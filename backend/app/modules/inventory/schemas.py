@@ -2,6 +2,23 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 
+# --- Media Schemas ---
+class ProductMediaBase(BaseModel):
+    file_url: str
+    media_type: str = "image"
+    is_primary: bool = False
+
+class ProductMediaCreate(ProductMediaBase):
+    pass
+
+class ProductMediaInDB(ProductMediaBase):
+    id: int
+    product_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 # --- Product Schemas ---
 class ProductBase(BaseModel):
     name: str
@@ -83,3 +100,4 @@ class StockMovementCreate(BaseModel):
 # --- Composite Response ---
 class ProductWithVariants(ProductInDB):
     variants: List[VariantInDB] = []
+    media: List[ProductMediaInDB] = []
