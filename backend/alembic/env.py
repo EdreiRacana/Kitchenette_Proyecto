@@ -10,7 +10,8 @@ from alembic import context
 # Import your models here
 from app.db.session import Base
 from app.core.config import settings
-from app.modules.auth.models import User # Import all models to register them
+from app.modules.auth.models import User
+from app.modules.inventory.models import Product, ProductVariant, Warehouse, StockLevel, StockMovement
 
 config = context.config
 
