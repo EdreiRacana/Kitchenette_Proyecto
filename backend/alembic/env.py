@@ -11,7 +11,7 @@ from alembic import context
 from app.db.session import Base
 from app.core.config import settings
 from app.modules.auth.models import User
-from app.modules.inventory.models import Product, ProductVariant, Warehouse, StockLevel, StockMovement
+from app.modules.inventory.models import Product, ProductVariant, Warehouse, StockLevel, StockMovement, ProductMedia
 
 config = context.config
 
