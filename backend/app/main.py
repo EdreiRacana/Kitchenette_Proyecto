@@ -18,7 +18,14 @@ if settings.BACKEND_CORS_ORIGINS:
         allow_headers=["*"],
     )
 
+from fastapi.staticfiles import StaticFiles
+from app.api.v1.endpoints import media
+
+# Mount static directory for local file serving
+app.mount("/static", StaticFiles(directory="uploads"), name="static")
+
 app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(media.router, prefix=f"{settings.API_V1_STR}/media", tags=["media"])
 
 @app.get("/health")
 def health_check():
