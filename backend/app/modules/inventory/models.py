@@ -26,6 +26,19 @@ class Product(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     variants = relationship("ProductVariant", back_populates="product", cascade="all, delete-orphan")
+    media = relationship("ProductMedia", back_populates="product", cascade="all, delete-orphan")
+
+class ProductMedia(Base):
+    __tablename__ = "product_media"
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    file_url = Column(String, nullable=False)
+    media_type = Column(String, default="image") # image, video
+    is_primary = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    product = relationship("Product", back_populates="media")
 
 class ProductVariant(Base):
     __tablename__ = "product_variants"
