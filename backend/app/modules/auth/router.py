@@ -16,6 +16,9 @@ async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(deps.get_db)]
 ):
+    print(f"DEBUG: Login Request Received. Username: '{form_data.username}'")
+    print(f"DEBUG: Password length: {len(form_data.password)}")
+    
     user = await service.authenticate_user(db, form_data.username, form_data.password)
     # Note: OAuth2PasswordRequestForm uses 'username' field, which maps to our email
     if not user:
