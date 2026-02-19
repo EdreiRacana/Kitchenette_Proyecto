@@ -9,14 +9,13 @@ app = FastAPI(
 )
 
 # Set all CORS enabled origins
-if settings.BACKEND_CORS_ORIGINS:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 from fastapi.staticfiles import StaticFiles
 from app.api.v1.endpoints import media
@@ -30,3 +29,17 @@ app.include_router(media.router, prefix=f"{settings.API_V1_STR}/media", tags=["m
 @app.get("/health")
 def health_check():
     return {"status": "ok", "app_name": settings.PROJECT_NAME}
+
+# Auto-create tables on startup (for immediate local dev)
+from app.db.session import engine, Base
+# Import all models to ensure registration
+from app.modules.auth import models as auth_models
+from app.modules.inventory import models as inventory_models
+from app.modules.customers import models as customer_models
+from app.modules.sales import models as sales_models
+from app.modules.finance import models as finance_models
+
+@app.on_event("startup")
+async def startup():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
