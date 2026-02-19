@@ -11,13 +11,17 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 class UploadService:
     @staticmethod
     async def save_file(file: UploadFile) -> str:
+        from starlette.concurrency import run_in_threadpool
         # Generate generic unique filename
         file_extension = os.path.splitext(file.filename)[1]
         unique_filename = f"{uuid.uuid4()}{file_extension}"
         file_path = UPLOAD_DIR / unique_filename
         
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        def _write_file():
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+        
+        await run_in_threadpool(_write_file)
             
         return f"/static/{unique_filename}"
 
