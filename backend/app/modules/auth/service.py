@@ -23,9 +23,17 @@ async def create_user(db: AsyncSession, user_in: UserCreate):
     return db_user
 
 async def authenticate_user(db: AsyncSession, email: str, password: str):
+    print(f"DEBUG: authenticate_user called for {email}")
     user = await get_user_by_email(db, email)
     if not user:
+        print(f"DEBUG: User '{email}' NOT FOUND in database query.")
         return False
+    
+    print(f"DEBUG: User found: {user.email}. ID: {user.id}. Hashed Pwd in DB: {user.hashed_password[:10]}...")
+    
     if not verify_password(password, user.hashed_password):
+        print("DEBUG: Password verification FAILED.")
         return False
+        
+    print("DEBUG: Password verification SUCCESS.")
     return user
