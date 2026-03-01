@@ -38,6 +38,7 @@ from app.modules.inventory import models as inventory_models
 from app.modules.customers import models as customer_models
 from app.modules.sales import models as sales_models
 from app.modules.finance import models as finance_models
+from app.modules.core_config import models as config_models
 
 @app.on_event("startup")
 async def startup():
