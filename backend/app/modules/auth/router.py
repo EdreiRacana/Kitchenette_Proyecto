@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from typing import Annotated
+from typing import Annotated, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import timedelta
 
@@ -52,3 +52,36 @@ async def read_users_me(
     current_user: Annotated[schemas.User, Depends(deps.get_current_active_user)]
 ):
     return current_user
+
+# -- User & Role Management (Superuser only) --
+
+@router.get("/users", response_model=List[schemas.User])
+async def read_users(
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+    current_user: Annotated[schemas.User, Depends(deps.get_current_superuser)],
+    skip: int = 0,
+    limit: int = 100,
+):
+    return await service.get_users(db, skip=skip, limit=limit)
+
+@router.get("/roles", response_model=List[schemas.Role])
+async def read_roles(
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+    current_user: Annotated[schemas.User, Depends(deps.get_current_active_user)]
+):
+    return await service.get_roles(db)
+
+@router.post("/roles", response_model=schemas.Role)
+async def create_role(
+    role_in: schemas.RoleCreate,
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+    current_user: Annotated[schemas.User, Depends(deps.get_current_superuser)]
+):
+    return await service.create_role(db, role_in)
+
+@router.get("/permissions", response_model=List[schemas.Permission])
+async def read_permissions(
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+    current_user: Annotated[schemas.User, Depends(deps.get_current_active_user)]
+):
+    return await service.get_permissions(db)
