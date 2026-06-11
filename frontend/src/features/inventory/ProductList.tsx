@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { inventoryService, Product } from './service';
+import { inventoryService, type Product } from './service';
 import { Plus, Search, Filter } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
