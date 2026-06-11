@@ -43,9 +43,9 @@ async def read_customer(
 async def upload_customer_document(
     customer_id: int,
     document_type: str,
-    file: UploadFile = File(...),
     db: Annotated[AsyncSession, Depends(deps.get_db)],
-    current_user: Annotated[User, Depends(deps.get_current_active_user)]
+    current_user: Annotated[User, Depends(deps.get_current_active_user)],
+    file: UploadFile = File(...),
 ):
     # Verify customer exists
     customer = await service.get_customer(db, customer_id)
@@ -57,9 +57,8 @@ async def upload_customer_document(
     safe_filename = f"{customer_id}_{document_type}_{int(datetime.now().timestamp())}{file_extension}"
     file_path = os.path.join(UPLOAD_DIR, safe_filename)
     
-    with os.open(file_path, os.O_WRONLY | os.O_CREAT | os.O_BINARY) as f:
-        with os.fdopen(f, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
     
     # Store in DB
     doc_in = schemas.CustomerDocumentCreate(
