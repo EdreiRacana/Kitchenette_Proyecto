@@ -1,48 +1,49 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, EmailStr, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 
+class CustomerDocumentBase(BaseModel):
+    document_type: str
+    status: Optional[str] = "pendiente"
 
-class OrderItemBase(BaseModel):
-    variant_id: int
-    quantity: int = 1
-    unit_price: float
+class CustomerDocumentCreate(CustomerDocumentBase):
+    file_name: str
+    file_path: str
+    mime_type: str
+    customer_id: int
 
+class CustomerDocumentUpdate(BaseModel):
+    status: Optional[str] = None
 
-class OrderItemCreate(OrderItemBase):
-    pass
-
-
-class OrderItemInDB(OrderItemBase):
+class CustomerDocumentInDB(CustomerDocumentBase):
     id: int
-    order_id: int
-    subtotal: float
+    customer_id: int
+    file_name: str
+    file_path: str
+    mime_type: str
+    upload_date: datetime
+    verified_at: Optional[datetime] = None
+    verified_by_id: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
+class CustomerBase(BaseModel):
+    name: str
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    is_active: Optional[bool] = True
 
-class OrderBase(BaseModel):
-    customer_id: Optional[int] = None
-    payment_method: Optional[str] = None
-    status: Optional[str] = "completed"
-    notes: Optional[str] = None
+class CustomerCreate(CustomerBase):
+    pass
 
+class CustomerUpdate(CustomerBase):
+    name: Optional[str] = None
 
-class OrderCreate(OrderBase):
-    items: List[OrderItemCreate]
-
-
-class OrderUpdate(BaseModel):
-    status: Optional[str] = None
-    notes: Optional[str] = None
-
-
-class OrderInDB(OrderBase):
+class CustomerInDB(CustomerBase):
     id: int
-    total_amount: float
-    user_id: Optional[int] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
-    items: List[OrderItemInDB] = []
+    documents: List[CustomerDocumentInDB] = []
 
     model_config = ConfigDict(from_attributes=True)
