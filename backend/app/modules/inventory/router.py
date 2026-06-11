@@ -8,7 +8,7 @@ from app.modules.auth.models import User
 router = APIRouter()
 
 # --- Products ---
-@router.post("/products", response_model=models.Product) # Simplified response model for now
+@router.post("/products", response_model=schemas.ProductInDB)
 async def create_product(
     product_in: schemas.ProductCreate,
     db: Annotated[AsyncSession, Depends(deps.get_db)],
@@ -18,10 +18,10 @@ async def create_product(
 
 @router.get("/products", response_model=List[schemas.ProductWithVariants]) # Use schema to include variants
 async def read_products(
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+    current_user: Annotated[User, Depends(deps.get_current_active_user)],
     skip: int = 0,
     limit: int = 100,
-    db: Annotated[AsyncSession, Depends(deps.get_db)],
-    current_user: User = Depends(deps.get_current_active_user)
 ):
     products = await service.get_products(db, skip, limit)
     # Pydantic's from_attributes should handle the conversion if relationships are loaded
