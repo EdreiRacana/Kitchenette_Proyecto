@@ -16,15 +16,13 @@ async def create_product(
 ):
     return await service.create_product(db, product_in)
 
-@router.get("/products", response_model=List[schemas.ProductWithVariants]) # Use schema to include variants
+@router.get("/products", response_model=List[schemas.ProductWithVariants])
 async def read_products(
     db: Annotated[AsyncSession, Depends(deps.get_db)],
-    current_user: Annotated[User, Depends(deps.get_current_active_user)],
     skip: int = 0,
     limit: int = 100,
 ):
     products = await service.get_products(db, skip, limit)
-    # Pydantic's from_attributes should handle the conversion if relationships are loaded
     return products
 
 @router.get("/products/{product_id}", response_model=schemas.ProductWithVariants)
