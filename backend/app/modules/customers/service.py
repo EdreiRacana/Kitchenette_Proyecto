@@ -10,7 +10,8 @@ async def create_customer(db: AsyncSession, customer_in: schemas.CustomerCreate)
     db.add(db_customer)
     await db.commit()
     await db.refresh(db_customer)
-    return db_customer
+    # Re-fetch with documents eagerly loaded to avoid async lazy-load on serialization
+    return await get_customer(db, db_customer.id)
 
 async def get_customers(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[models.Customer]:
     result = await db.execute(
@@ -38,6 +39,12 @@ async def create_document(db: AsyncSession, doc_in: schemas.CustomerDocumentCrea
 async def get_document(db: AsyncSession, doc_id: int) -> Optional[models.CustomerDocument]:
     result = await db.execute(select(models.CustomerDocument).where(models.CustomerDocument.id == doc_id))
     return result.scalars().first()
+
+async def get_customer_documents(db: AsyncSession, customer_id: int) -> List[models.CustomerDocument]:
+    result = await db.execute(
+        select(models.CustomerDocument).where(models.CustomerDocument.customer_id == customer_id)
+    )
+    return result.scalars().all()
 
 async def update_document_status(
     db: AsyncSession, 
