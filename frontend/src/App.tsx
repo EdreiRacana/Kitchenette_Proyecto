@@ -247,14 +247,17 @@ function PrimaryBtn({ t, children, onClick }) {
 }
 
 /* ============================ Charts ============================ */
-function Sparkline({ data, color }) {
-  const W = 84, H = 24, min = Math.min(...data), max = Math.max(...data);
+function Sparkline({ data, color, gid }) {
+  const W = 84, H = 26, min = Math.min(...data), max = Math.max(...data);
   const x = (i) => (i * W) / (data.length - 1);
-  const y = (v) => (max === min ? H / 2 : H - 3 - ((v - min) / (max - min)) * (H - 6));
-  const d = data.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
-  return (<svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ overflow: "visible" }}>
-    <path d={d} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="2.4" fill={color} />
+  const y = (v) => (max === min ? H / 2 : H - 3 - ((v - min) / (max - min)) * (H - 7));
+  const line = data.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
+  const area = `${line} L ${x(data.length - 1).toFixed(1)} ${H} L 0 ${H} Z`;
+  return (<svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}>
+    <defs><linearGradient id={gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.26" /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient></defs>
+    <path d={area} fill={`url(#${gid})`} />
+    <path d={line} fill="none" stroke={color} strokeOpacity="0.85" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="2.1" fill={color} fillOpacity="0.9" />
   </svg>);
 }
 function Gauge({ t, value, target, max = 60 }) {
@@ -268,12 +271,12 @@ function Gauge({ t, value, target, max = 60 }) {
   const valColor = value < 25 ? t.bad : value < 35 ? t.warn : t.good;
   return (
     <svg viewBox="0 0 200 104" style={{ width: 150, height: 78 }}>
-      <path d={arc(0, 25 / max)} fill="none" stroke={t.bad} strokeWidth={sw} opacity="0.8" strokeLinecap="round" />
-      <path d={arc(25 / max, 35 / max)} fill="none" stroke={t.warn} strokeWidth={sw} opacity="0.8" />
-      <path d={arc(35 / max, 1)} fill="none" stroke={t.good} strokeWidth={sw} opacity="0.8" strokeLinecap="round" />
-      <line x1={cx + (r - sw) * Math.cos(tA)} y1={cy - (r - sw) * Math.sin(tA)} x2={cx + (r + 4) * Math.cos(tA)} y2={cy - (r + 4) * Math.sin(tA)} stroke={t.textHi} strokeWidth="2" />
-      <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={valColor} strokeWidth="3" strokeLinecap="round" />
-      <circle cx={cx} cy={cy} r="5" fill={t.panel} stroke={valColor} strokeWidth="2.4" />
+      <path d={arc(0, 25 / max)} fill="none" stroke={t.bad} strokeWidth={sw} opacity="0.45" strokeLinecap="round" />
+      <path d={arc(25 / max, 35 / max)} fill="none" stroke={t.warn} strokeWidth={sw} opacity="0.45" />
+      <path d={arc(35 / max, 1)} fill="none" stroke={t.good} strokeWidth={sw} opacity="0.45" strokeLinecap="round" />
+      <line x1={cx + (r - sw) * Math.cos(tA)} y1={cy - (r - sw) * Math.sin(tA)} x2={cx + (r + 4) * Math.cos(tA)} y2={cy - (r + 4) * Math.sin(tA)} stroke={t.textHi} strokeWidth="2" strokeOpacity="0.5" />
+      <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={valColor} strokeWidth="3" strokeLinecap="round" strokeOpacity="0.65" />
+      <circle cx={cx} cy={cy} r="5" fill={t.panel} stroke={valColor} strokeWidth="2.4" strokeOpacity="0.7" />
       <text x={cx} y={cy - 16} textAnchor="middle" fontSize="25" fontWeight="700" fill={valColor}>{value}%</text>
     </svg>
   );
@@ -407,14 +410,14 @@ function Dashboard({ t, s, lang, setPage }) {
 
       {/* KPI health cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px,1fr))", gap: 14, marginBottom: 16 }}>
-        {data.kpis.map((k) => {
+        {data.kpis.map((k, i) => {
           const up = k.delta >= 0; const c = statusColor(t, k.delta);
           return (
             <Card key={k.label} t={t} style={{ padding: 18, position: "relative", overflow: "hidden" }}>
-              <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: c }} />
+              <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: c + "66" }} />
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12.5, color: t.textLo, fontWeight: 500 }}>{s.kpi[k.label]}</span>
-                <span style={{ width: 8, height: 8, borderRadius: 999, background: c, boxShadow: `0 0 0 3px ${c}22` }} />
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: c + "cc", boxShadow: `0 0 0 3px ${c}1f` }} />
               </div>
               <div style={{ fontSize: 23, fontWeight: 700, color: t.textHi, marginTop: 10, fontVariantNumeric: "tabular-nums" }}>{k.money ? mxn(k.value) : k.value.toLocaleString("es-MX")}</div>
               <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginTop: 8 }}>
@@ -423,7 +426,7 @@ function Dashboard({ t, s, lang, setPage }) {
                   <span style={{ fontSize: 12.5, fontWeight: 600, color: up ? t.good : t.bad }}>{Math.abs(k.delta)}%</span>
                   <span style={{ fontSize: 11, color: t.textLo }}>{s.dash.vsPrev}</span>
                 </span>
-                <Sparkline data={k.spark} color={c} />
+                <Sparkline data={k.spark} color={c} gid={`spk${i}`} />
               </div>
             </Card>
           );
