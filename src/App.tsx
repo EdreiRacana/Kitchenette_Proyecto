@@ -63,7 +63,7 @@ const STRINGS = {
     sales_col_payment: "Payment Method",
     sales_kpi_sold: "Total Sold",
     sales_kpi_pending_orders: "Pending Orders",
-    sales_kpi_pending_amount: "Amount Receivable",
+    sales_kpi_pending_amount: "Monto por Cobrar",
     sales_kpi_paid_rate: "Paid Rate",
     sales_detail_title: "Order Detail",
     sales_detail_folio: "Folio",
