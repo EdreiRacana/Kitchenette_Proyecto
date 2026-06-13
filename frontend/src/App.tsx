@@ -1,6 +1,6 @@
 // ... existing code ...
 
-const STRINGS = {
+const THEMES: Record<string, any> = {
   es: {
     // ... existing keys ...
     // NEW SALES/CRM KEYS
@@ -90,8 +90,6 @@ const STRINGS = {
     sales_confirm_paid: "Mark as paid?",
   },
 };
-
-// ... existing code ...
 
 const ORDERS = [
   {
@@ -217,8 +215,6 @@ const ORDERS = [
     ],
   },
 ];
-
-// ... existing code ...
 
 function Sales({ t, s }: { t: any; s: any }) {
   // ── State ──────────────────────────────────────────────────────────────
