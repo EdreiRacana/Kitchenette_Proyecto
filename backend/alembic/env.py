@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.modules.auth.models import User
 from app.modules.inventory.models import Product, ProductVariant, Warehouse, StockLevel, StockMovement, ProductMedia
 from app.modules.customers.models import Customer
-from app.modules.sales.models import Order, OrderItem
+from app.modules.sales.models import Order, OrderItem, Payment, OrderEvent
 from app.modules.finance.models import Transaction
 
 config = context.config
@@ -61,3 +61,4 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     asyncio.run(run_migrations_online())
+

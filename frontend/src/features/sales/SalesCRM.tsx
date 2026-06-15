@@ -1,510 +1,441 @@
-import React from "react";
+// High-end Sales / CRM module — orchestrator.
+// Keeps the { t, s } contract so it drops into App.tsx in place of the inline
+// Sales component. Connects to the live API and gracefully falls back to a
+// built-in demo dataset (with a banner) when the backend is unreachable.
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Search,
-  ChevronRight,
-  X,
-  CheckCircle,
-  XCircle,
-  List,
-  Columns,
-  TrendingUp,
-  Clock,
-  DollarSign,
-  Percent,
+  Search, List, Columns, BarChart3, Plus, Download, DollarSign, Clock,
+  TrendingUp, Percent, ChevronRight, ArrowUp, ArrowDown, FileText, Info,
 } from "lucide-react";
+import api from "../../services/api";
+import { resolveTheme, makeTr, money, dateShort, statusColors, statusMeta, paymentLabel, ORDER_PIPELINE, PAYMENT_METHODS } from "./theme";
+import type { Tokens } from "./theme";
+import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite } from "./types";
+import { salesApi } from "./api";
+import type { VariantOption } from "./api";
+import { Spinner, Badge, Button, EmptyState, Spinkeyframes } from "./ui";
+import { OrderForm } from "./OrderForm";
+import { PaymentModal } from "./PaymentModal";
+import { OrderDrawer } from "./OrderDrawer";
+import { Analytics } from "./Analytics";
+import { DEMO_ORDERS, DEMO_CUSTOMERS, DEMO_VARIANTS } from "./demo";
 
-interface OrderItem {
-  product: string;
-  qty: number;
-  unitPrice: number;
+type ViewMode = "list" | "pipeline" | "analytics";
+const PAGE = 20;
+
+function computeStats(orders: Order[]): SalesStats {
+  const real = orders.filter((o) => o.kind === "order" && o.status !== "cancelled");
+  const paid = real.filter((o) => o.status === "paid");
+  const pending = real.filter((o) => o.status === "pending" || o.status === "partial");
+  return {
+    total_sold: real.reduce((a, o) => a + o.paid_amount, 0),
+    orders_count: real.length,
+    pending_orders: pending.length,
+    pending_amount: pending.reduce((a, o) => a + (o.total_amount - o.paid_amount), 0),
+    paid_rate: real.length ? Math.round((paid.length / real.length) * 1000) / 10 : 0,
+    avg_ticket: real.length ? Math.round((real.reduce((a, o) => a + o.total_amount, 0) / real.length) * 100) / 100 : 0,
+    quotes_count: orders.filter((o) => o.kind === "quote").length,
+  };
 }
 
-interface StatusHistoryEntry {
-  status: string;
-  date: string;
-}
+export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
+  const tk = useMemo<Tokens>(() => resolveTheme(t as Record<string, unknown>), [t]);
+  const tr = useMemo(() => makeTr(s), [s]);
 
-interface Order {
-  id: number;
-  folio: string;
-  client: string;
-  date: string;
-  total: number;
-  status: string;
-  seller: string;
-  paymentMethod: string;
-  notes: string;
-  items: OrderItem[];
-  statusHistory: StatusHistoryEntry[];
-}
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [total, setTotal] = useState(0);
+  const [stats, setStats] = useState<SalesStats | null>(null);
+  const [trend, setTrend] = useState<TrendPoint[]>([]);
+  const [topCustomers, setTopCustomers] = useState<TopCustomer[]>([]);
+  const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
+  const [customers, setCustomers] = useState<CustomerLite[]>([]);
+  const [variants, setVariants] = useState<VariantOption[]>([]);
 
-const ORDERS: Order[] = [
-  {
-    id: 1, folio: "ORD-001", client: "Restaurante El Fogón", date: "2024-01-15",
-    total: 4500, status: "Pagado", seller: "María López", paymentMethod: "Transferencia",
-    notes: "Entrega urgente antes del mediodía.",
-    items: [
-      { product: "Pollo entero", qty: 10, unitPrice: 220 },
-      { product: "Costilla de res", qty: 5, unitPrice: 380 },
-      { product: "Chorizo artesanal", qty: 8, unitPrice: 150 },
-    ],
-    statusHistory: [
-      { status: "Borrador", date: "2024-01-14 09:00" },
-      { status: "Pendiente", date: "2024-01-14 10:30" },
-      { status: "Pagado", date: "2024-01-15 08:15" },
-    ],
-  },
-  {
-    id: 2, folio: "ORD-002", client: "Taquería Los Compadres", date: "2024-01-16",
-    total: 2300, status: "Pendiente", seller: "Carlos Ruiz", paymentMethod: "Efectivo",
-    notes: "",
-    items: [
-      { product: "Carne de cerdo", qty: 8, unitPrice: 200 },
-      { product: "Chorizo artesanal", qty: 6, unitPrice: 150 },
-      { product: "Manteca", qty: 4, unitPrice: 87.5 },
-    ],
-    statusHistory: [
-      { status: "Borrador", date: "2024-01-15 14:00" },
-      { status: "Pendiente", date: "2024-01-16 09:00" },
-    ],
-  },
-  {
-    id: 3, folio: "ORD-003", client: "Hotel Gran Plaza", date: "2024-01-17",
-    total: 8750, status: "Parcial", seller: "María López", paymentMethod: "Crédito",
-    notes: "50% pagado al entregar. Resto a 30 días.",
-    items: [
-      { product: "Filete de res", qty: 15, unitPrice: 350 },
-      { product: "Pollo entero", qty: 12, unitPrice: 220 },
-      { product: "Camarón mediano", qty: 5, unitPrice: 430 },
-    ],
-    statusHistory: [
-      { status: "Borrador", date: "2024-01-16 11:00" },
-      { status: "Pendiente", date: "2024-01-16 15:00" },
-      { status: "Parcial", date: "2024-01-17 10:00" },
-    ],
-  },
-  {
-    id: 4, folio: "ORD-004", client: "Catering Eventos MX", date: "2024-01-18",
-    total: 5600, status: "Pagado", seller: "Ana Torres", paymentMethod: "Tarjeta",
-    notes: "Cliente recurrente. Descuento 5% aplicado.",
-    items: [
-      { product: "Costilla de res", qty: 8, unitPrice: 380 },
-      { product: "Pollo entero", qty: 10, unitPrice: 220 },
-      { product: "Longaniza", qty: 6, unitPrice: 130 },
-    ],
-    statusHistory: [
-      { status: "Borrador", date: "2024-01-17 08:00" },
-      { status: "Pendiente", date: "2024-01-17 12:00" },
-      { status: "Pagado", date: "2024-01-18 09:30" },
-    ],
-  },
-  {
-    id: 5, folio: "ORD-005", client: "Mariscos El Puerto", date: "2024-01-19",
-    total: 3200, status: "Pendiente", seller: "Carlos Ruiz", paymentMethod: "Transferencia",
-    notes: "",
-    items: [
-      { product: "Camarón mediano", qty: 5, unitPrice: 430 },
-      { product: "Filete de res", qty: 4, unitPrice: 350 },
-      { product: "Manteca", qty: 2, unitPrice: 87.5 },
-    ],
-    statusHistory: [
-      { status: "Borrador", date: "2024-01-18 16:00" },
-      { status: "Pendiente", date: "2024-01-19 08:00" },
-    ],
-  },
-  {
-    id: 6, folio: "ORD-006", client: "Buffet Familiar Juárez", date: "2024-01-20",
-    total: 1950, status: "Borrador", seller: "Ana Torres", paymentMethod: "Efectivo",
-    notes: "Por confirmar cantidades.",
-    items: [
-      { product: "Carne de cerdo", qty: 5, unitPrice: 200 },
-      { product: "Chorizo artesanal", qty: 4, unitPrice: 150 },
-      { product: "Longaniza", qty: 3, unitPrice: 130 },
-    ],
-    statusHistory: [{ status: "Borrador", date: "2024-01-20 10:00" }],
-  },
-];
+  const [loading, setLoading] = useState(true);
+  const [demo, setDemo] = useState(false);
+  const [view, setView] = useState<ViewMode>("list");
+  const [saving, setSaving] = useState(false);
 
-const PIPELINE_COLS = ["Borrador", "Pendiente", "Parcial", "Pagado"];
+  const [q, setQ] = useState("");
+  const [kind, setKind] = useState("");
+  const [status, setStatus] = useState("");
+  const [payment, setPayment] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [sortBy, setSortBy] = useState("created_at");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(0);
 
-export default function SalesCRM({ t, s }: { t: any; s: any }) {
-  const [orders, setOrders] = React.useState<Order[]>(ORDERS);
-  const [search, setSearch] = React.useState("");
-  const [filterStatus, setFilterStatus] = React.useState("Todos");
-  const [filterFrom, setFilterFrom] = React.useState("");
-  const [filterTo, setFilterTo] = React.useState("");
-  const [selectedOrder, setSelectedOrder] = React.useState<Order | null>(null);
-  const [view, setView] = React.useState<"list" | "pipeline">("list");
-  const [dragOver, setDragOver] = React.useState<string | null>(null);
-  const [dragging, setDragging] = React.useState<number | null>(null);
-  const panelRef = React.useRef<HTMLDivElement>(null);
+  const [selected, setSelected] = useState<Order | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Order | null>(null);
+  const [payTarget, setPayTarget] = useState<Order | null>(null);
 
-  React.useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSelectedOrder(null);
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [dragCol, setDragCol] = useState<string | null>(null);
+
+  const filters = useMemo<OrderFilters>(() => ({
+    q: q || undefined, kind: (kind || undefined) as OrderFilters["kind"], status: status || undefined,
+    payment_method: payment || undefined, date_from: from || undefined, date_to: to || undefined,
+    sort_by: sortBy, sort_dir: sortDir, skip: page * PAGE, limit: PAGE,
+  }), [q, kind, status, payment, from, to, sortBy, sortDir, page]);
+
+  // ── Demo-mode local filtering ────────────────────────────────────────────
+  const applyDemoFilters = useCallback((all: Order[]): Order[] => {
+    let r = [...all];
+    if (kind) r = r.filter((o) => o.kind === kind);
+    if (status) r = r.filter((o) => o.status === status);
+    if (payment) r = r.filter((o) => o.payment_method === payment);
+    if (q) { const k = q.toLowerCase(); r = r.filter((o) => (o.folio ?? "").toLowerCase().includes(k) || (o.customer?.name ?? "").toLowerCase().includes(k) || o.status.includes(k)); }
+    r.sort((a, b) => {
+      const dir = sortDir === "asc" ? 1 : -1;
+      if (sortBy === "total_amount") return (a.total_amount - b.total_amount) * dir;
+      if (sortBy === "folio") return (a.folio ?? "").localeCompare(b.folio ?? "") * dir;
+      if (sortBy === "status") return a.status.localeCompare(b.status) * dir;
+      return (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir;
+    });
+    return r;
+  }, [kind, status, payment, q, sortBy, sortDir]);
+
+  const refreshDemoAnalytics = useCallback((all: Order[]) => {
+    setStats(computeStats(all));
+    const byDay = new Map<string, { total: number; count: number }>();
+    all.filter((o) => o.kind === "order" && o.status !== "cancelled").forEach((o) => {
+      const k = o.created_at.slice(0, 10);
+      const e = byDay.get(k) ?? { total: 0, count: 0 };
+      e.total += o.total_amount; e.count += 1; byDay.set(k, e);
+    });
+    setTrend([...byDay.entries()].sort().map(([period, v]) => ({ period, total: Math.round(v.total), count: v.count })));
+    const byCust = new Map<string, { total: number; orders: number; id: number | null }>();
+    all.filter((o) => o.kind === "order" && o.status !== "cancelled").forEach((o) => {
+      const name = o.customer?.name ?? "Sin cliente";
+      const e = byCust.get(name) ?? { total: 0, orders: 0, id: o.customer_id };
+      e.total += o.total_amount; e.orders += 1; byCust.set(name, e);
+    });
+    setTopCustomers([...byCust.entries()].map(([name, v]) => ({ customer_id: v.id, name, total: Math.round(v.total), orders: v.orders })).sort((a, b) => b.total - a.total).slice(0, 5));
+    const byProd = new Map<string, { qty: number; total: number }>();
+    all.filter((o) => o.kind === "order" && o.status !== "cancelled").forEach((o) => o.items.forEach((it) => {
+      const e = byProd.get(it.product_name ?? "—") ?? { qty: 0, total: 0 };
+      e.qty += it.quantity; e.total += (it.total ?? 0); byProd.set(it.product_name ?? "—", e);
+    }));
+    setTopProducts([...byProd.entries()].map(([name, v]) => ({ variant_id: null, name, quantity: v.qty, total: Math.round(v.total) })).sort((a, b) => b.total - a.total).slice(0, 5));
   }, []);
 
-  const filtered = orders.filter((o) => {
-    const q = search.toLowerCase();
-    const matchSearch =
-      o.folio.toLowerCase().includes(q) ||
-      o.client.toLowerCase().includes(q) ||
-      o.status.toLowerCase().includes(q);
-    const matchStatus = filterStatus === "Todos" || o.status === filterStatus;
-    const matchFrom = !filterFrom || o.date >= filterFrom;
-    const matchTo = !filterTo || o.date <= filterTo;
-    return matchSearch && matchStatus && matchFrom && matchTo;
-  });
+  // ── Load ───────────────────────────────────────────────────────────────────
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [page1, st, tr1, tc, tp] = await Promise.all([
+        salesApi.list(filters), salesApi.stats(), salesApi.trend("day", 30),
+        salesApi.topCustomers(5), salesApi.topProducts(5),
+      ]);
+      setOrders(page1.items); setTotal(page1.total); setStats(st);
+      setTrend(tr1); setTopCustomers(tc); setTopProducts(tp);
+      setDemo(false);
+      salesApi.customers().then(setCustomers).catch(() => setCustomers([]));
+      salesApi.variantOptions().then(setVariants).catch(() => setVariants([]));
+    } catch {
+      // Backend unreachable → demo mode
+      setDemo(true);
+      setCustomers(DEMO_CUSTOMERS); setVariants(DEMO_VARIANTS);
+      const filtered = applyDemoFilters(DEMO_ORDERS);
+      setOrders(filtered.slice(page * PAGE, page * PAGE + PAGE)); setTotal(filtered.length);
+      refreshDemoAnalytics(DEMO_ORDERS);
+    } finally {
+      setLoading(false);
+    }
+  }, [filters, applyDemoFilters, refreshDemoAnalytics, page]);
 
-  const totalSold = orders.filter((o) => o.status === "Pagado").reduce((a, b) => a + b.total, 0);
-  const pendingOrders = orders.filter((o) => o.status === "Pendiente" || o.status === "Parcial").length;
-  const pendingAmount = orders.filter((o) => o.status === "Pendiente" || o.status === "Parcial").reduce((a, b) => a + b.total, 0);
-  const paidRate = Math.round((orders.filter((o) => o.status === "Pagado").length / orders.length) * 100);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(0); }, [q, kind, status, payment, from, to]);
 
-  const statusColor = (status: string) => {
-    const good = t.good || "#34D399";
-    const warn = t.warn || "#FBBF24";
-    const nova = t.nova || "#33B2F5";
-    const bad = t.bad || "#F87171";
-    const textLo = t.textLo || "#7C9AD0";
-    if (status === "Pagado") return { bg: good + "22", text: good, border: good + "44" };
-    if (status === "Pendiente") return { bg: warn + "22", text: warn, border: warn + "44" };
-    if (status === "Parcial") return { bg: nova + "22", text: nova, border: nova + "44" };
-    if (status === "Cancelado") return { bg: bad + "22", text: bad, border: bad + "44" };
-    return { bg: t.panel3 || "#1A2856", text: textLo, border: t.border || "#1E2E5C" };
+  // ── Demo mutation helpers ────────────────────────────────────────────────
+  const demoStore = useMemo(() => ({ list: [...DEMO_ORDERS] }), []);
+  const commitDemo = useCallback(() => {
+    const filtered = applyDemoFilters(demoStore.list);
+    setOrders(filtered.slice(page * PAGE, page * PAGE + PAGE)); setTotal(filtered.length);
+    refreshDemoAnalytics(demoStore.list);
+  }, [applyDemoFilters, demoStore, page, refreshDemoAnalytics]);
+
+  // ── Actions ────────────────────────────────────────────────────────────────
+  const openDetail = useCallback(async (o: Order) => {
+    if (demo) { setSelected(o); return; }
+    try { setSelected(await salesApi.get(o.id)); } catch { setSelected(o); }
+  }, [demo]);
+
+  const handleSubmit = useCallback(async (draft: OrderDraft) => {
+    setSaving(true);
+    try {
+      if (demo) {
+        const subtotal = draft.items.reduce((a, it) => a + Math.max(it.unit_price * it.quantity - it.discount_amount, 0), 0);
+        const disc = draft.discount_type === "percent" ? subtotal * draft.discount_value / 100 : draft.discount_value;
+        const taxable = Math.max(subtotal - disc, 0); const tax = taxable * draft.tax_rate / 100;
+        const totalv = Math.round((taxable + tax + draft.shipping_amount) * 100) / 100;
+        if (editing) {
+          const idx = demoStore.list.findIndex((x) => x.id === editing.id);
+          if (idx >= 0) demoStore.list[idx] = { ...editing, subtotal, discount_amount: disc, tax_amount: tax, total_amount: totalv, balance: totalv - editing.paid_amount, notes: draft.notes || null };
+        } else {
+          const id = Math.max(0, ...demoStore.list.map((x) => x.id)) + 1;
+          const folio = `${draft.kind === "quote" ? "COT" : "ORD"}-${String(id).padStart(6, "0")}`;
+          demoStore.list.unshift({
+            id, folio, kind: draft.kind, customer_id: draft.customer_id, user_id: 1, warehouse_id: 1,
+            status: draft.kind === "quote" ? "sent" : "pending", payment_method: draft.payment_method, channel: draft.channel,
+            currency: "MXN", subtotal, discount_type: draft.discount_type, discount_value: draft.discount_value,
+            discount_amount: disc, tax_rate: draft.tax_rate, tax_amount: tax, shipping_amount: draft.shipping_amount,
+            total_amount: totalv, paid_amount: 0, balance: totalv, due_date: null, valid_until: null, notes: draft.notes || null,
+            bill_rfc: draft.bill_rfc || null, bill_name: draft.bill_name || null, bill_use: draft.bill_use || null,
+            bill_regime: draft.bill_regime || null, bill_zip: draft.bill_zip || null, cfdi_uuid: null, cfdi_status: "none", invoiced_at: null,
+            created_at: new Date().toISOString(), updated_at: null,
+            items: draft.items.map((it, i) => ({ id: i, variant_id: it.variant_id, product_name: it.product_name, sku: it.sku, quantity: it.quantity, unit_price: it.unit_price, discount_amount: it.discount_amount, tax_rate: it.tax_rate, subtotal: it.unit_price * it.quantity, total: it.unit_price * it.quantity * (1 + it.tax_rate / 100) })),
+            payments: [], events: [{ id: 1, event_type: "created", from_status: null, to_status: "pending", message: "Creado", created_at: new Date().toISOString() }],
+            customer: draft.customer_id ? (DEMO_CUSTOMERS.find((c) => c.id === draft.customer_id) ?? null) : null,
+            seller: { id: 1, full_name: "Vendedor Demo" },
+          });
+        }
+        commitDemo();
+      } else {
+        if (editing) await salesApi.update(editing.id, draft);
+        else await salesApi.create(draft);
+        await load();
+      }
+      setFormOpen(false); setEditing(null);
+    } finally { setSaving(false); }
+  }, [demo, editing, demoStore, commitDemo, load]);
+
+  const handlePay = useCallback(async (amount: number, method: string, reference: string, note: string) => {
+    if (!payTarget) return;
+    setSaving(true);
+    try {
+      if (demo) {
+        const idx = demoStore.list.findIndex((x) => x.id === payTarget.id);
+        if (idx >= 0) {
+          const o = demoStore.list[idx]; const paid = o.paid_amount + amount;
+          demoStore.list[idx] = { ...o, paid_amount: paid, balance: Math.round((o.total_amount - paid) * 100) / 100, status: paid + 0.001 >= o.total_amount ? "paid" : "partial", payments: [...o.payments, { id: o.payments.length + 1, order_id: o.id, amount, method, reference: reference || null, note: note || null, created_at: new Date().toISOString() }] };
+        }
+        commitDemo(); setSelected(null);
+      } else {
+        await salesApi.addPayment(payTarget.id, amount, method, reference, note);
+        await load(); setSelected(null);
+      }
+      setPayTarget(null);
+    } catch (e) { alert(extractErr(e)); } finally { setSaving(false); }
+  }, [payTarget, demo, demoStore, commitDemo, load]);
+
+  const changeStatus = useCallback(async (o: Order, newStatus: string) => {
+    if (o.status === newStatus) return;
+    if (demo) {
+      const idx = demoStore.list.findIndex((x) => x.id === o.id);
+      if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: newStatus as Order["status"] };
+      commitDemo(); return;
+    }
+    try { await salesApi.changeStatus(o.id, newStatus); await load(); } catch (e) { alert(extractErr(e)); }
+  }, [demo, demoStore, commitDemo, load]);
+
+  const markPaid = useCallback((o: Order) => { setPayTarget(o); }, []);
+
+  const convert = useCallback(async (o: Order) => {
+    if (demo) {
+      const idx = demoStore.list.findIndex((x) => x.id === o.id);
+      if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: "converted" };
+      commitDemo(); setSelected(null); return;
+    }
+    try { await salesApi.convert(o.id); await load(); setSelected(null); } catch (e) { alert(extractErr(e)); }
+  }, [demo, demoStore, commitDemo, load]);
+
+  const cancel = useCallback(async (o: Order) => {
+    if (!window.confirm(tr("sales_confirm_cancel", "¿Cancelar este documento?"))) return;
+    if (demo) {
+      const idx = demoStore.list.findIndex((x) => x.id === o.id);
+      if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: "cancelled", balance: 0 };
+      commitDemo(); setSelected(null); return;
+    }
+    try { await salesApi.cancel(o.id); await load(); setSelected(null); } catch (e) { alert(extractErr(e)); }
+  }, [demo, demoStore, commitDemo, load, tr]);
+
+  const invoice = useCallback(async (o: Order) => {
+    if (!o.bill_rfc) { alert(tr("sales_need_rfc", "Agrega datos de facturación (RFC) al pedido para generar el CFDI.")); return; }
+    if (demo) { alert("CFDI (demo): se generaría el comprobante para timbrar con tu PAC."); return; }
+    try {
+      const { data } = await api.get(`/sales/${o.id}/invoice`);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob); const a = document.createElement("a");
+      a.href = url; a.download = `cfdi-${o.folio}.json`; a.click(); URL.revokeObjectURL(url);
+    } catch (e) { alert(extractErr(e)); }
+  }, [demo, tr]);
+
+  const openEdit = useCallback((o: Order) => { setEditing(o); setSelected(null); setFormOpen(true); }, []);
+  const openNew = useCallback(() => { setEditing(null); setFormOpen(true); }, []);
+
+  const exportCsv = useCallback(() => {
+    if (demo) { alert("Export CSV disponible con backend conectado."); return; }
+    window.open(salesApi.exportUrl(filters), "_blank");
+  }, [demo, filters]);
+
+  const toggleSort = (col: string) => {
+    if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortBy(col); setSortDir("desc"); }
   };
 
-  const statusLabel = (status: string) => {
-    const map: Record<string, string> = {
-      Borrador: "Borrador",
-      Pendiente: "Pendiente",
-      Parcial: "Parcial",
-      Pagado: "Pagado",
-      Cancelado: "Cancelado",
-    };
-    return map[status] || status;
-  };
-
-  const now = () =>
-    new Date().toLocaleString("sv-SE").replace("T", " ").slice(0, 16);
-
-  const markAsPaid = (id: number) => {
-    const ts = now();
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === id
-          ? { ...o, status: "Pagado", statusHistory: [...o.statusHistory, { status: "Pagado", date: ts }] }
-          : o
-      )
-    );
-    setSelectedOrder((prev) =>
-      prev && prev.id === id
-        ? { ...prev, status: "Pagado", statusHistory: [...prev.statusHistory, { status: "Pagado", date: ts }] }
-        : prev
-    );
-  };
-
-  const cancelOrder = (id: number) => {
-    if (!window.confirm("¿Cancelar este pedido?")) return;
-    const ts = now();
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === id
-          ? { ...o, status: "Cancelado", statusHistory: [...o.statusHistory, { status: "Cancelado", date: ts }] }
-          : o
-      )
-    );
-    setSelectedOrder((prev) =>
-      prev && prev.id === id
-        ? { ...prev, status: "Cancelado", statusHistory: [...prev.statusHistory, { status: "Cancelado", date: ts }] }
-        : prev
-    );
-  };
-
-  const onDragStart = (id: number) => setDragging(id);
-  const onDragOver = (e: React.DragEvent, col: string) => { e.preventDefault(); setDragOver(col); };
-  const onDrop = (col: string) => {
-    if (dragging === null) return;
-    const ts = now();
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === dragging
-          ? { ...o, status: col, statusHistory: [...o.statusHistory, { status: col, date: ts }] }
-          : o
-      )
-    );
-    setDragging(null);
-    setDragOver(null);
-  };
-
-  const panel = t.panel || "#0E1838";
-  const panel2 = t.panel2 || "#131F44";
-  const panel3 = t.panel3 || "#1A2856";
-  const border = t.border || "#1E2E5C";
-  const textHi = t.textHi || "#F2F6FF";
-  const textMid = t.textMid || "#AFBEDF";
-  const textLo = t.textLo || "#7C9AD0";
-  const nova = t.nova || "#33B2F5";
-  const good = t.good || "#34D399";
-  const warn = t.warn || "#FBBF24";
-  const inputBg = t.inputBg || "#0A1430";
+  // ── Render helpers ───────────────────────────────────────────────────────
+  const kpis = stats ?? computeStats(orders);
+  const pages = Math.max(1, Math.ceil(total / PAGE));
 
   const KpiCard = ({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: string }) => (
-    <div style={{ background: panel, border: `1px solid ${border}`, borderRadius: 12, padding: "18px 22px", display: "flex", alignItems: "center", gap: 16, flex: 1, minWidth: 180 }}>
-      <div style={{ background: color + "22", color, borderRadius: 10, padding: 10, display: "flex" }}>{icon}</div>
-      <div>
-        <div style={{ fontSize: 12, color: textLo, marginBottom: 2 }}>{label}</div>
-        <div style={{ fontSize: 20, fontWeight: 700, color: textHi }}>{value}</div>
-      </div>
+    <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, flex: 1, minWidth: 170 }}>
+      <div style={{ background: color + "22", color, borderRadius: 10, padding: 9, display: "flex" }}>{icon}</div>
+      <div><div style={{ fontSize: 12, color: tk.textLo, marginBottom: 2 }}>{label}</div><div style={{ fontSize: 19, fontWeight: 800, color: tk.textHi }}>{value}</div></div>
     </div>
   );
 
-  const StatusBadge = ({ status }: { status: string }) => {
-    const c = statusColor(status);
-    return (
-      <span style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}`, borderRadius: 20, padding: "3px 10px", fontSize: 12, fontWeight: 600 }}>
-        {statusLabel(status)}
-      </span>
-    );
-  };
+  const inputBase: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.inputBg, color: tk.textHi, fontSize: 14, outline: "none" };
+  const SortHead = ({ col, label }: { col: string; label: string }) => (
+    <th onClick={() => toggleSort(col)} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: tk.textLo, borderBottom: `1px solid ${tk.border}`, cursor: "pointer", userSelect: "none", textTransform: "uppercase", letterSpacing: 0.4 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{label}{sortBy === col && (sortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</span>
+    </th>
+  );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, padding: "24px 0" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 18, padding: "20px 0" }}>
+      <Spinkeyframes />
 
-      {/* KPIs */}
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-        <KpiCard icon={<DollarSign size={20} />} label="Total vendido" value={`$${totalSold.toLocaleString()}`} color={good} />
-        <KpiCard icon={<Clock size={20} />} label="Pedidos pendientes" value={String(pendingOrders)} color={warn} />
-        <KpiCard icon={<TrendingUp size={20} />} label="Monto por cobrar" value={`$${pendingAmount.toLocaleString()}`} color={nova} />
-        <KpiCard icon={<Percent size={20} />} label="Tasa pagados" value={`${paidRate}%`} color={good} />
-      </div>
-
-      {/* Toolbar */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <div style={{ position: "relative" as const, flex: 1, minWidth: 200 }}>
-          <Search size={16} style={{ position: "absolute" as const, left: 10, top: "50%", transform: "translateY(-50%)", color: textLo }} />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar folio, cliente o estado..."
-            style={{ width: "100%", padding: "8px 12px 8px 34px", borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textHi, fontSize: 14, boxSizing: "border-box" as const, outline: "none" }}
-          />
-        </div>
-        <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textHi, fontSize: 14 }}>
-          {["Todos", ...PIPELINE_COLS, "Cancelado"].map((st) => (
-            <option key={st} value={st}>{st}</option>
-          ))}
-        </select>
-        <input type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textHi, fontSize: 14 }} />
-        <input type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textHi, fontSize: 14 }} />
-        <div style={{ display: "flex", gap: 4 }}>
-          <button onClick={() => setView("list")} style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${border}`, background: view === "list" ? nova : inputBg, color: view === "list" ? "#fff" : textMid, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}>
-            <List size={16} /> Lista
-          </button>
-          <button onClick={() => setView("pipeline")} style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${border}`, background: view === "pipeline" ? nova : inputBg, color: view === "pipeline" ? "#fff" : textMid, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}>
-            <Columns size={16} /> Pipeline
-          </button>
-        </div>
-      </div>
-
-      {/* LIST VIEW */}
-      {view === "list" && (
-        <div style={{ background: panel, border: `1px solid ${border}`, borderRadius: 12, overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" as const }}>
-            <thead>
-              <tr style={{ background: panel2 }}>
-                {["Folio", "Cliente", "Fecha", "Vendedor", "Pago", "Total", "Estado", ""].map((h, i) => (
-                  <th key={i} style={{ padding: "12px 16px", textAlign: "left" as const, fontSize: 12, fontWeight: 600, color: textLo, borderBottom: `1px solid ${border}` }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((o, i) => (
-                <tr
-                  key={o.id}
-                  onClick={() => setSelectedOrder(o)}
-                  style={{ background: i % 2 === 0 ? panel : panel2, cursor: "pointer" }}
-                  onMouseEnter={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = panel3)}
-                  onMouseLeave={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = i % 2 === 0 ? panel : panel2)}
-                >
-                  <td style={{ padding: "12px 16px", fontSize: 14, color: nova, fontWeight: 600 }}>{o.folio}</td>
-                  <td style={{ padding: "12px 16px", fontSize: 14, color: textHi }}>{o.client}</td>
-                  <td style={{ padding: "12px 16px", fontSize: 14, color: textMid }}>{o.date}</td>
-                  <td style={{ padding: "12px 16px", fontSize: 14, color: textMid }}>{o.seller}</td>
-                  <td style={{ padding: "12px 16px", fontSize: 14, color: textMid }}>{o.paymentMethod}</td>
-                  <td style={{ padding: "12px 16px", fontSize: 14, color: textHi, fontWeight: 600 }}>${o.total.toLocaleString()}</td>
-                  <td style={{ padding: "12px 16px" }}><StatusBadge status={o.status} /></td>
-                  <td style={{ padding: "12px 16px" }}><ChevronRight size={16} color={textLo} /></td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" as const, color: textLo, fontSize: 14 }}>Sin resultados</td></tr>
-              )}
-            </tbody>
-          </table>
+      {demo && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.warn + "18", border: `1px solid ${tk.warn}44`, color: tk.warn, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
+          <Info size={16} /> {tr("sales_demo_mode", "Modo demo: backend no disponible. Mostrando datos de ejemplo; las acciones no se guardan.")}
         </div>
       )}
 
-      {/* PIPELINE VIEW */}
-      {view === "pipeline" && (
-        <div style={{ display: "flex", gap: 16, overflowX: "auto" as const, paddingBottom: 8 }}>
-          {PIPELINE_COLS.map((col) => {
-            const colOrders = filtered.filter((o) => o.status === col);
-            const colTotal = colOrders.reduce((a, b) => a + b.total, 0);
-            const sc = statusColor(col);
+      {/* KPIs */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <KpiCard icon={<DollarSign size={20} />} label={tr("sales_kpi_sold", "Total vendido")} value={money(kpis.total_sold)} color={tk.good} />
+        <KpiCard icon={<Clock size={20} />} label={tr("sales_kpi_pending_orders", "Pedidos pendientes")} value={String(kpis.pending_orders)} color={tk.warn} />
+        <KpiCard icon={<TrendingUp size={20} />} label={tr("sales_kpi_pending_amount", "Por cobrar")} value={money(kpis.pending_amount)} color={tk.accent} />
+        <KpiCard icon={<Percent size={20} />} label={tr("sales_kpi_paid_rate", "Tasa pagados")} value={`${kpis.paid_rate}%`} color={tk.good} />
+        <KpiCard icon={<FileText size={20} />} label={tr("sales_kpi_avg", "Ticket promedio")} value={money(kpis.avg_ticket)} color={tk.accent} />
+      </div>
+
+      {/* Toolbar */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+          <Search size={16} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: tk.textLo }} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("sales_search_placeholder", "Buscar folio, cliente o estado…")}
+            style={{ ...inputBase, width: "100%", paddingLeft: 34, boxSizing: "border-box" }} />
+        </div>
+        <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
+          <option value="">{tr("sales_all_docs", "Todos")}</option>
+          <option value="order">{tr("sales_kind_order", "Pedidos")}</option>
+          <option value="quote">{tr("sales_kind_quote", "Cotizaciones")}</option>
+        </select>
+        <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
+          <option value="">{tr("sales_filter_status", "Estado")}</option>
+          {["draft", "pending", "partial", "paid", "cancelled"].map((st) => <option key={st} value={st}>{statusMeta(st).label}</option>)}
+        </select>
+        <select value={payment} onChange={(e) => setPayment(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
+          <option value="">{tr("sales_detail_payment", "Pago")}</option>
+          {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+        <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={inputBase} />
+        <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={inputBase} />
+        <div style={{ display: "flex", gap: 4 }}>
+          {([["list", List], ["pipeline", Columns], ["analytics", BarChart3]] as const).map(([v, Icon]) => (
+            <button key={v} onClick={() => setView(v)} title={v}
+              style={{ ...inputBase, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, background: view === v ? tk.accent : tk.inputBg, color: view === v ? "#06122B" : tk.textMid, borderColor: view === v ? tk.accent : tk.border }}>
+              <Icon size={16} />
+            </button>
+          ))}
+        </div>
+        <Button tk={tk} variant="ghost" icon={<Download size={16} />} onClick={exportCsv}>{tr("sales_export", "Export")}</Button>
+        <Button tk={tk} variant="primary" icon={<Plus size={16} />} onClick={openNew}>{tr("sales_new", "Nuevo")}</Button>
+      </div>
+
+      {loading ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 64 }}><Spinner tk={tk} size={28} /></div>
+      ) : view === "analytics" ? (
+        <Analytics tk={tk} tr={tr} trend={trend} topCustomers={topCustomers} topProducts={topProducts} />
+      ) : view === "pipeline" ? (
+        <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 8 }}>
+          {ORDER_PIPELINE.map((col) => {
+            const colOrders = orders.filter((o) => o.kind === "order" && o.status === col);
+            const sc = statusColors(tk, col);
             return (
-              <div
-                key={col}
-                onDragOver={(e) => onDragOver(e, col)}
-                onDrop={() => onDrop(col)}
-                style={{ flex: "0 0 260px", background: dragOver === col ? sc.bg : panel, border: `2px solid ${dragOver === col ? sc.border : border}`, borderRadius: 12, padding: 12, minHeight: 300, transition: "border 0.2s, background 0.2s" }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <span style={{ fontWeight: 700, color: sc.text, fontSize: 14 }}>{statusLabel(col)}</span>
-                  <span style={{ background: sc.bg, color: sc.text, border: `1px solid ${sc.border}`, borderRadius: 12, padding: "2px 8px", fontSize: 12, fontWeight: 600 }}>{colOrders.length}</span>
+              <div key={col} onDragOver={(e) => { e.preventDefault(); setDragCol(col); }} onDrop={() => { if (dragId !== null) { const o = orders.find((x) => x.id === dragId); if (o) changeStatus(o, col); } setDragId(null); setDragCol(null); }}
+                style={{ flex: "0 0 270px", background: dragCol === col ? sc.bg : tk.panel, border: `2px solid ${dragCol === col ? sc.border : tk.border}`, borderRadius: 12, padding: 12, minHeight: 320, transition: "border .2s, background .2s" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <span style={{ fontWeight: 700, color: sc.text, fontSize: 14 }}>{statusMeta(col).label}</span>
+                  <Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{colOrders.length}</Badge>
                 </div>
-                <div style={{ fontSize: 12, color: textLo, marginBottom: 10 }}>${colTotal.toLocaleString()}</div>
+                <div style={{ fontSize: 12, color: tk.textLo, marginBottom: 10 }}>{money(colOrders.reduce((a, b) => a + b.total_amount, 0))}</div>
                 {colOrders.map((o) => (
-                  <div
-                    key={o.id}
-                    draggable
-                    onDragStart={() => onDragStart(o.id)}
-                    onClick={() => setSelectedOrder(o)}
-                    style={{ background: panel2, border: `1px solid ${border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10, cursor: "grab", opacity: dragging === o.id ? 0.5 : 1, transition: "opacity 0.2s" }}
-                  >
-                    <div style={{ fontWeight: 600, fontSize: 13, color: nova, marginBottom: 4 }}>{o.folio}</div>
-                    <div style={{ fontSize: 12, color: textHi, marginBottom: 4 }}>{o.client}</div>
-                    <div style={{ fontSize: 12, color: textMid, marginBottom: 6 }}>{o.date}</div>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: textHi }}>${o.total.toLocaleString()}</div>
+                  <div key={o.id} draggable onDragStart={() => setDragId(o.id)} onClick={() => openDetail(o)}
+                    style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10, cursor: "grab", opacity: dragId === o.id ? 0.5 : 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: tk.accent, marginBottom: 4 }}>{o.folio}</div>
+                    <div style={{ fontSize: 12, color: tk.textHi, marginBottom: 4 }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: tk.textHi }}>{money(o.total_amount)}</div>
                   </div>
                 ))}
-                {colOrders.length === 0 && (
-                  <div style={{ textAlign: "center" as const, color: textLo, fontSize: 12, padding: "24px 0", opacity: 0.6 }}>Sin pedidos</div>
-                )}
+                {colOrders.length === 0 && <div style={{ textAlign: "center", color: tk.textLo, fontSize: 12, padding: "24px 0", opacity: 0.6 }}>—</div>}
               </div>
             );
           })}
         </div>
-      )}
-
-      {/* DETAIL DRAWER */}
-      {selectedOrder && (
-        <>
-          <div onClick={() => setSelectedOrder(null)} style={{ position: "fixed" as const, inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 40 }} />
-          <div ref={panelRef} style={{ position: "fixed" as const, top: 0, right: 0, height: "100%", width: 420, maxWidth: "95vw", background: panel, borderLeft: `1px solid ${border}`, zIndex: 50, display: "flex", flexDirection: "column" as const, boxShadow: "-4px 0 24px rgba(0,0,0,0.4)", overflowY: "auto" as const }}>
-
-            {/* Header */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px 16px", borderBottom: `1px solid ${border}`, position: "sticky" as const, top: 0, background: panel, zIndex: 1 }}>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 18, color: textHi }}>{selectedOrder.folio}</div>
-                <div style={{ fontSize: 13, color: textMid, marginTop: 2 }}>{selectedOrder.client}</div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <StatusBadge status={selectedOrder.status} />
-                <button onClick={() => setSelectedOrder(null)} style={{ background: "transparent", border: "none", cursor: "pointer", color: textLo, display: "flex" }}>
-                  <X size={20} />
-                </button>
-              </div>
-            </div>
-
-            {/* Body */}
-            <div style={{ padding: "20px 24px", flex: 1, display: "flex", flexDirection: "column" as const, gap: 20 }}>
-
-              {/* Info grid */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                {[
-                  { label: "Fecha", value: selectedOrder.date },
-                  { label: "Vendedor", value: selectedOrder.seller },
-                  { label: "Método de pago", value: selectedOrder.paymentMethod },
-                  { label: "Total", value: `$${selectedOrder.total.toLocaleString()}` },
-                ].map((f) => (
-                  <div key={f.label} style={{ background: panel2, borderRadius: 8, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 11, color: textLo, marginBottom: 4, fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: 0.5 }}>{f.label}</div>
-                    <div style={{ fontSize: 14, color: textHi, fontWeight: 600 }}>{f.value}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Notes */}
-              {selectedOrder.notes && (
-                <div style={{ background: panel2, borderRadius: 8, padding: "12px 14px" }}>
-                  <div style={{ fontSize: 11, color: textLo, marginBottom: 6, fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: 0.5 }}>Notas</div>
-                  <div style={{ fontSize: 13, color: textMid, lineHeight: 1.5 }}>{selectedOrder.notes}</div>
-                </div>
-              )}
-
-              {/* Products */}
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: textHi, marginBottom: 10 }}>Productos</div>
-                <div style={{ background: panel2, borderRadius: 10, overflow: "hidden" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" as const }}>
-                    <thead>
-                      <tr>
-                        {["Producto", "Cant.", "Precio", "Subtotal"].map((h) => (
-                          <th key={h} style={{ padding: "8px 12px", fontSize: 11, fontWeight: 600, color: textLo, borderBottom: `1px solid ${border}`, textAlign: "left" as const }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedOrder.items.map((item, i) => (
-                        <tr key={i}>
-                          <td style={{ padding: "8px 12px", fontSize: 13, color: textHi }}>{item.product}</td>
-                          <td style={{ padding: "8px 12px", fontSize: 13, color: textMid }}>{item.qty}</td>
-                          <td style={{ padding: "8px 12px", fontSize: 13, color: textMid }}>${item.unitPrice.toLocaleString()}</td>
-                          <td style={{ padding: "8px 12px", fontSize: 13, color: textHi, fontWeight: 600 }}>${(item.qty * item.unitPrice).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                      <tr>
-                        <td colSpan={3} style={{ padding: "10px 12px", fontSize: 13, fontWeight: 700, color: textHi, borderTop: `1px solid ${border}`, textAlign: "right" as const }}>Total</td>
-                        <td style={{ padding: "10px 12px", fontSize: 14, fontWeight: 700, color: nova, borderTop: `1px solid ${border}` }}>${selectedOrder.total.toLocaleString()}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Status history */}
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: textHi, marginBottom: 10 }}>Historial de estado</div>
-                <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
-                  {selectedOrder.statusHistory.map((h, i) => {
-                    const sc = statusColor(h.status);
-                    return (
-                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div style={{ width: 8, height: 8, borderRadius: 999, background: sc.text, flexShrink: 0 }} />
-                        <div style={{ fontSize: 13, color: textHi, fontWeight: 600 }}>{statusLabel(h.status)}</div>
-                        <div style={{ fontSize: 12, color: textLo, marginLeft: "auto" }}>{h.date}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            {/* Action buttons */}
-            {selectedOrder.status !== "Pagado" && selectedOrder.status !== "Cancelado" && (
-              <div style={{ padding: "16px 24px", borderTop: `1px solid ${border}`, display: "flex", gap: 10 }}>
-                <button
-                  onClick={() => markAsPaid(selectedOrder.id)}
-                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px 16px", borderRadius: 10, border: "none", background: good, color: "#fff", fontWeight: 600, fontSize: 14, cursor: "pointer" }}
-                >
-                  <CheckCircle size={16} /> Marcar pagado
-                </button>
-                <button
-                  onClick={() => cancelOrder(selectedOrder.id)}
-                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px 16px", borderRadius: 10, border: `1px solid ${border}`, background: "transparent", color: t.bad || "#F87171", fontWeight: 600, fontSize: 14, cursor: "pointer" }}
-                >
-                  <XCircle size={16} /> Cancelar
-                </button>
-              </div>
-            )}
+      ) : (
+        <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+              <thead><tr style={{ background: tk.panel2 }}>
+                <SortHead col="folio" label={tr("sales_col_folio", "Folio")} />
+                <th style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: tk.textLo, borderBottom: `1px solid ${tk.border}`, textTransform: "uppercase", letterSpacing: 0.4 }}>{tr("sales_col_client", "Cliente")}</th>
+                <SortHead col="created_at" label={tr("sales_col_date", "Fecha")} />
+                <th style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: tk.textLo, borderBottom: `1px solid ${tk.border}`, textTransform: "uppercase", letterSpacing: 0.4 }}>{tr("sales_col_payment", "Pago")}</th>
+                <SortHead col="total_amount" label={tr("sales_col_total", "Total")} />
+                <th style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: tk.textLo, borderBottom: `1px solid ${tk.border}`, textTransform: "uppercase", letterSpacing: 0.4 }}>{tr("sales_balance", "Saldo")}</th>
+                <SortHead col="status" label={tr("sales_col_status", "Estado")} />
+                <th style={{ borderBottom: `1px solid ${tk.border}` }}></th>
+              </tr></thead>
+              <tbody>
+                {orders.map((o, i) => {
+                  const sc = statusColors(tk, o.status);
+                  return (
+                    <tr key={o.id} onClick={() => openDetail(o)} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2, cursor: "pointer" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = tk.panel3)}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = i % 2 === 0 ? tk.panel : tk.panel2)}>
+                      <td style={{ padding: "12px 16px", fontSize: 14, color: tk.accent, fontWeight: 700 }}>{o.folio}{o.kind === "quote" && <span style={{ fontSize: 10, color: tk.textLo, fontWeight: 600 }}> · COT</span>}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{dateShort(o.created_at)}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{paymentLabel(o.payment_method)}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi, fontWeight: 700 }}>{money(o.total_amount)}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: o.balance > 0 ? tk.warn : tk.textLo }}>{money(o.balance)}</td>
+                      <td style={{ padding: "12px 16px" }}><Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{statusMeta(o.status).label}</Badge></td>
+                      <td style={{ padding: "12px 16px" }}><ChevronRight size={16} color={tk.textLo} /></td>
+                    </tr>
+                  );
+                })}
+                {orders.length === 0 && <tr><td colSpan={8}><EmptyState tk={tk} title={tr("sales_no_results", "Sin resultados")} hint={tr("sales_no_results_hint", "Ajusta los filtros o crea un nuevo pedido.")} /></td></tr>}
+              </tbody>
+            </table>
           </div>
-        </>
+          {/* Pagination */}
+          {total > PAGE && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: `1px solid ${tk.border}` }}>
+              <span style={{ fontSize: 13, color: tk.textLo }}>{total} {tr("sales_results", "resultados")}</span>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <Button tk={tk} variant="subtle" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>‹</Button>
+                <span style={{ fontSize: 13, color: tk.textMid }}>{page + 1} / {pages}</span>
+                <Button tk={tk} variant="subtle" disabled={page + 1 >= pages} onClick={() => setPage((p) => p + 1)}>›</Button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
+
+      <OrderForm tk={tk} tr={tr} open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} onSubmit={handleSubmit} editing={editing} customers={customers} variants={variants} saving={saving} />
+      <PaymentModal tk={tk} tr={tr} open={!!payTarget} onClose={() => setPayTarget(null)} order={payTarget} onSubmit={handlePay} saving={saving} />
+      <OrderDrawer tk={tk} tr={tr} order={selected} onClose={() => setSelected(null)} onEdit={openEdit} onPay={(o) => { setPayTarget(o); }} onMarkPaid={markPaid} onConvert={convert} onCancel={cancel} onInvoice={invoice} />
     </div>
   );
 }
 
+function extractErr(e: unknown): string {
+  const anyE = e as { response?: { data?: { detail?: string } } };
+  return anyE?.response?.data?.detail ?? "Ocurrió un error. Intenta de nuevo.";
+}
