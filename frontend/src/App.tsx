@@ -7,7 +7,7 @@ import {
   Calendar as CalIcon, AlertTriangle, Target, PackageX, FileWarning,
 } from "lucide-react";
 import SalesCRM from "./features/sales/SalesCRM";
-import CustomersModule from "./features/customers/CustomersModule";   ← esta la agregas nueva
+import CustomersModule from "./features/customers/CustomersModule";
 
 /* ============================ Theme ============================ */
 const THEMES = {
