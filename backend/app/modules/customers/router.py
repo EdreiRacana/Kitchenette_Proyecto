@@ -1,98 +1,120 @@
+"""REST API for the Customer / CRM module."""
+
+from __future__ import annotations
+
 import os
 import shutil
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
-from typing import List, Annotated
+from typing import Annotated, List, Optional
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api import deps
-from app.modules.customers import schemas, service
 from app.modules.auth.models import User
+from app.modules.customers import schemas, service
 
 router = APIRouter()
 
-UPLOAD_DIR = "uploads/customers"
-if not os.path.exists(UPLOAD_DIR):
-    os.makedirs(UPLOAD_DIR)
+DB = Annotated[AsyncSession, Depends(deps.get_db)]
+CurrentUser = Annotated[User, Depends(deps.get_current_active_user)]
 
-@router.post("/", response_model=schemas.CustomerInDB)
-async def create_customer(
-    customer_in: schemas.CustomerCreate,
-    db: Annotated[AsyncSession, Depends(deps.get_db)]
+UPLOAD_DIR = "uploads/customers"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+# ── Search / stats (declared before /{id} so paths don't collide) ─────────────
+
+@router.get("/search", response_model=schemas.PaginatedCustomers)
+async def search_customers(
+    db: DB, _: CurrentUser,
+    skip: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=200),
+    q: Optional[str] = None,
+    sucursal: Optional[str] = None,
+    client_type: Optional[str] = None,
+    price_list: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    sort_by: str = Query("created_at"),
+    sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
 ):
+    items, total = await service.search_customers(
+        db, skip=skip, limit=limit, q=q, sucursal=sucursal, client_type=client_type,
+        price_list=price_list, is_active=is_active, sort_by=sort_by, sort_dir=sort_dir,
+    )
+    return schemas.PaginatedCustomers(items=items, total=total, skip=skip, limit=limit)
+
+
+@router.get("/stats")
+async def customer_stats(db: DB, _: CurrentUser):
+    return await service.get_stats(db)
+
+
+# ── CRUD ──────────────────────────────────────────────────────────────────────
+
+@router.post("/", response_model=schemas.CustomerInDB, status_code=201)
+async def create_customer(customer_in: schemas.CustomerCreate, db: DB, _: CurrentUser):
     return await service.create_customer(db, customer_in)
 
+
 @router.get("/", response_model=List[schemas.CustomerInDB])
-async def read_customers(
-    db: Annotated[AsyncSession, Depends(deps.get_db)],
-    skip: int = 0,
-    limit: int = 100
-):
+async def read_customers(db: DB, _: CurrentUser, skip: int = 0, limit: int = 100):
+    # Plain list kept for the Sales dropdown / backward compatibility.
     return await service.get_customers(db, skip=skip, limit=limit)
 
+
 @router.get("/{customer_id}", response_model=schemas.CustomerInDB)
-async def read_customer(
-    customer_id: int,
-    db: Annotated[AsyncSession, Depends(deps.get_db)]
-):
+async def read_customer(customer_id: int, db: DB, _: CurrentUser):
     customer = await service.get_customer(db, customer_id)
     if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
+        raise HTTPException(404, "Cliente no encontrado")
     return customer
+
+
+@router.put("/{customer_id}", response_model=schemas.CustomerInDB)
+async def update_customer(customer_id: int, data: schemas.CustomerUpdate, db: DB, _: CurrentUser):
+    customer = await service.update_customer(db, customer_id, data)
+    if not customer:
+        raise HTTPException(404, "Cliente no encontrado")
+    return customer
+
+
+# ── Documents ───────────────────────────────────────────────────────────────
 
 @router.post("/{customer_id}/documents", response_model=schemas.CustomerDocumentInDB)
 async def upload_customer_document(
-    customer_id: int,
-    document_type: str,
-    db: Annotated[AsyncSession, Depends(deps.get_db)],
-    current_user: Annotated[User, Depends(deps.get_current_active_user)],
+    customer_id: int, document_type: str, db: DB, current_user: CurrentUser,
     file: UploadFile = File(...),
 ):
-    # Verify customer exists
     customer = await service.get_customer(db, customer_id)
     if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
-    
-    # Save file
-    file_extension = os.path.splitext(file.filename)[1]
-    safe_filename = f"{customer_id}_{document_type}_{int(datetime.now().timestamp())}{file_extension}"
-    file_path = os.path.join(UPLOAD_DIR, safe_filename)
-    
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    
-    # Store in DB
+        raise HTTPException(404, "Cliente no encontrado")
+
+    ext = os.path.splitext(file.filename or "")[1]
+    safe = f"{customer_id}_{document_type}_{int(datetime.now().timestamp())}{ext}"
+    path = os.path.join(UPLOAD_DIR, safe)
+    with open(path, "wb") as buf:
+        shutil.copyfileobj(file.file, buf)
+
     doc_in = schemas.CustomerDocumentCreate(
-        customer_id=customer_id,
-        document_type=document_type,
-        file_name=file.filename,
-        file_path=f"customers/{safe_filename}", # Relative to uploads
-        mime_type=file.content_type
+        customer_id=customer_id, document_type=document_type,
+        file_name=file.filename or safe, file_path=f"customers/{safe}",
+        mime_type=file.content_type or "application/octet-stream",
     )
-    
     return await service.create_document(db, doc_in)
 
+
 @router.get("/{customer_id}/documents", response_model=List[schemas.CustomerDocumentInDB])
-async def list_customer_documents(
-    customer_id: int,
-    db: Annotated[AsyncSession, Depends(deps.get_db)],
-    current_user: Annotated[User, Depends(deps.get_current_active_user)]
-):
+async def list_customer_documents(customer_id: int, db: DB, _: CurrentUser):
     return await service.get_customer_documents(db, customer_id)
+
 
 @router.patch("/documents/{doc_id}/status", response_model=schemas.CustomerDocumentInDB)
 async def update_document_status(
-    doc_id: int,
-    status_update: schemas.CustomerDocumentUpdate,
-    db: Annotated[AsyncSession, Depends(deps.get_db)],
-    current_user: Annotated[User, Depends(deps.get_current_active_user)]
+    doc_id: int, status_update: schemas.CustomerDocumentUpdate, db: DB, current_user: CurrentUser,
 ):
-    # Only verify/reject
-    if status_update.status not in ["verificado", "rechazado", "pendiente"]:
-        raise HTTPException(status_code=400, detail="Invalid status")
-    
-    doc = await service.update_document_status(
-        db, doc_id, status_update.status, verified_by_id=current_user.id
-    )
+    if status_update.status not in ("verificado", "rechazado", "pendiente"):
+        raise HTTPException(400, "Estatus inválido")
+    doc = await service.update_document_status(db, doc_id, status_update.status, verified_by_id=current_user.id)
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(404, "Documento no encontrado")
     return doc
