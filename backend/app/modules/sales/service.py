@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
-from sqlalchemy import func, or_
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -503,95 +503,119 @@ async def cancel_order(db: AsyncSession, order_id: int, user_id: Optional[int] =
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
 async def get_stats(db: AsyncSession) -> schemas.SalesStats:
-    res = await db.execute(select(models.Order).where(models.Order.kind == "order"))
-    orders = res.scalars().all()
-    quotes_res = await db.execute(
-        select(func.count(models.Order.id)).where(models.Order.kind == "quote")
+    """All KPIs in a SINGLE aggregated query (no rows pulled into Python).
+
+    Uses portable conditional aggregation (CASE inside COUNT/SUM) so it runs the
+    same on SQLite (dev) and Postgres (prod).
+    """
+    O = models.Order
+    active = and_(O.kind == "order", O.status != "cancelled")
+    pending = and_(active, O.status.in_(("pending", "partial")))
+
+    stmt = select(
+        func.count(case((active, 1))).label("orders_count"),
+        func.coalesce(func.sum(case((active, O.paid_amount), else_=0.0)), 0.0).label("total_sold"),
+        func.count(case((and_(active, O.status == "paid"), 1))).label("paid_count"),
+        func.count(case((pending, 1))).label("pending_orders"),
+        func.coalesce(func.sum(case((pending, O.total_amount - O.paid_amount), else_=0.0)), 0.0).label("pending_amount"),
+        func.coalesce(func.sum(case((active, O.total_amount), else_=0.0)), 0.0).label("active_total"),
+        func.count(case((O.kind == "quote", 1))).label("quotes_count"),
     )
-    quotes = quotes_res.scalar() or 0
-
-    active = [o for o in orders if o.status != "cancelled"]
-    paid = [o for o in active if o.status == "paid"]
-    pending = [o for o in active if o.status in ("pending", "partial")]
-
-    total_sold = sum(o.paid_amount or 0 for o in active)
-    pending_amount = sum((o.total_amount or 0) - (o.paid_amount or 0) for o in pending)
-    paid_rate = round(len(paid) / len(active) * 100, 1) if active else 0.0
-    avg_ticket = round(sum(o.total_amount or 0 for o in active) / len(active), 2) if active else 0.0
+    r = (await db.execute(stmt)).one()
+    oc = r.orders_count or 0
 
     return schemas.SalesStats(
-        total_sold=_r(total_sold), orders_count=len(active),
-        pending_orders=len(pending), pending_amount=_r(pending_amount),
-        paid_rate=paid_rate, avg_ticket=avg_ticket, quotes_count=quotes,
+        total_sold=_r(r.total_sold), orders_count=oc,
+        pending_orders=r.pending_orders or 0, pending_amount=_r(r.pending_amount),
+        paid_rate=round(r.paid_count / oc * 100, 1) if oc else 0.0,
+        avg_ticket=round(r.active_total / oc, 2) if oc else 0.0,
+        quotes_count=r.quotes_count or 0,
     )
 
 
 async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30) -> List[schemas.TrendPoint]:
-    res = await db.execute(
-        select(models.Order).where(
-            models.Order.kind == "order", models.Order.status != "cancelled"
-        )
-    )
-    orders = res.scalars().all()
+    """Aggregate revenue by day in SQL, bounded to the relevant date window so we
+    never scan the whole history; then roll days up to week/month in Python.
+    """
+    O = models.Order
+    mult = {"day": 1, "week": 7, "month": 31}.get(granularity, 1)
+    cutoff = _now() - timedelta(days=days * mult + 1)
 
-    def key(dt: datetime) -> str:
-        if not dt:
-            return "—"
+    stmt = (
+        select(
+            func.date(O.created_at).label("d"),
+            func.coalesce(func.sum(O.total_amount), 0.0).label("total"),
+            func.count(O.id).label("count"),
+        )
+        .where(O.kind == "order", O.status != "cancelled", O.created_at >= cutoff)
+        .group_by(func.date(O.created_at))
+        .order_by(func.date(O.created_at))
+    )
+    daily = [(str(row.d)[:10], float(row.total or 0.0), int(row.count or 0))
+             for row in (await db.execute(stmt)).all()]
+
+    def bucket_key(dstr: str) -> str:
+        dt = datetime.strptime(dstr, "%Y-%m-%d")
         if granularity == "month":
             return dt.strftime("%Y-%m")
         if granularity == "week":
             return f"{dt.isocalendar().year}-W{dt.isocalendar().week:02d}"
-        return dt.strftime("%Y-%m-%d")
+        return dstr
 
     buckets: dict[str, list] = {}
-    for o in orders:
-        k = key(o.created_at)
-        buckets.setdefault(k, []).append(o)
-    points = [
-        schemas.TrendPoint(period=k, total=_r(sum(x.total_amount or 0 for x in v)), count=len(v))
-        for k, v in sorted(buckets.items())
-    ]
+    for dstr, total, count in daily:
+        e = buckets.setdefault(bucket_key(dstr), [0.0, 0])
+        e[0] += total
+        e[1] += count
+    points = [schemas.TrendPoint(period=k, total=_r(v[0]), count=v[1])
+              for k, v in sorted(buckets.items())]
     return points[-days:]
 
 
 async def top_customers(db: AsyncSession, limit: int = 5) -> List[schemas.TopCustomer]:
-    res = await db.execute(
-        select(models.Order).where(
-            models.Order.kind == "order", models.Order.status != "cancelled"
-        ).options(selectinload(models.Order.customer))
+    from app.modules.customers import models as cust
+    O = models.Order
+    stmt = (
+        select(
+            O.customer_id,
+            func.coalesce(cust.Customer.name, "Sin cliente").label("name"),
+            func.coalesce(func.sum(O.total_amount), 0.0).label("total"),
+            func.count(O.id).label("orders"),
+        )
+        .outerjoin(cust.Customer, O.customer_id == cust.Customer.id)
+        .where(O.kind == "order", O.status != "cancelled")
+        .group_by(O.customer_id, cust.Customer.name)
+        .order_by(func.sum(O.total_amount).desc())
+        .limit(limit)
     )
-    agg: dict = {}
-    for o in res.scalars().all():
-        cid = o.customer_id
-        name = o.customer.name if o.customer else "Sin cliente"
-        e = agg.setdefault(cid, {"name": name, "total": 0.0, "orders": 0})
-        e["total"] += o.total_amount or 0
-        e["orders"] += 1
-    rows = [schemas.TopCustomer(customer_id=cid, name=v["name"],
-                                total=_r(v["total"]), orders=v["orders"])
-            for cid, v in agg.items()]
-    rows.sort(key=lambda r: r.total, reverse=True)
-    return rows[:limit]
+    return [
+        schemas.TopCustomer(customer_id=r.customer_id, name=r.name,
+                            total=_r(r.total), orders=r.orders)
+        for r in (await db.execute(stmt)).all()
+    ]
 
 
 async def top_products(db: AsyncSession, limit: int = 5) -> List[schemas.TopProduct]:
-    res = await db.execute(
-        select(models.OrderItem).join(models.Order).where(
-            models.Order.kind == "order", models.Order.status != "cancelled"
+    O = models.Order
+    OI = models.OrderItem
+    stmt = (
+        select(
+            OI.variant_id,
+            func.coalesce(OI.product_name, "—").label("name"),
+            func.coalesce(func.sum(OI.quantity), 0).label("qty"),
+            func.coalesce(func.sum(OI.total), 0.0).label("total"),
         )
+        .join(O, OI.order_id == O.id)
+        .where(O.kind == "order", O.status != "cancelled")
+        .group_by(OI.variant_id, OI.product_name)
+        .order_by(func.sum(OI.total).desc())
+        .limit(limit)
     )
-    agg: dict = {}
-    for it in res.scalars().all():
-        key = it.variant_id or it.product_name
-        e = agg.setdefault(key, {"vid": it.variant_id, "name": it.product_name or "—",
-                                 "qty": 0, "total": 0.0})
-        e["qty"] += it.quantity or 0
-        e["total"] += it.total or 0
-    rows = [schemas.TopProduct(variant_id=v["vid"], name=v["name"],
-                               quantity=v["qty"], total=_r(v["total"]))
-            for v in agg.values()]
-    rows.sort(key=lambda r: r.total, reverse=True)
-    return rows[:limit]
+    return [
+        schemas.TopProduct(variant_id=r.variant_id, name=r.name,
+                           quantity=r.qty, total=_r(r.total))
+        for r in (await db.execute(stmt)).all()
+    ]
 
 
 async def customer_360(db: AsyncSession, customer_id: int) -> Optional[schemas.Customer360]:
