@@ -676,7 +676,7 @@ function Config({ t, s, company }) {
         </Card>
         <Card t={t} style={{ padding: 20 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 16 }}>{s.cfg.users}</div>
-          {[["Jos", "Administrador", t.nova], ["Almacén 01", "Inventario", t.good], ["Caja Toreo", "Ventas", t.warn]].map(([n, r, c]) => (
+          {[["EDREI", "Administrador", t.nova], ["Almacén 01", "Inventario", t.good], ["Caja Toreo", "Ventas", t.warn]].map(([n, r, c]) => (
             <div key={n} style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 0", borderBottom: `1px solid ${t.borderSoft}` }}><span style={{ width: 32, height: 32, borderRadius: 999, background: c + "26", color: c, fontWeight: 700, fontSize: 12, display: "grid", placeItems: "center" }}>{n[0]}</span><div style={{ flex: 1 }}><div style={{ fontSize: 13.5, color: t.textHi, fontWeight: 600 }}>{n}</div><div style={{ fontSize: 11.5, color: t.textLo }}>{s.roles[r]}</div></div><CircleDot size={15} color={t.good} /></div>
           ))}
         </Card>
