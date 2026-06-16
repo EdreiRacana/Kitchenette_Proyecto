@@ -12,6 +12,27 @@ import {
   CLIENT_TYPES, AGENTES, CUENTAS_CONTABLES, HOW_HEARD, ESTADOS, MUNICIPIOS, PAISES,
 } from "./catalogs";
 
+const GRID: CSSProperties = {
+  display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14,
+};
+
+// IMPORTANT: defined at module scope (NOT inside CustomerForm). If it were nested,
+// every keystroke would remount the inputs and you couldn't type.
+function Section({ tk, icon, title, children }: {
+  tk: Tokens; icon: ReactNode; title: string; children: ReactNode;
+}) {
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <span style={{ color: tk.accent, display: "flex" }}>{icon}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: tk.textHi, textTransform: "uppercase", letterSpacing: 0.5 }}>{title}</span>
+        <span style={{ flex: 1, height: 1, background: tk.border }} />
+      </div>
+      <div style={GRID}>{children}</div>
+    </div>
+  );
+}
+
 function emptyDraft(): CustomerDraft {
   return {
     razon_social: "", nombre_comercial: "", name: "", client_type: "",
@@ -62,19 +83,6 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
     onSubmit(d);
   };
 
-  const Section = ({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) => (
-    <div style={{ marginBottom: 22 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <span style={{ color: tk.accent, display: "flex" }}>{icon}</span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: tk.textHi, textTransform: "uppercase", letterSpacing: 0.5 }}>{title}</span>
-        <span style={{ flex: 1, height: 1, background: tk.border }} />
-      </div>
-      <div style={grid}>{children}</div>
-    </div>
-  );
-
-  const grid: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 };
-
   return (
     <Modal tk={tk} open={open} onClose={onClose} width={860}
       title={editing ? tr("cust_edit", "Editar cliente") : tr("cust_new", "Nuevo cliente")}
@@ -103,7 +111,7 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
         </div>
       </div>
 
-      <Section icon={<Building2 size={16} />} title={tr("cust_sec_identity", "Identificación")}>
+      <Section tk={tk} icon={<Building2 size={16} />} title={tr("cust_sec_identity", "Identificación")}>
         <Field tk={tk} label={tr("cust_razon", "Razón Social")}>
           <TextInput tk={tk} value={d.razon_social || ""} onChange={(v) => set("razon_social", v)} placeholder="Comercializadora …  S.A. de C.V." />
         </Field>
@@ -115,7 +123,7 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
         </Field>
       </Section>
 
-      <Section icon={<FileText size={16} />} title={tr("cust_sec_fiscal", "Datos fiscales · CFDI 4.0")}>
+      <Section tk={tk} icon={<FileText size={16} />} title={tr("cust_sec_fiscal", "Datos fiscales · CFDI 4.0")}>
         <Field tk={tk} label="RFC" hint={tr("cust_rfc_hint", "12 = moral · 13 = física")}>
           <TextInput tk={tk} value={d.rfc || ""} onChange={(v) => set("rfc", v.toUpperCase())} placeholder="XAXX010101000" />
         </Field>
@@ -130,7 +138,7 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
         </Field>
       </Section>
 
-      <Section icon={<CreditCard size={16} />} title={tr("cust_sec_commercial", "Términos comerciales")}>
+      <Section tk={tk} icon={<CreditCard size={16} />} title={tr("cust_sec_commercial", "Términos comerciales")}>
         <Field tk={tk} label={tr("cust_pricelist", "Lista de Precios")}>
           <Select tk={tk} value={d.price_list || ""} onChange={(v) => set("price_list", v)} options={toOpts(PRICE_LISTS)} placeholder={tr("select", "Selecciona…")} />
         </Field>
@@ -148,7 +156,7 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
         </Field>
       </Section>
 
-      <Section icon={<Users size={16} />} title={tr("cust_sec_assign", "Asignaciones")}>
+      <Section tk={tk} icon={<Users size={16} />} title={tr("cust_sec_assign", "Asignaciones")}>
         <Field tk={tk} label={tr("cust_sales_agent", "Ventas")}>
           <Select tk={tk} value={d.sales_agent || ""} onChange={(v) => set("sales_agent", v)} options={toOpts(AGENTES)} placeholder={tr("select", "Selecciona…")} />
         </Field>
@@ -160,7 +168,7 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
         </Field>
       </Section>
 
-      <Section icon={<Phone size={16} />} title={tr("cust_sec_contact", "Contacto")}>
+      <Section tk={tk} icon={<Phone size={16} />} title={tr("cust_sec_contact", "Contacto")}>
         <Field tk={tk} label={tr("cust_email", "Correo Electrónico")}>
           <TextInput tk={tk} type="email" value={d.email || ""} onChange={(v) => set("email", v)} placeholder="cliente@correo.com" />
         </Field>
@@ -190,7 +198,7 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
         </div>
       </Section>
 
-      <Section icon={<MapPin size={16} />} title={tr("cust_sec_address", "Domicilio fiscal")}>
+      <Section tk={tk} icon={<MapPin size={16} />} title={tr("cust_sec_address", "Domicilio fiscal")}>
         <Field tk={tk} label={tr("cust_pais", "País")}>
           <Select tk={tk} value={d.pais || ""} onChange={(v) => set("pais", v)} options={toOpts(PAISES)} placeholder={tr("select", "Selecciona…")} />
         </Field>
