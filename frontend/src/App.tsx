@@ -7,6 +7,7 @@ import {
   Calendar as CalIcon, AlertTriangle, Target, PackageX, FileWarning,
 } from "lucide-react";
 import SalesCRM from "./features/sales/SalesCRM";
+import CustomersModule from "./features/customers/CustomersModule";   ← esta la agregas nueva
 
 /* ============================ Theme ============================ */
 const THEMES = {
@@ -706,7 +707,7 @@ export default function App() {
     dashboard: <Dashboard t={t} s={s} lang={lang} setPage={setPage} />,
     inventario: <Inventory t={t} s={s} />,
     ventas: <SalesCRM t={t} s={s} />,
-    clientes: <Customers t={t} s={s} />,
+    clientes: <CustomersModule t={t} s={s} />,
     finanzas: <Finance t={t} s={s} />,
     rh: <Soon t={t} s={s} title={s.nav.rh} sub={s.soon.rh} icon={IdCard} />,
     reportes: <Soon t={t} s={s} title={s.nav.reportes} sub={s.soon.reportes} icon={BarChart3} />,
