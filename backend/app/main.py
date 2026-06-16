@@ -42,5 +42,7 @@ from app.modules.core_config import models as config_models
 
 @app.on_event("startup")
 async def startup():
+    from app.db.migrations import run_startup_migrations
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await run_startup_migrations(conn)
