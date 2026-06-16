@@ -2,6 +2,15 @@
 // Keeps the { t, s } contract so it drops into App.tsx in place of the inline
 // Sales component. Connects to the live API and gracefully falls back to a
 // built-in demo dataset (with a banner) when the backend is unreachable.
+//
+// LOADING STRATEGY (block / progressive):
+//   The screen is split into independent blocks, each with its own loading
+//   state and skeleton, so each part renders the moment its own data arrives:
+//     • orders list  → reacts to filters/page (fast; this is the demo canary)
+//     • KPIs (stats) → global, loaded once + after mutations (NOT on paging)
+//     • analytics    → deferred; only fetched when the Analytics tab is opened
+//     • catalogs     → customers + variants, loaded once, independent
+//   Nothing is held hostage by the slowest aggregate query anymore.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -52,7 +61,12 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [variants, setVariants] = useState<VariantOption[]>([]);
 
-  const [loading, setLoading] = useState(true);
+  // ── Independent loading states (one per block) ─────────────────────────────
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
+
   const [demo, setDemo] = useState(false);
   const [view, setView] = useState<ViewMode>("list");
   const [saving, setSaving] = useState(false);
@@ -122,32 +136,77 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
     setTopProducts([...byProd.entries()].map(([name, v]) => ({ variant_id: null, name, quantity: v.qty, total: Math.round(v.total) })).sort((a, b) => b.total - a.total).slice(0, 5));
   }, []);
 
-  // ── Load ───────────────────────────────────────────────────────────────────
-  const load = useCallback(async () => {
-    setLoading(true);
+  // ── Block 1: orders list (paginated). Also the "is the backend up?" canary. ──
+  const loadOrders = useCallback(async () => {
+    setOrdersLoading(true);
     try {
-      const [page1, st, tr1, tc, tp] = await Promise.all([
-        salesApi.list(filters), salesApi.stats(), salesApi.trend("day", 30),
-        salesApi.topCustomers(5), salesApi.topProducts(5),
-      ]);
-      setOrders(page1.items); setTotal(page1.total); setStats(st);
-      setTrend(tr1); setTopCustomers(tc); setTopProducts(tp);
+      const page1 = await salesApi.list(filters);
+      setOrders(page1.items);
+      setTotal(page1.total);
       setDemo(false);
-      salesApi.customers().then(setCustomers).catch(() => setCustomers([]));
-      salesApi.variantOptions().then(setVariants).catch(() => setVariants([]));
     } catch {
-      // Backend unreachable → demo mode
+      // Backend unreachable → demo mode (fills orders + analytics locally).
       setDemo(true);
-      setCustomers(DEMO_CUSTOMERS); setVariants(DEMO_VARIANTS);
+      setCustomers(DEMO_CUSTOMERS);
+      setVariants(DEMO_VARIANTS);
       const filtered = applyDemoFilters(DEMO_ORDERS);
-      setOrders(filtered.slice(page * PAGE, page * PAGE + PAGE)); setTotal(filtered.length);
+      setOrders(filtered.slice(page * PAGE, page * PAGE + PAGE));
+      setTotal(filtered.length);
       refreshDemoAnalytics(DEMO_ORDERS);
+      setStatsLoading(false);
+      setAnalyticsLoaded(true);
     } finally {
-      setLoading(false);
+      setOrdersLoading(false);
     }
   }, [filters, applyDemoFilters, refreshDemoAnalytics, page]);
 
-  useEffect(() => { load(); }, [load]);
+  // ── Block 2: KPIs (global, not paginated). Once on mount + after mutations. ──
+  const loadStats = useCallback(async () => {
+    setStatsLoading(true);
+    try {
+      setStats(await salesApi.stats());
+    } catch {
+      /* demo path fills stats; ignore here */
+    } finally {
+      setStatsLoading(false);
+    }
+  }, []);
+
+  // ── Block 3: analytics bundle (global). Lazy — only when the tab is open. ──
+  const loadAnalytics = useCallback(async () => {
+    setAnalyticsLoading(true);
+    try {
+      const [tr1, tc, tp] = await Promise.all([
+        salesApi.trend("day", 30), salesApi.topCustomers(5), salesApi.topProducts(5),
+      ]);
+      setTrend(tr1); setTopCustomers(tc); setTopProducts(tp);
+      setAnalyticsLoaded(true);
+    } catch {
+      /* ignore; demo path handles it */
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, []);
+
+  // ── Block 4: catalogs (customers + variants). Once; independent of the list. ──
+  const loadCatalogs = useCallback(async () => {
+    salesApi.customers().then(setCustomers).catch(() => { /* keep current */ });
+    salesApi.variantOptions().then(setVariants).catch(() => { /* keep current */ });
+  }, []);
+
+  // Refresh after a mutation: list + KPIs now, analytics on next open.
+  const refreshData = useCallback(async () => {
+    await loadOrders();
+    loadStats();
+    setAnalyticsLoaded(false); // invalidate cache; refetches if the tab is open
+  }, [loadOrders, loadStats]);
+
+  // ── Effects: each block loads on its own trigger ───────────────────────────
+  useEffect(() => { loadOrders(); }, [loadOrders]);            // filters / page
+  useEffect(() => { loadStats(); loadCatalogs(); }, [loadStats, loadCatalogs]); // once
+  useEffect(() => {
+    if (view === "analytics" && !demo && !analyticsLoaded) loadAnalytics();
+  }, [view, demo, analyticsLoaded, loadAnalytics]);
   useEffect(() => { setPage(0); }, [q, kind, status, payment, from, to]);
 
   // ── Demo mutation helpers ────────────────────────────────────────────────
@@ -197,11 +256,11 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
       } else {
         if (editing) await salesApi.update(editing.id, draft);
         else await salesApi.create(draft);
-        await load();
+        await refreshData();
       }
       setFormOpen(false); setEditing(null);
     } finally { setSaving(false); }
-  }, [demo, editing, demoStore, commitDemo, load]);
+  }, [demo, editing, demoStore, commitDemo, refreshData]);
 
   const handlePay = useCallback(async (amount: number, method: string, reference: string, note: string) => {
     if (!payTarget) return;
@@ -216,11 +275,11 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
         commitDemo(); setSelected(null);
       } else {
         await salesApi.addPayment(payTarget.id, amount, method, reference, note);
-        await load(); setSelected(null);
+        await refreshData(); setSelected(null);
       }
       setPayTarget(null);
     } catch (e) { alert(extractErr(e)); } finally { setSaving(false); }
-  }, [payTarget, demo, demoStore, commitDemo, load]);
+  }, [payTarget, demo, demoStore, commitDemo, refreshData]);
 
   const changeStatus = useCallback(async (o: Order, newStatus: string) => {
     if (o.status === newStatus) return;
@@ -229,8 +288,8 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
       if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: newStatus as Order["status"] };
       commitDemo(); return;
     }
-    try { await salesApi.changeStatus(o.id, newStatus); await load(); } catch (e) { alert(extractErr(e)); }
-  }, [demo, demoStore, commitDemo, load]);
+    try { await salesApi.changeStatus(o.id, newStatus); await refreshData(); } catch (e) { alert(extractErr(e)); }
+  }, [demo, demoStore, commitDemo, refreshData]);
 
   const markPaid = useCallback((o: Order) => { setPayTarget(o); }, []);
 
@@ -240,8 +299,8 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
       if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: "converted" };
       commitDemo(); setSelected(null); return;
     }
-    try { await salesApi.convert(o.id); await load(); setSelected(null); } catch (e) { alert(extractErr(e)); }
-  }, [demo, demoStore, commitDemo, load]);
+    try { await salesApi.convert(o.id); await refreshData(); setSelected(null); } catch (e) { alert(extractErr(e)); }
+  }, [demo, demoStore, commitDemo, refreshData]);
 
   const cancel = useCallback(async (o: Order) => {
     if (!window.confirm(tr("sales_confirm_cancel", "¿Cancelar este documento?"))) return;
@@ -250,8 +309,8 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
       if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: "cancelled", balance: 0 };
       commitDemo(); setSelected(null); return;
     }
-    try { await salesApi.cancel(o.id); await load(); setSelected(null); } catch (e) { alert(extractErr(e)); }
-  }, [demo, demoStore, commitDemo, load, tr]);
+    try { await salesApi.cancel(o.id); await refreshData(); setSelected(null); } catch (e) { alert(extractErr(e)); }
+  }, [demo, demoStore, commitDemo, refreshData, tr]);
 
   const invoice = useCallback(async (o: Order) => {
     if (!o.bill_rfc) { alert(tr("sales_need_rfc", "Agrega datos de facturación (RFC) al pedido para generar el CFDI.")); return; }
@@ -288,6 +347,16 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
     </div>
   );
 
+  const KpiSkeleton = () => (
+    <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, flex: 1, minWidth: 170 }}>
+      <Skel tk={tk} w={38} h={38} r={10} />
+      <div style={{ flex: 1 }}>
+        <Skel tk={tk} w="60%" h={10} style={{ marginBottom: 8 }} />
+        <Skel tk={tk} w="42%" h={16} />
+      </div>
+    </div>
+  );
+
   const inputBase: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.inputBg, color: tk.textHi, fontSize: 14, outline: "none" };
   const SortHead = ({ col, label }: { col: string; label: string }) => (
     <th onClick={() => toggleSort(col)} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: tk.textLo, borderBottom: `1px solid ${tk.border}`, cursor: "pointer", userSelect: "none", textTransform: "uppercase", letterSpacing: 0.4 }}>
@@ -295,9 +364,12 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
     </th>
   );
 
+  const thBase: React.CSSProperties = { padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: tk.textLo, borderBottom: `1px solid ${tk.border}`, textTransform: "uppercase", letterSpacing: 0.4 };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18, padding: "20px 0" }}>
       <Spinkeyframes />
+      <ShimmerKeyframes />
 
       {demo && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.warn + "18", border: `1px solid ${tk.warn}44`, color: tk.warn, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
@@ -305,13 +377,19 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
         </div>
       )}
 
-      {/* KPIs */}
+      {/* KPIs — own block: skeleton until stats land, list keeps loading underneath */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-        <KpiCard icon={<DollarSign size={20} />} label={tr("sales_kpi_sold", "Total vendido")} value={money(kpis.total_sold)} color={tk.good} />
-        <KpiCard icon={<Clock size={20} />} label={tr("sales_kpi_pending_orders", "Pedidos pendientes")} value={String(kpis.pending_orders)} color={tk.warn} />
-        <KpiCard icon={<TrendingUp size={20} />} label={tr("sales_kpi_pending_amount", "Por cobrar")} value={money(kpis.pending_amount)} color={tk.accent} />
-        <KpiCard icon={<Percent size={20} />} label={tr("sales_kpi_paid_rate", "Tasa pagados")} value={`${kpis.paid_rate}%`} color={tk.good} />
-        <KpiCard icon={<FileText size={20} />} label={tr("sales_kpi_avg", "Ticket promedio")} value={money(kpis.avg_ticket)} color={tk.accent} />
+        {statsLoading && !stats ? (
+          Array.from({ length: 5 }).map((_, i) => <KpiSkeleton key={i} />)
+        ) : (
+          <>
+            <KpiCard icon={<DollarSign size={20} />} label={tr("sales_kpi_sold", "Total vendido")} value={money(kpis.total_sold)} color={tk.good} />
+            <KpiCard icon={<Clock size={20} />} label={tr("sales_kpi_pending_orders", "Pedidos pendientes")} value={String(kpis.pending_orders)} color={tk.warn} />
+            <KpiCard icon={<TrendingUp size={20} />} label={tr("sales_kpi_pending_amount", "Por cobrar")} value={money(kpis.pending_amount)} color={tk.accent} />
+            <KpiCard icon={<Percent size={20} />} label={tr("sales_kpi_paid_rate", "Tasa pagados")} value={`${kpis.paid_rate}%`} color={tk.good} />
+            <KpiCard icon={<FileText size={20} />} label={tr("sales_kpi_avg", "Ticket promedio")} value={money(kpis.avg_ticket)} color={tk.accent} />
+          </>
+        )}
       </div>
 
       {/* Toolbar */}
@@ -348,10 +426,13 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
         <Button tk={tk} variant="primary" icon={<Plus size={16} />} onClick={openNew}>{tr("sales_new", "Nuevo")}</Button>
       </div>
 
-      {loading ? (
-        <div style={{ display: "flex", justifyContent: "center", padding: 64 }}><Spinner tk={tk} size={28} /></div>
-      ) : view === "analytics" ? (
-        <Analytics tk={tk} tr={tr} trend={trend} topCustomers={topCustomers} topProducts={topProducts} />
+      {/* Main content — each view block manages its own loading state */}
+      {view === "analytics" ? (
+        analyticsLoading && !analyticsLoaded ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 64 }}><Spinner tk={tk} size={28} /></div>
+        ) : (
+          <Analytics tk={tk} tr={tr} trend={trend} topCustomers={topCustomers} topProducts={topProducts} />
+        )
       ) : view === "pipeline" ? (
         <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 8 }}>
           {ORDER_PIPELINE.map((col) => {
@@ -362,18 +443,28 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
                 style={{ flex: "0 0 270px", background: dragCol === col ? sc.bg : tk.panel, border: `2px solid ${dragCol === col ? sc.border : tk.border}`, borderRadius: 12, padding: 12, minHeight: 320, transition: "border .2s, background .2s" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                   <span style={{ fontWeight: 700, color: sc.text, fontSize: 14 }}>{statusMeta(col).label}</span>
-                  <Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{colOrders.length}</Badge>
+                  <Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{ordersLoading ? "…" : colOrders.length}</Badge>
                 </div>
-                <div style={{ fontSize: 12, color: tk.textLo, marginBottom: 10 }}>{money(colOrders.reduce((a, b) => a + b.total_amount, 0))}</div>
-                {colOrders.map((o) => (
-                  <div key={o.id} draggable onDragStart={() => setDragId(o.id)} onClick={() => openDetail(o)}
-                    style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10, cursor: "grab", opacity: dragId === o.id ? 0.5 : 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: tk.accent, marginBottom: 4 }}>{o.folio}</div>
-                    <div style={{ fontSize: 12, color: tk.textHi, marginBottom: 4 }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</div>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: tk.textHi }}>{money(o.total_amount)}</div>
-                  </div>
-                ))}
-                {colOrders.length === 0 && <div style={{ textAlign: "center", color: tk.textLo, fontSize: 12, padding: "24px 0", opacity: 0.6 }}>—</div>}
+                <div style={{ fontSize: 12, color: tk.textLo, marginBottom: 10 }}>{ordersLoading ? "" : money(colOrders.reduce((a, b) => a + b.total_amount, 0))}</div>
+                {ordersLoading ? (
+                  Array.from({ length: 2 }).map((_, i) => (
+                    <div key={i} style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
+                      <Skel tk={tk} w="50%" h={12} style={{ marginBottom: 6 }} />
+                      <Skel tk={tk} w="75%" h={11} style={{ marginBottom: 6 }} />
+                      <Skel tk={tk} w="40%" h={13} />
+                    </div>
+                  ))
+                ) : (
+                  colOrders.map((o) => (
+                    <div key={o.id} draggable onDragStart={() => setDragId(o.id)} onClick={() => openDetail(o)}
+                      style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10, cursor: "grab", opacity: dragId === o.id ? 0.5 : 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: tk.accent, marginBottom: 4 }}>{o.folio}</div>
+                      <div style={{ fontSize: 12, color: tk.textHi, marginBottom: 4 }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</div>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: tk.textHi }}>{money(o.total_amount)}</div>
+                    </div>
+                  ))
+                )}
+                {!ordersLoading && colOrders.length === 0 && <div style={{ textAlign: "center", color: tk.textLo, fontSize: 12, padding: "24px 0", opacity: 0.6 }}>—</div>}
               </div>
             );
           })}
@@ -384,33 +475,45 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
               <thead><tr style={{ background: tk.panel2 }}>
                 <SortHead col="folio" label={tr("sales_col_folio", "Folio")} />
-                <th style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: tk.textLo, borderBottom: `1px solid ${tk.border}`, textTransform: "uppercase", letterSpacing: 0.4 }}>{tr("sales_col_client", "Cliente")}</th>
+                <th style={thBase}>{tr("sales_col_client", "Cliente")}</th>
                 <SortHead col="created_at" label={tr("sales_col_date", "Fecha")} />
-                <th style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: tk.textLo, borderBottom: `1px solid ${tk.border}`, textTransform: "uppercase", letterSpacing: 0.4 }}>{tr("sales_col_payment", "Pago")}</th>
+                <th style={thBase}>{tr("sales_col_payment", "Pago")}</th>
                 <SortHead col="total_amount" label={tr("sales_col_total", "Total")} />
-                <th style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: tk.textLo, borderBottom: `1px solid ${tk.border}`, textTransform: "uppercase", letterSpacing: 0.4 }}>{tr("sales_balance", "Saldo")}</th>
+                <th style={thBase}>{tr("sales_balance", "Saldo")}</th>
                 <SortHead col="status" label={tr("sales_col_status", "Estado")} />
                 <th style={{ borderBottom: `1px solid ${tk.border}` }}></th>
               </tr></thead>
               <tbody>
-                {orders.map((o, i) => {
-                  const sc = statusColors(tk, o.status);
-                  return (
-                    <tr key={o.id} onClick={() => openDetail(o)} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2, cursor: "pointer" }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = tk.panel3)}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = i % 2 === 0 ? tk.panel : tk.panel2)}>
-                      <td style={{ padding: "12px 16px", fontSize: 14, color: tk.accent, fontWeight: 700 }}>{o.folio}{o.kind === "quote" && <span style={{ fontSize: 10, color: tk.textLo, fontWeight: 600 }}> · COT</span>}</td>
-                      <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</td>
-                      <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{dateShort(o.created_at)}</td>
-                      <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{paymentLabel(o.payment_method)}</td>
-                      <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi, fontWeight: 700 }}>{money(o.total_amount)}</td>
-                      <td style={{ padding: "12px 16px", fontSize: 13, color: o.balance > 0 ? tk.warn : tk.textLo }}>{money(o.balance)}</td>
-                      <td style={{ padding: "12px 16px" }}><Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{statusMeta(o.status).label}</Badge></td>
-                      <td style={{ padding: "12px 16px" }}><ChevronRight size={16} color={tk.textLo} /></td>
+                {ordersLoading ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={i} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2 }}>
+                      {Array.from({ length: 7 }).map((__, c) => (
+                        <td key={c} style={{ padding: "12px 16px" }}><Skel tk={tk} w={c === 1 ? "70%" : "55%"} h={12} /></td>
+                      ))}
+                      <td style={{ padding: "12px 16px" }}><Skel tk={tk} w={16} h={12} /></td>
                     </tr>
-                  );
-                })}
-                {orders.length === 0 && <tr><td colSpan={8}><EmptyState tk={tk} title={tr("sales_no_results", "Sin resultados")} hint={tr("sales_no_results_hint", "Ajusta los filtros o crea un nuevo pedido.")} /></td></tr>}
+                  ))
+                ) : orders.length === 0 ? (
+                  <tr><td colSpan={8}><EmptyState tk={tk} title={tr("sales_no_results", "Sin resultados")} hint={tr("sales_no_results_hint", "Ajusta los filtros o crea un nuevo pedido.")} /></td></tr>
+                ) : (
+                  orders.map((o, i) => {
+                    const sc = statusColors(tk, o.status);
+                    return (
+                      <tr key={o.id} onClick={() => openDetail(o)} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2, cursor: "pointer" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = tk.panel3)}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = i % 2 === 0 ? tk.panel : tk.panel2)}>
+                        <td style={{ padding: "12px 16px", fontSize: 14, color: tk.accent, fontWeight: 700 }}>{o.folio}{o.kind === "quote" && <span style={{ fontSize: 10, color: tk.textLo, fontWeight: 600 }}> · COT</span>}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{dateShort(o.created_at)}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{paymentLabel(o.payment_method)}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi, fontWeight: 700 }}>{money(o.total_amount)}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: o.balance > 0 ? tk.warn : tk.textLo }}>{money(o.balance)}</td>
+                        <td style={{ padding: "12px 16px" }}><Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{statusMeta(o.status).label}</Badge></td>
+                        <td style={{ padding: "12px 16px" }}><ChevronRight size={16} color={tk.textLo} /></td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -419,9 +522,9 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: `1px solid ${tk.border}` }}>
               <span style={{ fontSize: 13, color: tk.textLo }}>{total} {tr("sales_results", "resultados")}</span>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <Button tk={tk} variant="subtle" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>‹</Button>
+                <Button tk={tk} variant="subtle" disabled={page === 0 || ordersLoading} onClick={() => setPage((p) => Math.max(0, p - 1))}>‹</Button>
                 <span style={{ fontSize: 13, color: tk.textMid }}>{page + 1} / {pages}</span>
-                <Button tk={tk} variant="subtle" disabled={page + 1 >= pages} onClick={() => setPage((p) => p + 1)}>›</Button>
+                <Button tk={tk} variant="subtle" disabled={page + 1 >= pages || ordersLoading} onClick={() => setPage((p) => p + 1)}>›</Button>
               </div>
             </div>
           )}
@@ -433,6 +536,22 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
       <OrderDrawer tk={tk} tr={tr} order={selected} onClose={() => setSelected(null)} onEdit={openEdit} onPay={(o) => { setPayTarget(o); }} onMarkPaid={markPaid} onConvert={convert} onCancel={cancel} onInvoice={invoice} />
     </div>
   );
+}
+
+// ── Skeleton primitive (theme-aware shimmer) ────────────────────────────────
+function Skel({ tk, w, h, r = 8, style }: { tk: Tokens; w: number | string; h: number | string; r?: number; style?: React.CSSProperties }) {
+  return (
+    <div style={{
+      width: w, height: h, borderRadius: r,
+      background: `linear-gradient(90deg, ${tk.panel2} 25%, ${tk.panel3} 37%, ${tk.panel2} 63%)`,
+      backgroundSize: "400% 100%", animation: "kt-shimmer 1.4s ease infinite",
+      ...style,
+    }} />
+  );
+}
+
+function ShimmerKeyframes() {
+  return <style>{`@keyframes kt-shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}`}</style>;
 }
 
 function extractErr(e: unknown): string {
