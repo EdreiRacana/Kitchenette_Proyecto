@@ -45,4 +45,5 @@ async def startup():
     from app.db.migrations import run_startup_migrations
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await run_startup_migrations(conn)
+    # Migrations run isolated (own connection) and can never crash startup.
+    await run_startup_migrations(engine)
