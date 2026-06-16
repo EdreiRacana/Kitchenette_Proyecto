@@ -24,10 +24,12 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 # ── Search / stats (declared before /{id} so paths don't collide) ─────────────
+# NOTE: open (no auth) to match the original customers module behavior and the
+# rest of the read endpoints. Document verification stays authenticated below.
 
 @router.get("/search", response_model=schemas.PaginatedCustomers)
 async def search_customers(
-    db: DB, _: CurrentUser,
+    db: DB,
     skip: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=200),
     q: Optional[str] = None,
     sucursal: Optional[str] = None,
@@ -45,25 +47,25 @@ async def search_customers(
 
 
 @router.get("/stats")
-async def customer_stats(db: DB, _: CurrentUser):
+async def customer_stats(db: DB):
     return await service.get_stats(db)
 
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
 @router.post("/", response_model=schemas.CustomerInDB, status_code=201)
-async def create_customer(customer_in: schemas.CustomerCreate, db: DB, _: CurrentUser):
+async def create_customer(customer_in: schemas.CustomerCreate, db: DB):
     return await service.create_customer(db, customer_in)
 
 
 @router.get("/", response_model=List[schemas.CustomerInDB])
-async def read_customers(db: DB, _: CurrentUser, skip: int = 0, limit: int = 100):
+async def read_customers(db: DB, skip: int = 0, limit: int = 100):
     # Plain list kept for the Sales dropdown / backward compatibility.
     return await service.get_customers(db, skip=skip, limit=limit)
 
 
 @router.get("/{customer_id}", response_model=schemas.CustomerInDB)
-async def read_customer(customer_id: int, db: DB, _: CurrentUser):
+async def read_customer(customer_id: int, db: DB):
     customer = await service.get_customer(db, customer_id)
     if not customer:
         raise HTTPException(404, "Cliente no encontrado")
@@ -71,14 +73,14 @@ async def read_customer(customer_id: int, db: DB, _: CurrentUser):
 
 
 @router.put("/{customer_id}", response_model=schemas.CustomerInDB)
-async def update_customer(customer_id: int, data: schemas.CustomerUpdate, db: DB, _: CurrentUser):
+async def update_customer(customer_id: int, data: schemas.CustomerUpdate, db: DB):
     customer = await service.update_customer(db, customer_id, data)
     if not customer:
         raise HTTPException(404, "Cliente no encontrado")
     return customer
 
 
-# ── Documents ───────────────────────────────────────────────────────────────
+# ── Documents (authenticated, as in the original module) ────────────────────
 
 @router.post("/{customer_id}/documents", response_model=schemas.CustomerDocumentInDB)
 async def upload_customer_document(
