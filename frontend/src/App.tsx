@@ -42,6 +42,7 @@ const STRINGS = {
     nav: { dashboard: "Tablero", ventas: "Ventas / CRM", clientes: "Clientes", inventario: "Inventario", finanzas: "Finanzas", rh: "RH / Nómina", reportes: "Reportes / BI", config: "Configuración" },
     modules: "MÓDULOS", search: "Buscar productos, clientes, folios…", role: "Administrador",
     api: "API", soonTag: "pronto",
+    secure: "Sistema Seguro",
     login: { user: "Usuario", pass: "Contraseña", enter: "Entrar al sistema", demo: "Demo · cualquier credencial entra", platform: "Plataforma Sthenova · el logo de cada empresa cliente se configura por separado" },
     presets: { week: "Semana", month: "Mes", quarter: "Trimestre", year: "Año" },
     dash: {
@@ -69,6 +70,7 @@ const STRINGS = {
     nav: { dashboard: "Dashboard", ventas: "Sales / CRM", clientes: "Customers", inventario: "Inventory", finanzas: "Finance", rh: "HR / Payroll", reportes: "Reports / BI", config: "Settings" },
     modules: "MODULES", search: "Search products, customers, orders…", role: "Administrator",
     api: "API", soonTag: "soon",
+    secure: "Secure System",
     login: { user: "User", pass: "Password", enter: "Sign in", demo: "Demo · any credentials work", platform: "Sthenova platform · each client company's logo is configured separately" },
     presets: { week: "Week", month: "Month", quarter: "Quarter", year: "Year" },
     dash: {
@@ -363,7 +365,6 @@ function Dashboard({ t, s, lang, setPage }) {
 
   return (
     <div>
-      {/* Title row with compact signal chips */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 14 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 23, fontWeight: 700, color: t.textHi, letterSpacing: -0.3 }}>{s.nav.dashboard}</h1>
@@ -383,7 +384,6 @@ function Dashboard({ t, s, lang, setPage }) {
         </div>
       </div>
 
-      {/* Slim filter bar + gauge */}
       <div style={{ display: "flex", gap: 12, alignItems: "stretch", flexWrap: "wrap", marginBottom: 16 }}>
         <Card t={t} style={{ flex: "1 1 380px", padding: "8px 10px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div style={{ display: "flex", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 9, padding: 3 }}>
@@ -410,7 +410,6 @@ function Dashboard({ t, s, lang, setPage }) {
         </Card>
       </div>
 
-      {/* KPI health cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px,1fr))", gap: 14, marginBottom: 16 }}>
         {data.kpis.map((k, i) => {
           const up = k.delta >= 0; const c = statusColor(t, k.delta);
@@ -435,7 +434,6 @@ function Dashboard({ t, s, lang, setPage }) {
         })}
       </div>
 
-      {/* Chart + goal */}
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", gap: 14 }}>
         <Card t={t} style={{ padding: 18 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, flexWrap: "wrap", gap: 8 }}>
@@ -476,7 +474,7 @@ function Login({ t, s, onEnter }) {
       </svg>
       <div style={{ position: "relative", width: "100%", maxWidth: 380, textAlign: "center" }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}><NovaMark size={86} /></div>
-        <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: 6, color: t.textHi }}>STHENOVA</div>
+        <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: 6, color: t.textHi }}>STHENOVA®</div>
         <div style={{ fontSize: 10, letterSpacing: 6, color: t.textLo, marginBottom: 30 }}>COMPLETE SYSTEM</div>
         <Card t={t} style={{ padding: 26, textAlign: "left" }}>
           <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600 }}>{s.login.user}</label>
@@ -497,7 +495,10 @@ function Sidebar({ t, s, page, setPage, collapsed, setCollapsed }) {
   const w = collapsed ? 72 : 248;
   return (
     <aside style={{ width: w, flex: `0 0 ${w}px`, background: t.panel, borderRight: `1px solid ${t.border}`, display: "flex", flexDirection: "column", transition: "width .18s ease", height: "100vh", position: "sticky", top: 0 }}>
-      <div style={{ height: 64, display: "flex", alignItems: "center", gap: 8, padding: collapsed ? "0 16px" : "0 18px", borderBottom: `1px solid ${t.border}` }}><NovaMark size={30} />{!collapsed && <span style={{ fontWeight: 700, letterSpacing: 2.5, color: t.textHi, fontSize: 15 }}>STHENOVA</span>}</div>
+      <div style={{ height: 64, display: "flex", alignItems: "center", gap: 8, padding: collapsed ? "0 16px" : "0 18px", borderBottom: `1px solid ${t.border}` }}>
+        <NovaMark size={30} />
+        {!collapsed && <span style={{ fontWeight: 700, letterSpacing: 2.5, color: t.textHi, fontSize: 15 }}>STHENOVA®</span>}
+      </div>
       <nav style={{ flex: 1, padding: "12px 10px", overflowY: "auto" }}>
         {!collapsed && <div style={{ fontSize: 10.5, letterSpacing: 1.5, color: t.textLo, fontWeight: 600, padding: "6px 10px 8px" }}>{s.modules}</div>}
         {MODULES.map((m) => {
@@ -513,8 +514,34 @@ function Sidebar({ t, s, page, setPage, collapsed, setCollapsed }) {
           );
         })}
       </nav>
+
+      {/* Indicador Sistema Seguro — solo visible cuando el sidebar está expandido */}
+      {!collapsed && (
+        <div style={{
+          padding: "8px 18px 10px",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          borderTop: `1px solid ${t.borderSoft}`,
+        }}>
+          <span style={{
+            fontSize: 13,
+            color: "#34D399",
+            animation: "securePulse 2.8s ease-in-out infinite",
+            lineHeight: 1,
+          }}>◍</span>
+          <span style={{
+            fontSize: 10,
+            color: "#34D399",
+            opacity: 0.5,
+            fontWeight: 500,
+            letterSpacing: 0.4,
+          }}>{s.secure}</span>
+        </div>
+      )}
+
       <div style={{ borderTop: `1px solid ${t.border}`, padding: collapsed ? 12 : "14px 16px", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "space-between" }}>
-        {!collapsed ? (<div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}><NovaMark size={20} /><div style={{ lineHeight: 1.1 }}><div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: t.textLo }}>STHENOVA</div><div style={{ fontSize: 8, letterSpacing: 1, color: t.textLo }}>v0.1 · demo</div></div></div>) : <NovaMark size={20} />}
+        {!collapsed ? (<div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}><NovaMark size={20} /><div style={{ lineHeight: 1.1 }}><div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: t.textLo }}>STHENOVA®</div><div style={{ fontSize: 8, letterSpacing: 1, color: t.textLo }}>v0.1 · demo</div></div></div>) : <NovaMark size={20} />}
         {!collapsed && <button onClick={() => setCollapsed(true)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><ChevronLeft size={18} /></button>}
       </div>
       {collapsed && <button onClick={() => setCollapsed(false)} style={{ position: "absolute", top: 76, right: -12, width: 24, height: 24, borderRadius: 999, background: t.panel2, border: `1px solid ${t.border}`, cursor: "pointer", color: t.textMid, display: "grid", placeItems: "center" }}><ChevronRight size={14} /></button>}
@@ -555,8 +582,11 @@ function Topbar({ t, s, lang, setLang, company, setCompany, theme, setTheme, onL
         <button style={iconBtn(t)}><Bell size={18} /><span style={{ position: "absolute", top: 8, right: 8, width: 7, height: 7, borderRadius: 999, background: t.nova }} /></button>
         <div style={{ width: 1, height: 26, background: t.border, margin: "0 4px" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <span style={{ width: 32, height: 32, borderRadius: 999, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: 13 }}>JS</span>
-          <div style={{ lineHeight: 1.2 }}><div style={{ fontSize: 12.5, fontWeight: 600, color: t.textHi }}>Jos</div><div style={{ fontSize: 10.5, color: t.textLo }}>{s.role}</div></div>
+          <span style={{ width: 32, height: 32, borderRadius: 999, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: 13 }}>ER</span>
+          <div style={{ lineHeight: 1.2 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textHi }}>Edrei</div>
+            <div style={{ fontSize: 10.5, color: t.textLo }}>{s.role}</div>
+          </div>
         </div>
         <button onClick={onLogout} style={iconBtn(t)}><LogOut size={17} /></button>
       </div>
@@ -698,7 +728,11 @@ export default function App() {
 
   if (!authed) {
     return (<>
-      <style>{`.nova-glow{animation:pulse 3.4s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:.5}50%{opacity:.9}}@media (prefers-reduced-motion:reduce){.nova-glow{animation:none}}`}</style>
+      <style>{`
+        .nova-glow{animation:pulse 3.4s ease-in-out infinite}
+        @keyframes pulse{0%,100%{opacity:.5}50%{opacity:.9}}
+        @media (prefers-reduced-motion:reduce){.nova-glow{animation:none}}
+      `}</style>
       <Login t={t} s={s} onEnter={() => setAuthed(true)} />
     </>);
   }
@@ -716,7 +750,15 @@ export default function App() {
 
   return (
     <div style={{ display: "flex", background: t.base, minHeight: "100vh", fontFamily: "Inter, system-ui, Arial, sans-serif", color: t.textMid }}>
-      <style>{`.nova-glow{animation:pulse 3.4s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:.45}50%{opacity:.85}}@media (prefers-reduced-motion:reduce){.nova-glow{animation:none}} ::placeholder{color:${t.textLo}} .clickrow{transition:transform .12s ease, box-shadow .12s ease} .clickrow:hover{transform:translateY(-1px); box-shadow:0 8px 20px rgba(0,0,0,0.18)}`}</style>
+      <style>{`
+        .nova-glow{animation:pulse 3.4s ease-in-out infinite}
+        @keyframes pulse{0%,100%{opacity:.45}50%{opacity:.85}}
+        @keyframes securePulse{0%,100%{opacity:.3}50%{opacity:.75}}
+        @media (prefers-reduced-motion:reduce){.nova-glow{animation:none}}
+        ::placeholder{color:${t.textLo}}
+        .clickrow{transition:transform .12s ease, box-shadow .12s ease}
+        .clickrow:hover{transform:translateY(-1px); box-shadow:0 8px 20px rgba(0,0,0,0.18)}
+      `}</style>
       <Sidebar t={t} s={s} page={page} setPage={setPage} collapsed={collapsed} setCollapsed={setCollapsed} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <Topbar t={t} s={s} lang={lang} setLang={setLang} company={company} setCompany={setCompany} theme={theme} setTheme={setTheme} onLogout={() => setAuthed(false)} />
