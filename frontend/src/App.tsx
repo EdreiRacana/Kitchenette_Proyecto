@@ -1,10 +1,11 @@
 import { useState, useMemo } from "react";
 import {
-  LayoutDashboard, Package, Users, ShoppingCart, Wallet, BarChart3,
-  Settings, IdCard, Search, SlidersHorizontal, Plus, Bell, ChevronDown,
-  ChevronLeft, ChevronRight, LogOut, ArrowUpRight, ArrowDownRight,
-  CircleDot, Sun, Moon, Check, Lock, User as UserIcon, Globe,
-  Calendar as CalIcon, AlertTriangle, Target, PackageX, FileWarning,
+  LayoutDashboard, TrendingUp, Package, Wallet, Users, Sliders,
+  ArrowUpRight, ArrowDownRight, Minus, AlertTriangle, CheckCircle,
+  XCircle, Download, RefreshCw, Filter, ChevronRight, ChevronDown,
+  BarChart3, Target, DollarSign, ShoppingCart, Clock, Star,
+  Info, Calendar, FileText, Mail, Bell, Maximize2, X,
+  TrendingDown, Activity, Zap, Award, Eye, Check,
 } from "lucide-react";
 import SalesCRM from "./features/sales/SalesCRM";
 import CustomersModule from "./features/customers/CustomersModule";
