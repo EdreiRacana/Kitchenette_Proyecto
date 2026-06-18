@@ -364,7 +364,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
             {[
               { label: "Total empleados", value: String(kpis.total), icon: Users, color: t.nova, sub: `${kpis.active} activos` },
-              { label: "Costo nómina/mes", value: mxn(kpis.totalPayroll * 2), icon: DollarSign, color: t.good, sub: "estimado bruto" },
+              { label: "Costo nómina/mes", value: mxnShort(kpis.totalPayroll * 2), icon: DollarSign, color: t.good, sub: mxn(kpis.totalPayroll * 2) },
               { label: "En período prueba", value: String(kpis.onTrial), icon: Clock3, color: t.warn, sub: "requieren decisión" },
               { label: "Contratos por vencer", value: String(kpis.expiring30), icon: AlertTriangle, color: t.bad, sub: "próximos 30 días" },
               { label: "Presentes hoy", value: String(kpis.presentToday), icon: UserCheck, color: t.good, sub: `${kpis.absentToday} faltas` },
