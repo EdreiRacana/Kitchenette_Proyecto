@@ -1,11 +1,13 @@
 import { useState, useMemo } from "react";
 import {
-  LayoutDashboard, TrendingUp, Package, Wallet, Users, Sliders,
-  ArrowUpRight, ArrowDownRight, Minus, AlertTriangle, CheckCircle,
-  XCircle, Download, RefreshCw, Filter, ChevronRight, ChevronDown,
-  BarChart3, Target, DollarSign, ShoppingCart, Clock, Star,
-  Info, Calendar, FileText, Mail, Bell, Maximize2, X,
-  TrendingDown, Activity, Zap, Award, Eye, Check,
+  LayoutDashboard, TrendingUp, Package, PackageX, Wallet, Users, Sliders,
+  SlidersHorizontal, ArrowUpRight, ArrowDownRight, Minus, AlertTriangle,
+  CheckCircle, XCircle, CircleDot, Download, RefreshCw, Filter,
+  ChevronLeft, ChevronRight, ChevronDown, BarChart3, Target, DollarSign,
+  ShoppingCart, Clock, Star, Info, Calendar, Calendar as CalIcon,
+  FileText, FileWarning, Mail, Bell, Maximize2, X, TrendingDown, Activity,
+  Zap, Award, Eye, Check, IdCard, Settings, Plus, Search, Globe, Sun, Moon,
+  Lock, LogOut, User as UserIcon,
 } from "lucide-react";
 import SalesCRM from "./features/sales/SalesCRM";
 import CustomersModule from "./features/customers/CustomersModule";
