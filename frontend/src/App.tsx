@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import SalesCRM from "./features/sales/SalesCRM";
 import CustomersModule from "./features/customers/CustomersModule";
+import InventoryModule from "./features/inventory/InventoryModule";
 
 /* ============================ Theme ============================ */
 const THEMES = {
@@ -739,7 +740,7 @@ export default function App() {
 
   const PAGES = {
     dashboard: <Dashboard t={t} s={s} lang={lang} setPage={setPage} />,
-    inventario: <Inventory t={t} s={s} />,
+    inventario: <InventoryModule t={t} s={s} />,
     ventas: <SalesCRM t={t} s={s} />,
     clientes: <CustomersModule t={t} s={s} />,
     finanzas: <Finance t={t} s={s} />,
