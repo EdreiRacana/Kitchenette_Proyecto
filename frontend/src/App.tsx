@@ -10,6 +10,7 @@ import SalesCRM from "./features/sales/SalesCRM";
 import CustomersModule from "./features/customers/CustomersModule";
 import InventoryModule from "./features/inventory/InventoryModule";
 import FinanceModule from "./features/finance/FinanceModule";
+import HRModule from "./features/hr/HRModule";
 
 /* ============================ Theme ============================ */
 const THEMES = {
@@ -745,7 +746,7 @@ export default function App() {
     ventas: <SalesCRM t={t} s={s} />,
     clientes: <CustomersModule t={t} s={s} />,
     finanzas: <FinanceModule t={t} s={s} />,
-    rh: <Soon t={t} s={s} title={s.nav.rh} sub={s.soon.rh} icon={IdCard} />,
+    rh: <HRModule t={t} s={s} />,
     reportes: <Soon t={t} s={s} title={s.nav.reportes} sub={s.soon.reportes} icon={BarChart3} />,
     config: <Config t={t} s={s} company={company} />,
   };
