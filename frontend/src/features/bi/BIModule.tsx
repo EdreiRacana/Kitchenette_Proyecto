@@ -11,7 +11,7 @@ import {
   XCircle, Download, RefreshCw, Filter, ChevronRight, ChevronDown,
   BarChart3, Target, DollarSign, ShoppingCart, Clock, Star,
   Info, Calendar, FileText, Mail, Bell, Maximize2, X,
-  TrendingDown, Activity, Zap, Award, Eye,
+  TrendingDown, Activity, Zap, Award, Eye, Check, IdCard,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────
