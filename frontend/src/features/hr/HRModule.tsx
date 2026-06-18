@@ -205,6 +205,7 @@ const BANKS = ["BBVA", "Santander", "Banamex", "HSBC", "Banorte", "Scotiabank", 
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const mxnShort = (n: number) => n >= 1000000 ? "$" + (n / 1000000).toFixed(1) + "M" : n >= 1000 ? "$" + Math.round(n / 1000) + "k" : "$" + n;
 const fmtDate = (d: string) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const daysUntil = (date: string) => Math.ceil((new Date(date).getTime() - Date.now()) / 86400000);
 const fullName = (e: Employee) => `${e.name} ${e.last_name}`;
