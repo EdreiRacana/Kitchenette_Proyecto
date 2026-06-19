@@ -479,7 +479,7 @@ function Login({ t, s, onEnter }) {
       <svg viewBox="0 0 800 800" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.5 }} preserveAspectRatio="xMidYMid slice" aria-hidden>
         <defs><radialGradient id="bgGlow" cx="50%" cy="38%" r="55%"><stop offset="0" stopColor="#16306a" /><stop offset="1" stopColor={t.base} /></radialGradient></defs>
         <rect width="800" height="800" fill="url(#bgGlow)" />
-        <g stroke="#23396f" strokeWidth="1" fill="none" opacity="0.6"><polygon points="400,120 560,520 400,440 240,520" /><polyline points="400,120 480,440 560,520" /></g>
+        <g stroke="#23396f" strokeWidth="1" fill="none" opacity="0.6" className="login-tri"><polygon points="400,120 560,520 400,440 240,520" /><polyline points="400,120 480,440 560,520" /></g>
       </svg>
       <div style={{ position: "relative", width: "100%", maxWidth: 380, textAlign: "center" }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}><NovaMark size={86} /></div>
