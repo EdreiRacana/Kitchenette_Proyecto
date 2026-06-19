@@ -143,20 +143,30 @@ export function EmptyState({ tk, icon, title, hint }: {
   );
 }
 
-export function Modal({ tk, open, onClose, title, children, footer, width = 640 }: {
+// `confirmClose` (opcional): si se pasa, se llama cuando el usuario intenta cerrar
+// por clic-afuera o tecla Escape. Si devuelve false, el cierre se cancela.
+// Los modales que NO la pasen mantienen el comportamiento anterior (cierran siempre).
+export function Modal({ tk, open, onClose, title, children, footer, width = 640, confirmClose }: {
   tk: Tokens; open: boolean; onClose: () => void; title: string;
   children: ReactNode; footer?: ReactNode; width?: number;
+  confirmClose?: () => boolean;
 }) {
+  const tryClose = () => {
+    if (confirmClose && !confirmClose()) return; // cierre cancelado por el formulario
+    onClose();
+  };
+
   useEffect(() => {
     if (!open) return;
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") tryClose(); };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [open, onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, onClose, confirmClose]);
 
   if (!open) return null;
   return (
-    <div onClick={onClose} style={{
+    <div onClick={tryClose} style={{
       position: "fixed", inset: 0, background: "rgba(3,8,22,0.7)", zIndex: 60,
       display: "flex", alignItems: "flex-start", justifyContent: "center",
       padding: "40px 16px", overflowY: "auto",
@@ -171,7 +181,7 @@ export function Modal({ tk, open, onClose, title, children, footer, width = 640 
           padding: "18px 22px", borderBottom: `1px solid ${tk.border}`,
         }}>
           <span style={{ fontSize: 17, fontWeight: 700, color: tk.textHi }}>{title}</span>
-          <IconButton tk={tk} onClick={onClose} title="Cerrar"><X size={20} /></IconButton>
+          <IconButton tk={tk} onClick={tryClose} title="Cerrar"><X size={20} /></IconButton>
         </div>
         <div style={{ padding: 22, overflowY: "auto" }}>{children}</div>
         {footer && (
