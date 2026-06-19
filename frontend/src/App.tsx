@@ -740,7 +740,12 @@ export default function App() {
       <style>{`
         .nova-glow{animation:pulse 3.4s ease-in-out infinite}
         @keyframes pulse{0%,100%{opacity:.5}50%{opacity:.9}}
-        @media (prefers-reduced-motion:reduce){.nova-glow{animation:none}}
+        .login-tri{animation:triPulse 3.5s ease-in-out infinite}
+        @keyframes triPulse{
+          0%,100%{opacity:.25; stroke:#23396f}
+          50%{opacity:.9; stroke:#33B2F5}
+        }
+        @media (prefers-reduced-motion:reduce){.nova-glow,.login-tri{animation:none}}
       `}</style>
       <Login t={t} s={s} onEnter={() => setAuthed(true)} />
     </>);
@@ -776,3 +781,4 @@ export default function App() {
     </div>
   );
 }
+
