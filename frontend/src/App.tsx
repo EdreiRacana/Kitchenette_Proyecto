@@ -753,7 +753,7 @@ export default function App() {
     finanzas: <FinanceModule t={t} s={s} />,
     rh: <HRModule t={t} s={s} />,
     reportes: <BIModule t={t} s={s} />,
-    config: <Config t={t} s={s} company={company} />,
+    config: <ConfigModule t={t} s={s} company={company} />,
   };
 
   return (
