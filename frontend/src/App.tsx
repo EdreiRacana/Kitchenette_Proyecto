@@ -61,6 +61,10 @@ const STRINGS = {
       legendCur: "Actual", legendPrev: "Periodo anterior",
       metaTitle: "Meta vs real", metaSub: "de la meta del periodo", real: "Real", meta: "Meta",
       remaining: (a) => `Faltan ${a} para llegar al objetivo.`, skus: (n) => `${n} SKUs`,
+      ofTarget: "de meta", current: "Periodo actual", previous: "Periodo anterior",
+      variation: "vs periodo anterior", growth: "Crecimiento", drop: "Caída",
+      goalProgress: "Avance hacia la meta", trend: "Tendencia del periodo",
+      seeAnalysis: "Ver análisis completo",
     },
     kpi: { "Ventas": "Ventas", "Utilidad neta": "Utilidad neta", "Pedidos": "Pedidos", "Ticket promedio": "Ticket promedio" },
     inv: { sub: "Catálogo de productos, variantes y existencias por almacén", add: "Agregar producto", search: "Buscar por nombre o categoría", filters: "Filtros", h: { product: "Producto", cat: "Categoría", variants: "Variantes", stock: "Existencia", price: "Precio" }, variant: "variante", variants: "variantes", edit: "Editar", none: "Sin resultados. Ajusta la búsqueda o agrega un producto." },
@@ -89,6 +93,10 @@ const STRINGS = {
       legendCur: "Current", legendPrev: "Previous period",
       metaTitle: "Goal vs actual", metaSub: "of the period goal", real: "Actual", meta: "Goal",
       remaining: (a) => `${a} left to reach the goal.`, skus: (n) => `${n} SKUs`,
+      ofTarget: "of target", current: "Current period", previous: "Previous period",
+      variation: "vs previous period", growth: "Growth", drop: "Drop",
+      goalProgress: "Progress to goal", trend: "Period trend",
+      seeAnalysis: "See full analysis",
     },
     kpi: { "Ventas": "Sales", "Utilidad neta": "Net profit", "Pedidos": "Orders", "Ticket promedio": "Avg. ticket" },
     inv: { sub: "Product catalog, variants and stock by warehouse", add: "Add product", search: "Search by name or category", filters: "Filters", h: { product: "Product", cat: "Category", variants: "Variants", stock: "Stock", price: "Price" }, variant: "variant", variants: "variants", edit: "Edit", none: "No results. Adjust the search or add a product." },
@@ -260,18 +268,33 @@ function PrimaryBtn({ t, children, onClick }) {
 }
 
 /* ============================ Charts ============================ */
+/* Sparkline con tooltip al pasar el cursor */
 function Sparkline({ data, color, gid }) {
+  const [hover, setHover] = useState(null);
   const W = 84, H = 26, min = Math.min(...data), max = Math.max(...data);
   const x = (i) => (i * W) / (data.length - 1);
   const y = (v) => (max === min ? H / 2 : H - 3 - ((v - min) / (max - min)) * (H - 7));
   const line = data.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
   const area = `${line} L ${x(data.length - 1).toFixed(1)} ${H} L 0 ${H} Z`;
-  return (<svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}>
-    <defs><linearGradient id={gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.26" /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient></defs>
-    <path d={area} fill={`url(#${gid})`} />
-    <path d={line} fill="none" stroke={color} strokeOpacity="0.85" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="2.1" fill={color} fillOpacity="0.9" />
-  </svg>);
+  const near = (px) => { let b = 0, bd = 1e9; for (let i = 0; i < data.length; i++) { const d = Math.abs(px - x(i)); if (d < bd) { bd = d; b = i; } } return b; };
+  return (
+    <div style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ cursor: "crosshair", overflow: "visible" }}
+        onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover(near((e.clientX - r.left) / r.width * W)); }}
+        onMouseLeave={() => setHover(null)}>
+        <defs><linearGradient id={gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.26" /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient></defs>
+        <path d={area} fill={`url(#${gid})`} />
+        <path d={line} fill="none" stroke={color} strokeOpacity="0.85" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="2.1" fill={color} fillOpacity="0.9" />
+        {hover !== null && <circle cx={x(hover)} cy={y(data[hover])} r="3" fill={color} stroke="#fff" strokeWidth="1" />}
+      </svg>
+      {hover !== null && (
+        <div style={{ position: "absolute", top: -22, left: `${(x(hover) / W) * 100}%`, transform: "translateX(-50%)", background: "#131F44", border: `1px solid ${color}`, borderRadius: 6, padding: "2px 7px", fontSize: 10.5, fontWeight: 700, color: "#F2F6FF", whiteSpace: "nowrap", pointerEvents: "none", zIndex: 5 }}>
+          {data[hover]}
+        </div>
+      )}
+    </div>
+  );
 }
 function Gauge({ t, value, target, max = 60 }) {
   const cx = 100, cy = 90, r = 66, sw = 11;
@@ -294,7 +317,9 @@ function Gauge({ t, value, target, max = 60 }) {
     </svg>
   );
 }
+/* ComparisonChart con tooltip interactivo (línea guía, puntos, valores y %) */
 function ComparisonChart({ t, series, xlabels }) {
+  const [hover, setHover] = useState(null);
   const W = 660, H = 250, P = { l: 8, r: 8, t: 16, b: 30 };
   const iw = W - P.l - P.r, ih = H - P.t - P.b, n = series.cur.length;
   const max = Math.max(...series.cur, ...series.prev) * 1.14;
@@ -304,16 +329,41 @@ function ComparisonChart({ t, series, xlabels }) {
   const cur = path(series.cur);
   const area = `${cur} L ${x(n - 1).toFixed(1)} ${(P.t + ih).toFixed(1)} L ${x(0).toFixed(1)} ${(P.t + ih).toFixed(1)} Z`;
   const grid = [0, 0.33, 0.66, 1].map((g) => P.t + g * ih);
+  const near = (px) => { let b = 0, bd = 1e9; for (let i = 0; i < n; i++) { const d = Math.abs(px - x(i)); if (d < bd) { bd = d; b = i; } } return b; };
+  const hv = hover !== null ? { i: hover, cur: series.cur[hover], prev: series.prev[hover], label: xlabels[hover], delta: series.prev[hover] === 0 ? 0 : Math.round((series.cur[hover] - series.prev[hover]) / series.prev[hover] * 1000) / 10 } : null;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 250 }} preserveAspectRatio="none">
-      <defs><linearGradient id="cmpFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.nova} stopOpacity="0.3" /><stop offset="100%" stopColor={t.nova} stopOpacity="0" /></linearGradient></defs>
-      {grid.map((g, i) => <line key={i} x1={P.l} x2={W - P.r} y1={g} y2={g} stroke={t.gridLine} strokeWidth="1" />)}
-      <path d={path(series.prev)} fill="none" stroke={t.textLo} strokeWidth="2" strokeDasharray="5 5" opacity="0.75" />
-      <path d={area} fill="url(#cmpFill)" />
-      <path d={cur} fill="none" stroke={t.nova} strokeWidth="2.6" strokeLinejoin="round" strokeLinecap="round" />
-      {series.cur.map((v, i) => <circle key={i} cx={x(i)} cy={y(v)} r="3.2" fill={t.panel} stroke={t.nova} strokeWidth="2" />)}
-      {xlabels.map((lb, i) => <text key={i} x={x(i)} y={H - 9} fill={t.textLo} fontSize="12" textAnchor="middle">{lb}</text>)}
-    </svg>
+    <div style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 250, cursor: "crosshair" }} preserveAspectRatio="none"
+        onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover(near((e.clientX - r.left) / r.width * W)); }}
+        onMouseLeave={() => setHover(null)}>
+        <defs><linearGradient id="cmpFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.nova} stopOpacity="0.3" /><stop offset="100%" stopColor={t.nova} stopOpacity="0" /></linearGradient></defs>
+        {grid.map((g, i) => <line key={i} x1={P.l} x2={W - P.r} y1={g} y2={g} stroke={t.gridLine} strokeWidth="1" />)}
+        <path d={path(series.prev)} fill="none" stroke={t.textLo} strokeWidth="2" strokeDasharray="5 5" opacity="0.75" />
+        <path d={area} fill="url(#cmpFill)" />
+        <path d={cur} fill="none" stroke={t.nova} strokeWidth="2.6" strokeLinejoin="round" strokeLinecap="round" />
+        {hv && <line x1={x(hv.i)} x2={x(hv.i)} y1={P.t} y2={P.t + ih} stroke={t.nova} strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />}
+        {series.cur.map((v, i) => <circle key={i} cx={x(i)} cy={y(v)} r="3.2" fill={t.panel} stroke={t.nova} strokeWidth="2" />)}
+        {hv && <circle cx={x(hv.i)} cy={y(hv.prev)} r="4" fill={t.panel} stroke={t.textLo} strokeWidth="2" />}
+        {hv && <circle cx={x(hv.i)} cy={y(hv.cur)} r="5" fill={t.panel} stroke={t.nova} strokeWidth="2.5" />}
+        {xlabels.map((lb, i) => <text key={i} x={x(i)} y={H - 9} fill={t.textLo} fontSize="12" textAnchor="middle">{lb}</text>)}
+      </svg>
+      {hv && (
+        <div style={{ position: "absolute", top: 8, left: `${(x(hv.i) / W) * 100 > 60 ? (x(hv.i) / W) * 100 - 2 : (x(hv.i) / W) * 100 + 3}%`, transform: (x(hv.i) / W) * 100 > 60 ? "translateX(-100%)" : "none", background: t.panel2, border: `1px solid ${t.nova}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, boxShadow: "0 8px 24px rgba(0,0,0,.45)", minWidth: 140, pointerEvents: "none", zIndex: 5 }}>
+          <div style={{ fontWeight: 700, color: t.textHi, marginBottom: 6 }}>{hv.label}</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 3 }}>
+            <span style={{ color: t.textMid, display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 9, background: t.nova }} />Actual</span>
+            <span style={{ color: t.textHi, fontWeight: 600 }}>${hv.cur}k</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 6 }}>
+            <span style={{ color: t.textMid, display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 9, background: t.textLo }} />Anterior</span>
+            <span style={{ color: t.textMid }}>${hv.prev}k</span>
+          </div>
+          <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 5, color: hv.delta >= 0 ? t.good : t.bad, fontWeight: 600 }}>
+            {hv.delta >= 0 ? "▲ +" : "▼ "}{hv.delta}% vs anterior
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 function MiniCalendar({ t, s, start, end, onPick }) {
@@ -352,6 +402,7 @@ function Dashboard({ t, s, lang, setPage }) {
   const [calOpen, setCalOpen] = useState(false);
   const [rStart, setRStart] = useState(DATASETS.month.range[0]);
   const [rEnd, setREnd] = useState(DATASETS.month.range[1]);
+  const [kpiDrill, setKpiDrill] = useState(null);
 
   const data = preset === "custom" ? DATASETS.month : DATASETS[preset];
   const r0 = preset === "custom" ? rStart : data.range[0];
@@ -366,11 +417,21 @@ function Dashboard({ t, s, lang, setPage }) {
   };
 
   const goalPct = Math.round((data.goal.actual / data.goal.target) * 100);
+
+  const kpiTargets = {
+    "Ventas": data.goal.target,
+    "Utilidad neta": Math.round(data.goal.target * 0.34),
+    "Pedidos": Math.round(data.kpis[2].value * 1.12),
+    "Ticket promedio": 2900,
+  };
+
   const chips = [
     { icon: PackageX, value: String(data.attention.agotados), label: s.dash.focos.agotados, color: t.bad, go: "inventario" },
     { icon: FileWarning, value: mxnShort(data.attention.cartera), label: s.dash.focos.cartera, color: t.warn, go: "finanzas" },
     { icon: AlertTriangle, value: `${data.attention.margenBajo}`, label: s.dash.focos.margen, color: t.warn, go: "inventario" },
   ];
+
+  const kpiIcons = { "Ventas": TrendingUp, "Utilidad neta": DollarSign, "Pedidos": ShoppingCart, "Ticket promedio": Star };
 
   return (
     <div>
@@ -422,11 +483,17 @@ function Dashboard({ t, s, lang, setPage }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px,1fr))", gap: 14, marginBottom: 16 }}>
         {data.kpis.map((k, i) => {
           const up = k.delta >= 0; const c = statusColor(t, k.delta);
+          const target = kpiTargets[k.label];
+          const pct = target ? Math.min(100, Math.round((k.value / target) * 100)) : null;
+          const Icon = kpiIcons[k.label];
           return (
-            <Card key={k.label} t={t} style={{ padding: 18, position: "relative", overflow: "hidden" }}>
+            <Card key={k.label} t={t} className="clickrow" onClick={() => setKpiDrill(i)} style={{ padding: 18, position: "relative", overflow: "hidden", cursor: "pointer" }}>
               <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: c + "66" }} />
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 12.5, color: t.textLo, fontWeight: 500 }}>{s.kpi[k.label]}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  {Icon && <Icon size={14} color={t.textLo} />}
+                  <span style={{ fontSize: 12.5, color: t.textLo, fontWeight: 500 }}>{s.kpi[k.label]}</span>
+                </span>
                 <span style={{ width: 8, height: 8, borderRadius: 999, background: c + "cc", boxShadow: `0 0 0 3px ${c}1f` }} />
               </div>
               <div style={{ fontSize: 23, fontWeight: 700, color: t.textHi, marginTop: 10, fontVariantNumeric: "tabular-nums" }}>{k.money ? mxn(k.value) : k.value.toLocaleString("es-MX")}</div>
@@ -438,6 +505,14 @@ function Dashboard({ t, s, lang, setPage }) {
                 </span>
                 <Sparkline data={k.spark} color={c} gid={`spk${i}`} />
               </div>
+              {target && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ height: 4, background: t.panel3, borderRadius: 999, overflow: "hidden" }}>
+                    <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: pct >= 90 ? t.good : pct >= 65 ? t.nova : t.warn }} />
+                  </div>
+                  <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4 }}>{pct}% {s.dash.ofTarget} · {k.money ? mxnShort(target) : target.toLocaleString("es-MX")}</div>
+                </div>
+              )}
             </Card>
           );
         })}
@@ -466,6 +541,81 @@ function Dashboard({ t, s, lang, setPage }) {
           <div style={{ marginTop: "auto", paddingTop: 16, fontSize: 12.5, color: t.textMid, borderTop: `1px solid ${t.borderSoft}` }}>{s.dash.remaining(mxn(Math.max(0, data.goal.target - data.goal.actual)))}</div>
         </Card>
       </div>
+
+      {/* ── DRAWER: Detalle de KPI (drill-down) ── */}
+      {kpiDrill !== null && (() => {
+        const k = data.kpis[kpiDrill];
+        const up = k.delta >= 0;
+        const c = statusColor(t, k.delta);
+        const target = kpiTargets[k.label];
+        const pct = target ? Math.round((k.value / target) * 100) : null;
+        const prevVal = Math.round(k.value / (1 + k.delta / 100));
+        const Icon = kpiIcons[k.label];
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", justifyContent: "flex-end" }} onClick={() => setKpiDrill(null)}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: 440, maxWidth: "100%", height: "100vh", background: t.panel, borderLeft: `1px solid ${t.border}`, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: 24, borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ background: c + "22", color: c, borderRadius: 10, padding: 10, display: "flex" }}>{Icon && <Icon size={20} />}</div>
+                  <div>
+                    <div style={{ fontSize: 12, color: t.textLo }}>{s.kpi[k.label]}</div>
+                    <div style={{ fontSize: 26, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{k.money ? mxn(k.value) : k.value.toLocaleString("es-MX")}</div>
+                  </div>
+                </div>
+                <button onClick={() => setKpiDrill(null)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+              </div>
+
+              <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 18 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div style={{ background: t.panel2, borderRadius: 10, padding: "12px 14px" }}>
+                    <div style={{ fontSize: 11, color: t.textLo, marginBottom: 4 }}>{s.dash.current}</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: t.textHi }}>{k.money ? mxn(k.value) : k.value.toLocaleString("es-MX")}</div>
+                  </div>
+                  <div style={{ background: t.panel2, borderRadius: 10, padding: "12px 14px" }}>
+                    <div style={{ fontSize: 11, color: t.textLo, marginBottom: 4 }}>{s.dash.previous}</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: t.textMid }}>{k.money ? mxn(prevVal) : prevVal.toLocaleString("es-MX")}</div>
+                  </div>
+                </div>
+
+                <div style={{ background: (up ? t.good : t.bad) + "12", border: `1px solid ${(up ? t.good : t.bad)}33`, borderRadius: 10, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                  {up ? <ArrowUpRight size={22} color={t.good} /> : <ArrowDownRight size={22} color={t.bad} />}
+                  <div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: up ? t.good : t.bad }}>{up ? "+" : ""}{k.delta}%</div>
+                    <div style={{ fontSize: 12, color: t.textMid }}>{up ? s.dash.growth : s.dash.drop} {s.dash.variation}</div>
+                  </div>
+                </div>
+
+                {target && (
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                      <span style={{ fontSize: 12.5, color: t.textMid }}>{s.dash.goalProgress}</span>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: t.textHi }}>{pct}%</span>
+                    </div>
+                    <div style={{ height: 10, background: t.panel3, borderRadius: 999, overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(100, pct)}%`, height: "100%", borderRadius: 999, background: pct >= 90 ? t.good : pct >= 65 ? t.nova : t.warn }} />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11.5, color: t.textLo }}>
+                      <span>{s.dash.real} {k.money ? mxn(k.value) : k.value.toLocaleString("es-MX")}</span>
+                      <span>{s.dash.meta} {k.money ? mxn(target) : target.toLocaleString("es-MX")}</span>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textMid, marginBottom: 10 }}>{s.dash.trend}</div>
+                  <Card t={t} style={{ padding: 14, background: t.panel2 }}>
+                    <ComparisonChart t={t} series={{ cur: k.spark, prev: k.spark.map((v) => Math.round(v * 0.88)) }} xlabels={k.spark.map((_, idx) => `${idx + 1}`)} />
+                  </Card>
+                </div>
+
+                <button onClick={() => { setKpiDrill(null); setPage(k.label === "Pedidos" || k.label === "Ticket promedio" ? "ventas" : "reportes"); }} style={{ marginTop: 4, padding: "11px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  {s.dash.seeAnalysis} <ArrowUpRight size={15} />
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -524,7 +674,6 @@ function Sidebar({ t, s, page, setPage, collapsed, setCollapsed }) {
         })}
       </nav>
 
-      {/* Indicador Sistema Seguro — solo visible cuando el sidebar está expandido */}
       {!collapsed && (
         <div style={{
           padding: "8px 18px 10px",
@@ -781,4 +930,3 @@ export default function App() {
     </div>
   );
 }
-
