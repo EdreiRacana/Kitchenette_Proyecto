@@ -15,6 +15,7 @@ import InventoryModule from "./features/inventory/InventoryModule";
 import FinanceModule from "./features/finance/FinanceModule";
 import HRModule from "./features/hr/HRModule";
 import BIModule from "./features/bi/BIModule";
+import ConfigModule from "./features/config/ConfigModule";
 
 
 /* ============================ Theme ============================ */
