@@ -1,12 +1,13 @@
 // Customer360.tsx — Vista 360° del cliente (Customer 360)
 // Estado de resultados por cliente (P&L), devoluciones, transacciones y segmentación.
+// Selector de periodo (Semana/Mes/Trimestre/Año) con comparativo vs periodo anterior.
 // Respeta el patrón modular del proyecto: usa Tokens, componentes de ../sales/ui y money().
-// Datos demo realistas (derivados del cliente) hasta conectar el backend real.
+// Datos demo realistas (derivados del cliente + periodo) hasta conectar el backend real.
 
 import { useMemo, useState } from "react";
 import {
   X, TrendingUp, RotateCcw, Receipt, Truck, Megaphone, Percent, Landmark,
-  ArrowUpRight, ShoppingBag, Package, CreditCard,
+  ArrowUpRight, ArrowDownRight, ShoppingBag, Package, CreditCard,
   FileText, Wallet, Store, Globe, Building2, Star, Users, Info,
 } from "lucide-react";
 import type { Tokens } from "../sales/theme";
@@ -14,40 +15,21 @@ import { money } from "../sales/theme";
 import { Badge } from "../sales/ui";
 import type { Customer } from "./types";
 
+type Period = "week" | "month" | "quarter" | "year";
+
+const PERIOD_LABELS: Record<Period, string> = { week: "Semana", month: "Mes", quarter: "Trimestre", year: "Año" };
+const PERIOD_PREV_LABELS: Record<Period, string> = { week: "semana anterior", month: "mes anterior", quarter: "trimestre anterior", year: "año anterior" };
+// Factor que escala el "mes base" a cada periodo
+const PERIOD_FACTOR: Record<Period, number> = { week: 0.25, month: 1, quarter: 3, year: 12 };
+
 // ── Tipos del P&L por cliente ───────────────────────────────────────────────
 interface CustomerPnL {
-  gross_sales: number;       // Venta bruta
-  returns: number;           // Devoluciones (SR&A)
-  allowances: number;        // Bonificaciones
-  discounts: number;         // Descuentos
-  net_sales: number;         // Venta neta
-  cogs: number;              // Costo de mercancía
-  gross_margin: number;      // Margen bruto
-  commissions: number;       // Comisiones
-  shipping_costs: number;    // Costos de envío
-  marketing: number;         // Gastos de marketing
-  withholdings: number;      // Retenciones
-  net_contribution: number;  // Contribución neta
+  gross_sales: number; returns: number; allowances: number; discounts: number;
+  net_sales: number; cogs: number; gross_margin: number; commissions: number;
+  shipping_costs: number; marketing: number; withholdings: number; net_contribution: number;
 }
-
-interface Transaction {
-  id: string;
-  type: "venta" | "devolucion" | "nota_credito" | "pago";
-  date: string;
-  ref: string;
-  amount: number;
-  status: string;
-}
-
-interface ReturnItem {
-  id: string;
-  date: string;
-  ref: string;
-  product: string;
-  qty: number;
-  amount: number;
-  reason: string;
-}
+interface Transaction { id: string; type: "venta" | "devolucion" | "nota_credito" | "pago"; date: string; ref: string; amount: number; status: string; }
+interface ReturnItem { id: string; date: string; ref: string; product: string; qty: number; amount: number; reason: string; }
 
 // ── Segmento / tipo de cliente ──────────────────────────────────────────────
 const SEGMENT_META: Record<string, { label: string; icon: typeof Store; color: string }> = {
@@ -57,18 +39,16 @@ const SEGMENT_META: Record<string, { label: string; icon: typeof Store; color: s
   propia: { label: "Tienda propia", icon: Building2, color: "#33B2F5" },
   especial: { label: "Venta especial", icon: Star, color: "#FBBF24" },
 };
-
-// Mapea el client_type libre del backend a un segmento conocido (heurística demo)
 function segmentOf(c: Customer): keyof typeof SEGMENT_META {
   const t = (c.client_type || "").toLowerCase();
   if (t.includes("market") || t.includes("amazon") || t.includes("mercado")) return "marketplace";
   if (t.includes("propia") || t.includes("interna")) return "propia";
   if (t.includes("especial") || t.includes("vip")) return "especial";
-  if (t.includes("tienda") || t.includes("física") || t.includes("fisica") || t.includes("sucursal")) return "fisica";
+  if (t.includes("tienda") || t.includes("física") || t.includes("fisica") || t.includes("sucursal") || t.includes("distribuidor")) return "fisica";
   return "individual";
 }
 
-// ── Generador demo determinista (mismo cliente → mismos números) ────────────
+// ── Generador demo determinista (mismo cliente + periodo → mismos números) ──
 function hashId(c: Customer): number {
   const base = (c.client_number || c.name || String(c.id));
   let h = 0;
@@ -76,10 +56,15 @@ function hashId(c: Customer): number {
   return h;
 }
 
-function demoPnL(c: Customer): CustomerPnL {
+// P&L para un periodo. `prev` = periodo anterior (ligeramente distinto para comparar).
+function demoPnL(c: Customer, period: Period, prev = false): CustomerPnL {
   const h = hashId(c);
-  const gross = 180000 + (h % 1700000);          // 180k – 1.88M
-  const returns = Math.round(gross * (0.02 + (h % 60) / 1000));   // 2%–8%
+  const factor = PERIOD_FACTOR[period];
+  // El periodo anterior varía -6% a +14% respecto al actual (determinista)
+  const growth = prev ? (1 - (((h % 20) - 6) / 100)) : 1;
+  const baseMonth = 180000 + (h % 1700000);
+  const gross = Math.round(baseMonth * factor * growth);
+  const returns = Math.round(gross * (0.02 + (h % 60) / 1000));
   const allowances = Math.round(gross * 0.01);
   const discounts = Math.round(gross * (0.02 + (h % 40) / 1000));
   const net_sales = gross - returns - allowances - discounts;
@@ -95,34 +80,41 @@ function demoPnL(c: Customer): CustomerPnL {
   return { gross_sales: gross, returns, allowances, discounts, net_sales, cogs, gross_margin, commissions, shipping_costs, marketing, withholdings, net_contribution };
 }
 
-function demoTransactions(c: Customer): Transaction[] {
+function demoTransactions(c: Customer, period: Period): Transaction[] {
   const h = hashId(c);
+  const factor = PERIOD_FACTOR[period];
+  const count = period === "week" ? 4 : period === "month" ? 6 : period === "quarter" ? 9 : 12;
+  const types: Transaction["type"][] = ["venta", "venta", "pago", "devolucion", "venta", "nota_credito", "venta", "pago", "venta", "venta", "devolucion", "pago"];
   const out: Transaction[] = [];
-  const types: Transaction["type"][] = ["venta", "venta", "pago", "devolucion", "venta", "nota_credito"];
-  for (let i = 0; i < 6; i++) {
-    const day = 18 - i * 3;
+  for (let i = 0; i < count; i++) {
+    const tp = types[i % types.length];
+    const monthsBack = Math.floor((i / count) * factor);
+    const mo = 6 - monthsBack;
+    const day = Math.max(1, 26 - (i * 2) % 25);
     out.push({
       id: `T${i}`,
-      type: types[i],
-      date: `2026-06-${String(Math.max(1, day)).padStart(2, "0")}`,
-      ref: `${types[i] === "venta" ? "VTA" : types[i] === "pago" ? "PAG" : types[i] === "devolucion" ? "DEV" : "NC"}-${2000 + ((h + i * 7) % 900)}`,
+      type: tp,
+      date: `2026-${String(Math.max(1, mo)).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+      ref: `${tp === "venta" ? "VTA" : tp === "pago" ? "PAG" : tp === "devolucion" ? "DEV" : "NC"}-${2000 + ((h + i * 7) % 900)}`,
       amount: 8000 + ((h + i * 131) % 80000),
-      status: types[i] === "pago" ? "Aplicado" : types[i] === "devolucion" ? "Procesada" : "Completada",
+      status: tp === "pago" ? "Aplicado" : tp === "devolucion" ? "Procesada" : "Completada",
     });
   }
   return out;
 }
 
-function demoReturns(c: Customer): ReturnItem[] {
+function demoReturns(c: Customer, period: Period): ReturnItem[] {
   const h = hashId(c);
   const products = ["Cemento gris CPC 30R", "Pintura vinílica 19L", "Varilla 3/8\"", "Tubo PVC 4\"", "Cable THW cal. 12"];
   const reasons = ["Producto dañado", "No coincide pedido", "Defecto de fábrica", "Cliente cambió de opinión", "Entrega tardía"];
-  const n = 2 + (h % 3);
+  const base = 2 + (h % 3);
+  const n = period === "week" ? Math.max(1, Math.round(base * 0.4)) : period === "month" ? base : period === "quarter" ? base + 2 : base + 5;
   const out: ReturnItem[] = [];
   for (let i = 0; i < n; i++) {
+    const mo = 6 - Math.floor((i / n) * PERIOD_FACTOR[period]);
     out.push({
       id: `R${i}`,
-      date: `2026-06-${String(Math.max(1, 16 - i * 4)).padStart(2, "0")}`,
+      date: `2026-${String(Math.max(1, mo)).padStart(2, "0")}-${String(Math.max(1, 16 - (i * 3) % 15)).padStart(2, "0")}`,
       ref: `DEV-${1000 + ((h + i * 53) % 900)}`,
       product: products[(h + i) % products.length],
       qty: 1 + ((h + i) % 12),
@@ -140,20 +132,23 @@ const TX_META: Record<Transaction["type"], { label: string; color: string; icon:
   pago: { label: "Pago", color: "#33B2F5", icon: CreditCard },
 };
 
+// delta % entre actual y anterior
+const pctDelta = (cur: number, prev: number) => prev === 0 ? 0 : Math.round(((cur - prev) / prev) * 1000) / 10;
+
 // ── Componente principal ────────────────────────────────────────────────────
 export default function Customer360({
   tk, customer, onClose, onEdit,
 }: {
-  tk: Tokens;
-  customer: Customer;
-  onClose: () => void;
-  onEdit?: (c: Customer) => void;
+  tk: Tokens; customer: Customer; onClose: () => void; onEdit?: (c: Customer) => void;
 }) {
   const [tab, setTab] = useState<"resumen" | "pnl" | "transacciones" | "devoluciones">("resumen");
+  const [period, setPeriod] = useState<Period>("quarter");
 
-  const pnl = useMemo(() => demoPnL(customer), [customer]);
-  const txs = useMemo(() => demoTransactions(customer), [customer]);
-  const returns = useMemo(() => demoReturns(customer), [customer]);
+  const pnl = useMemo(() => demoPnL(customer, period, false), [customer, period]);
+  const pnlPrev = useMemo(() => demoPnL(customer, period, true), [customer, period]);
+  const txs = useMemo(() => demoTransactions(customer, period), [customer, period]);
+  const returns = useMemo(() => demoReturns(customer, period), [customer, period]);
+
   const seg = segmentOf(customer);
   const segMeta = SEGMENT_META[seg];
   const SegIcon = segMeta.icon;
@@ -173,20 +168,32 @@ export default function Customer360({
     whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6,
   });
 
-  // Cascada P&L: cada línea con etiqueta, valor, si es resta, si es subtotal
-  const pnlRows: { label: string; value: number; icon: typeof Receipt; neg?: boolean; subtotal?: boolean; strong?: boolean; pct?: number }[] = [
-    { label: "Venta bruta", value: pnl.gross_sales, icon: ShoppingBag, strong: true },
-    { label: "Devoluciones (SR&A)", value: pnl.returns, icon: RotateCcw, neg: true, pct: returnRate },
-    { label: "Bonificaciones", value: pnl.allowances, icon: Percent, neg: true },
-    { label: "Descuentos", value: pnl.discounts, icon: Percent, neg: true },
-    { label: "Venta neta", value: pnl.net_sales, icon: TrendingUp, subtotal: true, strong: true },
-    { label: "Costo de mercancía (COGS)", value: pnl.cogs, icon: Package, neg: true },
-    { label: "Margen bruto", value: pnl.gross_margin, icon: Wallet, subtotal: true, strong: true, pct: marginPct },
-    { label: "Comisiones", value: pnl.commissions, icon: Receipt, neg: true },
-    { label: "Costos de envío", value: pnl.shipping_costs, icon: Truck, neg: true },
-    { label: "Gastos de marketing", value: pnl.marketing, icon: Megaphone, neg: true },
-    { label: "Retenciones de impuestos", value: pnl.withholdings, icon: Landmark, neg: true },
-    { label: "Contribución neta del cliente", value: pnl.net_contribution, icon: TrendingUp, subtotal: true, strong: true, pct: contribPct },
+  // Pequeño indicador de variación vs periodo anterior
+  const DeltaTag = ({ cur, prev, invert = false }: { cur: number; prev: number; invert?: boolean }) => {
+    const d = pctDelta(cur, prev);
+    const good = invert ? d <= 0 : d >= 0;
+    const color = d === 0 ? tk.textLo : good ? tk.good : tk.bad;
+    const Arrow = d >= 0 ? ArrowUpRight : ArrowDownRight;
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 11, fontWeight: 700, color }}>
+        <Arrow size={11} />{Math.abs(d)}%
+      </span>
+    );
+  };
+
+  const pnlRows: { label: string; value: number; prev: number; icon: typeof Receipt; neg?: boolean; subtotal?: boolean; strong?: boolean; pct?: number; invert?: boolean }[] = [
+    { label: "Venta bruta", value: pnl.gross_sales, prev: pnlPrev.gross_sales, icon: ShoppingBag, strong: true },
+    { label: "Devoluciones (SR&A)", value: pnl.returns, prev: pnlPrev.returns, icon: RotateCcw, neg: true, pct: returnRate, invert: true },
+    { label: "Bonificaciones", value: pnl.allowances, prev: pnlPrev.allowances, icon: Percent, neg: true, invert: true },
+    { label: "Descuentos", value: pnl.discounts, prev: pnlPrev.discounts, icon: Percent, neg: true, invert: true },
+    { label: "Venta neta", value: pnl.net_sales, prev: pnlPrev.net_sales, icon: TrendingUp, subtotal: true, strong: true },
+    { label: "Costo de mercancía (COGS)", value: pnl.cogs, prev: pnlPrev.cogs, icon: Package, neg: true, invert: true },
+    { label: "Margen bruto", value: pnl.gross_margin, prev: pnlPrev.gross_margin, icon: Wallet, subtotal: true, strong: true, pct: marginPct },
+    { label: "Comisiones", value: pnl.commissions, prev: pnlPrev.commissions, icon: Receipt, neg: true, invert: true },
+    { label: "Costos de envío", value: pnl.shipping_costs, prev: pnlPrev.shipping_costs, icon: Truck, neg: true, invert: true },
+    { label: "Gastos de marketing", value: pnl.marketing, prev: pnlPrev.marketing, icon: Megaphone, neg: true, invert: true },
+    { label: "Retenciones de impuestos", value: pnl.withholdings, prev: pnlPrev.withholdings, icon: Landmark, neg: true, invert: true },
+    { label: "Contribución neta del cliente", value: pnl.net_contribution, prev: pnlPrev.net_contribution, icon: TrendingUp, subtotal: true, strong: true, pct: contribPct },
   ];
 
   return (
@@ -219,8 +226,23 @@ export default function Customer360({
             <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: tk.textLo, padding: 4 }}><X size={22} /></button>
           </div>
 
+          {/* Selector de periodo */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 9, padding: 3 }}>
+              {(["week", "month", "quarter", "year"] as Period[]).map((p) => {
+                const on = period === p;
+                return (
+                  <button key={p} onClick={() => setPeriod(p)} style={{ border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 600, padding: "6px 14px", borderRadius: 7, background: on ? tk.accent : "transparent", color: on ? "#06122B" : tk.textMid }}>
+                    {PERIOD_LABELS[p]}
+                  </button>
+                );
+              })}
+            </div>
+            <span style={{ fontSize: 11.5, color: tk.textLo }}>comparado vs {PERIOD_PREV_LABELS[period]}</span>
+          </div>
+
           {/* Tabs */}
-          <div style={{ display: "flex", gap: 2, marginTop: 18, marginBottom: -22, overflowX: "auto" }}>
+          <div style={{ display: "flex", gap: 2, marginTop: 16, marginBottom: -22, overflowX: "auto" }}>
             {([
               { id: "resumen", label: "Resumen", icon: TrendingUp },
               { id: "pnl", label: "Estado de resultados", icon: Receipt },
@@ -244,11 +266,11 @@ export default function Customer360({
             <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
                 {[
-                  { label: "Venta bruta", value: money(pnl.gross_sales), icon: ShoppingBag, color: tk.accent, sub: "acumulado" },
-                  { label: "Venta neta", value: money(pnl.net_sales), icon: TrendingUp, color: tk.good, sub: `${((pnl.net_sales / pnl.gross_sales) * 100).toFixed(0)}% de la bruta` },
-                  { label: "Margen bruto", value: `${marginPct.toFixed(1)}%`, icon: Wallet, color: tk.warn, sub: money(pnl.gross_margin) },
-                  { label: "Devoluciones", value: `${returnRate.toFixed(1)}%`, icon: RotateCcw, color: tk.bad, sub: money(pnl.returns) },
-                  { label: "Contribución neta", value: money(pnl.net_contribution), icon: ArrowUpRight, color: tk.good, sub: `${contribPct.toFixed(1)}% margen` },
+                  { label: "Venta bruta", value: money(pnl.gross_sales), icon: ShoppingBag, color: tk.accent, cur: pnl.gross_sales, prev: pnlPrev.gross_sales },
+                  { label: "Venta neta", value: money(pnl.net_sales), icon: TrendingUp, color: tk.good, cur: pnl.net_sales, prev: pnlPrev.net_sales },
+                  { label: "Margen bruto", value: `${marginPct.toFixed(1)}%`, icon: Wallet, color: tk.warn, cur: pnl.gross_margin, prev: pnlPrev.gross_margin },
+                  { label: "Devoluciones", value: `${returnRate.toFixed(1)}%`, icon: RotateCcw, color: tk.bad, cur: pnl.returns, prev: pnlPrev.returns, invert: true },
+                  { label: "Contribución neta", value: money(pnl.net_contribution), icon: ArrowUpRight, color: tk.good, cur: pnl.net_contribution, prev: pnlPrev.net_contribution },
                   { label: "Saldo actual", value: money(customer.credit_amount ?? 0), icon: CreditCard, color: tk.warn, sub: `${customer.credit_days ?? 0} días crédito` },
                 ].map((k) => {
                   const Icon = k.icon;
@@ -259,7 +281,9 @@ export default function Customer360({
                         <span style={{ fontSize: 11.5, color: tk.textLo }}>{k.label}</span>
                       </div>
                       <div style={{ fontSize: 19, fontWeight: 800, color: tk.textHi }}>{k.value}</div>
-                      <div style={{ fontSize: 11, color: tk.textLo, marginTop: 2 }}>{k.sub}</div>
+                      <div style={{ fontSize: 11, color: tk.textLo, marginTop: 3 }}>
+                        {k.sub ? k.sub : <DeltaTag cur={k.cur!} prev={k.prev!} invert={k.invert} />}
+                      </div>
                     </div>
                   );
                 })}
@@ -267,7 +291,7 @@ export default function Customer360({
 
               {/* Mini cascada visual */}
               <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: 20 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: tk.textHi, marginBottom: 14 }}>De venta bruta a contribución neta</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: tk.textHi, marginBottom: 14 }}>De venta bruta a contribución neta · {PERIOD_LABELS[period]}</div>
                 {[
                   { label: "Venta bruta", value: pnl.gross_sales, color: tk.accent },
                   { label: "Venta neta", value: pnl.net_sales, color: tk.good },
@@ -290,7 +314,7 @@ export default function Customer360({
               </div>
 
               <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: tk.textLo, background: tk.panel2, padding: "10px 14px", borderRadius: 8 }}>
-                <Info size={15} /> Datos demostrativos. Al conectar el backend, este expediente mostrará los movimientos reales del cliente.
+                <Info size={15} /> Datos demostrativos del {PERIOD_LABELS[period].toLowerCase()}. Al conectar el backend, mostrará los movimientos reales del cliente en cada periodo.
               </div>
             </>
           )}
@@ -298,8 +322,8 @@ export default function Customer360({
           {/* ── TAB: P&L (cascada completa) ── */}
           {tab === "pnl" && (
             <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: 22 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: tk.textHi, marginBottom: 4 }}>Estado de resultados del cliente</div>
-              <div style={{ fontSize: 12.5, color: tk.textLo, marginBottom: 18 }}>Cascada completa de venta bruta a contribución neta</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: tk.textHi, marginBottom: 4 }}>Estado de resultados · {PERIOD_LABELS[period]}</div>
+              <div style={{ fontSize: 12.5, color: tk.textLo, marginBottom: 18 }}>Cascada de venta bruta a contribución neta, con variación vs {PERIOD_PREV_LABELS[period]}</div>
               {pnlRows.map((row, i) => {
                 const Icon = row.icon;
                 const color = row.subtotal ? (row.value >= 0 ? tk.good : tk.bad) : row.neg ? tk.bad : tk.textHi;
@@ -317,8 +341,11 @@ export default function Customer360({
                         <span style={{ fontSize: 11, color: tk.textLo, background: tk.panel3, padding: "1px 7px", borderRadius: 20 }}>{row.pct.toFixed(1)}%</span>
                       )}
                     </span>
-                    <span style={{ fontSize: row.strong ? 15 : 13.5, fontWeight: row.strong ? 800 : 600, color, fontVariantNumeric: "tabular-nums" }}>
-                      {row.neg ? "− " : ""}{money(row.value)}
+                    <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <DeltaTag cur={row.value} prev={row.prev} invert={row.invert} />
+                      <span style={{ fontSize: row.strong ? 15 : 13.5, fontWeight: row.strong ? 800 : 600, color, fontVariantNumeric: "tabular-nums", minWidth: 96, textAlign: "right" }}>
+                        {row.neg ? "− " : ""}{money(row.value)}
+                      </span>
                     </span>
                   </div>
                 );
@@ -371,6 +398,7 @@ export default function Customer360({
                 <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "14px 16px" }}>
                   <div style={{ fontSize: 11.5, color: tk.textLo, marginBottom: 6 }}>Total devuelto</div>
                   <div style={{ fontSize: 19, fontWeight: 800, color: tk.bad }}>{money(pnl.returns)}</div>
+                  <div style={{ marginTop: 4 }}><DeltaTag cur={pnl.returns} prev={pnlPrev.returns} invert /></div>
                 </div>
                 <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "14px 16px" }}>
                   <div style={{ fontSize: 11.5, color: tk.textLo, marginBottom: 6 }}>Tasa de devolución</div>
