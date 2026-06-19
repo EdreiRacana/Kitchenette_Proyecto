@@ -59,13 +59,33 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
 }) {
   const [d, setD] = useState<CustomerDraft>(emptyDraft());
   const [err, setErr] = useState<string | null>(null);
+  // Snapshot del estado inicial (vacío para alta, o el cliente al editar).
+  // Sirve para saber si el usuario tocó algo (formulario "sucio").
+  const [baseline, setBaseline] = useState<string>(JSON.stringify(emptyDraft()));
 
   useEffect(() => {
-    if (open) { setD(editing ? fromCustomer(editing) : emptyDraft()); setErr(null); }
+    if (open) {
+      const init = editing ? fromCustomer(editing) : emptyDraft();
+      setD(init);
+      setBaseline(JSON.stringify(init));
+      setErr(null);
+    }
   }, [open, editing]);
 
   const set = <K extends keyof CustomerDraft>(k: K, v: CustomerDraft[K]) =>
     setD((p) => ({ ...p, [k]: v }));
+
+  // ¿Hay cambios sin guardar? Compara el estado actual contra el inicial.
+  const isDirty = useMemo(() => JSON.stringify(d) !== baseline, [d, baseline]);
+
+  // El Modal llama esto al intentar cerrar por clic-afuera o Escape.
+  // Si está limpio → deja cerrar. Si tiene cambios → pide confirmación.
+  const confirmClose = () => {
+    if (!isDirty) return true;
+    return window.confirm(
+      tr("cust_discard", "Tienes cambios sin guardar. ¿Seguro que quieres cerrar y descartarlos?")
+    );
+  };
 
   const regimenOpts = useMemo(() => regimenesForRfc(d.rfc || ""), [d.rfc]);
   const municipioList = d.estado ? MUNICIPIOS[d.estado] : undefined;
@@ -84,7 +104,7 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
   };
 
   return (
-    <Modal tk={tk} open={open} onClose={onClose} width={860}
+    <Modal tk={tk} open={open} onClose={onClose} width={860} confirmClose={confirmClose}
       title={editing ? tr("cust_edit", "Editar cliente") : tr("cust_new", "Nuevo cliente")}
       footer={
         <>
