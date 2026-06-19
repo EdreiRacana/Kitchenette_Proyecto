@@ -13,6 +13,7 @@ import { customersApi } from "./api";
 import type { Customer, CustomerDraft, CustomerFilters, CustomerStats } from "./types";
 import { CustomerForm } from "./CustomerForm";
 import { SUCURSALES, PRICE_LISTS, CLIENT_TYPES } from "./catalogs";
+import Customer360 from "./Customer360";
 
 const PAGE = 20;
 
@@ -49,6 +50,7 @@ export default function CustomersModule({ t, s }: { t: unknown; s: unknown }) {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
+  const [viewing, setViewing] = useState<Customer | null>(null);
 
   const filters = useMemo<CustomerFilters>(() => ({
     q: q || undefined, sucursal: sucursal || undefined, client_type: clientType || undefined,
@@ -196,7 +198,7 @@ export default function CustomersModule({ t, s }: { t: unknown; s: unknown }) {
                 <tr><td colSpan={9}><EmptyState tk={tk} title={tr("cust_empty", "Sin clientes")} hint={tr("cust_empty_hint", "Ajusta los filtros o registra un nuevo cliente.")} /></td></tr>
               ) : (
                 items.map((c, i) => (
-                  <tr key={c.id} onClick={() => openEdit(c)} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2, cursor: "pointer" }}
+                  <tr key={c.id} onClick={() => setViewing(c)} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2, cursor: "pointer" }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = tk.panel3)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = i % 2 === 0 ? tk.panel : tk.panel2)}>
                     <td style={{ padding: "12px 16px", fontSize: 13, color: tk.accent, fontWeight: 700, whiteSpace: "nowrap" }}>{c.client_number ?? "—"}</td>
@@ -236,6 +238,16 @@ export default function CustomersModule({ t, s }: { t: unknown; s: unknown }) {
           </div>
         )}
       </div>
+
+      {/* Vista 360° del cliente */}
+      {viewing && (
+        <Customer360
+          tk={tk}
+          customer={viewing}
+          onClose={() => setViewing(null)}
+          onEdit={(c) => { setViewing(null); openEdit(c); }}
+        />
+      )}
 
       <CustomerForm tk={tk} tr={tr} open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} onSubmit={handleSubmit} editing={editing} saving={saving} />
     </div>
