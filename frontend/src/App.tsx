@@ -249,7 +249,11 @@ const pillColor = (t) => ({ Pagado: t.good, Pendiente: t.warn, Parcial: t.nova, 
 
 /* ============================ Atoms ============================ */
 function Card({ t, children, style, className, onClick }) {
-  return <div className={className} onClick={onClick} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, ...style }}>{children}</div>;
+  const isDark = t.name === "dark";
+  const glass = isDark
+    ? { background: "rgba(20,32,68,0.55)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", border: `1px solid ${t.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.22)" }
+    : { background: t.panel, border: `1px solid ${t.border}` };
+  return <div className={className} onClick={onClick} style={{ ...glass, borderRadius: 14, ...style }}>{children}</div>;
 }
 function Pill({ t, s, k }) {
   const c = pillColor(t)[k] || t.textLo;
@@ -921,11 +925,23 @@ export default function App() {
         ::placeholder{color:${t.textLo}}
         .clickrow{transition:transform .12s ease, box-shadow .12s ease}
         .clickrow:hover{transform:translateY(-1px); box-shadow:0 8px 20px rgba(0,0,0,0.18)}
+        @keyframes glowDrift{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(20px,-16px) scale(1.06)}}
+        .bg-orb{position:absolute;border-radius:50%;pointer-events:none;filter:blur(8px);animation:glowDrift 18s ease-in-out infinite}
+        @media (prefers-reduced-motion:reduce){.bg-orb{animation:none}}
       `}</style>
       <Sidebar t={t} s={s} page={page} setPage={setPage} collapsed={collapsed} setCollapsed={setCollapsed} />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
         <Topbar t={t} s={s} lang={lang} setLang={setLang} company={company} setCompany={setCompany} theme={theme} setTheme={setTheme} onLogout={() => setAuthed(false)} />
-        <main style={{ flex: 1, padding: 24, overflowX: "hidden" }}>{PAGES[page]}</main>
+        <main style={{ flex: 1, padding: 24, overflowX: "hidden", position: "relative" }}>
+          {theme === "dark" && (
+            <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>
+              <span className="bg-orb" style={{ width: 460, height: 460, top: -160, right: -120, background: "radial-gradient(circle, rgba(51,178,245,0.22), transparent 70%)" }} />
+              <span className="bg-orb" style={{ width: 420, height: 420, bottom: -180, left: -100, background: "radial-gradient(circle, rgba(52,211,153,0.14), transparent 70%)", animationDelay: "-6s" }} />
+              <span className="bg-orb" style={{ width: 360, height: 360, top: "30%", left: "45%", background: "radial-gradient(circle, rgba(167,139,250,0.12), transparent 70%)", animationDelay: "-12s" }} />
+            </div>
+          )}
+          <div style={{ position: "relative", zIndex: 1 }}>{PAGES[page]}</div>
+        </main>
       </div>
     </div>
   );
