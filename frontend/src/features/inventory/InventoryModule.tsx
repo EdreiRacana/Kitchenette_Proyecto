@@ -90,6 +90,12 @@ const totalStock = (p: Product) => p.variants.reduce((a, v) => a + (v.stock_leve
 const inventoryValue = (p: Product) => p.variants.reduce((a, v) => a + (v.cost_price || v.price) * (v.stock_levels?.reduce((s, l) => s + l.quantity, 0) || 0), 0);
 const margin = (v: Variant) => v.cost_price && v.price ? Math.round(((v.price - v.cost_price) / v.price) * 100) : null;
 
+// Vidrio: en modo oscuro devuelve panel translúcido + blur; en claro, sólido.
+const glass = (t: any): React.CSSProperties =>
+  t?.name === "dark"
+    ? { background: "rgba(20,32,68,0.55)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", border: `1px solid ${t.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.22)" }
+    : { background: t.panel, border: `1px solid ${t.border}` };
+
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function InventoryModule({ t, s }: { t: any; s: any }) {
   const [tab, setTab] = useState<"dashboard" | "products" | "warehouses" | "entries" | "movements" | "adjustments">("dashboard");
@@ -218,7 +224,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
               { label: lang === "es" ? "Stock bajo" : "Low stock", value: String(kpis.lowStock), icon: AlertTriangle, color: t.warn, sub: lang === "es" ? "menos de 20 uds" : "less than 20 units" },
               { label: lang === "es" ? "Almacenes" : "Warehouses", value: String(warehouses.filter(w => w.is_active).length), icon: Warehouse, color: "#A78BFA", sub: lang === "es" ? "activos" : "active" },
             ].map((k) => (
-              <div key={k.label} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
+              <div key={k.label} style={{ ...glass(t), borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
                 <div style={{ background: k.color + "22", color: k.color, borderRadius: 10, padding: 10, display: "flex" }}><k.icon size={20} /></div>
                 <div>
                   <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 3 }}>{k.label}</div>
@@ -231,7 +237,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
 
           {/* Alerts */}
           {(kpis.outOfStock > 0 || kpis.lowStock > 0) && (
-            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+            <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
                 <AlertTriangle size={16} color={t.warn} /> {lang === "es" ? "Alertas de stock" : "Stock alerts"}
               </div>
@@ -260,7 +266,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
           )}
 
           {/* Top products by value */}
-          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+          <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
               <BarChart3 size={16} color={t.nova} /> {lang === "es" ? "Top productos por valor" : "Top products by value"}
             </div>
@@ -283,7 +289,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
           </div>
 
           {/* Recent movements */}
-          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+          <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
               <ArrowLeftRight size={16} color={t.nova} /> {lang === "es" ? "Movimientos recientes" : "Recent movements"}
             </div>
@@ -340,7 +346,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
           {/* Summary */}
           <div style={{ fontSize: 12.5, color: t.textLo }}>{filteredProducts.length} {lang === "es" ? "productos" : "products"}</div>
 
-          {/* Table */}
+          {/* Table (sólida para legibilidad) */}
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
@@ -428,7 +434,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
               const stockInWh = products.reduce((a, p) => a + p.variants.reduce((b, v) => b + (v.stock_levels?.filter(l => l.warehouse_id === w.id).reduce((c, l) => c + l.quantity, 0) || 0), 0), 0);
               const skusInWh = products.filter(p => p.variants.some(v => v.stock_levels?.some(l => l.warehouse_id === w.id && l.quantity > 0))).length;
               return (
-                <div key={w.id} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+                <div key={w.id} style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <div style={{ background: wt.color + "22", color: wt.color, borderRadius: 10, padding: 9, display: "flex" }}><Warehouse size={18} /></div>
@@ -470,9 +476,9 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
               { icon: Truck, title: lang === "es" ? "Orden de compra" : "Purchase order", desc: lang === "es" ? "Recibe mercancía de una orden existente" : "Receive goods from an existing order", color: "#A78BFA", action: () => alert(lang === "es" ? "Próximamente: órdenes de compra" : "Coming soon: purchase orders") },
               { icon: RotateCcw, title: lang === "es" ? "Devolución de cliente" : "Customer return", desc: lang === "es" ? "Regresa stock por devolución" : "Return stock from customer return", color: t.warn, action: () => alert(lang === "es" ? "Próximamente: devoluciones" : "Coming soon: returns") },
             ].map(card => (
-              <button key={card.title} onClick={card.action} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20, textAlign: "left", cursor: "pointer", transition: "transform .12s, box-shadow .12s" }}
-                onMouseEnter={e => { (e.currentTarget as any).style.transform = "translateY(-2px)"; (e.currentTarget as any).style.boxShadow = `0 8px 24px rgba(0,0,0,0.18)`; }}
-                onMouseLeave={e => { (e.currentTarget as any).style.transform = ""; (e.currentTarget as any).style.boxShadow = ""; }}>
+              <button key={card.title} onClick={card.action} style={{ ...glass(t), borderRadius: 12, padding: 20, textAlign: "left", cursor: "pointer", transition: "transform .12s, box-shadow .12s" }}
+                onMouseEnter={e => { (e.currentTarget as any).style.transform = "translateY(-2px)"; }}
+                onMouseLeave={e => { (e.currentTarget as any).style.transform = ""; }}>
                 <div style={{ background: card.color + "22", color: card.color, borderRadius: 10, padding: 10, display: "inline-flex", marginBottom: 12 }}><card.icon size={20} /></div>
                 <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>{card.title}</div>
                 <div style={{ fontSize: 12.5, color: t.textLo, lineHeight: 1.5 }}>{card.desc}</div>
@@ -484,7 +490,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
           </div>
 
           {/* Recent entries */}
-          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+          <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 14 }}>{lang === "es" ? "Entradas recientes" : "Recent entries"}</div>
             {movements.filter(m => m.movement_type === "IN").slice(0, 5).map(m => (
               <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: `1px solid ${t.borderSoft}` }}>
@@ -595,7 +601,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
         </div>
       )}
 
-      {/* ── MODAL: Product Detail ── */}
+      {/* ── MODAL: Product Detail (drawer sólido) ── */}
       {selectedProduct && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }} onClick={() => setSelectedProduct(null)}>
           <div onClick={e => e.stopPropagation()} style={{ width: 420, height: "100vh", background: t.panel, borderLeft: `1px solid ${t.border}`, padding: 24, overflowY: "auto", display: "flex", flexDirection: "column", gap: 20 }}>
