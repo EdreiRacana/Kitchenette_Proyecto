@@ -106,6 +106,12 @@ const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFract
 const mxnShort = (n: number) => n >= 1000000 ? "$" + (n / 1000000).toFixed(1) + "M" : n >= 1000 ? "$" + Math.round(n / 1000) + "k" : "$" + n;
 const fmtDate = (d: string) => new Date(d).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
 
+// Vidrio: en modo oscuro devuelve panel translúcido + blur; en claro, sólido.
+const glass = (t: any): React.CSSProperties =>
+  t?.name === "dark"
+    ? { background: "rgba(20,32,68,0.55)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", border: `1px solid ${t.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.22)" }
+    : { background: t.panel, border: `1px solid ${t.border}` };
+
 const AGING_COLORS: Record<string, string> = { current: "#34D399", "1-30": "#FBBF24", "31-60": "#FB923C", "61-90": "#F87171", "90+": "#DC2626" };
 const STATUS_META: Record<string, { label: string; color: string; icon: any }> = {
   pending: { label: "Pendiente", color: "#FBBF24", icon: Clock },
@@ -236,7 +242,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
               { label: "Por pagar", value: mxn(kpis.totalCXP), icon: CreditCard, color: "#F87171", sub: `${cxp.filter(c => c.status === "overdue").length} facturas vencidas` },
               { label: "Saldo en bancos", value: mxn(kpis.totalBankBalance), icon: PiggyBank, color: t.nova, sub: `${banks.length} cuentas` },
             ].map(k => (
-              <div key={k.label} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
+              <div key={k.label} style={{ ...glass(t), borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
                 <div style={{ background: k.color + "22", color: k.color, borderRadius: 10, padding: 10, display: "flex", flexShrink: 0 }}><k.icon size={20} /></div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 3 }}>{k.label}</div>
@@ -249,7 +255,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
 
           {/* Income vs Expenses mini chart */}
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14 }}>
-            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+            <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
                 <BarChart3 size={16} color={t.nova} /> Flujo mensual 2026
               </div>
@@ -276,7 +282,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
             </div>
 
             {/* Expenses by category */}
-            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+            <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 16 }}>Egresos por categoría</div>
               {Object.entries(
                 transactions.filter(tx => tx.type === "expense").reduce((acc, tx) => {
@@ -308,7 +314,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
               { title: "Antigüedad CXC — Por cobrar", items: cxc.filter(c => c.status !== "paid"), total: kpis.totalCXC },
               { title: "Antigüedad CXP — Por pagar", items: cxp.filter(c => c.status !== "paid"), total: kpis.totalCXP },
             ].map(({ title, items, total }) => (
-              <div key={title} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+              <div key={title} style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 14 }}>{title}</div>
                 {[
                   { label: "Corriente", key: "current" },
@@ -350,14 +356,14 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
               { label: "Clientes con saldo", value: String(cxc.filter(c => c.status !== "paid").length), color: t.nova },
               { label: "En riesgo (60+ días)", value: mxn(cxc.filter(c => c.aging === "61-90" || c.aging === "90+").reduce((a, c) => a + c.balance, 0)), color: t.bad },
             ].map(k => (
-              <div key={k.label} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: "14px 16px" }}>
+              <div key={k.label} style={{ ...glass(t), borderRadius: 10, padding: "14px 16px" }}>
                 <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 4 }}>{k.label}</div>
                 <div style={{ fontSize: 20, fontWeight: 800, color: k.color }}>{k.value}</div>
               </div>
             ))}
           </div>
 
-          {/* CXC Table */}
+          {/* CXC Table (sólida) */}
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
@@ -417,7 +423,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
               { label: "Proveedores activos", value: String(cxp.filter(c => c.status !== "paid").length), color: t.nova },
               { label: "Próximo vencimiento", value: fmtDate(cxp.filter(c => c.status !== "paid").sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())[0]?.due_date || ""), color: t.warn },
             ].map(k => (
-              <div key={k.label} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: "14px 16px" }}>
+              <div key={k.label} style={{ ...glass(t), borderRadius: 10, padding: "14px 16px" }}>
                 <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 4 }}>{k.label}</div>
                 <div style={{ fontSize: k.label === "Próximo vencimiento" ? 14 : 20, fontWeight: 800, color: k.color }}>{k.value}</div>
               </div>
@@ -482,7 +488,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
               const typeLabels: Record<string, string> = { checking: "Cuenta cheques", savings: "Ahorro", credit: "Tarjeta crédito" };
               const color = typeColors[b.type] || t.nova;
               return (
-                <div key={b.id} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, padding: 22, position: "relative", overflow: "hidden" }}>
+                <div key={b.id} style={{ ...glass(t), borderRadius: 14, padding: 22, position: "relative", overflow: "hidden" }}>
                   <div style={{ position: "absolute", top: -20, right: -20, width: 100, height: 100, borderRadius: 99, background: color + "0d" }} />
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                     <div>
@@ -509,7 +515,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
           </div>
 
           {/* Total summary */}
-          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+          <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>Posición total de tesorería</div>
               <div style={{ fontSize: 26, fontWeight: 800, color: kpis.totalBankBalance >= 0 ? t.good : t.bad }}>{mxn(kpis.totalBankBalance)}</div>
@@ -609,14 +615,14 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
               { label: "Flujo neto", value: mxn(DEMO_FLOW.reduce((a, f) => a + f.net, 0)), color: t.nova },
               { label: "Mejor mes", value: DEMO_FLOW.reduce((a, f) => f.net > a.net ? f : a, DEMO_FLOW[0]).period, color: t.good },
             ].map(k => (
-              <div key={k.label} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: "14px 16px" }}>
+              <div key={k.label} style={{ ...glass(t), borderRadius: 10, padding: "14px 16px" }}>
                 <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 4 }}>{k.label}</div>
                 <div style={{ fontSize: 20, fontWeight: 800, color: k.color }}>{k.value}</div>
               </div>
             ))}
           </div>
 
-          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 24 }}>
+          <div style={{ ...glass(t), borderRadius: 12, padding: 24 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 20 }}>Flujo de caja mensual 2026</div>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
