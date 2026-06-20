@@ -4,30 +4,19 @@
 // Principios: jerarquía visual, semáforos, drill-down, comparativos, cero desbordamiento
 // Contrato { t, s } igual que App.tsx
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import {
   LayoutDashboard, TrendingUp, Package, Wallet, Users, Sliders,
-  ArrowUpRight, ArrowDownRight, Minus, AlertTriangle, CheckCircle,
-  XCircle, Download, RefreshCw, Filter, ChevronRight, ChevronDown,
+  ArrowUpRight, ArrowDownRight, AlertTriangle, CheckCircle,
+  XCircle, Download, RefreshCw, ChevronRight,
   BarChart3, Target, DollarSign, ShoppingCart, Clock, Star,
-  Info, Calendar, FileText, Mail, Bell, Maximize2, X, Check,
-  TrendingDown, Activity, Zap, Award, Eye, IdCard, Receipt,
+  Calendar, Mail, X, Check,
+  TrendingDown, Activity, Zap,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Period = "week" | "month" | "quarter" | "year";
 type TrafficLight = "green" | "yellow" | "red";
-
-interface KPICard {
-  id: string;
-  label: string;
-  value: number;
-  prev: number;
-  format: "money" | "number" | "percent";
-  icon: any;
-  color: string;
-  target?: number;
-}
 
 interface ChartPoint {
   label: string;
@@ -335,8 +324,59 @@ const light = (cur: number, prev: number, target?: number): TrafficLight => {
 const lightColor = (tl: TrafficLight, t: any) => ({ green: t.good, yellow: t.warn, red: t.bad }[tl]);
 const PERIOD_LABELS: Record<Period, string> = { week: "Semana", month: "Mes", quarter: "Trimestre", year: "Año" };
 
+// ── Exportar a CSV (descarga real en el navegador) ──────────────────────────
+function downloadCSV(filename: string, rows: (string | number)[][]) {
+  const csv = rows.map(r => r.map(cell => {
+    const s = String(cell);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }).join(",")).join("\n");
+  // BOM para que Excel respete acentos
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportPeriodReport(period: Period) {
+  const D = DATA[period];
+  const rows: (string | number)[][] = [];
+  rows.push([`Reporte BI · ${PERIOD_LABELS[period]}`, "", ""]);
+  rows.push([]);
+  rows.push(["INDICADORES PRINCIPALES", "Actual", "Anterior"]);
+  rows.push(["Ventas totales", D.ventas, D.ventasPrev]);
+  rows.push(["Utilidad neta", D.utilidad, D.utilidadPrev]);
+  rows.push(["Pedidos", D.pedidos, D.pedidosPrev]);
+  rows.push(["Ticket promedio", D.ticket, D.ticketPrev]);
+  rows.push(["Margen bruto (%)", D.margenBruto, D.margenBrutoPrev]);
+  rows.push(["Flujo neto", D.flujoNeto, D.flujoPrev]);
+  rows.push(["Costo nómina", D.nomina, D.nominaPrev]);
+  rows.push(["Por cobrar (CXC)", D.cxc, ""]);
+  rows.push(["Por pagar (CXP)", D.cxp, ""]);
+  rows.push([]);
+  rows.push(["TOP CLIENTES", "Monto", "Tendencia %"]);
+  D.topClientes.forEach(c => rows.push([c.label, c.value, c.trend ?? ""]));
+  rows.push([]);
+  rows.push(["TOP PRODUCTOS", "Monto", "% del total"]);
+  D.topProductos.forEach(p => rows.push([p.label, p.value, p.pct ?? ""]));
+  rows.push([]);
+  rows.push(["VENTAS POR CANAL", "Monto", "%"]);
+  D.ventasPorCanal.forEach(c => rows.push([c.label, c.value, c.pct ?? ""]));
+  rows.push([]);
+  rows.push(["GASTOS POR CATEGORÍA", "Monto", "%"]);
+  D.gastosCat.forEach(g => rows.push([g.label, g.value, g.pct ?? ""]));
+  const fecha = new Date().toISOString().slice(0, 10);
+  downloadCSV(`Reporte_BI_${PERIOD_LABELS[period]}_${fecha}.csv`, rows);
+}
+
 // ── SVG Charts ────────────────────────────────────────────────────────────
+// LineBarChart con tooltip interactivo al pasar el cursor.
 function LineBarChart({ data, t, height = 200 }: { data: ChartPoint[]; t: any; height?: number }) {
+  const [hover, setHover] = useState<number | null>(null);
   const W = 600, H = height, PL = 8, PR = 8, PT = 16, PB = 28;
   const iw = W - PL - PR, ih = H - PT - PB, n = data.length;
   const maxVal = Math.max(...data.map(d => Math.max(d.current, d.prev, d.target || 0))) * 1.15;
@@ -347,33 +387,66 @@ function LineBarChart({ data, t, height = 200 }: { data: ChartPoint[]; t: any; h
   const prevPath = data.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(d.prev).toFixed(1)}`).join(" ");
   const areaPath = `${curPath} L ${x(n - 1).toFixed(1)} ${(PT + ih).toFixed(1)} L ${PL.toFixed(1)} ${(PT + ih).toFixed(1)} Z`;
   const grid = [0, 0.25, 0.5, 0.75, 1].map(g => PT + g * ih);
+  const nearest = (px: number) => { let b = 0, bd = 1e9; for (let i = 0; i < n; i++) { const dd = Math.abs(px - x(i)); if (dd < bd) { bd = dd; b = i; } } return b; };
+  const hv = hover !== null ? data[hover] : null;
+  const hd = hv ? delta(hv.current, hv.prev) : 0;
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height }} preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="biArea" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={t.nova} stopOpacity="0.25" />
-          <stop offset="100%" stopColor={t.nova} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      {grid.map((g, i) => <line key={i} x1={PL} x2={W - PR} y1={g} y2={g} stroke={t.gridLine} strokeWidth="1" opacity="0.6" />)}
-      {data.map((d, i) => (
-        <rect key={i} x={x(i) - barW / 2} y={y(d.current)} width={barW} height={(PT + ih) - y(d.current)} fill={t.nova} opacity="0.12" rx="3" />
-      ))}
-      {data[0]?.target && <path d={data.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(d.target!).toFixed(1)}`).join(" ")} fill="none" stroke={t.warn} strokeWidth="1.5" strokeDasharray="6 4" opacity="0.6" />}
-      <path d={prevPath} fill="none" stroke={t.textLo} strokeWidth="1.8" strokeDasharray="5 4" opacity="0.5" />
-      <path d={areaPath} fill="url(#biArea)" />
-      <path d={curPath} fill="none" stroke={t.nova} strokeWidth="2.6" strokeLinejoin="round" strokeLinecap="round" />
-      {data.map((d, i) => (
-        <g key={i}>
-          <circle cx={x(i)} cy={y(d.current)} r="3.5" fill={t.panel} stroke={t.nova} strokeWidth="2" />
-          <text x={x(i)} y={H - 8} textAnchor="middle" fontSize="11" fill={t.textLo}>{d.label}</text>
-        </g>
-      ))}
-    </svg>
+    <div style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height, cursor: "crosshair" }} preserveAspectRatio="none"
+        onMouseMove={(e) => { const r = (e.currentTarget as SVGElement).getBoundingClientRect(); setHover(nearest((e.clientX - r.left) / r.width * W)); }}
+        onMouseLeave={() => setHover(null)}>
+        <defs>
+          <linearGradient id="biArea" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={t.nova} stopOpacity="0.25" />
+            <stop offset="100%" stopColor={t.nova} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {grid.map((g, i) => <line key={i} x1={PL} x2={W - PR} y1={g} y2={g} stroke={t.gridLine} strokeWidth="1" opacity="0.6" />)}
+        {data.map((d, i) => (
+          <rect key={i} x={x(i) - barW / 2} y={y(d.current)} width={barW} height={(PT + ih) - y(d.current)} fill={t.nova} opacity={hover === i ? "0.22" : "0.12"} rx="3" />
+        ))}
+        {data[0]?.target && <path d={data.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(d.target!).toFixed(1)}`).join(" ")} fill="none" stroke={t.warn} strokeWidth="1.5" strokeDasharray="6 4" opacity="0.6" />}
+        <path d={prevPath} fill="none" stroke={t.textLo} strokeWidth="1.8" strokeDasharray="5 4" opacity="0.5" />
+        <path d={areaPath} fill="url(#biArea)" />
+        <path d={curPath} fill="none" stroke={t.nova} strokeWidth="2.6" strokeLinejoin="round" strokeLinecap="round" />
+        {hv && <line x1={x(hover!)} x2={x(hover!)} y1={PT} y2={PT + ih} stroke={t.nova} strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />}
+        {data.map((d, i) => (
+          <g key={i}>
+            <circle cx={x(i)} cy={y(d.current)} r={hover === i ? "5" : "3.5"} fill={t.panel} stroke={t.nova} strokeWidth="2" />
+            <text x={x(i)} y={H - 8} textAnchor="middle" fontSize="11" fill={t.textLo}>{d.label}</text>
+          </g>
+        ))}
+        {hv && <circle cx={x(hover!)} cy={y(hv.prev)} r="4" fill={t.panel} stroke={t.textLo} strokeWidth="2" />}
+      </svg>
+      {hv && (
+        <div style={{ position: "absolute", top: 6, left: `${(x(hover!) / W) * 100 > 62 ? (x(hover!) / W) * 100 - 2 : (x(hover!) / W) * 100 + 2}%`, transform: (x(hover!) / W) * 100 > 62 ? "translateX(-100%)" : "none", background: t.panel2, border: `1px solid ${t.nova}`, borderRadius: 10, padding: "9px 12px", fontSize: 12, boxShadow: "0 8px 24px rgba(0,0,0,.45)", minWidth: 130, pointerEvents: "none", zIndex: 5 }}>
+          <div style={{ fontWeight: 700, color: t.textHi, marginBottom: 6 }}>{hv.label}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 14, marginBottom: 3 }}>
+            <span style={{ color: t.textMid, display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 9, background: t.nova }} />Actual</span>
+            <span style={{ color: t.textHi, fontWeight: 700 }}>{hv.current}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 14, marginBottom: hv.target ? 3 : 6 }}>
+            <span style={{ color: t.textMid, display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 9, background: t.textLo }} />Anterior</span>
+            <span style={{ color: t.textMid }}>{hv.prev}</span>
+          </div>
+          {hv.target && (
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 14, marginBottom: 6 }}>
+              <span style={{ color: t.textMid, display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 9, background: t.warn }} />Meta</span>
+              <span style={{ color: t.warn }}>{hv.target}</span>
+            </div>
+          )}
+          <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 5, color: hd >= 0 ? t.good : t.bad, fontWeight: 700 }}>
+            {hd >= 0 ? "▲ +" : "▼ "}{hd}% vs anterior
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
 function DonutChart({ data, t, size = 140 }: { data: { label: string; value: number; color: string }[]; t: any; size?: number }) {
+  const [hover, setHover] = useState<number | null>(null);
   const total = data.reduce((a, d) => a + d.value, 0);
   const cx = size / 2, cy = size / 2, r = size * 0.38, sw = size * 0.14;
   let angle = -90;
@@ -388,12 +461,22 @@ function DonutChart({ data, t, size = 140 }: { data: { label: string; value: num
     const large = deg > 180 ? 1 : 0;
     return { ...d, pct, path: `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}` };
   });
+  const hv = hover !== null ? arcs[hover] : null;
   return (
     <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}>
       {arcs.map((a, i) => (
-        <path key={i} d={a.path} fill="none" stroke={a.color} strokeWidth={sw} strokeLinecap="butt" opacity="0.85" />
+        <path key={i} d={a.path} fill="none" stroke={a.color} strokeWidth={hover === i ? sw + 4 : sw} strokeLinecap="butt" opacity={hover === null || hover === i ? "0.9" : "0.4"} style={{ cursor: "pointer", transition: "stroke-width .12s" }}
+          onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} />
       ))}
       <circle cx={cx} cy={cy} r={r - sw / 2 - 2} fill={t.panel2} />
+      {hv ? (
+        <>
+          <text x={cx} y={cy - 3} textAnchor="middle" fontSize={size * 0.13} fontWeight="800" fill={t.textHi}>{Math.round(hv.pct * 100)}%</text>
+          <text x={cx} y={cy + 12} textAnchor="middle" fontSize={size * 0.075} fill={t.textLo}>{hv.label.length > 14 ? hv.label.slice(0, 13) + "…" : hv.label}</text>
+        </>
+      ) : (
+        <text x={cx} y={cy + 4} textAnchor="middle" fontSize={size * 0.085} fill={t.textLo}>Total</text>
+      )}
     </svg>
   );
 }
@@ -470,6 +553,11 @@ function KPIBlock({ label, value, prev, format, icon: Icon, color, target, t, sp
         <span style={{ fontSize: 11, color: t.textLo }}>vs anterior</span>
         {target && <span style={{ fontSize: 11, color: t.textLo, marginLeft: 4 }}>· meta {fmt(target, format)}</span>}
       </div>
+      {onClick && (
+        <div style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 8, fontSize: 11, color: t.nova, fontWeight: 600 }}>
+          Ver detalle <ChevronRight size={12} />
+        </div>
+      )}
     </div>
   );
 }
@@ -529,13 +617,22 @@ function HealthBadge({ tl, t }: { tl: TrafficLight; t: any }) {
 
 // ── Main Module ───────────────────────────────────────────────────────────
 export default function BIModule({ t, s }: { t: any; s: any }) {
+  void s;
   const [tab, setTab] = useState<"executive" | "sales" | "inventory" | "finance" | "hr" | "custom">("executive");
   const [period, setPeriod] = useState<Period>("month");
-  const [drillOpen, setDrillOpen] = useState<string | null>(null);
+  // El drill ahora guarda el KPI completo (funciona desde cualquier pestaña).
+  const [drillKpi, setDrillKpi] = useState<any | null>(null);
   const [customKPIs, setCustomKPIs] = useState<string[]>(["ventas", "utilidad", "pedidos", "inventario"]);
+  // Programación de reporte (visual; el envío real es backend)
+  const [schedOpen, setSchedOpen] = useState(false);
+  const [schedFreq, setSchedFreq] = useState("Semanal");
+  const [schedFmt, setSchedFmt] = useState("PDF");
+  const [schedEmail, setSchedEmail] = useState("");
+  const [schedSaved, setSchedSaved] = useState<string | null>(null);
 
   const D = DATA[period];
-  const lang = "es";
+
+  const openDrill = (k: any) => setDrillKpi(k);
 
   const tabBtn = (active: boolean): React.CSSProperties => ({
     padding: "10px 16px", borderRadius: "10px 10px 0 0", border: "none", cursor: "pointer",
@@ -567,6 +664,8 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
     { id: "cxc", label: "Por cobrar", value: D.cxc, prev: D.cxc * 1.05, format: "money" as const, icon: Clock, color: t.warn },
   ];
 
+  const sparkFor = (k: any) => [k.prev * 0.9, k.prev * 0.95, k.prev, k.prev * 1.02, k.value * 0.97, k.value];
+
   // ── Module health ───────────────────────────────────────────────────────
   const moduleHealth = [
     { label: "Ventas", tl: light(D.ventas, D.ventasPrev, D.ventasMeta), value: fmt(D.ventas, "money"), delta: delta(D.ventas, D.ventasPrev) },
@@ -577,6 +676,11 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
     { label: "Margen bruto", tl: D.margenBruto >= 35 ? "green" as TrafficLight : D.margenBruto >= 28 ? "yellow" as TrafficLight : "red" as TrafficLight, value: D.margenBruto + "%", delta: delta(D.margenBruto, D.margenBrutoPrev) },
   ];
 
+  const handleSchedule = () => {
+    setSchedSaved(`Reporte ${schedFreq.toLowerCase()} en ${schedFmt}${schedEmail ? ` a ${schedEmail}` : ""}`);
+    setSchedOpen(false);
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
       {/* Header */}
@@ -586,7 +690,6 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
           <p style={{ margin: "4px 0 0", color: t.textLo, fontSize: 13 }}>Inteligencia de negocio en tiempo real — todos los módulos integrados</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {/* Period selector */}
           <div style={{ display: "flex", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 3, gap: 2 }}>
             {(["week", "month", "quarter", "year"] as Period[]).map(p => (
               <button key={p} onClick={() => setPeriod(p)} style={{ padding: "7px 14px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: period === p ? 700 : 500, background: period === p ? `linear-gradient(135deg, ${t.nova}, ${t.navy})` : "transparent", color: period === p ? "#fff" : t.textMid, transition: "all .15s" }}>
@@ -594,14 +697,23 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
               </button>
             ))}
           </div>
-          <button style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>
+          <button onClick={() => exportPeriodReport(period)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>
             <Download size={14} /> Exportar
           </button>
-          <button style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>
+          <button onClick={() => setSchedOpen(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>
             <Mail size={14} /> Programar reporte
           </button>
         </div>
       </div>
+
+      {/* Confirmación de reporte programado */}
+      {schedSaved && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: t.good + "16", border: `1px solid ${t.good}44`, color: t.good, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 16 }}>
+          <CheckCircle size={16} />
+          <span style={{ flex: 1 }}>Programado: <b>{schedSaved}</b>. <span style={{ color: t.textMid }}>El envío automático se activará al conectar el servidor de correo.</span></span>
+          <button onClick={() => setSchedSaved(null)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.good, display: "flex" }}><X size={16} /></button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div style={{ display: "flex", borderBottom: `1px solid ${t.border}`, marginBottom: 20, overflowX: "auto", gap: 2 }}>
@@ -615,8 +727,6 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Executive ── */}
       {tab === "executive" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-
-          {/* Module health scorecard */}
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
             <SectionTitle icon={Activity} title="Semáforo de salud empresarial" color={t.nova} t={t} />
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
@@ -639,14 +749,12 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
             </div>
           </div>
 
-          {/* Main KPIs */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
             {ALL_KPIS.slice(0, 6).map(k => (
-              <KPIBlock key={k.id} {...k} t={t} sparkData={[k.prev * 0.9, k.prev * 0.95, k.prev, k.prev * 1.02, k.value * 0.97, k.value]} onClick={() => setDrillOpen(k.id)} />
+              <KPIBlock key={k.id} {...k} t={t} sparkData={sparkFor(k)} onClick={() => openDrill(k)} />
             ))}
           </div>
 
-          {/* Main chart + gauge */}
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14 }}>
             <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
@@ -683,7 +791,6 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
             </div>
           </div>
 
-          {/* Top clientes + productos */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <DrillTable rows={D.topClientes} t={t} title="Top 5 clientes por volumen" />
             <DrillTable rows={D.topProductos} t={t} title="Top 5 productos por venta" />
@@ -696,23 +803,20 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <SectionTitle icon={ShoppingCart} title="Análisis de Ventas & CRM" color={t.good} t={t} />
 
-          {/* KPIs */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>
             {[
-              { label: "Ventas totales", value: D.ventas, prev: D.ventasPrev, format: "money" as const, icon: TrendingUp, color: t.good, target: D.ventasMeta },
-              { label: "Pedidos cerrados", value: D.pedidos, prev: D.pedidosPrev, format: "number" as const, icon: ShoppingCart, color: t.nova },
-              { label: "Ticket promedio", value: D.ticket, prev: D.ticketPrev, format: "money" as const, icon: Star, color: t.warn },
-              { label: "Tasa conversión", value: 68, prev: 62, format: "percent" as const, icon: Target, color: "#A78BFA" },
-            ].map(k => <KPIBlock key={k.label} {...k} t={t} sparkData={[k.prev * 0.9, k.prev * 0.95, k.prev, k.value * 0.97, k.value]} />)}
+              { id: "s_ventas", label: "Ventas totales", value: D.ventas, prev: D.ventasPrev, format: "money" as const, icon: TrendingUp, color: t.good, target: D.ventasMeta },
+              { id: "s_pedidos", label: "Pedidos cerrados", value: D.pedidos, prev: D.pedidosPrev, format: "number" as const, icon: ShoppingCart, color: t.nova },
+              { id: "s_ticket", label: "Ticket promedio", value: D.ticket, prev: D.ticketPrev, format: "money" as const, icon: Star, color: t.warn },
+              { id: "s_conv", label: "Tasa conversión", value: 68, prev: 62, format: "percent" as const, icon: Target, color: "#A78BFA" },
+            ].map(k => <KPIBlock key={k.id} {...k} t={t} sparkData={sparkFor(k)} onClick={() => openDrill(k)} />)}
           </div>
 
-          {/* Chart */}
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 14 }}>Evolución de ventas vs período anterior y meta</div>
             <LineBarChart data={D.chart} t={t} height={220} />
           </div>
 
-          {/* Embudo de ventas */}
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 16 }}>Embudo de conversión</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -765,15 +869,14 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>
             {[
-              { label: "Valor total", value: D.inventarioVal, prev: D.inventarioVal * 0.97, format: "money" as const, icon: Package, color: t.nova },
-              { label: "Rotación mensual", value: 4.2, prev: 3.8, format: "number" as const, icon: RefreshCw, color: t.good },
-              { label: "Días de inventario", value: 38, prev: 42, format: "number" as const, icon: Calendar, color: t.warn },
-              { label: "SKUs activos", value: 7, prev: 7, format: "number" as const, icon: BarChart3, color: "#A78BFA" },
-              { label: "Agotados", value: 1, prev: 0, format: "number" as const, icon: XCircle, color: t.bad },
-            ].map(k => <KPIBlock key={k.label} {...k} t={t} sparkData={[k.prev * 0.9, k.prev, k.prev * 1.02, k.value]} />)}
+              { id: "i_val", label: "Valor total", value: D.inventarioVal, prev: D.inventarioVal * 0.97, format: "money" as const, icon: Package, color: t.nova },
+              { id: "i_rot", label: "Rotación mensual", value: 4.2, prev: 3.8, format: "number" as const, icon: RefreshCw, color: t.good },
+              { id: "i_dias", label: "Días de inventario", value: 38, prev: 42, format: "number" as const, icon: Calendar, color: t.warn },
+              { id: "i_sku", label: "SKUs activos", value: 7, prev: 7, format: "number" as const, icon: BarChart3, color: "#A78BFA" },
+              { id: "i_ago", label: "Agotados", value: 1, prev: 0, format: "number" as const, icon: XCircle, color: t.bad },
+            ].map(k => <KPIBlock key={k.id} {...k} t={t} sparkData={sparkFor(k)} onClick={() => openDrill(k)} />)}
           </div>
 
-          {/* ABC Analysis */}
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>Análisis ABC de inventario</div>
             <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 16 }}>A = 80% del valor · B = 15% · C = 5%</div>
@@ -798,7 +901,6 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
             <DrillTable rows={D.topProductos} t={t} title="Top productos por valor de inventario" />
           </div>
 
-          {/* Stock health */}
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 14 }}>Salud del stock por producto</div>
             {[
@@ -839,16 +941,15 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>
             {[
-              { label: "Ingresos totales", value: D.ventas, prev: D.ventasPrev, format: "money" as const, icon: TrendingUp, color: t.good },
-              { label: "Utilidad neta", value: D.utilidad, prev: D.utilidadPrev, format: "money" as const, icon: DollarSign, color: t.nova },
-              { label: "Margen bruto", value: D.margenBruto, prev: D.margenBrutoPrev, format: "percent" as const, icon: Activity, color: t.warn, target: 38 },
-              { label: "Flujo neto", value: D.flujoNeto, prev: D.flujoPrev, format: "money" as const, icon: Zap, color: "#34D399" },
-              { label: "CXC por cobrar", value: D.cxc, prev: D.cxc * 1.05, format: "money" as const, icon: Clock, color: t.warn },
-              { label: "CXP por pagar", value: D.cxp, prev: D.cxp * 0.98, format: "money" as const, icon: TrendingDown, color: t.bad },
-            ].map(k => <KPIBlock key={k.label} {...k} t={t} sparkData={[k.prev * 0.9, k.prev, k.value]} />)}
+              { id: "f_ing", label: "Ingresos totales", value: D.ventas, prev: D.ventasPrev, format: "money" as const, icon: TrendingUp, color: t.good },
+              { id: "f_uti", label: "Utilidad neta", value: D.utilidad, prev: D.utilidadPrev, format: "money" as const, icon: DollarSign, color: t.nova },
+              { id: "f_mar", label: "Margen bruto", value: D.margenBruto, prev: D.margenBrutoPrev, format: "percent" as const, icon: Activity, color: t.warn, target: 38 },
+              { id: "f_flu", label: "Flujo neto", value: D.flujoNeto, prev: D.flujoPrev, format: "money" as const, icon: Zap, color: "#34D399" },
+              { id: "f_cxc", label: "CXC por cobrar", value: D.cxc, prev: D.cxc * 1.05, format: "money" as const, icon: Clock, color: t.warn },
+              { id: "f_cxp", label: "CXP por pagar", value: D.cxp, prev: D.cxp * 0.98, format: "money" as const, icon: TrendingDown, color: t.bad },
+            ].map(k => <KPIBlock key={k.id} {...k} t={t} sparkData={sparkFor(k)} onClick={() => openDrill(k)} />)}
           </div>
 
-          {/* P&L Simplificado */}
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 16 }}>Estado de resultados simplificado (P&L)</div>
             <div style={{ maxWidth: 560 }}>
@@ -866,31 +967,30 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: `${row.line ? "10px 0 8px" : "7px 0"}`, borderTop: row.line ? `1px solid ${t.border}` : "none", borderBottom: row.line && row.big ? `2px solid ${t.border}` : "none", paddingLeft: row.indent ? 16 : 0 }}>
                   <span style={{ fontSize: row.big ? 14 : 13, color: row.color || t.textMid, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
                   <span style={{ fontSize: row.big ? 15 : 13.5, fontWeight: row.bold ? 700 : 500, color: row.value >= 0 ? t.good : t.bad, fontVariantNumeric: "tabular-nums" }}>
-                    {row.value >= 0 ? "" : ""}{fmtFull(Math.abs(row.value))}
+                    {fmtFull(Math.abs(row.value))}
                   </span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Razones financieras */}
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 16 }}>Razones financieras clave</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
               {[
-                { label: "Margen neto", value: `${((D.utilidad / D.ventas) * 100).toFixed(1)}%`, ref: ">15% saludable", tl: (D.utilidad / D.ventas) > 0.15 ? "green" : "yellow" as TrafficLight },
+                { label: "Margen neto", value: `${((D.utilidad / D.ventas) * 100).toFixed(1)}%`, ref: ">15% saludable", tl: ((D.utilidad / D.ventas) > 0.15 ? "green" : "yellow") as TrafficLight },
                 { label: "Liquidez corriente", value: "2.4x", ref: ">1.5x saludable", tl: "green" as TrafficLight },
                 { label: "Endeudamiento", value: "28%", ref: "<50% saludable", tl: "green" as TrafficLight },
                 { label: "ROE", value: `${((D.utilidad / (D.ventas * 0.4)) * 100).toFixed(1)}%`, ref: ">12% saludable", tl: "green" as TrafficLight },
                 { label: "Rotación CXC", value: "18 días", ref: "<30 días saludable", tl: "green" as TrafficLight },
-                { label: "Costo nómina / ventas", value: `${((D.nomina / D.ventas) * 100).toFixed(1)}%`, ref: "<20% saludable", tl: (D.nomina / D.ventas) < 0.2 ? "green" : "yellow" as TrafficLight },
+                { label: "Costo nómina / ventas", value: `${((D.nomina / D.ventas) * 100).toFixed(1)}%`, ref: "<20% saludable", tl: ((D.nomina / D.ventas) < 0.2 ? "green" : "yellow") as TrafficLight },
               ].map(r => {
                 const c = lightColor(r.tl, t);
                 return (
                   <div key={r.label} style={{ background: t.panel2, border: `1px solid ${c}33`, borderRadius: 10, padding: "14px 16px" }}>
                     <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 6 }}>{r.label}</div>
                     <div style={{ fontSize: 22, fontWeight: 800, color: c }}>{r.value}</div>
-                    <div style={{ fontSize: 11, color: t.textLo, marginTop: 5 }}>Ref: {r.ref}</div>
+                    <div style={{ fontSize: 11, color: t.textLo, marginTop: 5, marginBottom: 8 }}>Ref: {r.ref}</div>
                     <HealthBadge tl={r.tl} t={t} />
                   </div>
                 );
@@ -909,20 +1009,18 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>
             {[
-              { label: "Costo nómina", value: D.nomina, prev: D.nominaPrev, format: "money" as const, icon: DollarSign, color: "#A78BFA" },
-              { label: "Nómina / Ventas", value: Math.round((D.nomina / D.ventas) * 1000) / 10, prev: Math.round((D.nominaPrev / D.ventasPrev) * 1000) / 10, format: "percent" as const, icon: Activity, color: t.warn },
-              { label: "Empleados activos", value: 7, prev: 6, format: "number" as const, icon: Users, color: t.good },
-              { label: "Contratos por vencer", value: 2, prev: 1, format: "number" as const, icon: AlertTriangle, color: t.bad },
-              { label: "Ausentismo", value: 3.2, prev: 4.1, format: "percent" as const, icon: Clock, color: t.warn },
-            ].map(k => <KPIBlock key={k.label} {...k} t={t} sparkData={[k.prev * 0.95, k.prev, k.value]} />)}
+              { id: "h_nom", label: "Costo nómina", value: D.nomina, prev: D.nominaPrev, format: "money" as const, icon: DollarSign, color: "#A78BFA" },
+              { id: "h_rel", label: "Nómina / Ventas", value: Math.round((D.nomina / D.ventas) * 1000) / 10, prev: Math.round((D.nominaPrev / D.ventasPrev) * 1000) / 10, format: "percent" as const, icon: Activity, color: t.warn },
+              { id: "h_emp", label: "Empleados activos", value: 7, prev: 6, format: "number" as const, icon: Users, color: t.good },
+              { id: "h_con", label: "Contratos por vencer", value: 2, prev: 1, format: "number" as const, icon: AlertTriangle, color: t.bad },
+              { id: "h_aus", label: "Ausentismo", value: 3.2, prev: 4.1, format: "percent" as const, icon: Clock, color: t.warn },
+            ].map(k => <KPIBlock key={k.id} {...k} t={t} sparkData={sparkFor(k)} onClick={() => openDrill(k)} />)}
           </div>
 
-          {/* Payroll trend */}
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 14 }}>Costo de nómina vs ventas</div>
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
               {D.chart.map((c, i) => {
-                const pct = Math.round((D.nomina / D.ventas) * 1000) / 10;
                 const barH = Math.min((D.nomina / (D.ventas * 0.25)) * 100, 100);
                 return (
                   <div key={i} style={{ flex: 1, minWidth: 60, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
@@ -988,7 +1086,7 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
           {customKPIs.length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
               {ALL_KPIS.filter(k => customKPIs.includes(k.id)).map(k => (
-                <KPIBlock key={k.id} {...k} t={t} sparkData={[k.prev * 0.88, k.prev * 0.94, k.prev, k.value * 0.97, k.value]} />
+                <KPIBlock key={k.id} {...k} t={t} sparkData={sparkFor(k)} onClick={() => openDrill(k)} />
               ))}
             </div>
           )}
@@ -1005,53 +1103,48 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
               <div>
                 <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>Frecuencia</label>
-                <select style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none" }}>
-                  <option>Diario</option>
-                  <option>Semanal</option>
-                  <option>Quincenal</option>
-                  <option>Mensual</option>
+                <select value={schedFreq} onChange={e => setSchedFreq(e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none" }}>
+                  <option>Diario</option><option>Semanal</option><option>Quincenal</option><option>Mensual</option>
                 </select>
               </div>
               <div>
                 <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>Formato</label>
-                <select style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none" }}>
-                  <option>PDF</option>
-                  <option>Excel</option>
-                  <option>Ambos</option>
+                <select value={schedFmt} onChange={e => setSchedFmt(e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none" }}>
+                  <option>PDF</option><option>Excel</option><option>Ambos</option>
                 </select>
               </div>
               <div>
                 <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>Email destino</label>
-                <input placeholder="correo@empresa.mx" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
+                <input value={schedEmail} onChange={e => setSchedEmail(e.target.value)} placeholder="correo@empresa.mx" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
               </div>
             </div>
-            <button style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-              <Bell size={14} /> Activar reporte automático
+            <button onClick={handleSchedule} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              <Mail size={14} /> Activar reporte automático
             </button>
           </div>
         </div>
       )}
 
-      {/* ── DRILL-DOWN Modal ── */}
-      {drillOpen && (() => {
-        const kpi = ALL_KPIS.find(k => k.id === drillOpen);
-        if (!kpi) return null;
+      {/* ── DRILL-DOWN Modal (con gráfica de tooltip) ── */}
+      {drillKpi && (() => {
+        const kpi = drillKpi;
+        const dd = delta(kpi.value, kpi.prev);
         return (
-          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setDrillOpen(null)}>
-            <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 600, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, padding: 24 }}>
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setDrillKpi(null)}>
+            <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 600, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, padding: 24, maxHeight: "90vh", overflowY: "auto" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
                 <div>
-                  <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 4 }}>{kpi.label} — Detalle</div>
+                  <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 4 }}>{kpi.label} — Detalle · {PERIOD_LABELS[period]}</div>
                   <div style={{ fontSize: 28, fontWeight: 800, color: t.textHi }}>{fmt(kpi.value, kpi.format)}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                    <span style={{ fontSize: 13, color: delta(kpi.value, kpi.prev) >= 0 ? t.good : t.bad, fontWeight: 700 }}>
-                      {delta(kpi.value, kpi.prev) >= 0 ? "+" : ""}{delta(kpi.value, kpi.prev)}% vs período anterior
+                    <span style={{ fontSize: 13, color: dd >= 0 ? t.good : t.bad, fontWeight: 700 }}>
+                      {dd >= 0 ? "+" : ""}{dd}% vs período anterior
                     </span>
                   </div>
                 </div>
-                <button onClick={() => setDrillOpen(null)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+                <button onClick={() => setDrillKpi(null)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
               </div>
-              <LineBarChart data={D.chart.map(c => ({ ...c, current: c.current * (kpi.value / D.ventas) * 1000, prev: c.prev * (kpi.prev / D.ventasPrev) * 1000 }))} t={t} height={180} />
+              <LineBarChart data={D.chart.map(c => ({ label: c.label, current: Math.round(c.current * (kpi.value / D.ventas) * 1000) / 10 || c.current, prev: Math.round(c.prev * (kpi.prev / D.ventasPrev) * 1000) / 10 || c.prev }))} t={t} height={180} />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 16 }}>
                 {[
                   { l: "Actual", v: fmt(kpi.value, kpi.format), c: t.textHi },
@@ -1068,6 +1161,42 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
           </div>
         );
       })()}
+
+      {/* ── Modal: Programar reporte ── */}
+      {schedOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setSchedOpen(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 460, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, padding: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+              <span style={{ fontSize: 16, fontWeight: 700, color: t.textHi }}>Programar reporte automático</span>
+              <button onClick={() => setSchedOpen(false)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>Frecuencia</label>
+                <select value={schedFreq} onChange={e => setSchedFreq(e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none" }}>
+                  <option>Diario</option><option>Semanal</option><option>Quincenal</option><option>Mensual</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>Formato</label>
+                <select value={schedFmt} onChange={e => setSchedFmt(e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none" }}>
+                  <option>PDF</option><option>Excel</option><option>Ambos</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>Email destino</label>
+                <input value={schedEmail} onChange={e => setSchedEmail(e.target.value)} placeholder="correo@empresa.mx" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <div style={{ fontSize: 11.5, color: t.textLo, background: t.panel2, padding: "10px 12px", borderRadius: 8 }}>
+                El envío automático de correos se activará al conectar el servidor. Por ahora se guarda la configuración.
+              </div>
+              <button onClick={handleSchedule} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "11px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}>
+                <Mail size={15} /> Guardar programación
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`@keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}`}</style>
     </div>
