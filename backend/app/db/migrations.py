@@ -4,7 +4,8 @@ Idempotent startup migrations — resilient.
 Why this exists:
   `Base.metadata.create_all` only creates *missing tables*; it never alters a
   table that already exists. When we add columns to an existing model (e.g. the
-  professional Customer fields), a live Postgres table needs ALTER statements.
+  professional Customer fields, or the Sales `kind`/money breakdown), a live
+  Postgres table needs ALTER statements.
 
   This runs those ALTERs automatically on every startup. Safe to repeat: every
   statement uses IF NOT EXISTS, so once applied each is a no-op.
@@ -67,21 +68,82 @@ _CUSTOMER_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS ix_customers_rfc         ON customers (rfc)",
 ]
 
+# ── Sales: columnas añadidas a `orders` después del esquema original ─────────
+# El modelo unifica pedidos y cotizaciones con `kind`, guarda el desglose de
+# dinero explícito, control de cobranza (paid_amount) y snapshot CFDI.
+# Todas con IF NOT EXISTS → si la columna ya existe, es no-op.
+_SALES_STATEMENTS = [
+    # Clasificación pedido/cotización (la que causaba el 500)
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS kind            VARCHAR DEFAULT 'order'",
+    # Relaciones / metadatos
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS warehouse_id    INTEGER",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method  VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS channel         VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS currency        VARCHAR DEFAULT 'MXN'",
+    # Desglose de dinero
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS subtotal        DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount_type   VARCHAR DEFAULT 'amount'",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount_value  DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount_amount DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS tax_rate        DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS tax_amount      DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_amount DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_amount    DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_amount     DOUBLE PRECISION DEFAULT 0",
+    # Fechas
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS due_date        TIMESTAMPTZ",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS valid_until     TIMESTAMPTZ",
+    # Notas
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS notes           TEXT",
+    # Snapshot CFDI / facturación
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS bill_rfc        VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS bill_name       VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS bill_use        VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS bill_regime     VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS bill_zip        VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS cfdi_uuid       VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS cfdi_status     VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS invoiced_at     TIMESTAMPTZ",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at      TIMESTAMPTZ DEFAULT now()",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at      TIMESTAMPTZ",
+    # Backfill: filas viejas deben tener kind='order' y status coherente
+    "UPDATE orders SET kind = 'order' WHERE kind IS NULL",
+    "UPDATE orders SET currency = 'MXN' WHERE currency IS NULL",
+    "UPDATE orders SET discount_type = 'amount' WHERE discount_type IS NULL",
+    # Índices que el modelo declara
+    "CREATE INDEX IF NOT EXISTS ix_orders_kind   ON orders (kind)",
+    "CREATE INDEX IF NOT EXISTS ix_orders_status ON orders (status)",
+    # order_items: columnas snapshot añadidas
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS product_name    VARCHAR",
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS sku             VARCHAR",
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS discount_amount DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS tax_rate        DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS subtotal        DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS total           DOUBLE PRECISION DEFAULT 0",
+]
+
 
 def _apply(sync_conn: Connection) -> None:
     # Postgres only — SQLite already has the full schema from create_all.
     if sync_conn.dialect.name != "postgresql":
         return
-    applied, skipped = 0, 0
-    for stmt in _CUSTOMER_STATEMENTS:
-        try:
-            with sync_conn.begin():  # own transaction; isolates failures
-                sync_conn.execute(text(stmt))
-            applied += 1
-        except Exception as e:  # noqa: BLE001 — never let a migration crash boot
-            skipped += 1
-            print(f"[startup migrations] skipped: {stmt[:70]} -> {e}")
-    print(f"[startup migrations] customers: {applied} applied, {skipped} skipped")
+
+    all_statements = [
+        ("customers", _CUSTOMER_STATEMENTS),
+        ("sales", _SALES_STATEMENTS),
+    ]
+
+    for label, statements in all_statements:
+        applied, skipped = 0, 0
+        for stmt in statements:
+            try:
+                with sync_conn.begin():  # own transaction; isolates failures
+                    sync_conn.execute(text(stmt))
+                applied += 1
+            except Exception as e:  # noqa: BLE001 — never let a migration crash boot
+                skipped += 1
+                print(f"[startup migrations] skipped: {stmt[:70]} -> {e}")
+        print(f"[startup migrations] {label}: {applied} applied, {skipped} skipped")
 
 
 async def run_startup_migrations(engine) -> None:
