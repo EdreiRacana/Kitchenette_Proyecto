@@ -20,7 +20,6 @@ async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(deps.get_db)]
 ):
-    # OAuth2PasswordRequestForm usa el campo 'username', que mapeamos a email.
     user = await service.authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -35,16 +34,37 @@ async def login_for_access_token(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+# ── DIAGNÓSTICO TEMPORAL — BORRAR DESPUÉS DE USAR ────────────────────────────
+# Lista los usuarios existentes (sin contraseñas). Es solo para identificar
+# qué cuenta está bloqueando /setup. ELIMINAR este endpoint en cuanto se use.
+@router.get("/debug-users")
+async def debug_list_users(
+    db: Annotated[AsyncSession, Depends(deps.get_db)]
+):
+    result = await db.execute(select(User))
+    users = result.scalars().all()
+    return {
+        "total": len(users),
+        "users": [
+            {
+                "id": u.id,
+                "email": u.email,
+                "full_name": u.full_name,
+                "role": u.role,
+                "is_superuser": u.is_superuser,
+                "is_active": u.is_active,
+            }
+            for u in users
+        ],
+    }
+
+
 # ── BOOTSTRAP: Primer administrador (solo funciona una vez) ──────────────────
-# Resuelve el problema del "huevo y la gallina": necesitas un admin para crear
-# usuarios, pero al inicio la base está vacía. Se auto-deshabilita en cuanto
-# exista al menos un usuario, así que no es un hueco de seguridad permanente.
 @router.post("/setup", response_model=schemas.User)
 async def setup_first_admin(
     user_in: schemas.UserCreate,
     db: Annotated[AsyncSession, Depends(deps.get_db)]
 ):
-    # 1) ¿Ya hay usuarios? Si sí, este endpoint queda permanentemente cerrado.
     result = await db.execute(select(sqlfunc.count()).select_from(User))
     user_count = result.scalar_one()
     if user_count > 0:
@@ -52,13 +72,9 @@ async def setup_first_admin(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="El sistema ya tiene usuarios. La configuración inicial está deshabilitada.",
         )
-
-    # 2) Verificación defensiva del email.
     existing = await service.get_user_by_email(db, user_in.email)
     if existing:
         raise HTTPException(status_code=400, detail="Ese email ya está registrado.")
-
-    # 3) Crear el primer usuario como superadministrador.
     hashed_password = security.get_password_hash(user_in.password)
     db_user = User(
         email=user_in.email,
@@ -66,7 +82,7 @@ async def setup_first_admin(
         full_name=user_in.full_name or "Administrador",
         role="admin",
         is_active=True,
-        is_superuser=True,  # ← lo que get_current_superuser valida
+        is_superuser=True,
     )
     db.add(db_user)
     await db.commit()
@@ -80,7 +96,6 @@ async def create_user(
     db: Annotated[AsyncSession, Depends(deps.get_db)],
     current_user: Annotated[schemas.User, Depends(deps.get_current_superuser)],
 ):
-    # Protegido: solo un superusuario puede crear cuentas nuevas.
     user = await service.get_user_by_email(db, user_in.email)
     if user:
         raise HTTPException(
@@ -98,7 +113,6 @@ async def read_users_me(
     return current_user
 
 
-# ── User & Role Management (Superuser only) ──────────────────────────────────
 @router.get("/users", response_model=List[schemas.User])
 async def read_users(
     db: Annotated[AsyncSession, Depends(deps.get_db)],
