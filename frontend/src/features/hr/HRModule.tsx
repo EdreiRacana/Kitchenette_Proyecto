@@ -209,6 +209,10 @@ const mxnShort = (n: number) => n >= 1000000 ? "$" + (n / 1000000).toFixed(1) + 
 const fmtDate = (d: string) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const daysUntil = (date: string) => Math.ceil((new Date(date).getTime() - Date.now()) / 86400000);
 const fullName = (e: Employee) => `${e.name} ${e.last_name}`;
+const glass = (t: any): React.CSSProperties =>
+  t?.name === "dark"
+    ? { background: "rgba(20,32,68,0.55)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", border: `1px solid ${t.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.22)" }
+    : { background: t.panel, border: `1px solid ${t.border}` };
 
 // ISR 2026 quincenal (tabla simplificada)
 const calcISR = (gravable: number): number => {
@@ -370,7 +374,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
               { label: "Contratos por vencer", value: String(kpis.expiring30), icon: AlertTriangle, color: t.bad, sub: "próximos 30 días" },
               { label: "Presentes hoy", value: String(kpis.presentToday), icon: UserCheck, color: t.good, sub: `${kpis.absentToday} faltas` },
             ].map(k => (
-              <div key={k.label} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
+              <div key={k.label} style={{ ...glass(t), borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
                 <div style={{ background: k.color + "22", color: k.color, borderRadius: 10, padding: 10, display: "flex", flexShrink: 0 }}><k.icon size={20} /></div>
                 <div>
                   <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 3 }}>{k.label}</div>
@@ -383,7 +387,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
 
           {/* Alerts */}
           {alerts.length > 0 && (
-            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+            <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
                 <Bell size={16} color={t.bad} /> Alertas de RH
               </div>
@@ -412,7 +416,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
 
           {/* Headcount by dept + Contract breakdown */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+            <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 14 }}>Headcount por departamento</div>
               {Object.entries(kpis.byDept).filter(([, v]) => v > 0).sort(([, a], [, b]) => b - a).map(([dept, count]) => {
                 const max = Math.max(...Object.values(kpis.byDept));
@@ -431,7 +435,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
               })}
             </div>
 
-            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+            <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 14 }}>Tipos de contrato</div>
               {Object.entries(CONTRACT_TYPES).map(([key, meta]) => {
                 const count = employees.filter(e => e.contract_type === key && e.is_active).length;
@@ -450,7 +454,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           </div>
 
           {/* Recent periods */}
-          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+          <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
               <Receipt size={16} color={t.nova} /> Períodos de nómina recientes
             </div>
@@ -583,7 +587,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
             {Object.entries(ATTENDANCE_META).map(([type, meta]) => {
               const count = todayAttendance.filter(a => a.type === type).length;
               return (
-                <div key={type} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                <div key={type} style={{ ...glass(t), borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ background: meta.color + "22", color: meta.color, borderRadius: 8, padding: 7, display: "flex" }}><meta.icon size={14} /></div>
                   <div>
                     <div style={{ fontSize: 11, color: t.textLo }}>{meta.label}</div>
@@ -661,7 +665,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Checker ── */}
       {tab === "checker" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+          <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>Control de jornada laboral</div>
             <div style={{ fontSize: 13, color: t.textLo, marginBottom: 20 }}>Reforma LFT 2026 — Registro electrónico obligatorio. Configura los canales de entrada/salida de tus empleados.</div>
 
@@ -705,7 +709,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           </div>
 
           {/* Live feed */}
-          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+          <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ width: 8, height: 8, borderRadius: 99, background: t.good, animation: "pulse 2s ease infinite" }} /> Feed en tiempo real — Hoy
             </div>
@@ -745,7 +749,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
               const freqColors: Record<string, string> = { quincenal: t.nova, semanal: t.good, catorcenal: "#A78BFA", mensual: t.warn };
               const freqColor = freqColors[p.frequency] || t.nova;
               return (
-                <div key={p.id} onClick={() => setSelectedPeriod(p)} style={{ background: t.panel, border: `1px solid ${p.status === "calculated" ? t.warn + "55" : t.border}`, borderRadius: 12, padding: 20, cursor: "pointer", transition: "transform .12s, box-shadow .12s" }}
+                <div key={p.id} onClick={() => setSelectedPeriod(p)} style={{ ...glass(t), border: `1px solid ${p.status === "calculated" ? t.warn + "55" : t.border}`, borderRadius: 12, padding: 20, cursor: "pointer", transition: "transform .12s, box-shadow .12s" }}
                   onMouseEnter={e => { (e.currentTarget as any).style.transform = "translateY(-2px)"; (e.currentTarget as any).style.boxShadow = `0 8px 24px rgba(0,0,0,0.15)`; }}
                   onMouseLeave={e => { (e.currentTarget as any).style.transform = ""; (e.currentTarget as any).style.boxShadow = ""; }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
@@ -811,7 +815,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           </div>
 
           {/* Payroll calculator preview */}
-          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+          <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 4 }}>Calculadora de nómina — Vista previa</div>
             <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 16 }}>Percepciones y deducciones estimadas por empleado (quincena)</div>
             <div style={{ overflowX: "auto" }}>
@@ -856,7 +860,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Dispersion ── */}
       {tab === "dispersion" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+          <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>Dispersión de pagos</div>
             <div style={{ fontSize: 13, color: t.textLo, marginBottom: 20 }}>Genera el archivo bancario para dispersar el pago de nómina directamente a las cuentas CLABE de tus empleados.</div>
 
@@ -938,7 +942,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
               { icon: Calendar, title: "Control de vacaciones", desc: "Días generados, tomados y pendientes por empleado y período.", color: t.nova, tag: "RH" },
               { icon: Clock, title: "Horas extra LFT 2026", desc: "Reporte de horas ordinarias, dobles y triples con clasificación fiscal.", color: t.good, tag: "LFT" },
             ].map(r => (
-              <button key={r.title} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20, textAlign: "left", cursor: "pointer" }}
+              <button key={r.title} style={{ ...glass(t), borderRadius: 12, padding: 20, textAlign: "left", cursor: "pointer" }}
                 onMouseEnter={e => { (e.currentTarget as any).style.transform = "translateY(-2px)"; (e.currentTarget as any).style.boxShadow = `0 8px 20px rgba(0,0,0,0.15)`; }}
                 onMouseLeave={e => { (e.currentTarget as any).style.transform = ""; (e.currentTarget as any).style.boxShadow = ""; }}
                 onClick={() => alert(demo ? `Demo: generando ${r.title}...` : `Generando ${r.title}`)}>
