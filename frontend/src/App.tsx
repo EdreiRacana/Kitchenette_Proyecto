@@ -16,6 +16,7 @@ import FinanceModule from "./features/finance/FinanceModule";
 import HRModule from "./features/hr/HRModule";
 import BIModule from "./features/bi/BIModule";
 import ConfigModule from "./features/config/ConfigModule";
+import api from "./services/api";
 
 
 /* ============================ Theme ============================ */
@@ -625,9 +626,51 @@ function Dashboard({ t, s, lang, setPage }) {
 }
 
 /* ============================ Login ============================ */
-function Login({ t, s, onEnter }) {
-  const [u, setU] = useState("admin@sthenova.mx");
-  const [p, setP] = useState("demo");
+function Login({ t, s, lang, onEnter }) {
+  const [u, setU] = useState("");
+  const [p, setP] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleLogin = async () => {
+    if (!u || !p) {
+      setError(lang === "en" ? "Enter your email and password." : "Ingresa tu correo y contraseña.");
+      return;
+    }
+    setError("");
+    setLoading(true);
+    try {
+      const body = new URLSearchParams();
+      body.append("username", u);
+      body.append("password", p);
+
+      const res = await api.post("/auth/login", body, {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      });
+
+      const token = res.data?.access_token;
+      if (!token) throw new Error("no token");
+
+      localStorage.setItem("token", token);
+      onEnter();
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status === 401) {
+        setError(lang === "en" ? "Incorrect email or password." : "Correo o contraseña incorrectos.");
+      } else if (status === 422) {
+        setError(lang === "en" ? "Please complete both fields." : "Completa ambos campos.");
+      } else {
+        setError(lang === "en"
+          ? "Could not connect. The server may be starting up — try again in a moment."
+          : "No se pudo conectar. El servidor puede estar iniciando — intenta de nuevo en un momento.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onKey = (e) => { if (e.key === "Enter" && !loading) handleLogin(); };
+
   return (
     <div style={{ minHeight: "100vh", background: t.base, display: "grid", placeItems: "center", padding: 24, position: "relative", overflow: "hidden" }}>
       <svg viewBox="0 0 800 800" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.5 }} preserveAspectRatio="xMidYMid slice" aria-hidden>
@@ -641,11 +684,27 @@ function Login({ t, s, onEnter }) {
         <div style={{ fontSize: 10, letterSpacing: 6, color: t.textLo, marginBottom: 30 }}>COMPLETE SYSTEM</div>
         <Card t={t} style={{ padding: 26, textAlign: "left" }}>
           <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600 }}>{s.login.user}</label>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 16px" }}><UserIcon size={16} color={t.textLo} /><input value={u} onChange={(e) => setU(e.target.value)} style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 14 }} /></div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 16px" }}>
+            <UserIcon size={16} color={t.textLo} />
+            <input value={u} onChange={(e) => setU(e.target.value)} onKeyDown={onKey} autoComplete="username" placeholder="correo@empresa.com" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 14 }} />
+          </div>
           <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600 }}>{s.login.pass}</label>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 20px" }}><Lock size={16} color={t.textLo} /><input type="password" value={p} onChange={(e) => setP(e.target.value)} style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 14 }} /></div>
-          <button onClick={onEnter} style={{ width: "100%", border: "none", cursor: "pointer", color: "#fff", fontSize: 15, fontWeight: 600, padding: "12px", borderRadius: 10, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, boxShadow: `0 8px 22px ${t.nova}40` }}>{s.login.enter}</button>
-          <p style={{ margin: "14px 0 0", fontSize: 11.5, color: t.textLo, textAlign: "center" }}>{s.login.demo}</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 20px" }}>
+            <Lock size={16} color={t.textLo} />
+            <input type="password" value={p} onChange={(e) => setP(e.target.value)} onKeyDown={onKey} autoComplete="current-password" placeholder="••••••••" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 14 }} />
+          </div>
+
+          {error && (
+            <div style={{ background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 9, padding: "9px 12px", fontSize: 12.5, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+              <AlertTriangle size={15} /> {error}
+            </div>
+          )}
+
+          <button onClick={handleLogin} disabled={loading} style={{ width: "100%", border: "none", cursor: loading ? "default" : "pointer", color: "#fff", fontSize: 15, fontWeight: 600, padding: "12px", borderRadius: 10, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, boxShadow: `0 8px 22px ${t.nova}40`, opacity: loading ? 0.7 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            {loading
+              ? <><RefreshCw size={16} className="spin" /> {lang === "en" ? "Signing in…" : "Entrando…"}</>
+              : s.login.enter}
+          </button>
         </Card>
         <p style={{ marginTop: 22, fontSize: 11, color: t.textLo }}>{s.login.platform}</p>
       </div>
@@ -881,7 +940,7 @@ function Config({ t, s, company }) {
 export default function App() {
   const [theme, setTheme] = useState("dark");
   const [lang, setLang] = useState("es");
-  const [authed, setAuthed] = useState(false);
+  const [authed, setAuthed] = useState(() => !!localStorage.getItem("token"));
   const [page, setPage] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
   const [company, setCompany] = useState(COMPANIES[0]);
@@ -898,9 +957,11 @@ export default function App() {
           0%,100%{opacity:.25; stroke:#23396f}
           50%{opacity:.9; stroke:#33B2F5}
         }
+        .spin{animation:spin360 .9s linear infinite}
+        @keyframes spin360{to{transform:rotate(360deg)}}
         @media (prefers-reduced-motion:reduce){.nova-glow,.login-tri{animation:none}}
       `}</style>
-      <Login t={t} s={s} onEnter={() => setAuthed(true)} />
+      <Login t={t} s={s} lang={lang} onEnter={() => setAuthed(true)} />
     </>);
   }
 
@@ -931,7 +992,7 @@ export default function App() {
       `}</style>
       <Sidebar t={t} s={s} page={page} setPage={setPage} collapsed={collapsed} setCollapsed={setCollapsed} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
-        <Topbar t={t} s={s} lang={lang} setLang={setLang} company={company} setCompany={setCompany} theme={theme} setTheme={setTheme} onLogout={() => setAuthed(false)} />
+        <Topbar t={t} s={s} lang={lang} setLang={setLang} company={company} setCompany={setCompany} theme={theme} setTheme={setTheme} onLogout={() => { localStorage.removeItem("token"); setAuthed(false); }} />
         <main style={{ flex: 1, padding: 24, overflowX: "hidden", position: "relative" }}>
           {theme === "dark" && (
             <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>
