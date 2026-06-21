@@ -14,38 +14,19 @@ import {
   ToggleLeft, ToggleRight, Activity, ShieldCheck,
 } from "lucide-react";
 
-// ── Types ──────────────────────────────────────────────────────────────────
 interface User {
-  id: number;
-  name: string;
-  email: string;
-  role: string;
-  department: string;
-  status: "active" | "inactive" | "pending";
-  last_login?: string;
-  avatar_color: string;
+  id: number; name: string; email: string; role: string; department: string;
+  status: "active" | "inactive" | "pending"; last_login?: string; avatar_color: string;
 }
 interface Role {
-  id: number;
-  name: string;
-  description: string;
-  users_count: number;
-  is_system: boolean;
-  color: string;
-  permissions: Record<string, { view: boolean; create: boolean; edit: boolean; delete: boolean; approve: boolean }>;
+  id: number; name: string; description: string; users_count: number; is_system: boolean;
+  color: string; permissions: Record<string, { view: boolean; create: boolean; edit: boolean; delete: boolean; approve: boolean }>;
 }
 interface Integration {
-  id: string;
-  name: string;
-  category: string;
-  icon: any;
-  color: string;
-  connected: boolean;
-  last_sync?: string;
-  description: string;
+  id: string; name: string; category: string; icon: any; color: string;
+  connected: boolean; last_sync?: string; description: string;
 }
 
-// ── Demo Data ─────────────────────────────────────────────────────────────
 const DEMO_USERS: User[] = [
   { id: 1, name: "Edrei Racana", email: "edrei@empresa.mx", role: "Administrador", department: "Dirección", status: "active", last_login: "Hace 5 min", avatar_color: "#33B2F5" },
   { id: 2, name: "Ana Torres", email: "a.torres@empresa.mx", role: "Contador", department: "Contabilidad", status: "active", last_login: "Hace 2 horas", avatar_color: "#34D399" },
@@ -58,30 +39,12 @@ const DEMO_USERS: User[] = [
 const MODULES_LIST = ["Tablero", "Ventas / CRM", "Clientes", "Inventario", "Finanzas", "RH / Nómina", "Reportes / BI", "Configuración"];
 
 const DEMO_ROLES: Role[] = [
-  {
-    id: 1, name: "Administrador", description: "Acceso total al sistema", users_count: 1, is_system: true, color: "#33B2F5",
-    permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: true, create: true, edit: true, delete: true, approve: true } }), {}),
-  },
-  {
-    id: 2, name: "Gerente Ventas", description: "Gestión completa de ventas y clientes", users_count: 1, is_system: false, color: "#FBBF24",
-    permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: true, create: ["Ventas / CRM", "Clientes", "Tablero", "Reportes / BI"].includes(m), edit: ["Ventas / CRM", "Clientes"].includes(m), delete: false, approve: m === "Ventas / CRM" } }), {}),
-  },
-  {
-    id: 3, name: "Contador", description: "Finanzas, nómina y reportes", users_count: 1, is_system: false, color: "#34D399",
-    permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: true, create: ["Finanzas", "RH / Nómina"].includes(m), edit: ["Finanzas", "RH / Nómina"].includes(m), delete: false, approve: ["Finanzas", "RH / Nómina"].includes(m) } }), {}),
-  },
-  {
-    id: 4, name: "Almacén", description: "Control de inventario y movimientos", users_count: 1, is_system: false, color: "#A78BFA",
-    permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: ["Inventario", "Tablero", "Ventas / CRM"].includes(m), create: m === "Inventario", edit: m === "Inventario", delete: false, approve: false } }), {}),
-  },
-  {
-    id: 5, name: "Ventas", description: "Crear pedidos y cotizaciones", users_count: 1, is_system: false, color: "#F472B6",
-    permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: ["Ventas / CRM", "Clientes", "Tablero", "Inventario"].includes(m), create: ["Ventas / CRM", "Clientes"].includes(m), edit: m === "Ventas / CRM", delete: false, approve: false } }), {}),
-  },
-  {
-    id: 6, name: "Solo lectura", description: "Solo visualización de información", users_count: 1, is_system: true, color: "#94A3B8",
-    permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: true, create: false, edit: false, delete: false, approve: false } }), {}),
-  },
+  { id: 1, name: "Administrador", description: "Acceso total al sistema", users_count: 1, is_system: true, color: "#33B2F5", permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: true, create: true, edit: true, delete: true, approve: true } }), {}) },
+  { id: 2, name: "Gerente Ventas", description: "Gestión completa de ventas y clientes", users_count: 1, is_system: false, color: "#FBBF24", permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: true, create: ["Ventas / CRM", "Clientes", "Tablero", "Reportes / BI"].includes(m), edit: ["Ventas / CRM", "Clientes"].includes(m), delete: false, approve: m === "Ventas / CRM" } }), {}) },
+  { id: 3, name: "Contador", description: "Finanzas, nómina y reportes", users_count: 1, is_system: false, color: "#34D399", permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: true, create: ["Finanzas", "RH / Nómina"].includes(m), edit: ["Finanzas", "RH / Nómina"].includes(m), delete: false, approve: ["Finanzas", "RH / Nómina"].includes(m) } }), {}) },
+  { id: 4, name: "Almacén", description: "Control de inventario y movimientos", users_count: 1, is_system: false, color: "#A78BFA", permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: ["Inventario", "Tablero", "Ventas / CRM"].includes(m), create: m === "Inventario", edit: m === "Inventario", delete: false, approve: false } }), {}) },
+  { id: 5, name: "Ventas", description: "Crear pedidos y cotizaciones", users_count: 1, is_system: false, color: "#F472B6", permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: ["Ventas / CRM", "Clientes", "Tablero", "Inventario"].includes(m), create: ["Ventas / CRM", "Clientes"].includes(m), edit: m === "Ventas / CRM", delete: false, approve: false } }), {}) },
+  { id: 6, name: "Solo lectura", description: "Solo visualización de información", users_count: 1, is_system: true, color: "#94A3B8", permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: true, create: false, edit: false, delete: false, approve: false } }), {}) },
 ];
 
 const DEMO_INTEGRATIONS: Integration[] = [
@@ -98,7 +61,6 @@ const DEMO_INTEGRATIONS: Integration[] = [
 const PERM_LABELS = { view: "Ver", create: "Crear", edit: "Editar", delete: "Eliminar", approve: "Aprobar" };
 const PERM_COLORS = { view: "#60A5FA", create: "#34D399", edit: "#FBBF24", delete: "#F87171", approve: "#A78BFA" };
 
-// ── Main Component ─────────────────────────────────────────────────────────
 export default function ConfigModule({ t, s, company }: { t: any; s: any; company?: any }) {
   const [tab, setTab] = useState<"company" | "users" | "roles" | "fiscal" | "integrations" | "automation" | "security" | "preferences">("company");
   const [users, setUsers] = useState<User[]>(DEMO_USERS);
@@ -109,8 +71,14 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const [q, setQ] = useState("");
 
   const lang = "es";
-  const comp = company || { name: "Comercializadora del Valle", initials: "CV", color: "#33B2F5" };
 
+  // Vidrio: en modo oscuro devuelve panel translúcido + blur; en claro, sólido.
+  const glass = (t: any): React.CSSProperties =>
+    t?.name === "dark"
+      ? { background: "rgba(20,32,68,0.55)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", border: `1px solid ${t.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.22)" }
+      : { background: t.panel, border: `1px solid ${t.border}` };
+
+  const comp = company || { name: "Comercializadora del Valle", initials: "CV", color: "#33B2F5" };
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" };
   const lbl: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const tabBtn = (active: boolean): React.CSSProperties => ({ padding: "10px 14px", borderRadius: "10px 10px 0 0", border: "none", cursor: "pointer", fontWeight: active ? 700 : 500, fontSize: 12.5, background: active ? t.panel : "transparent", color: active ? t.nova : t.textLo, borderBottom: active ? `2px solid ${t.nova}` : "2px solid transparent", transition: "all .15s", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 });
@@ -126,7 +94,9 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
     { id: "preferences", label: "Preferencias", icon: Settings },
   ] as const;
 
-  const card: React.CSSProperties = { background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 };
+  // card usa glass — todos los paneles que usan style={card} heredan el vidrio de golpe
+  const card: React.CSSProperties = { ...glass(t), borderRadius: 12, padding: 20 };
+
   const sectionTitle = (icon: any, title: string, color: string) => {
     const Icon = icon;
     return (
@@ -158,7 +128,6 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
       {tab === "company" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            {/* Identity */}
             <div style={card}>
               {sectionTitle(Building2, "Identidad de la empresa", t.nova)}
               <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
@@ -179,8 +148,6 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                 </div>
               </div>
             </div>
-
-            {/* Fiscal data */}
             <div style={card}>
               {sectionTitle(FileText, "Datos fiscales", t.good)}
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -201,26 +168,16 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
             </div>
           </div>
 
-          {/* Regional + companies */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
             <div style={card}>
               {sectionTitle(Globe, "Configuración regional", "#A78BFA")}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div><label style={lbl}>Moneda base</label>
-                  <select style={{ ...inp, cursor: "pointer" }}><option>MXN - Peso Mexicano</option><option>USD - Dólar</option></select>
-                </div>
-                <div><label style={lbl}>Zona horaria</label>
-                  <select style={{ ...inp, cursor: "pointer" }}><option>(GMT-6) Ciudad de México</option><option>(GMT-7) Tijuana</option></select>
-                </div>
-                <div><label style={lbl}>Inicio de año fiscal</label>
-                  <select style={{ ...inp, cursor: "pointer" }}><option>Enero</option><option>Abril</option><option>Julio</option></select>
-                </div>
-                <div><label style={lbl}>Idioma</label>
-                  <select style={{ ...inp, cursor: "pointer" }}><option>Español</option><option>English</option></select>
-                </div>
+                <div><label style={lbl}>Moneda base</label><select style={{ ...inp, cursor: "pointer" }}><option>MXN - Peso Mexicano</option><option>USD - Dólar</option></select></div>
+                <div><label style={lbl}>Zona horaria</label><select style={{ ...inp, cursor: "pointer" }}><option>(GMT-6) Ciudad de México</option><option>(GMT-7) Tijuana</option></select></div>
+                <div><label style={lbl}>Inicio de año fiscal</label><select style={{ ...inp, cursor: "pointer" }}><option>Enero</option><option>Abril</option><option>Julio</option></select></div>
+                <div><label style={lbl}>Idioma</label><select style={{ ...inp, cursor: "pointer" }}><option>Español</option><option>English</option></select></div>
               </div>
             </div>
-
             <div style={card}>
               {sectionTitle(Building2, "Empresas / Sucursales", t.warn)}
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -258,7 +215,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               <UserPlus size={15} /> Invitar usuario
             </button>
           </div>
-
+          {/* Tabla sólida */}
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
@@ -285,9 +242,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                             </div>
                           </div>
                         </td>
-                        <td style={{ padding: "12px 16px" }}>
-                          <span style={{ fontSize: 12, color: t.nova, background: t.nova + "18", padding: "3px 9px", borderRadius: 20, fontWeight: 600 }}>{u.role}</span>
-                        </td>
+                        <td style={{ padding: "12px 16px" }}><span style={{ fontSize: 12, color: t.nova, background: t.nova + "18", padding: "3px 9px", borderRadius: 20, fontWeight: 600 }}>{u.role}</span></td>
                         <td style={{ padding: "12px 16px", fontSize: 13, color: t.textMid }}>{u.department}</td>
                         <td style={{ padding: "12px 16px", fontSize: 12.5, color: t.textLo }}>{u.last_login || "Nunca"}</td>
                         <td style={{ padding: "12px 16px" }}>
@@ -320,11 +275,9 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               <Plus size={15} /> Crear rol
             </button>
           </div>
-
-          {/* Role cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
             {roles.map(r => (
-              <div key={r.id} onClick={() => setSelectedRole(r)} style={{ background: t.panel, border: `1px solid ${selectedRole?.id === r.id ? r.color : t.border}`, borderRadius: 12, padding: 18, cursor: "pointer", transition: "all .15s" }}>
+              <div key={r.id} onClick={() => setSelectedRole(r)} style={{ ...glass(t), border: `1px solid ${selectedRole?.id === r.id ? r.color : t.border}`, borderRadius: 12, padding: 18, cursor: "pointer", transition: "all .15s" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                   <div style={{ background: r.color + "22", color: r.color, borderRadius: 10, padding: 9, display: "flex" }}><Shield size={18} /></div>
                   {r.is_system && <span style={{ fontSize: 10, fontWeight: 700, color: t.textLo, background: t.panel3, padding: "2px 7px", borderRadius: 6 }}>Sistema</span>}
@@ -338,10 +291,8 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               </div>
             ))}
           </div>
-
-          {/* Permission matrix */}
           {selectedRole && (
-            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+            <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ background: selectedRole.color + "22", color: selectedRole.color, borderRadius: 8, padding: 7, display: "flex" }}><Shield size={16} /></div>
@@ -371,9 +322,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                           {(Object.keys(PERM_LABELS) as (keyof typeof PERM_LABELS)[]).map(perm => (
                             <td key={perm} style={{ padding: "11px 16px", textAlign: "center" }}>
                               <button disabled={selectedRole.is_system} style={{ background: "transparent", border: "none", cursor: selectedRole.is_system ? "default" : "pointer", display: "inline-flex" }}>
-                                {perms[perm]
-                                  ? <CheckCircle size={18} color={PERM_COLORS[perm]} />
-                                  : <div style={{ width: 18, height: 18, borderRadius: 5, border: `1.5px solid ${t.border}` }} />}
+                                {perms[perm] ? <CheckCircle size={18} color={PERM_COLORS[perm]} /> : <div style={{ width: 18, height: 18, borderRadius: 5, border: `1.5px solid ${t.border}` }} />}
                               </button>
                             </td>
                           ))}
@@ -413,7 +362,6 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                 </div>
               </div>
             </div>
-
             <div style={card}>
               {sectionTitle(Key, "Certificados CSD", t.warn)}
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -429,8 +377,6 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               </div>
             </div>
           </div>
-
-          {/* Taxes */}
           <div style={card}>
             {sectionTitle(FileText, "Impuestos configurados", t.good)}
             <div style={{ overflowX: "auto" }}>
@@ -475,7 +421,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                 <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textLo, letterSpacing: 0.5, marginBottom: 10, textTransform: "uppercase" }}>{cat}</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
                   {items.map(intg => (
-                    <div key={intg.id} style={{ background: t.panel, border: `1px solid ${intg.connected ? intg.color + "55" : t.border}`, borderRadius: 12, padding: 18 }}>
+                    <div key={intg.id} style={{ ...glass(t), border: `1px solid ${intg.connected ? intg.color + "55" : t.border}`, borderRadius: 12, padding: 18 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                         <div style={{ background: intg.color + "22", color: intg.color, borderRadius: 10, padding: 10, display: "flex" }}><intg.icon size={20} /></div>
                         {intg.connected
@@ -489,7 +435,8 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                           <RefreshCw size={12} /> Última sync: {intg.last_sync}
                         </div>
                       )}
-                      <button onClick={() => setIntegrations(prev => prev.map(p => p.id === intg.id ? { ...p, connected: !p.connected, last_sync: !p.connected ? "Hace un momento" : undefined } : p))} style={{ width: "100%", padding: "9px", borderRadius: 8, border: intg.connected ? `1px solid ${t.border}` : "none", background: intg.connected ? t.panel2 : `linear-gradient(135deg, ${intg.color}, ${intg.color}cc)`, color: intg.connected ? t.textMid : "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+                      <button onClick={() => setIntegrations(prev => prev.map(p => p.id === intg.id ? { ...p, connected: !p.connected, last_sync: !p.connected ? "Hace un momento" : undefined } : p))}
+                        style={{ width: "100%", padding: "9px", borderRadius: 8, border: intg.connected ? `1px solid ${t.border}` : "none", background: intg.connected ? t.panel2 : `linear-gradient(135deg, ${intg.color}, ${intg.color}cc)`, color: intg.connected ? t.textMid : "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
                         {intg.connected ? "⚙ Configurar" : "Conectar"}
                       </button>
                     </div>
@@ -510,7 +457,6 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               <Plus size={15} /> Nueva regla
             </button>
           </div>
-
           {[
             { icon: ShieldCheck, title: "Aprobación de pedidos grandes", desc: "Pedidos mayores a $50,000 requieren autorización del gerente antes de confirmarse", active: true, color: t.nova, tag: "Aprobación" },
             { icon: Bell, title: "Alerta de stock bajo", desc: "Notificar al jefe de almacén cuando un producto baje de su stock mínimo", active: true, color: t.warn, tag: "Notificación" },
@@ -518,7 +464,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
             { icon: Clock, title: "Cierre automático de nómina", desc: "Calcular nómina automáticamente cada quincena el día 14 y 29", active: false, color: "#A78BFA", tag: "Programada" },
             { icon: AlertTriangle, title: "Alerta de contrato por vencer", desc: "Avisar a RH 15 días antes de que venza un contrato temporal o período de prueba", active: true, color: t.bad, tag: "Alerta" },
           ].map((rule, i) => (
-            <div key={i} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 18, display: "flex", alignItems: "center", gap: 14 }}>
+            <div key={i} style={{ ...glass(t), borderRadius: 12, padding: 18, display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ background: rule.color + "22", color: rule.color, borderRadius: 10, padding: 10, display: "flex", flexShrink: 0 }}><rule.icon size={20} /></div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
@@ -556,7 +502,6 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                 ))}
               </div>
             </div>
-
             <div style={card}>
               {sectionTitle(ShieldCheck, "Autenticación de dos factores (2FA)", t.good)}
               <div style={{ background: t.warn + "12", border: `1px solid ${t.warn}33`, borderRadius: 8, padding: "12px 14px", marginBottom: 14, display: "flex", gap: 10 }}>
@@ -580,8 +525,6 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               </div>
             </div>
           </div>
-
-          {/* Audit log */}
           <div style={card}>
             {sectionTitle(Activity, "Registro de auditoría", "#A78BFA")}
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -616,34 +559,20 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
             <div style={card}>
               {sectionTitle(Settings, "Apariencia", t.nova)}
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div><label style={lbl}>Tema</label>
-                  <select style={{ ...inp, cursor: "pointer" }}><option>Oscuro</option><option>Claro</option><option>Automático (según sistema)</option></select>
-                </div>
-                <div><label style={lbl}>Idioma de la interfaz</label>
-                  <select style={{ ...inp, cursor: "pointer" }}><option>Español</option><option>English</option></select>
-                </div>
-                <div><label style={lbl}>Densidad de la interfaz</label>
-                  <select style={{ ...inp, cursor: "pointer" }}><option>Cómoda</option><option>Compacta</option></select>
-                </div>
+                <div><label style={lbl}>Tema</label><select style={{ ...inp, cursor: "pointer" }}><option>Oscuro</option><option>Claro</option><option>Automático (según sistema)</option></select></div>
+                <div><label style={lbl}>Idioma de la interfaz</label><select style={{ ...inp, cursor: "pointer" }}><option>Español</option><option>English</option></select></div>
+                <div><label style={lbl}>Densidad de la interfaz</label><select style={{ ...inp, cursor: "pointer" }}><option>Cómoda</option><option>Compacta</option></select></div>
               </div>
             </div>
-
             <div style={card}>
               {sectionTitle(Globe, "Formatos regionales", t.good)}
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div><label style={lbl}>Formato de fecha</label>
-                  <select style={{ ...inp, cursor: "pointer" }}><option>DD/MM/AAAA</option><option>MM/DD/AAAA</option><option>AAAA-MM-DD</option></select>
-                </div>
-                <div><label style={lbl}>Formato de números</label>
-                  <select style={{ ...inp, cursor: "pointer" }}><option>1,234.56</option><option>1.234,56</option></select>
-                </div>
-                <div><label style={lbl}>Símbolo de moneda</label>
-                  <select style={{ ...inp, cursor: "pointer" }}><option>$ (MXN)</option><option>US$ (USD)</option></select>
-                </div>
+                <div><label style={lbl}>Formato de fecha</label><select style={{ ...inp, cursor: "pointer" }}><option>DD/MM/AAAA</option><option>MM/DD/AAAA</option><option>AAAA-MM-DD</option></select></div>
+                <div><label style={lbl}>Formato de números</label><select style={{ ...inp, cursor: "pointer" }}><option>1,234.56</option><option>1.234,56</option></select></div>
+                <div><label style={lbl}>Símbolo de moneda</label><select style={{ ...inp, cursor: "pointer" }}><option>$ (MXN)</option><option>US$ (USD)</option></select></div>
               </div>
             </div>
           </div>
-
           <div style={card}>
             {sectionTitle(Bell, "Notificaciones por email", t.warn)}
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -662,7 +591,6 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               ))}
             </div>
           </div>
-
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
             <button style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               <Save size={15} /> Guardar preferencias
@@ -686,12 +614,8 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               <div><label style={lbl}>Nombre completo *</label><input placeholder="Nombre del usuario" style={inp} /></div>
               <div><label style={lbl}>Email *</label><input type="email" placeholder="correo@empresa.mx" style={inp} /></div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div><label style={lbl}>Rol *</label>
-                  <select style={{ ...inp, cursor: "pointer" }}>{roles.map(r => <option key={r.id}>{r.name}</option>)}</select>
-                </div>
-                <div><label style={lbl}>Departamento</label>
-                  <select style={{ ...inp, cursor: "pointer" }}><option>Ventas</option><option>Contabilidad</option><option>Almacén</option><option>Dirección</option></select>
-                </div>
+                <div><label style={lbl}>Rol *</label><select style={{ ...inp, cursor: "pointer" }}>{roles.map(r => <option key={r.id}>{r.name}</option>)}</select></div>
+                <div><label style={lbl}>Departamento</label><select style={{ ...inp, cursor: "pointer" }}><option>Ventas</option><option>Contabilidad</option><option>Almacén</option><option>Dirección</option></select></div>
               </div>
               <div style={{ background: t.nova + "12", border: `1px solid ${t.nova}33`, borderRadius: 8, padding: "12px 14px", display: "flex", gap: 10 }}>
                 <Mail size={16} color={t.nova} style={{ flexShrink: 0, marginTop: 1 }} />
