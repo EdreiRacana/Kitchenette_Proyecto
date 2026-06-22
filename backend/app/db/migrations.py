@@ -73,6 +73,10 @@ _CUSTOMER_STATEMENTS = [
 # dinero explícito, control de cobranza (paid_amount) y snapshot CFDI.
 # Todas con IF NOT EXISTS → si la columna ya existe, es no-op.
 _SALES_STATEMENTS = [
+    # Identificación del documento (folio faltaba en el esquema viejo)
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS folio           VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_id     INTEGER",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS user_id         INTEGER",
     # Clasificación pedido/cotización (la que causaba el 500)
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS kind            VARCHAR DEFAULT 'order'",
     # Relaciones / metadatos
@@ -110,7 +114,9 @@ _SALES_STATEMENTS = [
     "UPDATE orders SET kind = 'order' WHERE kind IS NULL",
     "UPDATE orders SET currency = 'MXN' WHERE currency IS NULL",
     "UPDATE orders SET discount_type = 'amount' WHERE discount_type IS NULL",
+    "UPDATE orders SET folio = 'ORD-' || lpad(id::text, 6, '0') WHERE folio IS NULL",
     # Índices que el modelo declara
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_orders_folio ON orders (folio)",
     "CREATE INDEX IF NOT EXISTS ix_orders_kind   ON orders (kind)",
     "CREATE INDEX IF NOT EXISTS ix_orders_status ON orders (status)",
     # order_items: columnas snapshot añadidas
