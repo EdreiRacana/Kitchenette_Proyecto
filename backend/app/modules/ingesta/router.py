@@ -9,6 +9,7 @@ Rutas:
   PUT    /ingesta/fuentes/{id}               → actualizar fuente
   DELETE /ingesta/fuentes/{id}               → eliminar fuente
 
+  POST   /ingesta/preview                    → leer encabezados + muestra de cualquier archivo
   POST   /ingesta/detectar                   → detectar columnas con IA (modo automático)
   POST   /ingesta/fuentes/{id}/upload        → subir Excel/CSV y procesar
   GET    /ingesta/fuentes/{id}/lotes         → historial de lotes de una fuente
@@ -18,7 +19,7 @@ Rutas:
 from __future__ import annotations
 
 import io
-from typing import Annotated, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +40,6 @@ CurrentUser = Annotated[User, Depends(deps.get_current_active_user)]
 
 @router.get("/resumen", response_model=schemas.ResumenIngesta)
 async def resumen(db: DB, _: CurrentUser):
-    """Métricas globales del motor de ingesta para el dashboard."""
     return await service.get_resumen(db)
 
 
@@ -86,6 +86,125 @@ async def eliminar_fuente(fuente_id: int, db: DB, _: CurrentUser):
 
 
 # ─────────────────────────────────────────────────────────────
+# PREVIEW — leer encabezados y muestra de cualquier archivo
+# ─────────────────────────────────────────────────────────────
+
+@router.post("/preview")
+async def preview_archivo(
+    _: CurrentUser,
+    archivo: UploadFile = File(...),
+    fila_encabezado: int = Form(1),
+):
+    """
+    Recibe cualquier archivo (xlsx, xls, csv) y devuelve:
+    - encabezados: lista de nombres de columnas
+    - muestra_filas: primeras 5 filas como lista de dicts
+    - total_filas: cantidad total de filas de datos
+
+    El frontend usa esto para mostrar el mapeo antes de procesar.
+    No guarda nada en la base de datos.
+    """
+    nombre = archivo.filename or "archivo"
+    contenido = await archivo.read()
+    extension = nombre.rsplit(".", 1)[-1].lower()
+
+    try:
+        encabezados, muestra_filas, total_filas = _leer_preview(
+            contenido, extension, fila_encabezado
+        )
+    except Exception as e:
+        raise HTTPException(400, f"No se pudo leer el archivo: {e}")
+
+    if not encabezados:
+        raise HTTPException(400, "El archivo no tiene columnas detectables o está vacío.")
+
+    return {
+        "encabezados": encabezados,
+        "muestra_filas": muestra_filas,
+        "total_filas": total_filas,
+        "nombre_archivo": nombre,
+        "extension": extension,
+    }
+
+
+def _leer_preview(
+    contenido: bytes,
+    extension: str,
+    fila_encabezado: int = 1,
+) -> tuple[List[str], List[Dict[str, Any]], int]:
+    """
+    Lee encabezados y muestra de filas usando pandas.
+    Retorna (encabezados, muestra_filas, total_filas).
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        raise RuntimeError("pandas no instalado. Agrega 'pandas openpyxl' a requirements.txt")
+
+    header_row = max(0, fila_encabezado - 1)
+
+    if extension in ("xlsx", "xls"):
+        df = pd.read_excel(
+            io.BytesIO(contenido),
+            header=header_row,
+            dtype=str,
+            nrows=200,  # solo leer primeras 200 filas para el preview
+        )
+    elif extension == "csv":
+        df = pd.read_csv(
+            io.BytesIO(contenido),
+            header=header_row,
+            dtype=str,
+            encoding="utf-8-sig",
+            nrows=200,
+        )
+    else:
+        raise ValueError(f"Formato no soportado: .{extension}. Usa .xlsx, .xls o .csv")
+
+    df = df.dropna(how="all")
+    df.columns = [str(c).strip() for c in df.columns]
+
+    encabezados = df.columns.tolist()
+    muestra = df.head(5).where(df.notna(), None).to_dict(orient="records")
+    # Convertir a strings limpios para JSON
+    muestra_limpia = [
+        {k: (str(v) if v is not None else None) for k, v in row.items()}
+        for row in muestra
+    ]
+
+    return encabezados, muestra_limpia, len(df)
+
+
+def _leer_archivo(
+    contenido: bytes,
+    extension: str,
+    fila_encabezado: int = 1,
+) -> list:
+    """
+    Lee Excel o CSV completo y retorna lista de dicts {columna: valor}.
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        raise RuntimeError("pandas no instalado.")
+
+    header_row = max(0, fila_encabezado - 1)
+
+    if extension in ("xlsx", "xls"):
+        df = pd.read_excel(io.BytesIO(contenido), header=header_row, dtype=str)
+    elif extension == "csv":
+        df = pd.read_csv(
+            io.BytesIO(contenido), header=header_row, dtype=str, encoding="utf-8-sig"
+        )
+    else:
+        raise ValueError(f"Formato no soportado: .{extension}")
+
+    df = df.dropna(how="all")
+    df.columns = [str(c).strip() for c in df.columns]
+    return df.where(df.notna(), None).to_dict(orient="records")
+
+
+# ─────────────────────────────────────────────────────────────
 # DETECCIÓN DE COLUMNAS CON IA
 # ─────────────────────────────────────────────────────────────
 
@@ -97,7 +216,6 @@ async def detectar_columnas(
     """
     Modo automático: manda encabezados + muestra de filas a Claude API.
     Devuelve propuesta de mapeo lista para que el usuario confirme o corrija.
-    No requiere fuente_id — se usa antes de crear/actualizar el perfil.
     """
     try:
         return await service.detectar_columnas_ia(request)
@@ -132,7 +250,7 @@ async def upload_archivo(
         raise HTTPException(
             400,
             "Esta fuente no tiene columnas mapeadas. "
-            "Primero usa /detectar para configurar el mapeo."
+            "Primero usa /preview + /detectar para configurar el mapeo."
         )
 
     nombre = archivo.filename or "archivo"
@@ -163,44 +281,6 @@ async def upload_archivo(
     return resultado
 
 
-def _leer_archivo(
-    contenido: bytes,
-    extension: str,
-    fila_encabezado: int = 1,
-) -> list:
-    """
-    Lee Excel o CSV y retorna lista de dicts {columna: valor}.
-    Soporta .xlsx, .xls, .csv.
-    """
-    try:
-        import pandas as pd
-    except ImportError:
-        raise RuntimeError("pandas no está instalado. Agrega 'pandas openpyxl' a requirements.txt")
-
-    header_row = max(0, fila_encabezado - 1)
-
-    if extension in ("xlsx", "xls"):
-        df = pd.read_excel(
-            io.BytesIO(contenido),
-            header=header_row,
-            dtype=str,
-        )
-    elif extension == "csv":
-        df = pd.read_csv(
-            io.BytesIO(contenido),
-            header=header_row,
-            dtype=str,
-            encoding="utf-8-sig",
-        )
-    else:
-        raise ValueError(f"Formato no soportado: .{extension}. Usa .xlsx, .xls o .csv")
-
-    df = df.dropna(how="all")
-    df.columns = [str(c).strip() for c in df.columns]
-
-    return df.where(df.notna(), None).to_dict(orient="records")
-
-
 # ─────────────────────────────────────────────────────────────
 # LOTES E HISTORIAL
 # ─────────────────────────────────────────────────────────────
@@ -213,7 +293,6 @@ async def listar_lotes(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
 ):
-    """Historial de archivos subidos para una fuente."""
     fuente = await service.get_fuente(db, fuente_id)
     if not fuente:
         raise HTTPException(404, "Fuente no encontrada")
@@ -239,7 +318,6 @@ async def registros_lote(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
 ):
-    """Registros normalizados de un lote específico."""
     registros, total = await service.get_registros(
         db, lote_id=lote_id, skip=skip, limit=limit
     )
@@ -259,7 +337,6 @@ async def registros_fuente(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
 ):
-    """Registros normalizados filtrados por fuente."""
     registros, total = await service.get_registros(
         db, fuente_id=fuente_id, skip=skip, limit=limit
     )
