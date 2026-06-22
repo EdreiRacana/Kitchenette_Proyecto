@@ -184,7 +184,6 @@ def _build_detection_prompt(
     fuente_nombre: Optional[str],
     tipo_cliente: Optional[str],
 ) -> str:
-    campos_json = json.dumps(CAMPOS_DESCRIPCION, ensure_ascii=False, indent=2)
     # Truncar valores de muestra a 30 chars y usar solo 2 filas para reducir tokens
     muestra_corta = [
         {k: (str(v)[:30] if v is not None else None) for k, v in row.items()}
@@ -198,47 +197,40 @@ def _build_detection_prompt(
     if tipo_cliente:
         hint += f"Tipo de cliente: {tipo_cliente}."
 
-    return f"""Eres un experto en datos de ventas retail y CPG (Consumer Packaged Goods).
+    # Para archivos con muchas columnas, omitir "razon" para reducir tokens
+    omitir_razon = len(encabezados) > 30
 
-Tu tarea: analizar las columnas de un archivo de reporte de ventas y mapear cada columna al campo interno correcto de STHENOVA ERP.
+    if omitir_razon:
+        formato_columna = '{"columna_origen":"...","campo_sthenova_sugerido":"...","muestra":"...","confianza":0.9}'
+    else:
+        formato_columna = '{"columna_origen":"...","campo_sthenova_sugerido":"...","muestra":"...","confianza":0.9,"razon":"..."}'
 
-{hint}
+    return f"""Eres un experto en datos de ventas retail y CPG.
 
-COLUMNAS DEL ARCHIVO:
+Mapea cada columna del archivo al campo interno de STHENOVA. {hint}
+
+COLUMNAS ({len(encabezados)} total):
 {json.dumps(encabezados, ensure_ascii=False)}
 
-MUESTRA DE DATOS (primeras filas):
+MUESTRA (2 filas):
 {muestra_json}
 
-CAMPOS INTERNOS DE STHENOVA (nombre: descripción):
-{campos_json}
+CAMPOS STHENOVA válidos (usa exactamente estos nombres o "skip"):
+{json.dumps(list(CAMPOS_DESCRIPCION.keys()), ensure_ascii=False)}
 
-INSTRUCCIONES:
-1. Mapea cada columna del archivo al campo STHENOVA más apropiado.
-2. Si una columna no corresponde a ningún campo útil, usa "skip".
-3. Detecta si el archivo tiene ESTRUCTURA ANIDADA (múltiples filas por pedido, como Mercado Libre):
-   - Si detectas un campo que identifica el pedido y se repite en varias filas, es estructura anidada.
-   - Indica cuál columna es el ID del pedido y cómo identificar la fila de total.
-4. La confianza es de 0.0 a 1.0. Usa valores altos (>0.8) solo cuando estés seguro.
-5. Responde ÚNICAMENTE con JSON válido, sin texto adicional, sin markdown, sin explicaciones fuera del JSON.
+REGLAS:
+- Devuelve una entrada por cada columna del archivo, en el mismo orden.
+- Si no corresponde a ningún campo útil → "skip".
+- Detecta estructura anidada (varias filas por pedido).
+- Solo JSON puro, sin markdown ni texto extra.
 
-FORMATO DE RESPUESTA (JSON puro):
-{{
-  "columnas": [
-    {{
-      "columna_origen": "nombre exacto de la columna en el archivo",
-      "campo_sthenova_sugerido": "nombre del campo STHENOVA o skip",
-      "muestra": "valor de ejemplo de esa columna",
-      "confianza": 0.95,
-      "razon": "breve explicación del mapeo"
-    }}
-  ],
-  "tiene_filas_anidadas": false,
-  "campo_id_pedido_sugerido": null,
-  "patron_fila_total_sugerido": null,
-  "confianza_global": 0.90,
-  "notas": "observaciones adicionales si las hay"
-}}"""
+RESPUESTA:
+{{"columnas":[{formato_columna},...],
+"tiene_filas_anidadas":false,
+"campo_id_pedido_sugerido":null,
+"patron_fila_total_sugerido":null,
+"confianza_global":0.85,
+"notas":null}}"""
 
 
 async def detectar_columnas_ia(
@@ -261,7 +253,7 @@ async def detectar_columnas_ia(
 
     payload = {
         "model": ANTHROPIC_MODEL,
-        "max_tokens": 4000,
+        "max_tokens": 6000,
         "messages": [{"role": "user", "content": prompt}],
     }
 
