@@ -1,3 +1,4 @@
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -8,10 +9,21 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
 )
 
-# Set all CORS enabled origins
+# ── CORS ─────────────────────────────────────────────────────────────────────
+# IMPORTANTE: con allow_credentials=True NO se puede usar allow_origins=["*"].
+# El estándar CORS lo prohíbe, y FastAPI entonces omite el header
+# Access-Control-Allow-Origin → el navegador bloquea todo. Por eso listamos
+# los orígenes explícitos del frontend (producción + desarrollo local).
+ALLOWED_ORIGINS = [
+    "https://sthenova-frontend.onrender.com",  # frontend en producción
+    "http://localhost:5173",                   # Vite dev server
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",                   # por si usas otro puerto
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -26,12 +38,15 @@ app.mount("/static", StaticFiles(directory="uploads"), name="static")
 app.include_router(api_router, prefix=settings.API_V1_STR)
 app.include_router(media.router, prefix=f"{settings.API_V1_STR}/media", tags=["media"])
 
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "app_name": settings.PROJECT_NAME}
 
+
 # Auto-create tables on startup (for immediate local dev)
 from app.db.session import engine, Base
+
 # Import all models to ensure registration
 from app.modules.auth import models as auth_models
 from app.modules.inventory import models as inventory_models
@@ -40,6 +55,7 @@ from app.modules.sales import models as sales_models
 from app.modules.finance import models as finance_models
 from app.modules.core_config import models as config_models
 
+
 @app.on_event("startup")
 async def startup():
     from app.db.migrations import run_startup_migrations
@@ -47,3 +63,4 @@ async def startup():
         await conn.run_sync(Base.metadata.create_all)
     # Migrations run isolated (own connection) and can never crash startup.
     await run_startup_migrations(engine)
+
