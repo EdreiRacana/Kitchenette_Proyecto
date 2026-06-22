@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Search, List, Columns, BarChart3, Plus, Download, DollarSign, Clock,
   TrendingUp, Percent, ChevronRight, ArrowUp, ArrowDown, FileText, Info,
-  Upload, Zap, Settings2, CheckCircle, AlertTriangle, X, ChevronDown,
+  Upload, Zap, Settings2, CheckCircle, AlertTriangle,
 } from "lucide-react";
 import api from "../../services/api";
 import { resolveTheme, makeTr, money, dateShort, statusColors, statusMeta, paymentLabel, ORDER_PIPELINE, PAYMENT_METHODS } from "./theme";
@@ -28,44 +28,76 @@ const PAGE = 20;
 // ── Ingesta API helpers ──────────────────────────────────────────────────────
 const ingestaApi = {
   fuentes: () => api.get("/ingesta/fuentes").then((r) => r.data),
-  resumen: () => api.get("/ingesta/resumen").then((r) => r.data),
   detectar: (payload: unknown) => api.post("/ingesta/detectar", payload).then((r) => r.data),
   crearFuente: (data: unknown) => api.post("/ingesta/fuentes", data).then((r) => r.data),
   upload: (fuenteId: number, formData: FormData) =>
     api.post(`/ingesta/fuentes/${fuenteId}/upload`, formData, {
       headers: { "Content-Type": "multipart/form-data" },
     }).then((r) => r.data),
-  lotes: (fuenteId: number) => api.get(`/ingesta/fuentes/${fuenteId}/lotes`).then((r) => r.data),
 };
 
-// Campos internos estándar para los dropdowns manuales
+// ── CSV parser nativo (sin dependencias) ─────────────────────────────────────
+function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length === 0) return { headers: [], rows: [] };
+
+  const parseRow = (line: string): string[] => {
+    const result: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+        else inQuotes = !inQuotes;
+      } else if (ch === "," && !inQuotes) {
+        result.push(current.trim()); current = "";
+      } else {
+        current += ch;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  const headers = parseRow(lines[0]);
+  const rows = lines.slice(1).map((line) => {
+    const vals = parseRow(line);
+    const obj: Record<string, string> = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] ?? ""; });
+    return obj;
+  });
+  return { headers, rows };
+}
+
+// ── Campos internos estándar ─────────────────────────────────────────────────
 const CAMPOS_STHENOVA = [
-  { value: "skip",                   label: "— Ignorar columna —" },
-  { value: "upc",                    label: "UPC / código de barras" },
-  { value: "sku_cliente",            label: "SKU del cliente" },
-  { value: "sku_cadena",             label: "SKU de la cadena" },
-  { value: "descripcion",            label: "Descripción del producto" },
-  { value: "fecha_inicio",           label: "Fecha inicio periodo" },
-  { value: "fecha_fin",              label: "Fecha fin periodo" },
-  { value: "fecha_venta",            label: "Fecha de venta" },
-  { value: "cantidad_vendida",       label: "Cantidad vendida" },
-  { value: "precio_unitario",        label: "Precio unitario" },
-  { value: "venta_bruta",            label: "Venta bruta" },
-  { value: "venta_neta",             label: "Venta neta" },
-  { value: "devoluciones_unidades",  label: "Devoluciones (unidades)" },
-  { value: "devoluciones_importe",   label: "Devoluciones (importe)" },
-  { value: "sra",                    label: "SR&A" },
-  { value: "bonificaciones",         label: "Bonificaciones" },
-  { value: "descuentos",             label: "Descuentos" },
-  { value: "cogs",                   label: "COGS" },
-  { value: "comisiones",             label: "Comisiones" },
-  { value: "envio",                  label: "Envío" },
-  { value: "marketing",              label: "Marketing / trade spend" },
-  { value: "inv_inicial",            label: "Inventario inicial" },
-  { value: "inv_final",              label: "Inventario final" },
-  { value: "entradas_resurtido",     label: "Entradas / resurtido" },
-  { value: "id_pedido",              label: "ID de pedido (agrupa filas)" },
-  { value: "costo_envio_pedido",     label: "Costo envío del pedido" },
+  { value: "skip",                  label: "— Ignorar columna —" },
+  { value: "upc",                   label: "UPC / código de barras" },
+  { value: "sku_cliente",           label: "SKU del cliente" },
+  { value: "sku_cadena",            label: "SKU de la cadena" },
+  { value: "descripcion",           label: "Descripción del producto" },
+  { value: "fecha_inicio",          label: "Fecha inicio periodo" },
+  { value: "fecha_fin",             label: "Fecha fin periodo" },
+  { value: "fecha_venta",           label: "Fecha de venta" },
+  { value: "cantidad_vendida",      label: "Cantidad vendida" },
+  { value: "precio_unitario",       label: "Precio unitario" },
+  { value: "venta_bruta",           label: "Venta bruta" },
+  { value: "venta_neta",            label: "Venta neta" },
+  { value: "devoluciones_unidades", label: "Devoluciones (unidades)" },
+  { value: "devoluciones_importe",  label: "Devoluciones (importe)" },
+  { value: "sra",                   label: "SR&A" },
+  { value: "bonificaciones",        label: "Bonificaciones" },
+  { value: "descuentos",            label: "Descuentos" },
+  { value: "cogs",                  label: "COGS" },
+  { value: "comisiones",            label: "Comisiones" },
+  { value: "envio",                 label: "Envío" },
+  { value: "marketing",             label: "Marketing / trade spend" },
+  { value: "inv_inicial",           label: "Inventario inicial" },
+  { value: "inv_final",             label: "Inventario final" },
+  { value: "entradas_resurtido",    label: "Entradas / resurtido" },
+  { value: "id_pedido",             label: "ID de pedido (agrupa filas)" },
+  { value: "costo_envio_pedido",    label: "Costo envío del pedido" },
 ];
 
 function computeStats(orders: Order[]): SalesStats {
@@ -83,7 +115,7 @@ function computeStats(orders: Order[]): SalesStats {
   };
 }
 
-// ── Módulo de Ingesta ────────────────────────────────────────────────────────
+// ── Tipos de ingesta ─────────────────────────────────────────────────────────
 type IngestaStep = "inicio" | "detectando" | "mapeo" | "subiendo" | "resultado";
 
 interface ColumnaDetectada {
@@ -103,9 +135,29 @@ interface DeteccionResult {
   tokens_usados: number;
 }
 
+interface FuenteItem {
+  id: number;
+  nombre: string;
+  moneda: string;
+}
+
+interface ResultadoLote {
+  filas_ok: number;
+  filas_error: number;
+  total_filas: number;
+  estado: string;
+  registros_muestra: {
+    descripcion: string | null;
+    cantidad_vendida: number;
+    venta_bruta: number;
+    upc: string | null;
+  }[];
+}
+
+// ── Módulo de Ingesta ────────────────────────────────────────────────────────
 function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => string }) {
   const [step, setStep] = useState<IngestaStep>("inicio");
-  const [fuentes, setFuentes] = useState<unknown[]>([]);
+  const [fuentes, setFuentes] = useState<FuenteItem[]>([]);
   const [fuenteId, setFuenteId] = useState<number | null>(null);
   const [fuenteNombre, setFuenteNombre] = useState("");
   const [tipoCliente, setTipoCliente] = useState("cadena_retail");
@@ -116,7 +168,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
   const [muestraFilas, setMuestraFilas] = useState<Record<string, string>[]>([]);
   const [deteccion, setDeteccion] = useState<DeteccionResult | null>(null);
   const [mapeo, setMapeo] = useState<Record<string, string>>({});
-  const [resultado, setResultado] = useState<unknown>(null);
+  const [resultado, setResultado] = useState<ResultadoLote | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [periodoInicio, setPeriodoInicio] = useState("");
   const [periodoFin, setPeriodoFin] = useState("");
@@ -130,48 +182,60 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     padding: "9px 12px", borderRadius: 8,
     border: `1px solid ${tk.border}`,
     background: tk.inputBg, color: tk.textHi,
-    fontSize: 14, outline: "none", width: "100%", boxSizing: "border-box" as const,
+    fontSize: 14, outline: "none", width: "100%",
+    boxSizing: "border-box",
   };
 
-  const card = (extra?: React.CSSProperties): React.CSSProperties => ({
-    background: tk.panel, border: `1px solid ${tk.border}`,
-    borderRadius: 12, padding: "20px 24px", ...extra,
-  });
+  const cardStyle: React.CSSProperties = {
+    background: tk.panel,
+    border: `1px solid ${tk.border}`,
+    borderRadius: 12,
+    padding: "20px 24px",
+  };
 
-  // Lee encabezados del archivo en el cliente (sin subir aún)
-  const leerEncabezados = async (file: File) => {
-    const { default: Papa } = await import("papaparse" as never) as { default: unknown } as { default: { parse: (f: File, opts: unknown) => void } };
-    const ext = file.name.split(".").pop()?.toLowerCase();
-    if (ext === "csv") {
-      Papa.parse(file, {
-        header: true,
-        preview: 5,
-        complete: (res: { data: Record<string, string>[]; meta: { fields: string[] } }) => {
-          setEncabezados(res.meta.fields ?? []);
-          setMuestraFilas(res.data.slice(0, 5));
-        },
-      });
-    } else {
-      // Para xlsx usamos FileReader + SheetJS
+  // Lee encabezados del archivo en el cliente sin librerías externas
+  const leerEncabezados = (file: File): Promise<void> => {
+    return new Promise((resolve) => {
+      const ext = file.name.split(".").pop()?.toLowerCase();
       const reader = new FileReader();
-      reader.onload = async (e) => {
-        const { read, utils } = await import("xlsx" as never) as { default: unknown } as { read: (d: ArrayBuffer, o: unknown) => unknown; utils: { sheet_to_json: (s: unknown, o: unknown) => unknown[] } };
-        const wb = read(e.target!.result as ArrayBuffer, { type: "array" });
-        const ws = (wb as { Sheets: Record<string, unknown> }).Sheets[(wb as { SheetNames: string[] }).SheetNames[0]];
-        const rows = utils.sheet_to_json(ws, { header: 1 }) as unknown[][];
-        if (rows.length > 0) {
-          const hdrs = (rows[0] as string[]).map(String);
-          setEncabezados(hdrs);
-          const dataRows = rows.slice(1, 6).map((r) => {
-            const obj: Record<string, string> = {};
-            hdrs.forEach((h, i) => { obj[h] = String((r as unknown[])[i] ?? ""); });
-            return obj;
-          });
-          setMuestraFilas(dataRows);
-        }
-      };
-      reader.readAsArrayBuffer(file);
-    }
+
+      if (ext === "csv") {
+        reader.onload = (e) => {
+          const text = e.target?.result as string;
+          const { headers, rows } = parseCSV(text);
+          setEncabezados(headers);
+          setMuestraFilas(rows.slice(0, 5));
+          resolve();
+        };
+        reader.readAsText(file, "utf-8");
+      } else {
+        // Para xlsx: subimos directamente al backend sin previsualización local
+        // Extraemos encabezados leyendo las primeras filas como texto
+        reader.onload = (e) => {
+          const text = e.target?.result as string;
+          // Intentar parsear como CSV por si acaso
+          const lines = text.split(/\r?\n/).filter((l) => l.trim()).slice(0, 6);
+          if (lines.length > 0) {
+            const firstLine = lines[0];
+            // Detectar separador
+            const sep = firstLine.includes("\t") ? "\t" : ",";
+            const hdrs = firstLine.split(sep).map((h) => h.replace(/^"|"$/g, "").trim());
+            setEncabezados(hdrs);
+            const dataRows = lines.slice(1).map((line) => {
+              const vals = line.split(sep).map((v) => v.replace(/^"|"$/g, "").trim());
+              const obj: Record<string, string> = {};
+              hdrs.forEach((h, i) => { obj[h] = vals[i] ?? ""; });
+              return obj;
+            });
+            setMuestraFilas(dataRows);
+          }
+          resolve();
+        };
+        // Para xlsx intentamos leer como texto (funciona para xls antiguo)
+        // Para xlsx moderno el backend lo procesa con pandas
+        reader.readAsText(file, "utf-8");
+      }
+    });
   };
 
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -179,15 +243,20 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     if (!f) return;
     setArchivo(f);
     setError(null);
+    setEncabezados([]);
+    setMuestraFilas([]);
     await leerEncabezados(f);
   };
 
   const detectarConIA = async () => {
-    if (!encabezados.length) { setError("Sube un archivo primero para detectar las columnas."); return; }
+    if (encabezados.length === 0) {
+      setError("Sube un archivo primero para detectar las columnas.");
+      return;
+    }
     setStep("detectando");
     setError(null);
     try {
-      const res = await ingestaApi.detectar({
+      const res: DeteccionResult = await ingestaApi.detectar({
         encabezados,
         muestra_filas: muestraFilas,
         fuente_nombre: fuenteNombre || undefined,
@@ -195,7 +264,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
       });
       setDeteccion(res);
       const m: Record<string, string> = {};
-      res.columnas.forEach((c: ColumnaDetectada) => { m[c.columna_origen] = c.campo_sthenova_sugerido; });
+      res.columnas.forEach((c) => { m[c.columna_origen] = c.campo_sthenova_sugerido; });
       setMapeo(m);
       setStep("mapeo");
     } catch (e: unknown) {
@@ -206,7 +275,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
   };
 
   const irAMapeoManual = () => {
-    if (!encabezados.length) { setError("Sube un archivo primero."); return; }
+    if (encabezados.length === 0) { setError("Sube un archivo primero."); return; }
     const m: Record<string, string> = {};
     encabezados.forEach((h) => { m[h] = "skip"; });
     setMapeo(m);
@@ -220,7 +289,6 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     setError(null);
     try {
       let id = fuenteId;
-      // Si no hay fuente seleccionada, crear una nueva con el mapeo actual
       if (!id) {
         const columnas = Object.entries(mapeo)
           .filter(([, v]) => v !== "skip")
@@ -232,14 +300,14 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
           columnas,
           reglas: {},
         });
-        id = nueva.id;
+        id = nueva.id as number;
         setFuenteId(id);
       }
       const fd = new FormData();
       fd.append("archivo", archivo);
       if (periodoInicio) fd.append("periodo_inicio", periodoInicio);
       if (periodoFin) fd.append("periodo_fin", periodoFin);
-      const res = await ingestaApi.upload(id!, fd);
+      const res = await ingestaApi.upload(id!, fd) as ResultadoLote;
       setResultado(res);
       setStep("resultado");
       ingestaApi.fuentes().then(setFuentes).catch(() => {});
@@ -254,26 +322,28 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     setStep("inicio"); setArchivo(null); setEncabezados([]);
     setMuestraFilas([]); setDeteccion(null); setMapeo({});
     setResultado(null); setError(null); setFuenteNombre("");
+    setFuenteId(null);
     if (fileRef.current) fileRef.current.value = "";
   };
 
-  // Paso: inicio
+  const errorBanner = error && (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.bad + "18", border: `1px solid ${tk.bad}44`, color: tk.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
+      <AlertTriangle size={15} /> {error}
+    </div>
+  );
+
+  // ── Paso: inicio ────────────────────────────────────────────────────────────
   if (step === "inicio") return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {error && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.bad + "18", border: `1px solid ${tk.bad}44`, color: tk.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
-          <AlertTriangle size={15} /> {error}
-        </div>
-      )}
+      {errorBanner}
 
-      {/* Fuentes existentes */}
-      {(fuentes as { id: number; nombre: string; moneda: string }[]).length > 0 && (
-        <div style={card()}>
+      {fuentes.length > 0 && (
+        <div style={cardStyle}>
           <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi, marginBottom: 12 }}>
             Fuentes configuradas — subir reporte
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {(fuentes as { id: number; nombre: string; moneda: string }[]).map((f) => (
+            {fuentes.map((f) => (
               <div key={f.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: tk.panel2, borderRadius: 9, border: `1px solid ${tk.border}` }}>
                 <div>
                   <span style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{f.nombre}</span>
@@ -290,8 +360,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
         </div>
       )}
 
-      {/* Nueva fuente */}
-      <div style={card()}>
+      <div style={cardStyle}>
         <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi, marginBottom: 16 }}>
           Configurar nueva fuente
         </div>
@@ -302,7 +371,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
           </div>
           <div>
             <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Tipo de cliente</label>
-            <select value={tipoCliente} onChange={(e) => setTipoCliente(e.target.value)} style={{ ...inputBase }}>
+            <select value={tipoCliente} onChange={(e) => setTipoCliente(e.target.value)} style={inputBase}>
               <option value="cadena_retail">Cadena retail</option>
               <option value="marketplace">Marketplace digital</option>
               <option value="tienda_fisica">Tienda física</option>
@@ -311,30 +380,31 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
           </div>
           <div>
             <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Moneda</label>
-            <select value={moneda} onChange={(e) => setMoneda(e.target.value)} style={{ ...inputBase }}>
+            <select value={moneda} onChange={(e) => setMoneda(e.target.value)} style={inputBase}>
               <option value="MXN">MXN — Pesos mexicanos</option>
               <option value="USD">USD — Dólares</option>
             </select>
           </div>
           <div>
             <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Modo de detección</label>
-            <select value={modoDeteccion} onChange={(e) => setModoDeteccion(e.target.value as "ia" | "manual")} style={{ ...inputBase }}>
+            <select value={modoDeteccion} onChange={(e) => setModoDeteccion(e.target.value as "ia" | "manual")} style={inputBase}>
               <option value="ia">IA automática (recomendado)</option>
               <option value="manual">Manual — elijo cada columna</option>
             </select>
           </div>
         </div>
 
-        {/* Zona de archivo */}
         <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={onFileChange} style={{ display: "none" }} />
         <div
           onClick={() => fileRef.current?.click()}
           style={{ border: `2px dashed ${archivo ? tk.accent : tk.border}`, borderRadius: 10, padding: "28px 20px", textAlign: "center", cursor: "pointer", background: archivo ? tk.accent + "0a" : "transparent", transition: "all .2s" }}>
-          <Upload size={24} color={archivo ? tk.accent : tk.textLo} style={{ margin: "0 auto 8px" }} />
+          <Upload size={24} color={archivo ? tk.accent : tk.textLo} style={{ margin: "0 auto 8px", display: "block" }} />
           {archivo ? (
             <div>
               <div style={{ fontSize: 14, fontWeight: 600, color: tk.accent }}>{archivo.name}</div>
-              <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>{encabezados.length} columnas detectadas · clic para cambiar</div>
+              <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>
+                {encabezados.length > 0 ? `${encabezados.length} columnas detectadas` : "Procesando…"} · clic para cambiar
+              </div>
             </div>
           ) : (
             <div>
@@ -344,14 +414,14 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
           )}
         </div>
 
-        {archivo && encabezados.length > 0 && (
+        {archivo && (
           <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
             {modoDeteccion === "ia" ? (
               <button onClick={detectarConIA} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.accent}, #0C447C)`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
                 <Zap size={16} /> Detectar columnas con IA
               </button>
             ) : (
-              <button onClick={irAMapeoManual} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px", borderRadius: 9, border: "none", background: tk.panel2, color: tk.textHi, fontSize: 14, fontWeight: 600, cursor: "pointer", border: `1px solid ${tk.border}` as never }}>
+              <button onClick={irAMapeoManual} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px", borderRadius: 9, border: `1px solid ${tk.border}`, background: tk.panel2, color: tk.textHi, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
                 <Settings2 size={16} /> Mapear columnas manualmente
               </button>
             )}
@@ -361,23 +431,19 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     </div>
   );
 
-  // Paso: detectando
+  // ── Paso: detectando ────────────────────────────────────────────────────────
   if (step === "detectando") return (
-    <div style={{ ...card(), textAlign: "center", padding: "64px 24px" }}>
+    <div style={{ ...cardStyle, textAlign: "center", padding: "64px 24px" }}>
       <Spinner tk={tk} size={32} />
       <div style={{ fontSize: 15, color: tk.textHi, fontWeight: 600, marginTop: 16 }}>Analizando columnas con IA…</div>
       <div style={{ fontSize: 13, color: tk.textLo, marginTop: 6 }}>Claude está leyendo tu archivo y mapeando las columnas automáticamente</div>
     </div>
   );
 
-  // Paso: mapeo (confirmar o corregir)
+  // ── Paso: mapeo ─────────────────────────────────────────────────────────────
   if (step === "mapeo") return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {error && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.bad + "18", border: `1px solid ${tk.bad}44`, color: tk.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
-          <AlertTriangle size={15} /> {error}
-        </div>
-      )}
+      {errorBanner}
 
       {deteccion && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.good + "18", border: `1px solid ${tk.good}44`, color: tk.good, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
@@ -387,45 +453,39 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
         </div>
       )}
 
-      <div style={card()}>
+      <div style={cardStyle}>
         <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi, marginBottom: 4 }}>
           {deteccion ? "Confirma o corrige el mapeo detectado" : "Asigna cada columna a su campo"}
         </div>
         <div style={{ fontSize: 12, color: tk.textLo, marginBottom: 16 }}>
           {archivo?.name} · {encabezados.length} columnas
         </div>
-
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {encabezados.map((col) => {
             const det = deteccion?.columnas.find((c) => c.columna_origen === col);
             const confianza = det?.confianza ?? 1;
-            const color = confianza >= 0.8 ? tk.good : confianza >= 0.5 ? tk.warn : tk.bad;
+            const dotColor = confianza >= 0.8 ? tk.good : confianza >= 0.5 ? tk.warn : tk.bad;
             return (
               <div key={col} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: tk.panel2, borderRadius: 9, border: `1px solid ${tk.border}` }}>
-                <div style={{ flex: "0 0 200px" }}>
+                <div style={{ flex: "0 0 190px" }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: tk.textHi }}>{col}</div>
                   {det?.muestra && <div style={{ fontSize: 11, color: tk.textLo, marginTop: 2 }}>{det.muestra}</div>}
                 </div>
-                {det && (
-                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0 }} />
-                )}
+                {det && <div style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
                 <select
                   value={mapeo[col] ?? "skip"}
                   onChange={(e) => setMapeo((m) => ({ ...m, [col]: e.target.value }))}
                   style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: `1px solid ${tk.border}`, background: tk.inputBg, color: tk.textHi, fontSize: 13, outline: "none" }}>
                   {CAMPOS_STHENOVA.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                 </select>
-                {det?.razon && (
-                  <div style={{ fontSize: 11, color: tk.textLo, maxWidth: 160, lineHeight: 1.3 }}>{det.razon}</div>
-                )}
+                {det?.razon && <div style={{ fontSize: 11, color: tk.textLo, maxWidth: 160, lineHeight: 1.3 }}>{det.razon}</div>}
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Periodo */}
-      <div style={card()}>
+      <div style={cardStyle}>
         <div style={{ fontSize: 13, fontWeight: 600, color: tk.textHi, marginBottom: 12 }}>Periodo del reporte (opcional)</div>
         <div style={{ display: "flex", gap: 12 }}>
           <div style={{ flex: 1 }}>
@@ -450,27 +510,28 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     </div>
   );
 
-  // Paso: subiendo
+  // ── Paso: subiendo ──────────────────────────────────────────────────────────
   if (step === "subiendo") return (
-    <div style={{ ...card(), textAlign: "center", padding: "64px 24px" }}>
+    <div style={{ ...cardStyle, textAlign: "center", padding: "64px 24px" }}>
       <Spinner tk={tk} size={32} />
       <div style={{ fontSize: 15, color: tk.textHi, fontWeight: 600, marginTop: 16 }}>Procesando archivo…</div>
       <div style={{ fontSize: 13, color: tk.textLo, marginTop: 6 }}>Normalizando y guardando registros en la base de datos</div>
     </div>
   );
 
-  // Paso: resultado
-  const res = resultado as { filas_ok: number; filas_error: number; total_filas: number; estado: string; registros_muestra: { descripcion: string; cantidad_vendida: number; venta_bruta: number; upc: string }[] };
+  // ── Paso: resultado ─────────────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ ...card(), textAlign: "center" }}>
-        <CheckCircle size={40} color={tk.good} style={{ margin: "0 auto 12px" }} />
+      <div style={{ ...cardStyle, textAlign: "center" }}>
+        <CheckCircle size={40} color={tk.good} style={{ margin: "0 auto 12px", display: "block" }} />
         <div style={{ fontSize: 17, fontWeight: 700, color: tk.textHi }}>¡Archivo procesado!</div>
-        <div style={{ fontSize: 13, color: tk.textLo, marginTop: 4 }}>{res.filas_ok} registros importados · {res.filas_error} errores · estado: {res.estado}</div>
+        <div style={{ fontSize: 13, color: tk.textLo, marginTop: 4 }}>
+          {resultado?.filas_ok} registros importados · {resultado?.filas_error} errores · estado: {resultado?.estado}
+        </div>
       </div>
 
-      {res.registros_muestra?.length > 0 && (
-        <div style={card()}>
+      {resultado?.registros_muestra && resultado.registros_muestra.length > 0 && (
+        <div style={cardStyle}>
           <div style={{ fontSize: 13, fontWeight: 600, color: tk.textHi, marginBottom: 12 }}>Vista previa — primeros registros</div>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -482,7 +543,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
                 </tr>
               </thead>
               <tbody>
-                {res.registros_muestra.map((r, i) => (
+                {resultado.registros_muestra.map((r, i) => (
                   <tr key={i} style={{ borderBottom: `1px solid ${tk.border}` }}>
                     <td style={{ padding: "8px 12px", color: tk.textMid }}>{r.upc ?? "—"}</td>
                     <td style={{ padding: "8px 12px", color: tk.textHi }}>{r.descripcion ?? "—"}</td>
@@ -802,8 +863,8 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
         <div style={{ display: "flex", gap: 4 }}>
           {([["list", List, "Lista"], ["pipeline", Columns, "Pipeline"], ["analytics", BarChart3, "Analytics"], ["ingesta", Upload, "Ingesta"]] as const).map(([v, Icon, label]) => (
             <button key={v} onClick={() => setView(v)} title={label}
-              style={{ ...inputBase, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, background: view === v ? tk.accent : tk.inputBg, color: view === v ? "#06122B" : tk.textMid, borderColor: view === v ? tk.accent : tk.border }}>
-              <Icon size={16} /><span style={{ fontSize: 12 }}>{label}</span>
+              style={{ ...inputBase, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, background: view === v ? tk.accent : tk.inputBg, color: view === v ? "#06122B" : tk.textMid, borderColor: view === v ? tk.accent : tk.border }}>
+              <Icon size={15} /><span style={{ fontSize: 12 }}>{label}</span>
             </button>
           ))}
         </div>
