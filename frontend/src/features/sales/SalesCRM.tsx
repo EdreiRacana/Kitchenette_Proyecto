@@ -2,20 +2,12 @@
 // Keeps the { t, s } contract so it drops into App.tsx in place of the inline
 // Sales component. Connects to the live API and gracefully falls back to a
 // built-in demo dataset (with a banner) when the backend is unreachable.
-//
-// LOADING STRATEGY (block / progressive):
-//   The screen is split into independent blocks, each with its own loading
-//   state and skeleton, so each part renders the moment its own data arrives:
-//     • orders list  → reacts to filters/page (fast; this is the demo canary)
-//     • KPIs (stats) → global, loaded once + after mutations (NOT on paging)
-//     • analytics    → deferred; only fetched when the Analytics tab is opened
-//     • catalogs     → customers + variants, loaded once, independent
-//   Nothing is held hostage by the slowest aggregate query anymore.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Search, List, Columns, BarChart3, Plus, Download, DollarSign, Clock,
   TrendingUp, Percent, ChevronRight, ArrowUp, ArrowDown, FileText, Info,
+  Upload, Zap, Settings2, CheckCircle, AlertTriangle, X, ChevronDown,
 } from "lucide-react";
 import api from "../../services/api";
 import { resolveTheme, makeTr, money, dateShort, statusColors, statusMeta, paymentLabel, ORDER_PIPELINE, PAYMENT_METHODS } from "./theme";
@@ -30,8 +22,51 @@ import { OrderDrawer } from "./OrderDrawer";
 import { Analytics } from "./Analytics";
 import { DEMO_ORDERS, DEMO_CUSTOMERS, DEMO_VARIANTS } from "./demo";
 
-type ViewMode = "list" | "pipeline" | "analytics";
+type ViewMode = "list" | "pipeline" | "analytics" | "ingesta";
 const PAGE = 20;
+
+// ── Ingesta API helpers ──────────────────────────────────────────────────────
+const ingestaApi = {
+  fuentes: () => api.get("/ingesta/fuentes").then((r) => r.data),
+  resumen: () => api.get("/ingesta/resumen").then((r) => r.data),
+  detectar: (payload: unknown) => api.post("/ingesta/detectar", payload).then((r) => r.data),
+  crearFuente: (data: unknown) => api.post("/ingesta/fuentes", data).then((r) => r.data),
+  upload: (fuenteId: number, formData: FormData) =>
+    api.post(`/ingesta/fuentes/${fuenteId}/upload`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }).then((r) => r.data),
+  lotes: (fuenteId: number) => api.get(`/ingesta/fuentes/${fuenteId}/lotes`).then((r) => r.data),
+};
+
+// Campos internos estándar para los dropdowns manuales
+const CAMPOS_STHENOVA = [
+  { value: "skip",                   label: "— Ignorar columna —" },
+  { value: "upc",                    label: "UPC / código de barras" },
+  { value: "sku_cliente",            label: "SKU del cliente" },
+  { value: "sku_cadena",             label: "SKU de la cadena" },
+  { value: "descripcion",            label: "Descripción del producto" },
+  { value: "fecha_inicio",           label: "Fecha inicio periodo" },
+  { value: "fecha_fin",              label: "Fecha fin periodo" },
+  { value: "fecha_venta",            label: "Fecha de venta" },
+  { value: "cantidad_vendida",       label: "Cantidad vendida" },
+  { value: "precio_unitario",        label: "Precio unitario" },
+  { value: "venta_bruta",            label: "Venta bruta" },
+  { value: "venta_neta",             label: "Venta neta" },
+  { value: "devoluciones_unidades",  label: "Devoluciones (unidades)" },
+  { value: "devoluciones_importe",   label: "Devoluciones (importe)" },
+  { value: "sra",                    label: "SR&A" },
+  { value: "bonificaciones",         label: "Bonificaciones" },
+  { value: "descuentos",             label: "Descuentos" },
+  { value: "cogs",                   label: "COGS" },
+  { value: "comisiones",             label: "Comisiones" },
+  { value: "envio",                  label: "Envío" },
+  { value: "marketing",              label: "Marketing / trade spend" },
+  { value: "inv_inicial",            label: "Inventario inicial" },
+  { value: "inv_final",              label: "Inventario final" },
+  { value: "entradas_resurtido",     label: "Entradas / resurtido" },
+  { value: "id_pedido",              label: "ID de pedido (agrupa filas)" },
+  { value: "costo_envio_pedido",     label: "Costo envío del pedido" },
+];
 
 function computeStats(orders: Order[]): SalesStats {
   const real = orders.filter((o) => o.kind === "order" && o.status !== "cancelled");
@@ -48,6 +83,427 @@ function computeStats(orders: Order[]): SalesStats {
   };
 }
 
+// ── Módulo de Ingesta ────────────────────────────────────────────────────────
+type IngestaStep = "inicio" | "detectando" | "mapeo" | "subiendo" | "resultado";
+
+interface ColumnaDetectada {
+  columna_origen: string;
+  campo_sthenova_sugerido: string;
+  muestra: string | null;
+  confianza: number;
+  razon: string | null;
+}
+
+interface DeteccionResult {
+  columnas: ColumnaDetectada[];
+  tiene_filas_anidadas: boolean;
+  campo_id_pedido_sugerido: string | null;
+  confianza_global: number;
+  notas: string | null;
+  tokens_usados: number;
+}
+
+function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => string }) {
+  const [step, setStep] = useState<IngestaStep>("inicio");
+  const [fuentes, setFuentes] = useState<unknown[]>([]);
+  const [fuenteId, setFuenteId] = useState<number | null>(null);
+  const [fuenteNombre, setFuenteNombre] = useState("");
+  const [tipoCliente, setTipoCliente] = useState("cadena_retail");
+  const [moneda, setMoneda] = useState("MXN");
+  const [modoDeteccion, setModoDeteccion] = useState<"ia" | "manual">("ia");
+  const [archivo, setArchivo] = useState<File | null>(null);
+  const [encabezados, setEncabezados] = useState<string[]>([]);
+  const [muestraFilas, setMuestraFilas] = useState<Record<string, string>[]>([]);
+  const [deteccion, setDeteccion] = useState<DeteccionResult | null>(null);
+  const [mapeo, setMapeo] = useState<Record<string, string>>({});
+  const [resultado, setResultado] = useState<unknown>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [periodoInicio, setPeriodoInicio] = useState("");
+  const [periodoFin, setPeriodoFin] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    ingestaApi.fuentes().then(setFuentes).catch(() => {});
+  }, []);
+
+  const inputBase: React.CSSProperties = {
+    padding: "9px 12px", borderRadius: 8,
+    border: `1px solid ${tk.border}`,
+    background: tk.inputBg, color: tk.textHi,
+    fontSize: 14, outline: "none", width: "100%", boxSizing: "border-box" as const,
+  };
+
+  const card = (extra?: React.CSSProperties): React.CSSProperties => ({
+    background: tk.panel, border: `1px solid ${tk.border}`,
+    borderRadius: 12, padding: "20px 24px", ...extra,
+  });
+
+  // Lee encabezados del archivo en el cliente (sin subir aún)
+  const leerEncabezados = async (file: File) => {
+    const { default: Papa } = await import("papaparse" as never) as { default: unknown } as { default: { parse: (f: File, opts: unknown) => void } };
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (ext === "csv") {
+      Papa.parse(file, {
+        header: true,
+        preview: 5,
+        complete: (res: { data: Record<string, string>[]; meta: { fields: string[] } }) => {
+          setEncabezados(res.meta.fields ?? []);
+          setMuestraFilas(res.data.slice(0, 5));
+        },
+      });
+    } else {
+      // Para xlsx usamos FileReader + SheetJS
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const { read, utils } = await import("xlsx" as never) as { default: unknown } as { read: (d: ArrayBuffer, o: unknown) => unknown; utils: { sheet_to_json: (s: unknown, o: unknown) => unknown[] } };
+        const wb = read(e.target!.result as ArrayBuffer, { type: "array" });
+        const ws = (wb as { Sheets: Record<string, unknown> }).Sheets[(wb as { SheetNames: string[] }).SheetNames[0]];
+        const rows = utils.sheet_to_json(ws, { header: 1 }) as unknown[][];
+        if (rows.length > 0) {
+          const hdrs = (rows[0] as string[]).map(String);
+          setEncabezados(hdrs);
+          const dataRows = rows.slice(1, 6).map((r) => {
+            const obj: Record<string, string> = {};
+            hdrs.forEach((h, i) => { obj[h] = String((r as unknown[])[i] ?? ""); });
+            return obj;
+          });
+          setMuestraFilas(dataRows);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+  };
+
+  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setArchivo(f);
+    setError(null);
+    await leerEncabezados(f);
+  };
+
+  const detectarConIA = async () => {
+    if (!encabezados.length) { setError("Sube un archivo primero para detectar las columnas."); return; }
+    setStep("detectando");
+    setError(null);
+    try {
+      const res = await ingestaApi.detectar({
+        encabezados,
+        muestra_filas: muestraFilas,
+        fuente_nombre: fuenteNombre || undefined,
+        tipo_cliente: tipoCliente || undefined,
+      });
+      setDeteccion(res);
+      const m: Record<string, string> = {};
+      res.columnas.forEach((c: ColumnaDetectada) => { m[c.columna_origen] = c.campo_sthenova_sugerido; });
+      setMapeo(m);
+      setStep("mapeo");
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      setError(err?.response?.data?.detail ?? "Error al conectar con Claude API.");
+      setStep("inicio");
+    }
+  };
+
+  const irAMapeoManual = () => {
+    if (!encabezados.length) { setError("Sube un archivo primero."); return; }
+    const m: Record<string, string> = {};
+    encabezados.forEach((h) => { m[h] = "skip"; });
+    setMapeo(m);
+    setDeteccion(null);
+    setStep("mapeo");
+  };
+
+  const procesarArchivo = async () => {
+    if (!archivo) { setError("Selecciona un archivo."); return; }
+    setStep("subiendo");
+    setError(null);
+    try {
+      let id = fuenteId;
+      // Si no hay fuente seleccionada, crear una nueva con el mapeo actual
+      if (!id) {
+        const columnas = Object.entries(mapeo)
+          .filter(([, v]) => v !== "skip")
+          .map(([k, v]) => ({ columna_origen: k, campo_sthenova: v, confirmada: true }));
+        const nueva = await ingestaApi.crearFuente({
+          nombre: fuenteNombre || archivo.name,
+          tipo_cliente: tipoCliente,
+          moneda,
+          columnas,
+          reglas: {},
+        });
+        id = nueva.id;
+        setFuenteId(id);
+      }
+      const fd = new FormData();
+      fd.append("archivo", archivo);
+      if (periodoInicio) fd.append("periodo_inicio", periodoInicio);
+      if (periodoFin) fd.append("periodo_fin", periodoFin);
+      const res = await ingestaApi.upload(id!, fd);
+      setResultado(res);
+      setStep("resultado");
+      ingestaApi.fuentes().then(setFuentes).catch(() => {});
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      setError(err?.response?.data?.detail ?? "Error al procesar el archivo.");
+      setStep("mapeo");
+    }
+  };
+
+  const reiniciar = () => {
+    setStep("inicio"); setArchivo(null); setEncabezados([]);
+    setMuestraFilas([]); setDeteccion(null); setMapeo({});
+    setResultado(null); setError(null); setFuenteNombre("");
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  // Paso: inicio
+  if (step === "inicio") return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {error && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.bad + "18", border: `1px solid ${tk.bad}44`, color: tk.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
+          <AlertTriangle size={15} /> {error}
+        </div>
+      )}
+
+      {/* Fuentes existentes */}
+      {(fuentes as { id: number; nombre: string; moneda: string }[]).length > 0 && (
+        <div style={card()}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi, marginBottom: 12 }}>
+            Fuentes configuradas — subir reporte
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {(fuentes as { id: number; nombre: string; moneda: string }[]).map((f) => (
+              <div key={f.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: tk.panel2, borderRadius: 9, border: `1px solid ${tk.border}` }}>
+                <div>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{f.nombre}</span>
+                  <span style={{ fontSize: 12, color: tk.textLo, marginLeft: 10 }}>{f.moneda}</span>
+                </div>
+                <button
+                  onClick={() => { setFuenteId(f.id); setFuenteNombre(f.nombre); fileRef.current?.click(); }}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "none", background: tk.accent, color: "#06122B", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  <Upload size={14} /> Subir reporte
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Nueva fuente */}
+      <div style={card()}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi, marginBottom: 16 }}>
+          Configurar nueva fuente
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <div>
+            <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Nombre de la fuente</label>
+            <input value={fuenteNombre} onChange={(e) => setFuenteNombre(e.target.value)} placeholder="Walmart México" style={inputBase} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Tipo de cliente</label>
+            <select value={tipoCliente} onChange={(e) => setTipoCliente(e.target.value)} style={{ ...inputBase }}>
+              <option value="cadena_retail">Cadena retail</option>
+              <option value="marketplace">Marketplace digital</option>
+              <option value="tienda_fisica">Tienda física</option>
+              <option value="distribuidor">Distribuidor</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Moneda</label>
+            <select value={moneda} onChange={(e) => setMoneda(e.target.value)} style={{ ...inputBase }}>
+              <option value="MXN">MXN — Pesos mexicanos</option>
+              <option value="USD">USD — Dólares</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Modo de detección</label>
+            <select value={modoDeteccion} onChange={(e) => setModoDeteccion(e.target.value as "ia" | "manual")} style={{ ...inputBase }}>
+              <option value="ia">IA automática (recomendado)</option>
+              <option value="manual">Manual — elijo cada columna</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Zona de archivo */}
+        <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={onFileChange} style={{ display: "none" }} />
+        <div
+          onClick={() => fileRef.current?.click()}
+          style={{ border: `2px dashed ${archivo ? tk.accent : tk.border}`, borderRadius: 10, padding: "28px 20px", textAlign: "center", cursor: "pointer", background: archivo ? tk.accent + "0a" : "transparent", transition: "all .2s" }}>
+          <Upload size={24} color={archivo ? tk.accent : tk.textLo} style={{ margin: "0 auto 8px" }} />
+          {archivo ? (
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: tk.accent }}>{archivo.name}</div>
+              <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>{encabezados.length} columnas detectadas · clic para cambiar</div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize: 14, color: tk.textMid }}>Arrastra tu archivo aquí o haz clic para seleccionar</div>
+              <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>Excel (.xlsx, .xls) o CSV</div>
+            </div>
+          )}
+        </div>
+
+        {archivo && encabezados.length > 0 && (
+          <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
+            {modoDeteccion === "ia" ? (
+              <button onClick={detectarConIA} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.accent}, #0C447C)`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                <Zap size={16} /> Detectar columnas con IA
+              </button>
+            ) : (
+              <button onClick={irAMapeoManual} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px", borderRadius: 9, border: "none", background: tk.panel2, color: tk.textHi, fontSize: 14, fontWeight: 600, cursor: "pointer", border: `1px solid ${tk.border}` as never }}>
+                <Settings2 size={16} /> Mapear columnas manualmente
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // Paso: detectando
+  if (step === "detectando") return (
+    <div style={{ ...card(), textAlign: "center", padding: "64px 24px" }}>
+      <Spinner tk={tk} size={32} />
+      <div style={{ fontSize: 15, color: tk.textHi, fontWeight: 600, marginTop: 16 }}>Analizando columnas con IA…</div>
+      <div style={{ fontSize: 13, color: tk.textLo, marginTop: 6 }}>Claude está leyendo tu archivo y mapeando las columnas automáticamente</div>
+    </div>
+  );
+
+  // Paso: mapeo (confirmar o corregir)
+  if (step === "mapeo") return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {error && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.bad + "18", border: `1px solid ${tk.bad}44`, color: tk.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
+          <AlertTriangle size={15} /> {error}
+        </div>
+      )}
+
+      {deteccion && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.good + "18", border: `1px solid ${tk.good}44`, color: tk.good, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
+          <CheckCircle size={15} />
+          IA completada · confianza global {Math.round(deteccion.confianza_global * 100)}% · {deteccion.tokens_usados} tokens usados
+          {deteccion.notas && <span style={{ color: tk.textLo }}> · {deteccion.notas}</span>}
+        </div>
+      )}
+
+      <div style={card()}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi, marginBottom: 4 }}>
+          {deteccion ? "Confirma o corrige el mapeo detectado" : "Asigna cada columna a su campo"}
+        </div>
+        <div style={{ fontSize: 12, color: tk.textLo, marginBottom: 16 }}>
+          {archivo?.name} · {encabezados.length} columnas
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {encabezados.map((col) => {
+            const det = deteccion?.columnas.find((c) => c.columna_origen === col);
+            const confianza = det?.confianza ?? 1;
+            const color = confianza >= 0.8 ? tk.good : confianza >= 0.5 ? tk.warn : tk.bad;
+            return (
+              <div key={col} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: tk.panel2, borderRadius: 9, border: `1px solid ${tk.border}` }}>
+                <div style={{ flex: "0 0 200px" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: tk.textHi }}>{col}</div>
+                  {det?.muestra && <div style={{ fontSize: 11, color: tk.textLo, marginTop: 2 }}>{det.muestra}</div>}
+                </div>
+                {det && (
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0 }} />
+                )}
+                <select
+                  value={mapeo[col] ?? "skip"}
+                  onChange={(e) => setMapeo((m) => ({ ...m, [col]: e.target.value }))}
+                  style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: `1px solid ${tk.border}`, background: tk.inputBg, color: tk.textHi, fontSize: 13, outline: "none" }}>
+                  {CAMPOS_STHENOVA.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+                {det?.razon && (
+                  <div style={{ fontSize: 11, color: tk.textLo, maxWidth: 160, lineHeight: 1.3 }}>{det.razon}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Periodo */}
+      <div style={card()}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: tk.textHi, marginBottom: 12 }}>Periodo del reporte (opcional)</div>
+        <div style={{ display: "flex", gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Fecha inicio</label>
+            <input type="date" value={periodoInicio} onChange={(e) => setPeriodoInicio(e.target.value)} style={inputBase} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Fecha fin</label>
+            <input type="date" value={periodoFin} onChange={(e) => setPeriodoFin(e.target.value)} style={inputBase} />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={reiniciar} style={{ padding: "10px 18px", borderRadius: 9, border: `1px solid ${tk.border}`, background: "transparent", color: tk.textMid, fontSize: 14, cursor: "pointer" }}>
+          ‹ Volver
+        </button>
+        <button onClick={procesarArchivo} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.accent}, #0C447C)`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+          <Upload size={16} /> Procesar archivo
+        </button>
+      </div>
+    </div>
+  );
+
+  // Paso: subiendo
+  if (step === "subiendo") return (
+    <div style={{ ...card(), textAlign: "center", padding: "64px 24px" }}>
+      <Spinner tk={tk} size={32} />
+      <div style={{ fontSize: 15, color: tk.textHi, fontWeight: 600, marginTop: 16 }}>Procesando archivo…</div>
+      <div style={{ fontSize: 13, color: tk.textLo, marginTop: 6 }}>Normalizando y guardando registros en la base de datos</div>
+    </div>
+  );
+
+  // Paso: resultado
+  const res = resultado as { filas_ok: number; filas_error: number; total_filas: number; estado: string; registros_muestra: { descripcion: string; cantidad_vendida: number; venta_bruta: number; upc: string }[] };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ ...card(), textAlign: "center" }}>
+        <CheckCircle size={40} color={tk.good} style={{ margin: "0 auto 12px" }} />
+        <div style={{ fontSize: 17, fontWeight: 700, color: tk.textHi }}>¡Archivo procesado!</div>
+        <div style={{ fontSize: 13, color: tk.textLo, marginTop: 4 }}>{res.filas_ok} registros importados · {res.filas_error} errores · estado: {res.estado}</div>
+      </div>
+
+      {res.registros_muestra?.length > 0 && (
+        <div style={card()}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: tk.textHi, marginBottom: 12 }}>Vista previa — primeros registros</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: tk.panel2 }}>
+                  {["UPC", "Descripción", "Cantidad", "Venta bruta"].map((h) => (
+                    <th key={h} style={{ padding: "8px 12px", textAlign: "left", color: tk.textLo, fontWeight: 600, borderBottom: `1px solid ${tk.border}` }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {res.registros_muestra.map((r, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${tk.border}` }}>
+                    <td style={{ padding: "8px 12px", color: tk.textMid }}>{r.upc ?? "—"}</td>
+                    <td style={{ padding: "8px 12px", color: tk.textHi }}>{r.descripcion ?? "—"}</td>
+                    <td style={{ padding: "8px 12px", color: tk.textMid }}>{r.cantidad_vendida}</td>
+                    <td style={{ padding: "8px 12px", color: tk.textHi, fontWeight: 600 }}>{money(r.venta_bruta)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <button onClick={reiniciar} style={{ padding: "11px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.accent}, #0C447C)`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+        Subir otro archivo
+      </button>
+    </div>
+  );
+}
+
+// ── SalesCRM principal ───────────────────────────────────────────────────────
 export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
   const tk = useMemo<Tokens>(() => resolveTheme(t as Record<string, unknown>), [t]);
   const tr = useMemo(() => makeTr(s), [s]);
@@ -61,7 +517,6 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [variants, setVariants] = useState<VariantOption[]>([]);
 
-  // ── Independent loading states (one per block) ─────────────────────────────
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [statsLoading, setStatsLoading] = useState(true);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -85,7 +540,6 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Order | null>(null);
   const [payTarget, setPayTarget] = useState<Order | null>(null);
-
   const [dragId, setDragId] = useState<number | null>(null);
   const [dragCol, setDragCol] = useState<string | null>(null);
 
@@ -95,7 +549,6 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
     sort_by: sortBy, sort_dir: sortDir, skip: page * PAGE, limit: PAGE,
   }), [q, kind, status, payment, from, to, sortBy, sortDir, page]);
 
-  // ── Demo-mode local filtering ────────────────────────────────────────────
   const applyDemoFilters = useCallback((all: Order[]): Order[] => {
     let r = [...all];
     if (kind) r = r.filter((o) => o.kind === kind);
@@ -136,80 +589,46 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
     setTopProducts([...byProd.entries()].map(([name, v]) => ({ variant_id: null, name, quantity: v.qty, total: Math.round(v.total) })).sort((a, b) => b.total - a.total).slice(0, 5));
   }, []);
 
-  // ── Block 1: orders list (paginated). Also the "is the backend up?" canary. ──
   const loadOrders = useCallback(async () => {
     setOrdersLoading(true);
     try {
       const page1 = await salesApi.list(filters);
-      setOrders(page1.items);
-      setTotal(page1.total);
-      setDemo(false);
+      setOrders(page1.items); setTotal(page1.total); setDemo(false);
     } catch {
-      // Backend unreachable → demo mode (fills orders + analytics locally).
-      setDemo(true);
-      setCustomers(DEMO_CUSTOMERS);
-      setVariants(DEMO_VARIANTS);
+      setDemo(true); setCustomers(DEMO_CUSTOMERS); setVariants(DEMO_VARIANTS);
       const filtered = applyDemoFilters(DEMO_ORDERS);
-      setOrders(filtered.slice(page * PAGE, page * PAGE + PAGE));
-      setTotal(filtered.length);
-      refreshDemoAnalytics(DEMO_ORDERS);
-      setStatsLoading(false);
-      setAnalyticsLoaded(true);
-    } finally {
-      setOrdersLoading(false);
-    }
+      setOrders(filtered.slice(page * PAGE, page * PAGE + PAGE)); setTotal(filtered.length);
+      refreshDemoAnalytics(DEMO_ORDERS); setStatsLoading(false); setAnalyticsLoaded(true);
+    } finally { setOrdersLoading(false); }
   }, [filters, applyDemoFilters, refreshDemoAnalytics, page]);
 
-  // ── Block 2: KPIs (global, not paginated). Once on mount + after mutations. ──
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
-    try {
-      setStats(await salesApi.stats());
-    } catch {
-      /* demo path fills stats; ignore here */
-    } finally {
-      setStatsLoading(false);
-    }
+    try { setStats(await salesApi.stats()); } catch { } finally { setStatsLoading(false); }
   }, []);
 
-  // ── Block 3: analytics bundle (global). Lazy — only when the tab is open. ──
   const loadAnalytics = useCallback(async () => {
     setAnalyticsLoading(true);
     try {
-      const [tr1, tc, tp] = await Promise.all([
-        salesApi.trend("day", 30), salesApi.topCustomers(5), salesApi.topProducts(5),
-      ]);
-      setTrend(tr1); setTopCustomers(tc); setTopProducts(tp);
-      setAnalyticsLoaded(true);
-    } catch {
-      /* ignore; demo path handles it */
-    } finally {
-      setAnalyticsLoading(false);
-    }
+      const [tr1, tc, tp] = await Promise.all([salesApi.trend("day", 30), salesApi.topCustomers(5), salesApi.topProducts(5)]);
+      setTrend(tr1); setTopCustomers(tc); setTopProducts(tp); setAnalyticsLoaded(true);
+    } catch { } finally { setAnalyticsLoading(false); }
   }, []);
 
-  // ── Block 4: catalogs (customers + variants). Once; independent of the list. ──
   const loadCatalogs = useCallback(async () => {
-    salesApi.customers().then(setCustomers).catch(() => { /* keep current */ });
-    salesApi.variantOptions().then(setVariants).catch(() => { /* keep current */ });
+    salesApi.customers().then(setCustomers).catch(() => {});
+    salesApi.variantOptions().then(setVariants).catch(() => {});
   }, []);
 
-  // Refresh after a mutation: list + KPIs now, analytics on next open.
   const refreshData = useCallback(async () => {
-    await loadOrders();
-    loadStats();
-    setAnalyticsLoaded(false); // invalidate cache; refetches if the tab is open
+    await loadOrders(); loadStats(); setAnalyticsLoaded(false);
   }, [loadOrders, loadStats]);
 
-  // ── Effects: each block loads on its own trigger ───────────────────────────
-  useEffect(() => { loadOrders(); }, [loadOrders]);            // filters / page
-  useEffect(() => { loadStats(); loadCatalogs(); }, [loadStats, loadCatalogs]); // once
-  useEffect(() => {
-    if (view === "analytics" && !demo && !analyticsLoaded) loadAnalytics();
-  }, [view, demo, analyticsLoaded, loadAnalytics]);
+  useEffect(() => { loadOrders(); }, [loadOrders]);
+  useEffect(() => { loadStats(); loadCatalogs(); }, [loadStats, loadCatalogs]);
+  useEffect(() => { if (view === "analytics" && !demo && !analyticsLoaded) loadAnalytics(); }, [view, demo, analyticsLoaded, loadAnalytics]);
   useEffect(() => { setPage(0); }, [q, kind, status, payment, from, to]);
 
-  // ── Demo mutation helpers ────────────────────────────────────────────────
   const demoStore = useMemo(() => ({ list: [...DEMO_ORDERS] }), []);
   const commitDemo = useCallback(() => {
     const filtered = applyDemoFilters(demoStore.list);
@@ -217,7 +636,6 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
     refreshDemoAnalytics(demoStore.list);
   }, [applyDemoFilters, demoStore, page, refreshDemoAnalytics]);
 
-  // ── Actions ────────────────────────────────────────────────────────────────
   const openDetail = useCallback(async (o: Order) => {
     if (demo) { setSelected(o); return; }
     try { setSelected(await salesApi.get(o.id)); } catch { setSelected(o); }
@@ -237,20 +655,7 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
         } else {
           const id = Math.max(0, ...demoStore.list.map((x) => x.id)) + 1;
           const folio = `${draft.kind === "quote" ? "COT" : "ORD"}-${String(id).padStart(6, "0")}`;
-          demoStore.list.unshift({
-            id, folio, kind: draft.kind, customer_id: draft.customer_id, user_id: 1, warehouse_id: 1,
-            status: draft.kind === "quote" ? "sent" : "pending", payment_method: draft.payment_method, channel: draft.channel,
-            currency: "MXN", subtotal, discount_type: draft.discount_type, discount_value: draft.discount_value,
-            discount_amount: disc, tax_rate: draft.tax_rate, tax_amount: tax, shipping_amount: draft.shipping_amount,
-            total_amount: totalv, paid_amount: 0, balance: totalv, due_date: null, valid_until: null, notes: draft.notes || null,
-            bill_rfc: draft.bill_rfc || null, bill_name: draft.bill_name || null, bill_use: draft.bill_use || null,
-            bill_regime: draft.bill_regime || null, bill_zip: draft.bill_zip || null, cfdi_uuid: null, cfdi_status: "none", invoiced_at: null,
-            created_at: new Date().toISOString(), updated_at: null,
-            items: draft.items.map((it, i) => ({ id: i, variant_id: it.variant_id, product_name: it.product_name, sku: it.sku, quantity: it.quantity, unit_price: it.unit_price, discount_amount: it.discount_amount, tax_rate: it.tax_rate, subtotal: it.unit_price * it.quantity, total: it.unit_price * it.quantity * (1 + it.tax_rate / 100) })),
-            payments: [], events: [{ id: 1, event_type: "created", from_status: null, to_status: "pending", message: "Creado", created_at: new Date().toISOString() }],
-            customer: draft.customer_id ? (DEMO_CUSTOMERS.find((c) => c.id === draft.customer_id) ?? null) : null,
-            seller: { id: 1, full_name: "Vendedor Demo" },
-          });
+          demoStore.list.unshift({ id, folio, kind: draft.kind, customer_id: draft.customer_id, user_id: 1, warehouse_id: 1, status: draft.kind === "quote" ? "sent" : "pending", payment_method: draft.payment_method, channel: draft.channel, currency: "MXN", subtotal, discount_type: draft.discount_type, discount_value: draft.discount_value, discount_amount: disc, tax_rate: draft.tax_rate, tax_amount: tax, shipping_amount: draft.shipping_amount, total_amount: totalv, paid_amount: 0, balance: totalv, due_date: null, valid_until: null, notes: draft.notes || null, bill_rfc: draft.bill_rfc || null, bill_name: draft.bill_name || null, bill_use: draft.bill_use || null, bill_regime: draft.bill_regime || null, bill_zip: draft.bill_zip || null, cfdi_uuid: null, cfdi_status: "none", invoiced_at: null, created_at: new Date().toISOString(), updated_at: null, items: draft.items.map((it, i) => ({ id: i, variant_id: it.variant_id, product_name: it.product_name, sku: it.sku, quantity: it.quantity, unit_price: it.unit_price, discount_amount: it.discount_amount, tax_rate: it.tax_rate, subtotal: it.unit_price * it.quantity, total: it.unit_price * it.quantity * (1 + it.tax_rate / 100) })), payments: [], events: [{ id: 1, event_type: "created", from_status: null, to_status: "pending", message: "Creado", created_at: new Date().toISOString() }], customer: draft.customer_id ? (DEMO_CUSTOMERS.find((c) => c.id === draft.customer_id) ?? null) : null, seller: { id: 1, full_name: "Vendedor Demo" } });
         }
         commitDemo();
       } else {
@@ -268,47 +673,28 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
     try {
       if (demo) {
         const idx = demoStore.list.findIndex((x) => x.id === payTarget.id);
-        if (idx >= 0) {
-          const o = demoStore.list[idx]; const paid = o.paid_amount + amount;
-          demoStore.list[idx] = { ...o, paid_amount: paid, balance: Math.round((o.total_amount - paid) * 100) / 100, status: paid + 0.001 >= o.total_amount ? "paid" : "partial", payments: [...o.payments, { id: o.payments.length + 1, order_id: o.id, amount, method, reference: reference || null, note: note || null, created_at: new Date().toISOString() }] };
-        }
+        if (idx >= 0) { const o = demoStore.list[idx]; const paid = o.paid_amount + amount; demoStore.list[idx] = { ...o, paid_amount: paid, balance: Math.round((o.total_amount - paid) * 100) / 100, status: paid + 0.001 >= o.total_amount ? "paid" : "partial", payments: [...o.payments, { id: o.payments.length + 1, order_id: o.id, amount, method, reference: reference || null, note: note || null, created_at: new Date().toISOString() }] }; }
         commitDemo(); setSelected(null);
-      } else {
-        await salesApi.addPayment(payTarget.id, amount, method, reference, note);
-        await refreshData(); setSelected(null);
-      }
+      } else { await salesApi.addPayment(payTarget.id, amount, method, reference, note); await refreshData(); setSelected(null); }
       setPayTarget(null);
     } catch (e) { alert(extractErr(e)); } finally { setSaving(false); }
   }, [payTarget, demo, demoStore, commitDemo, refreshData]);
 
   const changeStatus = useCallback(async (o: Order, newStatus: string) => {
     if (o.status === newStatus) return;
-    if (demo) {
-      const idx = demoStore.list.findIndex((x) => x.id === o.id);
-      if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: newStatus as Order["status"] };
-      commitDemo(); return;
-    }
+    if (demo) { const idx = demoStore.list.findIndex((x) => x.id === o.id); if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: newStatus as Order["status"] }; commitDemo(); return; }
     try { await salesApi.changeStatus(o.id, newStatus); await refreshData(); } catch (e) { alert(extractErr(e)); }
   }, [demo, demoStore, commitDemo, refreshData]);
 
   const markPaid = useCallback((o: Order) => { setPayTarget(o); }, []);
-
   const convert = useCallback(async (o: Order) => {
-    if (demo) {
-      const idx = demoStore.list.findIndex((x) => x.id === o.id);
-      if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: "converted" };
-      commitDemo(); setSelected(null); return;
-    }
+    if (demo) { const idx = demoStore.list.findIndex((x) => x.id === o.id); if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: "converted" }; commitDemo(); setSelected(null); return; }
     try { await salesApi.convert(o.id); await refreshData(); setSelected(null); } catch (e) { alert(extractErr(e)); }
   }, [demo, demoStore, commitDemo, refreshData]);
 
   const cancel = useCallback(async (o: Order) => {
     if (!window.confirm(tr("sales_confirm_cancel", "¿Cancelar este documento?"))) return;
-    if (demo) {
-      const idx = demoStore.list.findIndex((x) => x.id === o.id);
-      if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: "cancelled", balance: 0 };
-      commitDemo(); setSelected(null); return;
-    }
+    if (demo) { const idx = demoStore.list.findIndex((x) => x.id === o.id); if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: "cancelled", balance: 0 }; commitDemo(); setSelected(null); return; }
     try { await salesApi.cancel(o.id); await refreshData(); setSelected(null); } catch (e) { alert(extractErr(e)); }
   }, [demo, demoStore, commitDemo, refreshData, tr]);
 
@@ -325,7 +711,6 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
 
   const openEdit = useCallback((o: Order) => { setEditing(o); setSelected(null); setFormOpen(true); }, []);
   const openNew = useCallback(() => { setEditing(null); setFormOpen(true); }, []);
-
   const exportCsv = useCallback(() => {
     if (demo) { alert("Export CSV disponible con backend conectado."); return; }
     window.open(salesApi.exportUrl(filters), "_blank");
@@ -336,7 +721,6 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
     else { setSortBy(col); setSortDir("desc"); }
   };
 
-  // ── Render helpers ───────────────────────────────────────────────────────
   const kpis = stats ?? computeStats(orders);
   const pages = Math.max(1, Math.ceil(total / PAGE));
 
@@ -350,10 +734,7 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
   const KpiSkeleton = () => (
     <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, flex: 1, minWidth: 170 }}>
       <Skel tk={tk} w={38} h={38} r={10} />
-      <div style={{ flex: 1 }}>
-        <Skel tk={tk} w="60%" h={10} style={{ marginBottom: 8 }} />
-        <Skel tk={tk} w="42%" h={16} />
-      </div>
+      <div style={{ flex: 1 }}><Skel tk={tk} w="60%" h={10} style={{ marginBottom: 8 }} /><Skel tk={tk} w="42%" h={16} /></div>
     </div>
   );
 
@@ -363,7 +744,6 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
       <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{label}{sortBy === col && (sortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</span>
     </th>
   );
-
   const thBase: React.CSSProperties = { padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: tk.textLo, borderBottom: `1px solid ${tk.border}`, textTransform: "uppercase", letterSpacing: 0.4 };
 
   return (
@@ -371,63 +751,75 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
       <Spinkeyframes />
       <ShimmerKeyframes />
 
-      {demo && (
+      {demo && view !== "ingesta" && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.warn + "18", border: `1px solid ${tk.warn}44`, color: tk.warn, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
           <Info size={16} /> {tr("sales_demo_mode", "Modo demo: backend no disponible. Mostrando datos de ejemplo; las acciones no se guardan.")}
         </div>
       )}
 
-      {/* KPIs — own block: skeleton until stats land, list keeps loading underneath */}
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-        {statsLoading && !stats ? (
-          Array.from({ length: 5 }).map((_, i) => <KpiSkeleton key={i} />)
-        ) : (
+      {view !== "ingesta" && (
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+          {statsLoading && !stats ? (
+            Array.from({ length: 5 }).map((_, i) => <KpiSkeleton key={i} />)
+          ) : (
+            <>
+              <KpiCard icon={<DollarSign size={20} />} label={tr("sales_kpi_sold", "Total vendido")} value={money(kpis.total_sold)} color={tk.good} />
+              <KpiCard icon={<Clock size={20} />} label={tr("sales_kpi_pending_orders", "Pedidos pendientes")} value={String(kpis.pending_orders)} color={tk.warn} />
+              <KpiCard icon={<TrendingUp size={20} />} label={tr("sales_kpi_pending_amount", "Por cobrar")} value={money(kpis.pending_amount)} color={tk.accent} />
+              <KpiCard icon={<Percent size={20} />} label={tr("sales_kpi_paid_rate", "Tasa pagados")} value={`${kpis.paid_rate}%`} color={tk.good} />
+              <KpiCard icon={<FileText size={20} />} label={tr("sales_kpi_avg", "Ticket promedio")} value={money(kpis.avg_ticket)} color={tk.accent} />
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Toolbar */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        {view !== "ingesta" && (
           <>
-            <KpiCard icon={<DollarSign size={20} />} label={tr("sales_kpi_sold", "Total vendido")} value={money(kpis.total_sold)} color={tk.good} />
-            <KpiCard icon={<Clock size={20} />} label={tr("sales_kpi_pending_orders", "Pedidos pendientes")} value={String(kpis.pending_orders)} color={tk.warn} />
-            <KpiCard icon={<TrendingUp size={20} />} label={tr("sales_kpi_pending_amount", "Por cobrar")} value={money(kpis.pending_amount)} color={tk.accent} />
-            <KpiCard icon={<Percent size={20} />} label={tr("sales_kpi_paid_rate", "Tasa pagados")} value={`${kpis.paid_rate}%`} color={tk.good} />
-            <KpiCard icon={<FileText size={20} />} label={tr("sales_kpi_avg", "Ticket promedio")} value={money(kpis.avg_ticket)} color={tk.accent} />
+            <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+              <Search size={16} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: tk.textLo }} />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("sales_search_placeholder", "Buscar folio, cliente o estado…")} style={{ ...inputBase, width: "100%", paddingLeft: 34, boxSizing: "border-box" }} />
+            </div>
+            <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
+              <option value="">{tr("sales_all_docs", "Todos")}</option>
+              <option value="order">{tr("sales_kind_order", "Pedidos")}</option>
+              <option value="quote">{tr("sales_kind_quote", "Cotizaciones")}</option>
+            </select>
+            <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
+              <option value="">{tr("sales_filter_status", "Estado")}</option>
+              {["draft", "pending", "partial", "paid", "cancelled"].map((st) => <option key={st} value={st}>{statusMeta(st).label}</option>)}
+            </select>
+            <select value={payment} onChange={(e) => setPayment(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
+              <option value="">{tr("sales_detail_payment", "Pago")}</option>
+              {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={inputBase} />
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={inputBase} />
+          </>
+        )}
+
+        <div style={{ display: "flex", gap: 4 }}>
+          {([["list", List, "Lista"], ["pipeline", Columns, "Pipeline"], ["analytics", BarChart3, "Analytics"], ["ingesta", Upload, "Ingesta"]] as const).map(([v, Icon, label]) => (
+            <button key={v} onClick={() => setView(v)} title={label}
+              style={{ ...inputBase, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, background: view === v ? tk.accent : tk.inputBg, color: view === v ? "#06122B" : tk.textMid, borderColor: view === v ? tk.accent : tk.border }}>
+              <Icon size={16} /><span style={{ fontSize: 12 }}>{label}</span>
+            </button>
+          ))}
+        </div>
+
+        {view !== "ingesta" && (
+          <>
+            <Button tk={tk} variant="ghost" icon={<Download size={16} />} onClick={exportCsv}>{tr("sales_export", "Export")}</Button>
+            <Button tk={tk} variant="primary" icon={<Plus size={16} />} onClick={openNew}>{tr("sales_new", "Nuevo")}</Button>
           </>
         )}
       </div>
 
-      {/* Toolbar */}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
-          <Search size={16} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: tk.textLo }} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("sales_search_placeholder", "Buscar folio, cliente o estado…")}
-            style={{ ...inputBase, width: "100%", paddingLeft: 34, boxSizing: "border-box" }} />
-        </div>
-        <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
-          <option value="">{tr("sales_all_docs", "Todos")}</option>
-          <option value="order">{tr("sales_kind_order", "Pedidos")}</option>
-          <option value="quote">{tr("sales_kind_quote", "Cotizaciones")}</option>
-        </select>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
-          <option value="">{tr("sales_filter_status", "Estado")}</option>
-          {["draft", "pending", "partial", "paid", "cancelled"].map((st) => <option key={st} value={st}>{statusMeta(st).label}</option>)}
-        </select>
-        <select value={payment} onChange={(e) => setPayment(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
-          <option value="">{tr("sales_detail_payment", "Pago")}</option>
-          {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-        </select>
-        <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={inputBase} />
-        <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={inputBase} />
-        <div style={{ display: "flex", gap: 4 }}>
-          {([["list", List], ["pipeline", Columns], ["analytics", BarChart3]] as const).map(([v, Icon]) => (
-            <button key={v} onClick={() => setView(v)} title={v}
-              style={{ ...inputBase, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, background: view === v ? tk.accent : tk.inputBg, color: view === v ? "#06122B" : tk.textMid, borderColor: view === v ? tk.accent : tk.border }}>
-              <Icon size={16} />
-            </button>
-          ))}
-        </div>
-        <Button tk={tk} variant="ghost" icon={<Download size={16} />} onClick={exportCsv}>{tr("sales_export", "Export")}</Button>
-        <Button tk={tk} variant="primary" icon={<Plus size={16} />} onClick={openNew}>{tr("sales_new", "Nuevo")}</Button>
-      </div>
-
-      {/* Main content — each view block manages its own loading state */}
-      {view === "analytics" ? (
+      {/* Contenido principal */}
+      {view === "ingesta" ? (
+        <IngestaModule tk={tk} tr={tr} />
+      ) : view === "analytics" ? (
         analyticsLoading && !analyticsLoaded ? (
           <div style={{ display: "flex", justifyContent: "center", padding: 64 }}><Spinner tk={tk} size={28} /></div>
         ) : (
@@ -446,24 +838,18 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
                   <Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{ordersLoading ? "…" : colOrders.length}</Badge>
                 </div>
                 <div style={{ fontSize: 12, color: tk.textLo, marginBottom: 10 }}>{ordersLoading ? "" : money(colOrders.reduce((a, b) => a + b.total_amount, 0))}</div>
-                {ordersLoading ? (
-                  Array.from({ length: 2 }).map((_, i) => (
-                    <div key={i} style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
-                      <Skel tk={tk} w="50%" h={12} style={{ marginBottom: 6 }} />
-                      <Skel tk={tk} w="75%" h={11} style={{ marginBottom: 6 }} />
-                      <Skel tk={tk} w="40%" h={13} />
-                    </div>
-                  ))
-                ) : (
-                  colOrders.map((o) => (
-                    <div key={o.id} draggable onDragStart={() => setDragId(o.id)} onClick={() => openDetail(o)}
-                      style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10, cursor: "grab", opacity: dragId === o.id ? 0.5 : 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13, color: tk.accent, marginBottom: 4 }}>{o.folio}</div>
-                      <div style={{ fontSize: 12, color: tk.textHi, marginBottom: 4 }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</div>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: tk.textHi }}>{money(o.total_amount)}</div>
-                    </div>
-                  ))
-                )}
+                {ordersLoading ? Array.from({ length: 2 }).map((_, i) => (
+                  <div key={i} style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
+                    <Skel tk={tk} w="50%" h={12} style={{ marginBottom: 6 }} /><Skel tk={tk} w="75%" h={11} style={{ marginBottom: 6 }} /><Skel tk={tk} w="40%" h={13} />
+                  </div>
+                )) : colOrders.map((o) => (
+                  <div key={o.id} draggable onDragStart={() => setDragId(o.id)} onClick={() => openDetail(o)}
+                    style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10, cursor: "grab", opacity: dragId === o.id ? 0.5 : 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: tk.accent, marginBottom: 4 }}>{o.folio}</div>
+                    <div style={{ fontSize: 12, color: tk.textHi, marginBottom: 4 }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: tk.textHi }}>{money(o.total_amount)}</div>
+                  </div>
+                ))}
                 {!ordersLoading && colOrders.length === 0 && <div style={{ textAlign: "center", color: tk.textLo, fontSize: 12, padding: "24px 0", opacity: 0.6 }}>—</div>}
               </div>
             );
@@ -484,40 +870,33 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
                 <th style={{ borderBottom: `1px solid ${tk.border}` }}></th>
               </tr></thead>
               <tbody>
-                {ordersLoading ? (
-                  Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2 }}>
-                      {Array.from({ length: 7 }).map((__, c) => (
-                        <td key={c} style={{ padding: "12px 16px" }}><Skel tk={tk} w={c === 1 ? "70%" : "55%"} h={12} /></td>
-                      ))}
-                      <td style={{ padding: "12px 16px" }}><Skel tk={tk} w={16} h={12} /></td>
-                    </tr>
-                  ))
-                ) : orders.length === 0 ? (
+                {ordersLoading ? Array.from({ length: 8 }).map((_, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2 }}>
+                    {Array.from({ length: 7 }).map((__, c) => <td key={c} style={{ padding: "12px 16px" }}><Skel tk={tk} w={c === 1 ? "70%" : "55%"} h={12} /></td>)}
+                    <td style={{ padding: "12px 16px" }}><Skel tk={tk} w={16} h={12} /></td>
+                  </tr>
+                )) : orders.length === 0 ? (
                   <tr><td colSpan={8}><EmptyState tk={tk} title={tr("sales_no_results", "Sin resultados")} hint={tr("sales_no_results_hint", "Ajusta los filtros o crea un nuevo pedido.")} /></td></tr>
-                ) : (
-                  orders.map((o, i) => {
-                    const sc = statusColors(tk, o.status);
-                    return (
-                      <tr key={o.id} onClick={() => openDetail(o)} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2, cursor: "pointer" }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = tk.panel3)}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = i % 2 === 0 ? tk.panel : tk.panel2)}>
-                        <td style={{ padding: "12px 16px", fontSize: 14, color: tk.accent, fontWeight: 700 }}>{o.folio}{o.kind === "quote" && <span style={{ fontSize: 10, color: tk.textLo, fontWeight: 600 }}> · COT</span>}</td>
-                        <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</td>
-                        <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{dateShort(o.created_at)}</td>
-                        <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{paymentLabel(o.payment_method)}</td>
-                        <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi, fontWeight: 700 }}>{money(o.total_amount)}</td>
-                        <td style={{ padding: "12px 16px", fontSize: 13, color: o.balance > 0 ? tk.warn : tk.textLo }}>{money(o.balance)}</td>
-                        <td style={{ padding: "12px 16px" }}><Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{statusMeta(o.status).label}</Badge></td>
-                        <td style={{ padding: "12px 16px" }}><ChevronRight size={16} color={tk.textLo} /></td>
-                      </tr>
-                    );
-                  })
-                )}
+                ) : orders.map((o, i) => {
+                  const sc = statusColors(tk, o.status);
+                  return (
+                    <tr key={o.id} onClick={() => openDetail(o)} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2, cursor: "pointer" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = tk.panel3)}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = i % 2 === 0 ? tk.panel : tk.panel2)}>
+                      <td style={{ padding: "12px 16px", fontSize: 14, color: tk.accent, fontWeight: 700 }}>{o.folio}{o.kind === "quote" && <span style={{ fontSize: 10, color: tk.textLo, fontWeight: 600 }}> · COT</span>}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{dateShort(o.created_at)}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{paymentLabel(o.payment_method)}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi, fontWeight: 700 }}>{money(o.total_amount)}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: o.balance > 0 ? tk.warn : tk.textLo }}>{money(o.balance)}</td>
+                      <td style={{ padding: "12px 16px" }}><Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{statusMeta(o.status).label}</Badge></td>
+                      <td style={{ padding: "12px 16px" }}><ChevronRight size={16} color={tk.textLo} /></td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-          {/* Pagination */}
           {total > PAGE && (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: `1px solid ${tk.border}` }}>
               <span style={{ fontSize: 13, color: tk.textLo }}>{total} {tr("sales_results", "resultados")}</span>
@@ -538,16 +917,8 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
   );
 }
 
-// ── Skeleton primitive (theme-aware shimmer) ────────────────────────────────
 function Skel({ tk, w, h, r = 8, style }: { tk: Tokens; w: number | string; h: number | string; r?: number; style?: React.CSSProperties }) {
-  return (
-    <div style={{
-      width: w, height: h, borderRadius: r,
-      background: `linear-gradient(90deg, ${tk.panel2} 25%, ${tk.panel3} 37%, ${tk.panel2} 63%)`,
-      backgroundSize: "400% 100%", animation: "kt-shimmer 1.4s ease infinite",
-      ...style,
-    }} />
-  );
+  return <div style={{ width: w, height: h, borderRadius: r, background: `linear-gradient(90deg, ${tk.panel2} 25%, ${tk.panel3} 37%, ${tk.panel2} 63%)`, backgroundSize: "400% 100%", animation: "kt-shimmer 1.4s ease infinite", ...style }} />;
 }
 
 function ShimmerKeyframes() {
