@@ -60,6 +60,7 @@ CAMPOS_DESCRIPCION = {
     "id_pedido":             "Identificador del pedido (agrupa múltiples líneas)",
     "es_fila_total":         "Indicador de que esta fila es el total/resumen del pedido",
     "costo_envio_pedido":    "Costo de envío a nivel de pedido completo",
+    "estatus_pedido":        "Estado del pedido: recibido, enviado, entregado, devuelto, reembolsado, cancelado",
     "skip":                  "Ignorar esta columna, no mapear a ningún campo",
 }
 

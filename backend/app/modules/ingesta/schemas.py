@@ -230,6 +230,7 @@ class IngestaRegistro(BaseModel):
     entradas_resurtido: float = 0.0
     moneda: str = "MXN"
     id_pedido_origen: Optional[str] = None
+    estatus_pedido: Optional[str] = None
     created_at: Optional[Any] = None
 
     class Config:

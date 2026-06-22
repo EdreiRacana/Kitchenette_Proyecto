@@ -222,6 +222,10 @@ class IngestaRegistro(Base):
     moneda = Column(String, default="MXN")
     id_pedido_origen = Column(String, nullable=True)     # ID original del pedido en la cadena
 
+    # Estatus del pedido/documento en la cadena
+    # Valores: recibido, en_proceso, enviado, entregado, devuelto, reembolsado, cancelado
+    estatus_pedido = Column(String, nullable=True, index=True)
+
     # Datos crudos por si se necesita auditoría
     datos_crudos = Column(JSON, nullable=True)
 
