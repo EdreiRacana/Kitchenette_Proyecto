@@ -188,6 +188,8 @@ _INGESTA_STATEMENTS = [
     "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS entradas_resurtido   DOUBLE PRECISION DEFAULT 0",
     "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS moneda               VARCHAR DEFAULT 'MXN'",
     "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS id_pedido_origen     VARCHAR",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS estatus_pedido       VARCHAR",
+    "CREATE INDEX IF NOT EXISTS ix_ingesta_registros_estatus ON ingesta_registros (estatus_pedido)",
     "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS datos_crudos         JSONB",
     "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS created_at           TIMESTAMPTZ DEFAULT now()",
     # índices útiles para consultas de BI
