@@ -185,7 +185,12 @@ def _build_detection_prompt(
     tipo_cliente: Optional[str],
 ) -> str:
     campos_json = json.dumps(CAMPOS_DESCRIPCION, ensure_ascii=False, indent=2)
-    muestra_json = json.dumps(muestra_filas[:5], ensure_ascii=False, indent=2)
+    # Truncar valores de muestra a 30 chars y usar solo 2 filas para reducir tokens
+    muestra_corta = [
+        {k: (str(v)[:30] if v is not None else None) for k, v in row.items()}
+        for row in muestra_filas[:2]
+    ]
+    muestra_json = json.dumps(muestra_corta, ensure_ascii=False, indent=2)
 
     hint = ""
     if fuente_nombre:
@@ -256,7 +261,7 @@ async def detectar_columnas_ia(
 
     payload = {
         "model": ANTHROPIC_MODEL,
-        "max_tokens": 1500,
+        "max_tokens": 4000,
         "messages": [{"role": "user", "content": prompt}],
     }
 
