@@ -71,7 +71,10 @@ CAMPOS_DESCRIPCION = {
 async def get_fuentes(db: AsyncSession) -> List[models.IngestaFuente]:
     result = await db.execute(
         select(models.IngestaFuente)
-        .options(selectinload(models.IngestaFuente.columnas))
+        .options(
+            selectinload(models.IngestaFuente.columnas),
+            selectinload(models.IngestaFuente.reglas),
+        )
         .order_by(models.IngestaFuente.nombre)
     )
     return result.scalars().all()
