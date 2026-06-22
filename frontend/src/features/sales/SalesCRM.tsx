@@ -27,6 +27,7 @@ const PAGE = 20;
 // ── Ingesta API ──────────────────────────────────────────────────────────────
 const ingestaApi = {
   fuentes: () => api.get("/ingesta/fuentes").then((r) => r.data),
+  borrarFuente: (id: number) => api.delete(`/ingesta/fuentes/${id}`),
   preview: (formData: FormData) =>
     api.post("/ingesta/preview", formData, {
       headers: { "Content-Type": "multipart/form-data" },
@@ -69,6 +70,7 @@ const CAMPOS_STHENOVA = [
   { value: "entradas_resurtido",    label: "Entradas / resurtido" },
   { value: "id_pedido",             label: "ID de pedido (agrupa filas)" },
   { value: "costo_envio_pedido",    label: "Costo envío del pedido" },
+  { value: "estatus_pedido",         label: "Estatus del pedido (enviado, devuelto...)" },
 ];
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -149,11 +151,25 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
   const [error, setError] = useState<string | null>(null);
   const [periodoInicio, setPeriodoInicio] = useState("");
   const [periodoFin, setPeriodoFin] = useState("");
+  const [borrando, setBorrando] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     ingestaApi.fuentes().then(setFuentes).catch(() => {});
   }, []);
+
+  const borrarFuente = async (id: number, nombre: string) => {
+    if (!window.confirm(`¿Eliminar la fuente "${nombre}" y todos sus datos? Esta acción no se puede deshacer.`)) return;
+    setBorrando(id);
+    try {
+      await ingestaApi.borrarFuente(id);
+      setFuentes((prev) => prev.filter((f) => f.id !== id));
+    } catch {
+      alert("No se pudo eliminar la fuente. Intenta de nuevo.");
+    } finally {
+      setBorrando(null);
+    }
+  };
 
   const inputBase: React.CSSProperties = {
     padding: "9px 12px", borderRadius: 8,
@@ -437,11 +453,19 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
                   <span style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{f.nombre}</span>
                   <span style={{ fontSize: 12, color: tk.textLo, marginLeft: 10 }}>{f.moneda}</span>
                 </div>
-                <button
-                  onClick={() => { setFuenteId(f.id); setFuenteNombre(f.nombre); fileRef.current?.click(); }}
-                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "none", background: tk.accent, color: "#06122B", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                  <Upload size={14} /> Subir reporte
-                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => { setFuenteId(f.id); setFuenteNombre(f.nombre); fileRef.current?.click(); }}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "none", background: tk.accent, color: "#06122B", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                    <Upload size={14} /> Subir reporte
+                  </button>
+                  <button
+                    onClick={() => borrarFuente(f.id, f.nombre)}
+                    disabled={borrando === f.id}
+                    style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, border: `1px solid ${tk.bad}55`, background: tk.bad + "18", color: tk.bad, fontSize: 13, fontWeight: 600, cursor: borrando === f.id ? "default" : "pointer", opacity: borrando === f.id ? 0.6 : 1 }}>
+                    {borrando === f.id ? "…" : "Eliminar"}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
