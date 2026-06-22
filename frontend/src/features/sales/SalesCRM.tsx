@@ -1,4 +1,3 @@
-
 // High-end Sales / CRM module — orchestrator.
 // Ingesta uses /ingesta/preview to read file headers server-side (pandas),
 // so xlsx/xls/csv all work correctly without client-side parsing.
@@ -983,5 +982,3 @@ function extractErr(e: unknown): string {
   const anyE = e as { response?: { data?: { detail?: string } } };
   return anyE?.response?.data?.detail ?? "Ocurrió un error. Intenta de nuevo.";
 }
-
-
