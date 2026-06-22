@@ -233,69 +233,144 @@ RESPUESTA:
 "notas":null}}"""
 
 
-async def detectar_columnas_ia(
-    request: schemas.DeteccionRequest,
-) -> schemas.DeteccionResponse:
-    """
-    Llama a Claude API para detectar y mapear columnas automáticamente.
-    Modo 1 (IA automática): el usuario solo confirma.
-    """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY no configurada en variables de entorno.")
-
-    prompt = _build_detection_prompt(
-        encabezados=request.encabezados,
-        muestra_filas=request.muestra_filas,
-        fuente_nombre=request.fuente_nombre,
-        tipo_cliente=request.tipo_cliente,
-    )
-
+async def _llamar_claude(
+    prompt: str,
+    api_key: str,
+    max_tokens: int = 3000,
+) -> tuple[str, int]:
+    """Llama a Claude API y retorna (texto_respuesta, tokens_usados)."""
     payload = {
         "model": ANTHROPIC_MODEL,
-        "max_tokens": 6000,
+        "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
-
     headers = {
         "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
     }
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(ANTHROPIC_API_URL, json=payload, headers=headers)
         resp.raise_for_status()
-
     data = resp.json()
-    raw_text = data["content"][0]["text"].strip()
-    tokens_usados = data.get("usage", {}).get("input_tokens", 0) + data.get("usage", {}).get("output_tokens", 0)
+    raw = data["content"][0]["text"].strip()
+    raw = re.sub(r"^```json\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+    tokens = data.get("usage", {}).get("input_tokens", 0) + data.get("usage", {}).get("output_tokens", 0)
+    return raw, tokens
 
-    # Limpiar posibles backticks si la IA los incluyó
-    raw_text = re.sub(r"^```json\s*", "", raw_text)
-    raw_text = re.sub(r"\s*```$", "", raw_text)
 
-    parsed = json.loads(raw_text)
+async def detectar_columnas_ia(
+    request: schemas.DeteccionRequest,
+) -> schemas.DeteccionResponse:
+    """
+    Detecta y mapea columnas automáticamente con Claude API.
+    Para archivos con más de 40 columnas divide en lotes para evitar
+    que el JSON se trunque por límite de tokens de salida.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY no configurada en variables de entorno.")
+
+    LOTE = 40  # columnas por llamada
+    encabezados = request.encabezados
+    muestra_filas = request.muestra_filas
+
+    # Muestra reducida para no inflar el prompt
+    muestra_corta = [
+        {k: (str(v)[:25] if v is not None else None) for k, v in row.items()}
+        for row in muestra_filas[:2]
+    ]
+
+    campos_validos = json.dumps(list(CAMPOS_DESCRIPCION.keys()), ensure_ascii=False)
+    hint = ""
+    if request.fuente_nombre:
+        hint += f"Fuente: {request.fuente_nombre}. "
+    if request.tipo_cliente:
+        hint += f"Tipo: {request.tipo_cliente}."
+
+    todas_columnas: list = []
+    tokens_total = 0
+    tiene_anidadas = False
+    id_pedido_sugerido = None
+    patron_total_sugerido = None
+    confianza_global = 0.0
+    n_lotes = 0
+
+    # Dividir en lotes de LOTE columnas
+    for inicio in range(0, len(encabezados), LOTE):
+        lote_cols = encabezados[inicio: inicio + LOTE]
+        # Muestra solo con las columnas del lote
+        muestra_lote = [
+            {k: v for k, v in row.items() if k in lote_cols}
+            for row in muestra_corta
+        ]
+
+        prompt = f"""Experto en datos retail. Mapea columnas de reporte de ventas a campos STHENOVA.
+{hint}
+
+COLUMNAS A MAPEAR ({len(lote_cols)} de {len(encabezados)} total, lote {inicio // LOTE + 1}):
+{json.dumps(lote_cols, ensure_ascii=False)}
+
+MUESTRA:
+{json.dumps(muestra_lote, ensure_ascii=False)}
+
+CAMPOS VÁLIDOS (usa exactamente o "skip"):
+{campos_validos}
+
+Responde SOLO JSON puro:
+{{"columnas":[{{"columna_origen":"...","campo_sthenova_sugerido":"...","muestra":"...","confianza":0.9}},...],
+"tiene_filas_anidadas":false,"campo_id_pedido_sugerido":null,"confianza_global":0.85}}"""
+
+        raw, tokens = await _llamar_claude(prompt, api_key, max_tokens=3000)
+        tokens_total += tokens
+        n_lotes += 1
+
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            # Si falla un lote, marcar esas columnas como skip
+            for col in lote_cols:
+                todas_columnas.append({
+                    "columna_origen": col,
+                    "campo_sthenova_sugerido": "skip",
+                    "muestra": None,
+                    "confianza": 0.0,
+                    "razon": "Error al parsear respuesta de IA",
+                })
+            continue
+
+        todas_columnas.extend(parsed.get("columnas", []))
+
+        # Tomar metadatos del primer lote (tiene más contexto)
+        if inicio == 0:
+            tiene_anidadas = parsed.get("tiene_filas_anidadas", False)
+            id_pedido_sugerido = parsed.get("campo_id_pedido_sugerido")
+            patron_total_sugerido = parsed.get("patron_fila_total_sugerido")
+
+        confianza_global += parsed.get("confianza_global", 0.85)
+
+    confianza_global = round(confianza_global / max(n_lotes, 1), 2)
 
     columnas = [
         schemas.ColumnaDetectada(
-            columna_origen=c["columna_origen"],
+            columna_origen=c.get("columna_origen", ""),
             campo_sthenova_sugerido=c.get("campo_sthenova_sugerido", "skip"),
             muestra=c.get("muestra"),
             confianza=float(c.get("confianza", 0.5)),
             razon=c.get("razon"),
         )
-        for c in parsed.get("columnas", [])
+        for c in todas_columnas
     ]
 
     return schemas.DeteccionResponse(
         columnas=columnas,
-        tiene_filas_anidadas=parsed.get("tiene_filas_anidadas", False),
-        campo_id_pedido_sugerido=parsed.get("campo_id_pedido_sugerido"),
-        patron_fila_total_sugerido=parsed.get("patron_fila_total_sugerido"),
-        confianza_global=float(parsed.get("confianza_global", 0.0)),
-        notas=parsed.get("notas"),
-        tokens_usados=tokens_usados,
+        tiene_filas_anidadas=tiene_anidadas,
+        campo_id_pedido_sugerido=id_pedido_sugerido,
+        patron_fila_total_sugerido=patron_total_sugerido,
+        confianza_global=confianza_global,
+        notas=f"Procesado en {n_lotes} lote(s) · {len(encabezados)} columnas totales",
+        tokens_usados=tokens_total,
     )
 
 
