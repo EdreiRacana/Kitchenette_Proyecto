@@ -17,9 +17,6 @@ Design choices for safety:
     poison the rest (in Postgres an error aborts the whole surrounding tx).
   - Any error is logged, never raised. A migration hiccup must NOT take the API
     down — the server always boots.
-
-For full version-controlled migrations (history, up/down), the next step up is
-Alembic run as a Render pre-deploy command (`alembic upgrade head`).
 """
 
 from sqlalchemy import text
@@ -68,23 +65,15 @@ _CUSTOMER_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS ix_customers_rfc         ON customers (rfc)",
 ]
 
-# ── Sales: columnas añadidas a `orders` después del esquema original ─────────
-# El modelo unifica pedidos y cotizaciones con `kind`, guarda el desglose de
-# dinero explícito, control de cobranza (paid_amount) y snapshot CFDI.
-# Todas con IF NOT EXISTS → si la columna ya existe, es no-op.
 _SALES_STATEMENTS = [
-    # Identificación del documento (folio faltaba en el esquema viejo)
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS folio           VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_id     INTEGER",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS user_id         INTEGER",
-    # Clasificación pedido/cotización (la que causaba el 500)
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS kind            VARCHAR DEFAULT 'order'",
-    # Relaciones / metadatos
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS warehouse_id    INTEGER",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method  VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS channel         VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS currency        VARCHAR DEFAULT 'MXN'",
-    # Desglose de dinero
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS subtotal        DOUBLE PRECISION DEFAULT 0",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount_type   VARCHAR DEFAULT 'amount'",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount_value  DOUBLE PRECISION DEFAULT 0",
@@ -94,12 +83,9 @@ _SALES_STATEMENTS = [
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_amount DOUBLE PRECISION DEFAULT 0",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_amount    DOUBLE PRECISION DEFAULT 0",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_amount     DOUBLE PRECISION DEFAULT 0",
-    # Fechas
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS due_date        TIMESTAMPTZ",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS valid_until     TIMESTAMPTZ",
-    # Notas
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS notes           TEXT",
-    # Snapshot CFDI / facturación
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS bill_rfc        VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS bill_name       VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS bill_use        VARCHAR",
@@ -110,16 +96,13 @@ _SALES_STATEMENTS = [
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS invoiced_at     TIMESTAMPTZ",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at      TIMESTAMPTZ DEFAULT now()",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at      TIMESTAMPTZ",
-    # Backfill: filas viejas deben tener kind='order' y status coherente
     "UPDATE orders SET kind = 'order' WHERE kind IS NULL",
     "UPDATE orders SET currency = 'MXN' WHERE currency IS NULL",
     "UPDATE orders SET discount_type = 'amount' WHERE discount_type IS NULL",
     "UPDATE orders SET folio = 'ORD-' || lpad(id::text, 6, '0') WHERE folio IS NULL",
-    # Índices que el modelo declara
     "CREATE UNIQUE INDEX IF NOT EXISTS ix_orders_folio ON orders (folio)",
     "CREATE INDEX IF NOT EXISTS ix_orders_kind   ON orders (kind)",
     "CREATE INDEX IF NOT EXISTS ix_orders_status ON orders (status)",
-    # order_items: columnas snapshot añadidas
     "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS product_name    VARCHAR",
     "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS sku             VARCHAR",
     "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS discount_amount DOUBLE PRECISION DEFAULT 0",
@@ -128,25 +111,113 @@ _SALES_STATEMENTS = [
     "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS total           DOUBLE PRECISION DEFAULT 0",
 ]
 
+# ── Ingesta Universal: tablas nuevas ────────────────────────────────────────
+# Las tablas se crean via create_all en startup. Estas migraciones solo agregan
+# columnas que pudieran faltar si la tabla ya existía de una versión anterior.
+_INGESTA_STATEMENTS = [
+    # ingesta_fuentes
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS nombre                VARCHAR",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS tipo_cliente          VARCHAR",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS tipo_ingesta          VARCHAR DEFAULT 'excel'",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS moneda                VARCHAR DEFAULT 'MXN'",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS periodicidad          VARCHAR DEFAULT 'flexible'",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS activa                BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS notas                 TEXT",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS separador_decimal     VARCHAR DEFAULT 'punto'",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS formato_fecha         VARCHAR DEFAULT 'DD/MM/YYYY'",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS simbolo_moneda        VARCHAR DEFAULT 'ninguno'",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS fila_encabezado       INTEGER DEFAULT 1",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS tiene_filas_anidadas  BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS campo_id_pedido       VARCHAR",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS patron_fila_total     VARCHAR",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS created_at            TIMESTAMPTZ DEFAULT now()",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS updated_at            TIMESTAMPTZ",
+    # ingesta_columnas
+    "ALTER TABLE ingesta_columnas ADD COLUMN IF NOT EXISTS fuente_id         INTEGER",
+    "ALTER TABLE ingesta_columnas ADD COLUMN IF NOT EXISTS columna_origen     VARCHAR",
+    "ALTER TABLE ingesta_columnas ADD COLUMN IF NOT EXISTS campo_sthenova     VARCHAR",
+    "ALTER TABLE ingesta_columnas ADD COLUMN IF NOT EXISTS muestra            VARCHAR",
+    "ALTER TABLE ingesta_columnas ADD COLUMN IF NOT EXISTS confianza          DOUBLE PRECISION DEFAULT 1.0",
+    "ALTER TABLE ingesta_columnas ADD COLUMN IF NOT EXISTS confirmada         BOOLEAN DEFAULT FALSE",
+    # ingesta_reglas
+    "ALTER TABLE ingesta_reglas ADD COLUMN IF NOT EXISTS fuente_id                    INTEGER",
+    "ALTER TABLE ingesta_reglas ADD COLUMN IF NOT EXISTS devolucion_fecha_venta       BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE ingesta_reglas ADD COLUMN IF NOT EXISTS devolucion_acepta_huerfanas  BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE ingesta_reglas ADD COLUMN IF NOT EXISTS devolucion_ventana_dias      INTEGER DEFAULT 90",
+    "ALTER TABLE ingesta_reglas ADD COLUMN IF NOT EXISTS inv_control_temporalidad     BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE ingesta_reglas ADD COLUMN IF NOT EXISTS inv_alerta_amarilla_dias     INTEGER DEFAULT 90",
+    "ALTER TABLE ingesta_reglas ADD COLUMN IF NOT EXISTS inv_alerta_roja_dias         INTEGER DEFAULT 180",
+    # ingesta_lotes
+    "ALTER TABLE ingesta_lotes ADD COLUMN IF NOT EXISTS fuente_id       INTEGER",
+    "ALTER TABLE ingesta_lotes ADD COLUMN IF NOT EXISTS nombre_archivo  VARCHAR",
+    "ALTER TABLE ingesta_lotes ADD COLUMN IF NOT EXISTS tipo            VARCHAR DEFAULT 'excel'",
+    "ALTER TABLE ingesta_lotes ADD COLUMN IF NOT EXISTS estado          VARCHAR DEFAULT 'pendiente'",
+    "ALTER TABLE ingesta_lotes ADD COLUMN IF NOT EXISTS total_filas     INTEGER DEFAULT 0",
+    "ALTER TABLE ingesta_lotes ADD COLUMN IF NOT EXISTS filas_ok        INTEGER DEFAULT 0",
+    "ALTER TABLE ingesta_lotes ADD COLUMN IF NOT EXISTS filas_error     INTEGER DEFAULT 0",
+    "ALTER TABLE ingesta_lotes ADD COLUMN IF NOT EXISTS error_detalle   TEXT",
+    "ALTER TABLE ingesta_lotes ADD COLUMN IF NOT EXISTS periodo_inicio  VARCHAR",
+    "ALTER TABLE ingesta_lotes ADD COLUMN IF NOT EXISTS periodo_fin     VARCHAR",
+    "ALTER TABLE ingesta_lotes ADD COLUMN IF NOT EXISTS created_at      TIMESTAMPTZ DEFAULT now()",
+    "ALTER TABLE ingesta_lotes ADD COLUMN IF NOT EXISTS updated_at      TIMESTAMPTZ",
+    # ingesta_registros
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS lote_id              INTEGER",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS fuente_id            INTEGER",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS upc                  VARCHAR",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS sku_cliente          VARCHAR",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS sku_cadena           VARCHAR",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS descripcion          VARCHAR",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS fecha_inicio         VARCHAR",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS fecha_fin            VARCHAR",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS fecha_venta          VARCHAR",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS cantidad_vendida     DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS precio_unitario      DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS venta_bruta          DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS venta_neta           DOUBLE PRECISION",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS devoluciones_unidades DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS devoluciones_importe  DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS sra                  DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS bonificaciones       DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS descuentos           DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS cogs                 DOUBLE PRECISION",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS comisiones           DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS envio                DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS marketing            DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS inv_inicial          DOUBLE PRECISION",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS inv_final            DOUBLE PRECISION",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS entradas_resurtido   DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS moneda               VARCHAR DEFAULT 'MXN'",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS id_pedido_origen     VARCHAR",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS datos_crudos         JSONB",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS created_at           TIMESTAMPTZ DEFAULT now()",
+    # índices útiles para consultas de BI
+    "CREATE INDEX IF NOT EXISTS ix_ingesta_registros_fuente  ON ingesta_registros (fuente_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ingesta_registros_lote    ON ingesta_registros (lote_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ingesta_registros_upc     ON ingesta_registros (upc)",
+    "CREATE INDEX IF NOT EXISTS ix_ingesta_registros_fechas  ON ingesta_registros (fecha_inicio, fecha_fin)",
+    "CREATE INDEX IF NOT EXISTS ix_ingesta_lotes_fuente      ON ingesta_lotes (fuente_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ingesta_columnas_fuente   ON ingesta_columnas (fuente_id)",
+]
+
 
 def _apply(sync_conn: Connection) -> None:
-    # Postgres only — SQLite already has the full schema from create_all.
     if sync_conn.dialect.name != "postgresql":
         return
 
     all_statements = [
         ("customers", _CUSTOMER_STATEMENTS),
-        ("sales", _SALES_STATEMENTS),
+        ("sales",     _SALES_STATEMENTS),
+        ("ingesta",   _INGESTA_STATEMENTS),
     ]
 
     for label, statements in all_statements:
         applied, skipped = 0, 0
         for stmt in statements:
             try:
-                with sync_conn.begin():  # own transaction; isolates failures
+                with sync_conn.begin():
                     sync_conn.execute(text(stmt))
                 applied += 1
-            except Exception as e:  # noqa: BLE001 — never let a migration crash boot
+            except Exception as e:
                 skipped += 1
                 print(f"[startup migrations] skipped: {stmt[:70]} -> {e}")
         print(f"[startup migrations] {label}: {applied} applied, {skipped} skipped")
@@ -157,5 +228,5 @@ async def run_startup_migrations(engine) -> None:
     try:
         async with engine.connect() as conn:
             await conn.run_sync(_apply)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"[startup migrations] disabled (connection error): {e}")
