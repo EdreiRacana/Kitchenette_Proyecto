@@ -21,7 +21,7 @@ from app.db.session import Base
 
 
 # ── Canonical vocab (plain strings for SQLite/Postgres friendliness) ─────────
-SUCURSALES = ("Matriz", "Mundo E", "Toreo Parque Central", "Todos")
+SUCURSALES = ("CEDIS 1", "CEDIS 2", "CEDIS 3")
 CLIENT_TYPES = ("Contado", "Crédito", "Mayorista", "Distribuidor", "VIP")
 PRICE_LISTS = ("ABRIGO", "MATRIZ", "RETAIL", "RETAIL REBAJAS", "RETAIL VIP ACCESS")
 

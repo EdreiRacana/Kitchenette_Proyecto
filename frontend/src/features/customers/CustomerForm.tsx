@@ -136,7 +136,7 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
           <TextInput tk={tk} value={d.razon_social || ""} onChange={(v) => set("razon_social", v)} placeholder="Comercializadora …  S.A. de C.V." />
         </Field>
         <Field tk={tk} label={tr("cust_comercial", "Nombre Comercial")}>
-          <TextInput tk={tk} value={d.nombre_comercial || ""} onChange={(v) => set("nombre_comercial", v)} placeholder="John Leopard …" />
+          <TextInput tk={tk} value={d.nombre_comercial || ""} onChange={(v) => set("nombre_comercial", v)} placeholder="Comercializadora …" />
         </Field>
         <Field tk={tk} label={tr("cust_sucursal", "Sucursal")}>
           <Select tk={tk} value={d.sucursal || ""} onChange={(v) => set("sucursal", v)} options={toOpts(SUCURSALES)} placeholder={tr("select", "Selecciona…")} />

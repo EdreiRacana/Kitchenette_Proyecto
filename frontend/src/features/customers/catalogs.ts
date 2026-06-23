@@ -55,8 +55,9 @@ export const USOS_CFDI: Opt[] = [
   { value: "P01", label: "P01 · Por definir" },
 ];
 
-// ── Commercial catalogs (John Leopard) ───────────────────────────────────────
-export const SUCURSALES: string[] = ["Matriz", "Mundo E", "Toreo Parque Central", "Todos"];
+// ── Commercial catalogs (genéricos, válidos para cualquier empresa) ──────────
+// Placeholders hasta que se den de alta los almacenes reales en Inventario.
+export const SUCURSALES: string[] = ["CEDIS 1", "CEDIS 2", "CEDIS 3"];
 export const PRICE_LISTS: string[] = ["ABRIGO", "MATRIZ", "RETAIL", "RETAIL REBAJAS", "RETAIL VIP ACCESS"];
 export const CLIENT_TYPES: string[] = ["Contado", "Crédito", "Mayorista", "Distribuidor", "VIP"];
 
