@@ -23,7 +23,7 @@ from app.db.session import Base
 # ── Canonical vocab (plain strings for SQLite/Postgres friendliness) ─────────
 SUCURSALES = ("CEDIS 1", "CEDIS 2", "CEDIS 3")
 CLIENT_TYPES = ("Contado", "Crédito", "Mayorista", "Distribuidor", "VIP")
-PRICE_LISTS = ("ABRIGO", "MATRIZ", "RETAIL", "RETAIL REBAJAS", "RETAIL VIP ACCESS")
+PRICE_LISTS = ("General", "Mayoreo", "Menudeo", "Distribuidor", "VIP")
 
 
 class Customer(Base):

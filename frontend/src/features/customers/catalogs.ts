@@ -58,14 +58,11 @@ export const USOS_CFDI: Opt[] = [
 // ── Commercial catalogs (genéricos, válidos para cualquier empresa) ──────────
 // Placeholders hasta que se den de alta los almacenes reales en Inventario.
 export const SUCURSALES: string[] = ["CEDIS 1", "CEDIS 2", "CEDIS 3"];
-export const PRICE_LISTS: string[] = ["ABRIGO", "MATRIZ", "RETAIL", "RETAIL REBAJAS", "RETAIL VIP ACCESS"];
+export const PRICE_LISTS: string[] = ["General", "Mayoreo", "Menudeo", "Distribuidor", "VIP"];
 export const CLIENT_TYPES: string[] = ["Contado", "Crédito", "Mayorista", "Distribuidor", "VIP"];
 
-export const AGENTES: string[] = [
-  "Cedis Comercial", "Gerente Mundo e", "admin", "Gerente Toreo Parque Central",
-  "Marco Negrete", "Servicio al Cliente", "Subgerente Toreo Parque Central",
-  "Subgerente Mundo e", "Ventas Toreo Parque Central", "Ventas Mundo e",
-];
+// Placeholders genéricos hasta que cada empresa dé de alta a sus agentes reales.
+export const AGENTES: string[] = ["Agente 1", "Agente 2", "Agente 3"];
 
 export const CUENTAS_CONTABLES: Opt[] = [
   { value: "105-01-001", label: "105-01-001 · Clientes Nacionales" },
@@ -88,7 +85,7 @@ export const ESTADOS: string[] = [
   "Zacatecas",
 ];
 
-// Municipios for the states where John Leopard operates (+ Aguascalientes as
+// Municipios for the most common operating states (+ Aguascalientes as
 // reference). For any other state the form falls back to a free-text input.
 // The full INEGI catalog (~2,469 municipios) can be dropped in here later.
 export const MUNICIPIOS: Record<string, string[]> = {
