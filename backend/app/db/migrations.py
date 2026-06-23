@@ -112,6 +112,9 @@ _SALES_STATEMENTS = [
     "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS tax_rate        DOUBLE PRECISION DEFAULT 0",
     "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS subtotal        DOUBLE PRECISION DEFAULT 0",
     "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS total           DOUBLE PRECISION DEFAULT 0",
+    # Pre-existing schema had variant_id NOT NULL; the current model allows
+    # free-text items (no catalog variant), so the DB constraint must relax too.
+    "ALTER TABLE order_items ALTER COLUMN variant_id DROP NOT NULL",
 ]
 
 # ── Ingesta Universal: tablas nuevas ────────────────────────────────────────
