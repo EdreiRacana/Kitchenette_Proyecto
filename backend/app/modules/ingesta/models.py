@@ -39,6 +39,11 @@ class IngestaFuente(Base):
     activa        = Column(Boolean, default=True)
     notas         = Column(Text,    nullable=True)
 
+    # ── Puente a Ventas ──────────────────────────────────────────────────
+    customer_id        = Column(Integer, nullable=True, index=True)  # cuenta del marketplace/cliente en Customers
+    api_key            = Column(String,  nullable=True, unique=True, index=True)  # para ingesta tipo "api"
+    auto_crear_ventas  = Column(Boolean, default=False)  # generar Order automáticamente al procesar un lote
+
     # ── Formato del archivo ──────────────────────────────────────────────
     separador_decimal = Column(String,  default="punto")      # punto | coma
     formato_fecha     = Column(String,  default="YYYY-MM-DD")
@@ -245,6 +250,9 @@ class IngestaRegistro(Base):
     moneda        = Column(String, default="MXN")
     es_devolucion = Column(Boolean, default=False, index=True)  # detectado por regla
     datos_crudos  = Column(JSON,   nullable=True)               # fila original para auditoría
+
+    # ── Puente a Ventas ──────────────────────────────────────────────────
+    order_id = Column(Integer, nullable=True, index=True)  # Order creada a partir de este registro (si aplica)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

@@ -12,7 +12,9 @@ Rutas:
   POST   /ingesta/preview                    → leer encabezados + muestra de cualquier archivo
   POST   /ingesta/detectar                   → detectar columnas con IA (modo automático)
   POST   /ingesta/fuentes/{id}/upload        → subir Excel/CSV y procesar
+  POST   /ingesta/fuentes/{id}/webhook       → ingesta tipo API (auth por X-API-Key)
   GET    /ingesta/fuentes/{id}/lotes         → historial de lotes de una fuente
+  POST   /ingesta/lotes/{lote_id}/generar-ventas → convierte registros en Order reales
   GET    /ingesta/lotes/{lote_id}/registros  → registros normalizados de un lote
 """
 
@@ -21,7 +23,7 @@ from __future__ import annotations
 import io
 from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
@@ -278,6 +280,57 @@ async def upload_archivo(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    if fuente.auto_crear_ventas:
+        await service.generar_ordenes_de_lote(db, resultado.lote_id)
+
+    return resultado
+
+
+# ─────────────────────────────────────────────────────────────
+# WEBHOOK — ingesta tipo "api" (sin login, autenticado por api_key)
+# ─────────────────────────────────────────────────────────────
+
+@router.post("/fuentes/{fuente_id}/webhook", response_model=schemas.ProcesamientoResponse)
+async def webhook_ingesta(
+    fuente_id: int,
+    payload: schemas.WebhookIngestaRequest,
+    db: DB,
+    x_api_key: str = Header(..., alias="X-API-Key"),
+):
+    """
+    Punto de entrada para que un marketplace/cliente empuje su reporte de
+    ventas directamente, sin subir un archivo. Misma normalización y reglas
+    que Excel/CSV — solo cambia el transporte.
+    """
+    fuente = await service.get_fuente_por_api_key(db, x_api_key)
+    if not fuente or fuente.id != fuente_id:
+        raise HTTPException(401, "API key inválida para esta fuente.")
+
+    if not fuente.columnas:
+        raise HTTPException(
+            400,
+            "Esta fuente no tiene columnas mapeadas. Configúrala antes de enviar datos."
+        )
+
+    if not payload.filas:
+        raise HTTPException(400, "No se enviaron filas.")
+
+    try:
+        resultado = await service.procesar_lote(
+            db=db,
+            fuente_id=fuente_id,
+            filas_crudas=payload.filas,
+            nombre_archivo=None,
+            tipo="api",
+            periodo_inicio=payload.periodo_inicio,
+            periodo_fin=payload.periodo_fin,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    if fuente.auto_crear_ventas:
+        await service.generar_ordenes_de_lote(db, resultado.lote_id)
+
     return resultado
 
 
@@ -308,6 +361,23 @@ async def listar_lotes(
         .limit(limit)
     )
     return result.scalars().all()
+
+
+@router.post("/lotes/{lote_id}/generar-ventas", response_model=schemas.GenerarVentasResponse)
+async def generar_ventas(
+    lote_id: int,
+    db: DB,
+    user: CurrentUser,
+):
+    """
+    Convierte los registros normalizados (aún sin Order) de un lote en
+    pedidos reales de Ventas, para que Finanzas/Inventario los reconozcan.
+    Idempotente: los registros que ya tienen order_id se omiten.
+    """
+    try:
+        return await service.generar_ordenes_de_lote(db, lote_id, user_id=user.id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.get("/lotes/{lote_id}/registros")

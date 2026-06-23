@@ -85,6 +85,8 @@ class IngestaFuenteBase(BaseModel):
     tiene_filas_anidadas: bool = False
     campo_id_pedido: Optional[str] = None
     patron_fila_total: Optional[str] = None
+    customer_id: Optional[int] = None
+    auto_crear_ventas: bool = False
 
 
 class IngestaFuenteCreate(IngestaFuenteBase):
@@ -109,12 +111,15 @@ class IngestaFuenteUpdate(BaseModel):
     patron_fila_total: Optional[str] = None
     columnas: Optional[List[IngestaColumnaCreate]] = None
     reglas: Optional[IngestaReglaCreate] = None
+    customer_id: Optional[int] = None
+    auto_crear_ventas: Optional[bool] = None
 
 
 class IngestaFuente(IngestaFuenteBase):
     id: int
     columnas: List[IngestaColumna] = []
     reglas: Optional[IngestaRegla] = None
+    api_key: Optional[str] = None
     created_at: Optional[Any] = None
     updated_at: Optional[Any] = None
 
@@ -231,6 +236,7 @@ class IngestaRegistro(BaseModel):
     moneda: str = "MXN"
     id_pedido_origen: Optional[str] = None
     estatus_pedido: Optional[str] = None
+    order_id: Optional[int] = None
     created_at: Optional[Any] = None
 
     class Config:
@@ -250,6 +256,29 @@ class ProcesamientoResponse(BaseModel):
     filas_error: int
     error_detalle: Optional[str] = None
     registros_muestra: List[IngestaRegistro] = []  # primeras 5 filas para preview
+
+
+# ─────────────────────────────────────────────────────────────
+# GENERACIÓN DE VENTAS (Ingesta → Order)
+# ─────────────────────────────────────────────────────────────
+
+class GenerarVentasResponse(BaseModel):
+    lote_id: int
+    ordenes_creadas: int
+    registros_omitidos: int  # ya tenían order_id (procesados antes)
+    order_ids: List[int] = []
+
+
+# ─────────────────────────────────────────────────────────────
+# WEBHOOK (ingesta tipo "api")
+# ─────────────────────────────────────────────────────────────
+
+class WebhookIngestaRequest(BaseModel):
+    """Payload que manda el marketplace/cliente vía API: filas crudas, mismo
+    formato de columnas que la fuente tiene mapeado (columna_origen -> valor)."""
+    filas: List[Dict[str, Any]]
+    periodo_inicio: Optional[str] = None
+    periodo_fin: Optional[str] = None
 
 
 # ─────────────────────────────────────────────────────────────

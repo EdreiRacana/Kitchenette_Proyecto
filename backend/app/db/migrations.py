@@ -232,6 +232,13 @@ _INGESTA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS ix_ingesta_registros_devolucion ON ingesta_registros (es_devolucion)",
     "CREATE INDEX IF NOT EXISTS ix_ingesta_registros_estatus    ON ingesta_registros (estatus_pedido)",
     "CREATE INDEX IF NOT EXISTS ix_ingesta_registros_sku_cliente ON ingesta_registros (sku_cliente)",
+    # v3 — puente Ingesta → Ventas (Excel/CSV/API ya no son data huérfana de BI)
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS customer_id       INTEGER",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS api_key           VARCHAR",
+    "ALTER TABLE ingesta_fuentes ADD COLUMN IF NOT EXISTS auto_crear_ventas BOOLEAN DEFAULT FALSE",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_ingesta_fuentes_api_key ON ingesta_fuentes (api_key)",
+    "ALTER TABLE ingesta_registros ADD COLUMN IF NOT EXISTS order_id          INTEGER",
+    "CREATE INDEX IF NOT EXISTS ix_ingesta_registros_order ON ingesta_registros (order_id)",
 ]
 
 

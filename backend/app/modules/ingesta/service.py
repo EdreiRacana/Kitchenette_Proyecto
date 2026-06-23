@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -112,6 +113,9 @@ async def create_fuente(
         tiene_filas_anidadas=data.tiene_filas_anidadas,
         campo_id_pedido=data.campo_id_pedido,
         patron_fila_total=data.patron_fila_total,
+        customer_id=data.customer_id,
+        auto_crear_ventas=data.auto_crear_ventas,
+        api_key=secrets.token_urlsafe(24) if data.tipo_ingesta == "api" else None,
     )
     db.add(fuente)
     await db.flush()
@@ -142,12 +146,15 @@ async def update_fuente(
         "nombre", "tipo_cliente", "tipo_ingesta", "moneda", "periodicidad",
         "activa", "notas", "separador_decimal", "formato_fecha",
         "simbolo_moneda", "fila_encabezado", "tiene_filas_anidadas",
-        "campo_id_pedido", "patron_fila_total",
+        "campo_id_pedido", "patron_fila_total", "customer_id", "auto_crear_ventas",
     ]
     for campo in campos_simples:
         valor = getattr(data, campo, None)
         if valor is not None:
             setattr(fuente, campo, valor)
+
+    if fuente.tipo_ingesta == "api" and not fuente.api_key:
+        fuente.api_key = secrets.token_urlsafe(24)
 
     if data.columnas is not None:
         for col in fuente.columnas:
@@ -643,6 +650,15 @@ async def get_registros(
     return result.scalars().all(), total
 
 
+async def get_fuente_por_api_key(db: AsyncSession, api_key: str) -> Optional[models.IngestaFuente]:
+    result = await db.execute(
+        select(models.IngestaFuente)
+        .options(selectinload(models.IngestaFuente.columnas))
+        .where(models.IngestaFuente.api_key == api_key, models.IngestaFuente.activa == True)  # noqa: E712
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_resumen(db: AsyncSession) -> schemas.ResumenIngesta:
     fuentes_total = (await db.execute(select(func.count(models.IngestaFuente.id)))).scalar() or 0
     fuentes_activas = (await db.execute(
@@ -670,4 +686,93 @@ async def get_resumen(db: AsyncSession) -> schemas.ResumenIngesta:
         ultimo_lote_fecha=ultimo_lote.created_at if ultimo_lote else None,
         total_registros=registros_total,
         registros_ultimo_lote=registros_ultimo,
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# 5. PUENTE INGESTA → VENTAS (genera Order reales desde registros)
+# ─────────────────────────────────────────────────────────────
+#
+# Un IngestaRegistro normalizado es solo BI hasta que esta función lo
+# convierte en una Order real: ahí es cuando Finanzas reconoce el ingreso
+# e Inventario refleja el movimiento (si el SKU está vinculado a un
+# variant_id real; si no, es un renglón de texto libre, igual que en
+# Ventas manuales).
+#
+# Agrupamos por id_pedido_origen cuando existe (un pedido, varias líneas);
+# si no, cada registro es su propio pedido de una sola línea.
+
+async def generar_ordenes_de_lote(
+    db: AsyncSession,
+    lote_id: int,
+    user_id: Optional[int] = None,
+) -> schemas.GenerarVentasResponse:
+    from app.modules.sales import schemas as sales_schemas, service as sales_service
+
+    lote = await db.get(models.IngestaLote, lote_id)
+    if not lote:
+        raise ValueError(f"Lote {lote_id} no encontrado.")
+
+    fuente = await get_fuente(db, lote.fuente_id)
+    if not fuente:
+        raise ValueError(f"Fuente {lote.fuente_id} no encontrada.")
+
+    result = await db.execute(
+        select(models.IngestaRegistro).where(
+            models.IngestaRegistro.lote_id == lote_id,
+            models.IngestaRegistro.order_id.is_(None),
+        )
+    )
+    registros = result.scalars().all()
+
+    pendientes_total = (await db.execute(
+        select(func.count(models.IngestaRegistro.id)).where(models.IngestaRegistro.lote_id == lote_id)
+    )).scalar() or 0
+    omitidos = pendientes_total - len(registros)
+
+    grupos: Dict[str, List[models.IngestaRegistro]] = {}
+    for reg in registros:
+        clave = reg.id_pedido_origen or f"_reg_{reg.id}"
+        grupos.setdefault(clave, []).append(reg)
+
+    order_ids: List[int] = []
+    for clave, regs in grupos.items():
+        items = [
+            sales_schemas.OrderItemCreate(
+                variant_id=None,
+                product_name=reg.descripcion or reg.sku_cliente or reg.upc or "Producto",
+                sku=reg.sku_cliente or reg.sku_cadena or reg.upc,
+                quantity=max(1, int(reg.cantidad_vendida or 1)),
+                unit_price=reg.precio_unitario or (
+                    (reg.venta_neta or reg.venta_bruta or 0.0) / max(1, reg.cantidad_vendida or 1)
+                ),
+                discount_amount=0.0,
+                tax_rate=0.0,
+            )
+            for reg in regs
+        ]
+
+        order_in = sales_schemas.OrderCreate(
+            kind="order",
+            customer_id=fuente.customer_id,
+            payment_method="marketplace",
+            channel=fuente.tipo_cliente or "marketplace",
+            status="paid",  # la cadena ya liquidó la venta; se reconoce el ingreso de inmediato
+            notes=f"Generado desde ingesta · fuente '{fuente.nombre}' · lote #{lote_id}"
+                  + (f" · pedido origen {clave}" if regs[0].id_pedido_origen else ""),
+            items=items,
+        )
+
+        order = await sales_service.create_order(db, order_in, user_id=user_id)
+        order_ids.append(order.id)
+        for reg in regs:
+            reg.order_id = order.id
+
+    await db.commit()
+
+    return schemas.GenerarVentasResponse(
+        lote_id=lote_id,
+        ordenes_creadas=len(order_ids),
+        registros_omitidos=omitidos,
+        order_ids=order_ids,
     )
