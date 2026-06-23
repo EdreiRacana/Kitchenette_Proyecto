@@ -196,7 +196,7 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
   const paso1Ok = nombre.trim().length > 0 && archivo !== null && preview !== null;
   const camposMapeados = columnas.filter((c) => c.campo !== "skip").map((c) => c.campo);
   const faltanRequeridos = CAMPOS_REQUERIDOS.filter((r) => !camposMapeados.includes(r));
-  const paso2Ok = faltanRequeridos.length === 0;
+  const paso2Ok = true; // siempre puede continuar, los requeridos son solo advertencia
 
   const guardar = async () => {
     setGuardando(true);
@@ -449,8 +449,8 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
             <button onClick={() => setPaso(1)} style={{ padding: "9px 18px", borderRadius: 8, border: `1px solid ${tk.border}`, background: "transparent", color: tk.textMid, fontSize: 14, cursor: "pointer" }}>
               <ChevronLeft size={14} style={{ verticalAlign: -2 }} /> Atrás
             </button>
-            <button onClick={() => setPaso(3)} disabled={!paso2Ok}
-              style={{ flex: 1, maxWidth: 320, padding: "9px 24px", borderRadius: 8, border: "none", background: paso2Ok ? `linear-gradient(135deg, ${tk.nova}, ${tk.navy})` : tk.panel2, color: paso2Ok ? "#fff" : tk.textLo, fontSize: 14, fontWeight: 600, cursor: paso2Ok ? "pointer" : "default" }}>
+            <button onClick={() => setPaso(3)}
+              style={{ flex: 1, maxWidth: 320, padding: "9px 24px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${tk.nova}, ${tk.navy})`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
               Continuar — reglas del negocio <ChevronRight size={15} style={{ verticalAlign: -2 }} />
             </button>
           </div>
