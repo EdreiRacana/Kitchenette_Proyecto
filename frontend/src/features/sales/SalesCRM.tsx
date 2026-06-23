@@ -9,6 +9,7 @@ import {
   Upload, Zap, Settings2, CheckCircle, AlertTriangle,
 } from "lucide-react";
 import api from "../../services/api";
+import IngestaConfigurador from "./IngestaConfigurador";
 import { resolveTheme, makeTr, money, dateShort, statusColors, statusMeta, paymentLabel, ORDER_PIPELINE, PAYMENT_METHODS } from "./theme";
 import type { Tokens } from "./theme";
 import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite } from "./types";
@@ -136,292 +137,69 @@ function computeStats(orders: Order[]): SalesStats {
 
 // ── Módulo de Ingesta ────────────────────────────────────────────────────────
 function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => string }) {
-  const [step, setStep] = useState<IngestaStep>("inicio");
-  const [fuentes, setFuentes] = useState<FuenteItem[]>([]);
-  const [fuenteId, setFuenteId] = useState<number | null>(null);
-  const [fuenteNombre, setFuenteNombre] = useState("");
-  const [tipoCliente, setTipoCliente] = useState("cadena_retail");
-  const [moneda, setMoneda] = useState("MXN");
-  const [modoDeteccion, setModoDeteccion] = useState<"ia" | "manual">("ia");
-  const [archivo, setArchivo] = useState<File | null>(null);
-  const [preview, setPreview] = useState<PreviewResult | null>(null);
-  const [deteccion, setDeteccion] = useState<DeteccionResult | null>(null);
-  const [mapeo, setMapeo] = useState<Record<string, string>>({});
-  const [resultado, setResultado] = useState<ResultadoLote | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [periodoInicio, setPeriodoInicio] = useState("");
-  const [periodoFin, setPeriodoFin] = useState("");
+  const [modo, setModo] = useState<"lista" | "nueva" | "subir">("lista");
+  const [fuentes, setFuentes] = useState<{ id: number; nombre: string; moneda: string; activa: boolean }[]>([]);
+  const [fuenteSubir, setFuenteSubir] = useState<{ id: number; nombre: string } | null>(null);
   const [borrando, setBorrando] = useState<number | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [resultado, setResultado] = useState<{ filas_ok: number; filas_error: number; estado: string; registros_muestra: { descripcion: string | null; cantidad_vendida: number; venta_bruta: number; upc: string | null }[] } | null>(null);
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    ingestaApi.fuentes().then(setFuentes).catch(() => {});
-  }, []);
+  const cargarFuentes = () => {
+    api.get("/ingesta/fuentes").then((r) => setFuentes(r.data)).catch(() => {});
+  };
 
-  const borrarFuente = async (id: number, nombre: string) => {
+  useEffect(() => { cargarFuentes(); }, []);
+
+  const borrar = async (id: number, nombre: string) => {
     if (!window.confirm(`¿Eliminar la fuente "${nombre}" y todos sus datos? Esta acción no se puede deshacer.`)) return;
     setBorrando(id);
+    try { await api.delete(`/ingesta/fuentes/${id}`); setFuentes((p) => p.filter((f) => f.id !== id)); }
+    catch { alert("No se pudo eliminar. Intenta de nuevo."); }
+    finally { setBorrando(null); }
+  };
+
+  const subirArchivo = async (fuenteId: number, archivo: File) => {
+    setSubiendo(true); setError(null);
     try {
-      await ingestaApi.borrarFuente(id);
-      setFuentes((prev) => prev.filter((f) => f.id !== id));
-    } catch {
-      alert("No se pudo eliminar la fuente. Intenta de nuevo.");
-    } finally {
-      setBorrando(null);
-    }
-  };
-
-  const inputBase: React.CSSProperties = {
-    padding: "9px 12px", borderRadius: 8,
-    border: `1px solid ${tk.border}`,
-    background: tk.inputBg, color: tk.textHi,
-    fontSize: 14, outline: "none", width: "100%",
-    boxSizing: "border-box",
-  };
-
-  const cardStyle: React.CSSProperties = {
-    background: tk.panel,
-    border: `1px solid ${tk.border}`,
-    borderRadius: 12,
-    padding: "20px 24px",
-  };
-
-  // Paso 1: subir archivo al backend para obtener encabezados reales
-  const leerArchivoEnBackend = async (file: File) => {
-    setStep("leyendo");
-    setError(null);
-    try {
-      const fd = new FormData();
-      fd.append("archivo", file);
-      const result: PreviewResult = await ingestaApi.preview(fd);
-      setPreview(result);
-      setArchivo(file);
-      setStep("inicio"); // volver a inicio con archivo cargado
-    } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      setError(err?.response?.data?.detail ?? "No se pudo leer el archivo. Verifica que sea un Excel o CSV válido.");
-      setStep("inicio");
-      setArchivo(null);
-      setPreview(null);
-    }
-  };
-
-  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    await leerArchivoEnBackend(f);
-  };
-
-  const detectarConIA = async () => {
-    if (!preview) { setError("Sube un archivo primero."); return; }
-    setStep("detectando");
-    setError(null);
-    try {
-      const res: DeteccionResult = await ingestaApi.detectar({
-        encabezados: preview.encabezados,
-        muestra_filas: preview.muestra_filas,
-        fuente_nombre: fuenteNombre || undefined,
-        tipo_cliente: tipoCliente || undefined,
-      });
-      setDeteccion(res);
-      const m: Record<string, string> = {};
-      res.columnas.forEach((c) => { m[c.columna_origen] = c.campo_sthenova_sugerido; });
-      setMapeo(m);
-      setStep("mapeo");
-    } catch (e: unknown) {
-      const err = e as { response?: { data?: { detail?: string } } };
-      setError(err?.response?.data?.detail ?? "Error al conectar con Claude API.");
-      setStep("inicio");
-    }
-  };
-
-  const irAMapeoManual = () => {
-    if (!preview) { setError("Sube un archivo primero."); return; }
-    const m: Record<string, string> = {};
-    preview.encabezados.forEach((h) => { m[h] = "skip"; });
-    setMapeo(m);
-    setDeteccion(null);
-    setStep("mapeo");
-  };
-
-  const procesarArchivo = async () => {
-    if (!archivo) { setError("Selecciona un archivo."); return; }
-    setStep("subiendo");
-    setError(null);
-    try {
-      let id = fuenteId;
-      if (!id) {
-        const columnas = Object.entries(mapeo)
-          .filter(([, v]) => v !== "skip")
-          .map(([k, v]) => ({ columna_origen: k, campo_sthenova: v, confirmada: true }));
-        const nueva = await ingestaApi.crearFuente({
-          nombre: fuenteNombre || archivo.name,
-          tipo_cliente: tipoCliente,
-          moneda,
-          columnas,
-          reglas: {},
-        });
-        id = nueva.id as number;
-        setFuenteId(id);
-      }
       const fd = new FormData();
       fd.append("archivo", archivo);
-      if (periodoInicio) fd.append("periodo_inicio", periodoInicio);
-      if (periodoFin) fd.append("periodo_fin", periodoFin);
-      const res = await ingestaApi.upload(id!, fd) as ResultadoLote;
-      setResultado(res);
-      setStep("resultado");
-      ingestaApi.fuentes().then(setFuentes).catch(() => {});
+      const res = await api.post(`/ingesta/fuentes/${fuenteId}/upload`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setResultado(res.data);
+      setModo("lista");
+      cargarFuentes();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       setError(err?.response?.data?.detail ?? "Error al procesar el archivo.");
-      setStep("mapeo");
-    }
+    } finally { setSubiendo(false); }
   };
 
-  const reiniciar = () => {
-    setStep("inicio"); setArchivo(null); setPreview(null);
-    setDeteccion(null); setMapeo({}); setResultado(null);
-    setError(null); setFuenteNombre(""); setFuenteId(null);
-    if (fileRef.current) fileRef.current.value = "";
-  };
+  const card: React.CSSProperties = { background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "18px 22px", marginBottom: 14 };
 
-  const errorBanner = error && (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.bad + "18", border: `1px solid ${tk.bad}44`, color: tk.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
-      <AlertTriangle size={15} /> {error}
-    </div>
-  );
-
-  // ── Paso: leyendo ───────────────────────────────────────────────────────────
-  if (step === "leyendo") return (
-    <div style={{ ...cardStyle, textAlign: "center", padding: "64px 24px" }}>
-      <Spinner tk={tk} size={32} />
-      <div style={{ fontSize: 15, color: tk.textHi, fontWeight: 600, marginTop: 16 }}>Leyendo archivo…</div>
-      <div style={{ fontSize: 13, color: tk.textLo, marginTop: 6 }}>El servidor está procesando las columnas del archivo</div>
-    </div>
-  );
-
-  // ── Paso: detectando ────────────────────────────────────────────────────────
-  if (step === "detectando") return (
-    <div style={{ ...cardStyle, textAlign: "center", padding: "64px 24px" }}>
-      <Spinner tk={tk} size={32} />
-      <div style={{ fontSize: 15, color: tk.textHi, fontWeight: 600, marginTop: 16 }}>Analizando columnas con IA…</div>
-      <div style={{ fontSize: 13, color: tk.textLo, marginTop: 6 }}>Claude está mapeando las columnas automáticamente</div>
-    </div>
-  );
-
-  // ── Paso: subiendo ──────────────────────────────────────────────────────────
-  if (step === "subiendo") return (
-    <div style={{ ...cardStyle, textAlign: "center", padding: "64px 24px" }}>
-      <Spinner tk={tk} size={32} />
-      <div style={{ fontSize: 15, color: tk.textHi, fontWeight: 600, marginTop: 16 }}>Procesando archivo…</div>
-      <div style={{ fontSize: 13, color: tk.textLo, marginTop: 6 }}>Normalizando y guardando registros en la base de datos</div>
-    </div>
-  );
-
-  // ── Paso: mapeo ─────────────────────────────────────────────────────────────
-  if (step === "mapeo") return (
+  // ── Vista: resultado de carga ──────────────────────────────────────────────
+  if (resultado) return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {errorBanner}
-
-      {deteccion && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.good + "18", border: `1px solid ${tk.good}44`, color: tk.good, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
-          <CheckCircle size={15} />
-          IA completada · confianza global {Math.round(deteccion.confianza_global * 100)}%
-          · {deteccion.tokens_usados} tokens usados
-          {deteccion.notas && <span style={{ color: tk.textLo }}> · {deteccion.notas}</span>}
-        </div>
-      )}
-
-      <div style={cardStyle}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi, marginBottom: 4 }}>
-          {deteccion ? "Confirma o corrige el mapeo detectado" : "Asigna cada columna a su campo"}
-        </div>
-        <div style={{ fontSize: 12, color: tk.textLo, marginBottom: 16 }}>
-          {preview?.nombre_archivo} · {preview?.encabezados.length} columnas · {preview?.total_filas} filas
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {(preview?.encabezados ?? []).map((col) => {
-            const det = deteccion?.columnas.find((c) => c.columna_origen === col);
-            const confianza = det?.confianza ?? 1;
-            const dotColor = confianza >= 0.8 ? tk.good : confianza >= 0.5 ? tk.warn : tk.bad;
-            const muestra = det?.muestra ?? preview?.muestra_filas[0]?.[col] ?? null;
-            return (
-              <div key={col} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: tk.panel2, borderRadius: 9, border: `1px solid ${tk.border}` }}>
-                <div style={{ flex: "0 0 190px" }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: tk.textHi }}>{col}</div>
-                  {muestra && <div style={{ fontSize: 11, color: tk.textLo, marginTop: 2 }}>{String(muestra).slice(0, 40)}</div>}
-                </div>
-                {det && <div style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
-                <select
-                  value={mapeo[col] ?? "skip"}
-                  onChange={(e) => setMapeo((m) => ({ ...m, [col]: e.target.value }))}
-                  style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: `1px solid ${tk.border}`, background: tk.inputBg, color: tk.textHi, fontSize: 13, outline: "none" }}>
-                  {CAMPOS_STHENOVA.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                </select>
-                {det?.razon && <div style={{ fontSize: 11, color: tk.textLo, maxWidth: 160, lineHeight: 1.3 }}>{det.razon}</div>}
-              </div>
-            );
-          })}
-        </div>
+      <div style={{ ...card, textAlign: "center" }}>
+        <Check size={40} color={tk.good} style={{ margin: "0 auto 12px", display: "block" }} />
+        <div style={{ fontSize: 17, fontWeight: 600, color: tk.textHi }}>¡Archivo procesado correctamente!</div>
+        <div style={{ fontSize: 13, color: tk.textLo, marginTop: 4 }}>{resultado.filas_ok} registros importados · {resultado.filas_error} errores · estado: {resultado.estado}</div>
       </div>
-
-      <div style={cardStyle}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: tk.textHi, marginBottom: 12 }}>Periodo del reporte (opcional)</div>
-        <div style={{ display: "flex", gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Fecha inicio</label>
-            <input type="date" value={periodoInicio} onChange={(e) => setPeriodoInicio(e.target.value)} style={inputBase} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Fecha fin</label>
-            <input type="date" value={periodoFin} onChange={(e) => setPeriodoFin(e.target.value)} style={inputBase} />
-          </div>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: 10 }}>
-        <button onClick={reiniciar} style={{ padding: "10px 18px", borderRadius: 9, border: `1px solid ${tk.border}`, background: "transparent", color: tk.textMid, fontSize: 14, cursor: "pointer" }}>
-          ‹ Volver
-        </button>
-        <button onClick={procesarArchivo} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.accent}, #0C447C)`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-          <Upload size={16} /> Procesar archivo
-        </button>
-      </div>
-    </div>
-  );
-
-  // ── Paso: resultado ─────────────────────────────────────────────────────────
-  if (step === "resultado") return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ ...cardStyle, textAlign: "center" }}>
-        <CheckCircle size={40} color={tk.good} style={{ margin: "0 auto 12px", display: "block" }} />
-        <div style={{ fontSize: 17, fontWeight: 700, color: tk.textHi }}>¡Archivo procesado!</div>
-        <div style={{ fontSize: 13, color: tk.textLo, marginTop: 4 }}>
-          {resultado?.filas_ok} registros importados · {resultado?.filas_error} errores · estado: {resultado?.estado}
-        </div>
-      </div>
-
-      {resultado?.registros_muestra && resultado.registros_muestra.length > 0 && (
-        <div style={cardStyle}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: tk.textHi, marginBottom: 12 }}>Vista previa — primeros registros normalizados</div>
+      {resultado.registros_muestra?.length > 0 && (
+        <div style={card}>
+          <p style={{ fontSize: 13, fontWeight: 600, color: tk.textHi, margin: "0 0 10px" }}>Vista previa — primeros registros normalizados</p>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ background: tk.panel2 }}>
-                  {["UPC", "Descripción", "Cantidad", "Venta bruta"].map((h) => (
-                    <th key={h} style={{ padding: "8px 12px", textAlign: "left", color: tk.textLo, fontWeight: 600, borderBottom: `1px solid ${tk.border}` }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
+              <thead><tr style={{ background: tk.panel2 }}>
+                {["UPC", "Descripción", "Cantidad", "Venta bruta"].map((h) => <th key={h} style={{ padding: "8px 12px", textAlign: "left", color: tk.textLo, fontWeight: 600, borderBottom: `1px solid ${tk.border}` }}>{h}</th>)}
+              </tr></thead>
               <tbody>
                 {resultado.registros_muestra.map((r, i) => (
                   <tr key={i} style={{ borderBottom: `1px solid ${tk.border}` }}>
                     <td style={{ padding: "8px 12px", color: tk.textMid }}>{r.upc ?? "—"}</td>
                     <td style={{ padding: "8px 12px", color: tk.textHi }}>{r.descripcion ?? "—"}</td>
                     <td style={{ padding: "8px 12px", color: tk.textMid }}>{r.cantidad_vendida}</td>
-                    <td style={{ padding: "8px 12px", color: tk.textHi, fontWeight: 600 }}>{money(r.venta_bruta)}</td>
+                    <td style={{ padding: "8px 12px", color: tk.textHi, fontWeight: 600 }}>${r.venta_bruta?.toLocaleString("es-MX") ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -429,158 +207,100 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
           </div>
         </div>
       )}
-
-      <button onClick={reiniciar} style={{ padding: "11px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.accent}, #0C447C)`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-        Subir otro archivo
+      <button onClick={() => setResultado(null)} style={{ padding: "10px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.nova}, ${tk.navy})`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+        Volver a Ingesta
       </button>
     </div>
   );
 
-  // ── Paso: inicio ────────────────────────────────────────────────────────────
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {errorBanner}
+  // ── Vista: configurador de nueva fuente ────────────────────────────────────
+  if (modo === "nueva") return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <button onClick={() => setModo("lista")} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: "transparent", color: tk.textMid, fontSize: 13, cursor: "pointer" }}>
+          <ChevronLeft size={14} /> Volver
+        </button>
+        <span style={{ fontSize: 15, fontWeight: 600, color: tk.textHi }}>Configurar nueva fuente</span>
+      </div>
+      <IngestaConfigurador
+        tk={tk}
+        onGuardado={(id) => { cargarFuentes(); setModo("lista"); }}
+        onCancelar={() => setModo("lista")}
+      />
+    </div>
+  );
 
-      {fuentes.length > 0 && (
-        <div style={cardStyle}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi, marginBottom: 12 }}>
-            Fuentes configuradas — subir reporte
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {fuentes.map((f) => (
-              <div key={f.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: tk.panel2, borderRadius: 9, border: `1px solid ${tk.border}` }}>
-                <div>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{f.nombre}</span>
-                  <span style={{ fontSize: 12, color: tk.textLo, marginLeft: 10 }}>{f.moneda}</span>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    onClick={() => { setFuenteId(f.id); setFuenteNombre(f.nombre); fileRef.current?.click(); }}
-                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "none", background: tk.accent, color: "#06122B", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                    <Upload size={14} /> Subir reporte
-                  </button>
-                  <button
-                    onClick={() => borrarFuente(f.id, f.nombre)}
-                    disabled={borrando === f.id}
-                    style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, border: `1px solid ${tk.bad}55`, background: tk.bad + "18", color: tk.bad, fontSize: 13, fontWeight: 600, cursor: borrando === f.id ? "default" : "pointer", opacity: borrando === f.id ? 0.6 : 1 }}>
-                    {borrando === f.id ? "…" : "Eliminar"}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+  // ── Vista: lista de fuentes ────────────────────────────────────────────────
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f && fuenteSubir) subirArchivo(fuenteSubir.id, f);
+          if (fileRef.current) fileRef.current.value = "";
+        }} />
+
+      {error && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.bad + "18", border: `1px solid ${tk.bad}44`, color: tk.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
+          <AlertTriangle size={15} /> {error}
         </div>
       )}
 
-      <div style={cardStyle}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi, marginBottom: 16 }}>
-          {preview ? "Archivo listo — configura la fuente" : "Configurar nueva fuente"}
+      {subiendo && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.nova + "18", border: `1px solid ${tk.nova}44`, color: tk.nova, borderRadius: 10, padding: "12px 14px", fontSize: 13 }}>
+          <Upload size={16} /> Procesando archivo... esto puede tomar unos segundos.
         </div>
+      )}
 
-        {!preview && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-            <div>
-              <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Nombre de la fuente</label>
-              <input value={fuenteNombre} onChange={(e) => setFuenteNombre(e.target.value)} placeholder="Walmart México" style={inputBase} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Tipo de cliente</label>
-              <select value={tipoCliente} onChange={(e) => setTipoCliente(e.target.value)} style={inputBase}>
-                <option value="cadena_retail">Cadena retail</option>
-                <option value="marketplace">Marketplace digital</option>
-                <option value="tienda_fisica">Tienda física</option>
-                <option value="distribuidor">Distribuidor</option>
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Moneda</label>
-              <select value={moneda} onChange={(e) => setMoneda(e.target.value)} style={inputBase}>
-                <option value="MXN">MXN — Pesos mexicanos</option>
-                <option value="USD">USD — Dólares</option>
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Modo de detección</label>
-              <select value={modoDeteccion} onChange={(e) => setModoDeteccion(e.target.value as "ia" | "manual")} style={inputBase}>
-                <option value="ia">IA automática (recomendado)</option>
-                <option value="manual">Manual — elijo cada columna</option>
-              </select>
-            </div>
+      {fuentes.length === 0 ? (
+        <div style={{ background: tk.panel, border: `2px dashed ${tk.border}`, borderRadius: 12, padding: "48px 24px", textAlign: "center" }}>
+          <FileSpreadsheet size={36} color={tk.textLo} style={{ margin: "0 auto 12px", display: "block" }} />
+          <div style={{ fontSize: 15, fontWeight: 600, color: tk.textHi, marginBottom: 6 }}>No hay fuentes configuradas</div>
+          <div style={{ fontSize: 13, color: tk.textLo, marginBottom: 20 }}>Configura tu primera fuente de datos. Solo lo haces una vez.</div>
+          <button onClick={() => setModo("nueva")}
+            style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.nova}, ${tk.navy})`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+            <Plus size={16} /> Configurar primera fuente
+          </button>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{fuentes.length} fuente{fuentes.length !== 1 ? "s" : ""} configurada{fuentes.length !== 1 ? "s" : ""}</span>
+            <button onClick={() => setModo("nueva")}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${tk.nova}, ${tk.navy})`, color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              <Plus size={14} /> Nueva fuente
+            </button>
           </div>
-        )}
 
-        <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={onFileChange} style={{ display: "none" }} />
-
-        {preview ? (
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: tk.good + "12", border: `1px solid ${tk.good}44`, borderRadius: 10, marginBottom: 16 }}>
-              <CheckCircle size={18} color={tk.good} />
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{preview.nombre_archivo}</div>
-                <div style={{ fontSize: 12, color: tk.textLo, marginTop: 2 }}>
-                  {preview.encabezados.length} columnas detectadas · {preview.total_filas} filas de datos
-                </div>
+          {fuentes.map((f) => (
+            <div key={f.id} style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}>
+              <FileSpreadsheet size={20} color={tk.nova} style={{ flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{f.nombre}</div>
+                <div style={{ fontSize: 12, color: tk.textLo, marginTop: 2 }}>{f.moneda} · {f.activa ? "Activa" : "Inactiva"}</div>
               </div>
-              <button onClick={() => fileRef.current?.click()} style={{ marginLeft: "auto", fontSize: 12, color: tk.textLo, background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline" }}>
-                Cambiar archivo
-              </button>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-              <div>
-                <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Nombre de la fuente</label>
-                <input value={fuenteNombre} onChange={(e) => setFuenteNombre(e.target.value)} placeholder="Walmart México" style={inputBase} />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Tipo de cliente</label>
-                <select value={tipoCliente} onChange={(e) => setTipoCliente(e.target.value)} style={inputBase}>
-                  <option value="cadena_retail">Cadena retail</option>
-                  <option value="marketplace">Marketplace digital</option>
-                  <option value="tienda_fisica">Tienda física</option>
-                  <option value="distribuidor">Distribuidor</option>
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Moneda</label>
-                <select value={moneda} onChange={(e) => setMoneda(e.target.value)} style={inputBase}>
-                  <option value="MXN">MXN — Pesos mexicanos</option>
-                  <option value="USD">USD — Dólares</option>
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 }}>Modo de detección</label>
-                <select value={modoDeteccion} onChange={(e) => setModoDeteccion(e.target.value as "ia" | "manual")} style={inputBase}>
-                  <option value="ia">IA automática (recomendado)</option>
-                  <option value="manual">Manual — elijo cada columna</option>
-                </select>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: 10 }}>
-              {modoDeteccion === "ia" ? (
-                <button onClick={detectarConIA} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.accent}, #0C447C)`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-                  <Zap size={16} /> Detectar columnas con IA
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => { setFuenteSubir({ id: f.id, nombre: f.nombre }); fileRef.current?.click(); }}
+                  disabled={subiendo}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "none", background: tk.nova, color: "#06122B", fontSize: 13, fontWeight: 600, cursor: subiendo ? "default" : "pointer", opacity: subiendo ? 0.6 : 1 }}>
+                  <Upload size={14} /> Subir reporte
                 </button>
-              ) : (
-                <button onClick={irAMapeoManual} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px", borderRadius: 9, border: `1px solid ${tk.border}`, background: tk.panel2, color: tk.textHi, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-                  <Settings2 size={16} /> Mapear columnas manualmente
+                <button
+                  onClick={() => borrar(f.id, f.nombre)}
+                  disabled={borrando === f.id}
+                  style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, border: `1px solid ${tk.bad}55`, background: tk.bad + "18", color: tk.bad, fontSize: 13, cursor: borrando === f.id ? "default" : "pointer", opacity: borrando === f.id ? 0.6 : 1 }}>
+                  <Trash2 size={14} /> {borrando === f.id ? "..." : "Eliminar"}
                 </button>
-              )}
+              </div>
             </div>
-          </div>
-        ) : (
-          <div
-            onClick={() => fileRef.current?.click()}
-            style={{ border: `2px dashed ${tk.border}`, borderRadius: 10, padding: "40px 20px", textAlign: "center", cursor: "pointer", transition: "all .2s" }}>
-            <Upload size={28} color={tk.textLo} style={{ margin: "0 auto 10px", display: "block" }} />
-            <div style={{ fontSize: 14, color: tk.textMid }}>Haz clic para seleccionar tu archivo</div>
-            <div style={{ fontSize: 12, color: tk.textLo, marginTop: 6 }}>Excel (.xlsx, .xls) o CSV · el servidor detecta las columnas automáticamente</div>
-          </div>
-        )}
-      </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
+
 
 // ── SalesCRM principal ───────────────────────────────────────────────────────
 export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
