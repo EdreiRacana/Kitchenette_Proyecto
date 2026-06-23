@@ -41,6 +41,8 @@ const ingestaApi = {
     api.post(`/ingesta/fuentes/${fuenteId}/upload`, formData, {
       headers: { "Content-Type": "multipart/form-data" },
     }).then((r) => r.data),
+  generarVentas: (loteId: number) =>
+    api.post(`/ingesta/lotes/${loteId}/generar-ventas`).then((r) => r.data),
 };
 
 // ── Campos internos estándar ─────────────────────────────────────────────────
@@ -108,6 +110,7 @@ interface FuenteItem {
 }
 
 interface ResultadoLote {
+  lote_id: number;
   filas_ok: number;
   filas_error: number;
   total_filas: number;
@@ -138,12 +141,14 @@ function computeStats(orders: Order[]): SalesStats {
 // ── Módulo de Ingesta ────────────────────────────────────────────────────────
 function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => string }) {
   const [modo, setModo] = useState<"lista" | "nueva" | "subir">("lista");
-  const [fuentes, setFuentes] = useState<{ id: number; nombre: string; moneda: string; activa: boolean }[]>([]);
+  const [fuentes, setFuentes] = useState<{ id: number; nombre: string; moneda: string; activa: boolean; customer_id?: number | null; auto_crear_ventas?: boolean }[]>([]);
   const [fuenteSubir, setFuenteSubir] = useState<{ id: number; nombre: string } | null>(null);
   const [borrando, setBorrando] = useState<number | null>(null);
-  const [resultado, setResultado] = useState<{ filas_ok: number; filas_error: number; estado: string; registros_muestra: { descripcion: string | null; cantidad_vendida: number; venta_bruta: number; upc: string | null }[] } | null>(null);
+  const [resultado, setResultado] = useState<ResultadoLote | null>(null);
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [generandoVentas, setGenerandoVentas] = useState(false);
+  const [ventasGeneradas, setVentasGeneradas] = useState<{ ordenes_creadas: number } | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const cargarFuentes = () => {
@@ -177,6 +182,18 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
 
   const card: React.CSSProperties = { background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "18px 22px", marginBottom: 14 };
 
+  const generarVentas = async () => {
+    if (!resultado) return;
+    setGenerandoVentas(true); setError(null);
+    try {
+      const res = await ingestaApi.generarVentas(resultado.lote_id);
+      setVentasGeneradas({ ordenes_creadas: res.ordenes_creadas });
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      setError(err?.response?.data?.detail ?? "No se pudieron generar las ventas.");
+    } finally { setGenerandoVentas(false); }
+  };
+
   // ── Vista: resultado de carga ──────────────────────────────────────────────
   if (resultado) return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -185,6 +202,20 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
         <div style={{ fontSize: 17, fontWeight: 600, color: tk.textHi }}>¡Archivo procesado correctamente!</div>
         <div style={{ fontSize: 13, color: tk.textLo, marginTop: 4 }}>{resultado.filas_ok} registros importados · {resultado.filas_error} errores · estado: {resultado.estado}</div>
       </div>
+
+      {ventasGeneradas ? (
+        <div style={{ ...card, textAlign: "center", borderColor: tk.good + "55" }}>
+          <CheckCircle size={28} color={tk.good} style={{ margin: "0 auto 10px", display: "block" }} />
+          <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{ventasGeneradas.ordenes_creadas} pedido{ventasGeneradas.ordenes_creadas !== 1 ? "s" : ""} generado{ventasGeneradas.ordenes_creadas !== 1 ? "s" : ""} en Ventas</div>
+          <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>Ya puedes verlos en el listado de pedidos.</div>
+        </div>
+      ) : (
+        <button onClick={generarVentas} disabled={generandoVentas}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px", borderRadius: 9, border: `1px solid ${tk.nova}55`, background: tk.nova + "18", color: tk.nova, fontSize: 14, fontWeight: 600, cursor: generandoVentas ? "default" : "pointer", opacity: generandoVentas ? 0.6 : 1 }}>
+          <Zap size={16} /> {generandoVentas ? "Generando pedidos..." : "Generar pedidos de venta a partir de este lote"}
+        </button>
+      )}
+
       {resultado.registros_muestra?.length > 0 && (
         <div style={card}>
           <p style={{ fontSize: 13, fontWeight: 600, color: tk.textHi, margin: "0 0 10px" }}>Vista previa — primeros registros normalizados</p>
@@ -207,7 +238,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
           </div>
         </div>
       )}
-      <button onClick={() => setResultado(null)} style={{ padding: "10px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.nova}, ${tk.navy})`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+      <button onClick={() => { setResultado(null); setVentasGeneradas(null); }} style={{ padding: "10px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.nova}, ${tk.navy})`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
         Volver a Ingesta
       </button>
     </div>
@@ -276,8 +307,17 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
             <div key={f.id} style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}>
               <FileSpreadsheet size={20} color={tk.nova} style={{ flexShrink: 0 }} />
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{f.nombre}</div>
-                <div style={{ fontSize: 12, color: tk.textLo, marginTop: 2 }}>{f.moneda} · {f.activa ? "Activa" : "Inactiva"}</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi, display: "flex", alignItems: "center", gap: 8 }}>
+                  {f.nombre}
+                  {f.auto_crear_ventas && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 6, background: tk.nova + "18", color: tk.nova, fontSize: 11, fontWeight: 600 }}>
+                      <Zap size={11} /> Auto
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 12, color: tk.textLo, marginTop: 2 }}>
+                  {f.moneda} · {f.activa ? "Activa" : "Inactiva"} · {f.customer_id ? "Genera pedidos en Ventas" : "Solo BI (sin cliente asignado)"}
+                </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button

@@ -8,9 +8,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Upload, ChevronRight, ChevronLeft, Check, AlertTriangle,
-  Info, Plus, Trash2, Settings, FileSpreadsheet, Zap,
+  Info, Plus, Trash2, Settings, FileSpreadsheet, Zap, Copy,
 } from "lucide-react";
 import api from "../../services/api";
+import { salesApi } from "./api";
+import type { CustomerLite } from "./types";
 import type { Tokens } from "./theme";
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
@@ -33,6 +35,12 @@ interface Props {
   tk: Tokens;
   onGuardado?: (fuenteId: number) => void;
   onCancelar?: () => void;
+}
+
+interface FuenteCreada {
+  id: number;
+  tipo_ingesta: string;
+  api_key?: string | null;
 }
 
 // ── Campos estándar STHENOVA ──────────────────────────────────────────────────
@@ -123,11 +131,23 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
   // Paso 1 — datos de la fuente
   const [nombre, setNombre] = useState("");
   const [tipoCliente, setTipoCliente] = useState("marketplace");
+  const [tipoIngesta, setTipoIngesta] = useState<"excel" | "csv" | "api">("excel");
   const [moneda, setMoneda] = useState("MXN");
   const [periodicidad, setPeriodicidad] = useState("flexible");
   const [nombreHoja, setNombreHoja] = useState("");
   const [tieneAnidadas, setTieneAnidadas] = useState(false);
   const [campoIdPedido, setCampoIdPedido] = useState("");
+
+  // Puente a Ventas — a qué cliente se le atribuye la venta y si se factura sola
+  const [customers, setCustomers] = useState<CustomerLite[]>([]);
+  const [customerId, setCustomerId] = useState<number | "">("");
+  const [autoCrearVentas, setAutoCrearVentas] = useState(false);
+  const [creada, setCreada] = useState<FuenteCreada | null>(null);
+  const [copiado, setCopiado] = useState(false);
+
+  useEffect(() => {
+    salesApi.customers().then(setCustomers).catch(() => {});
+  }, []);
 
   // Paso 2 — columnas
   const [columnas, setColumnas] = useState<Columna[]>([]);
@@ -205,11 +225,14 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
       const payload = {
         nombre,
         tipo_cliente: tipoCliente,
+        tipo_ingesta: tipoIngesta,
         moneda,
         periodicidad,
         nombre_hoja: nombreHoja || null,
         tiene_filas_anidadas: tieneAnidadas,
         campo_id_pedido: tieneAnidadas ? campoIdPedido : null,
+        customer_id: customerId || null,
+        auto_crear_ventas: autoCrearVentas,
         columnas: columnas.filter((c) => c.campo !== "skip").map((c) => ({
           columna_origen: c.nombre,
           campo_sthenova: c.campo,
@@ -233,7 +256,11 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
         },
       };
       const res = await api.post("/ingesta/fuentes", payload);
-      if (onGuardado) onGuardado(res.data.id);
+      if (tipoIngesta === "api" && res.data.api_key) {
+        setCreada({ id: res.data.id, tipo_ingesta: res.data.tipo_ingesta, api_key: res.data.api_key });
+      } else if (onGuardado) {
+        onGuardado(res.data.id);
+      }
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } } };
       setError(e?.response?.data?.detail ?? "Error al guardar. Intenta de nuevo.");
@@ -243,6 +270,44 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
   };
 
   const stepLabel = ["Datos de la fuente", "Asignar columnas", "Reglas del negocio", "Confirmar y guardar"];
+
+  const webhookUrl = `${(api.defaults.baseURL ?? "").replace(/\/$/, "")}/ingesta/fuentes/${creada?.id}/webhook`;
+
+  // ── Vista: fuente tipo API creada — entregar la clave y la URL ──────────────
+  if (creada) return (
+    <div style={card}>
+      <Check size={32} color={tk.good} style={{ marginBottom: 10 }} />
+      <p style={{ fontSize: 15, fontWeight: 600, color: tk.textHi, margin: "0 0 6px" }}>Fuente API creada</p>
+      <p style={{ fontSize: 13, color: tk.textLo, margin: "0 0 16px" }}>
+        Comparte esto con el equipo técnico del marketplace/cliente. Cada envío reutiliza el mismo mapeo de columnas que configuraste.
+      </p>
+
+      <label style={label12}>URL del webhook</label>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <input readOnly value={webhookUrl} style={{ ...inp, fontFamily: "monospace", fontSize: 12 }} />
+      </div>
+
+      <label style={label12}>API Key (header X-API-Key) — solo se muestra una vez</label>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input readOnly value={creada.api_key ?? ""} style={{ ...inp, fontFamily: "monospace", fontSize: 12 }} />
+        <button
+          onClick={() => { navigator.clipboard.writeText(creada.api_key ?? ""); setCopiado(true); setTimeout(() => setCopiado(false), 1500); }}
+          style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.panel2, color: tk.textHi, fontSize: 13, cursor: "pointer" }}>
+          <Copy size={14} /> {copiado ? "¡Copiado!" : "Copiar"}
+        </button>
+      </div>
+
+      <div style={{ marginTop: 14, fontSize: 12, color: tk.textLo, padding: "10px 12px", background: tk.panel2, borderRadius: 8 }}>
+        <Info size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
+        POST de JSON: <code>{`{"filas": [{ "<columna_origen>": "<valor>", ... }]}`}</code> — mismas columnas que mapeaste con el archivo de muestra.
+      </div>
+
+      <button onClick={() => { if (onGuardado) onGuardado(creada.id); }}
+        style={{ marginTop: 16, padding: "10px 24px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${tk.nova}, ${tk.navy})`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+        Listo
+      </button>
+    </div>
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
@@ -345,6 +410,32 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
                 <label style={label12}>Nombre de la hoja (si es Excel)</label>
                 <input value={nombreHoja} onChange={(e) => setNombreHoja(e.target.value)} placeholder="Ej: Meli, Amazon, Venta_Total..." style={inp} />
               </div>
+              <div>
+                <label style={label12}>Cómo llegarán los datos después</label>
+                <select value={tipoIngesta} onChange={(e) => setTipoIngesta(e.target.value as "excel" | "csv" | "api")} style={inp}>
+                  <option value="excel">Subiendo Excel/CSV manualmente</option>
+                  <option value="api">Conectado por API (webhook)</option>
+                </select>
+              </div>
+              <div>
+                <label style={label12}>Cliente al que se le atribuye la venta</label>
+                <select value={customerId} onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : "")} style={inp}>
+                  <option value="">— Sin asignar (solo BI, no genera Order) —</option>
+                  {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14, padding: "12px 14px", background: tk.panel2, borderRadius: 9, border: `1px solid ${tk.border}` }}>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+                <input type="checkbox" checked={autoCrearVentas} onChange={(e) => setAutoCrearVentas(e.target.checked)} style={{ marginTop: 2 }} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: tk.textHi }}>Generar pedidos de Ventas automáticamente</div>
+                  <div style={{ fontSize: 12, color: tk.textLo, marginTop: 2 }}>
+                    Cada archivo/envío crea Orders reales al instante (Finanzas e Inventario los ven). Si lo dejas apagado, puedes generarlos manualmente después de revisar cada lote.
+                  </div>
+                </div>
+              </label>
             </div>
 
             <div style={{ marginTop: 14, padding: "12px 14px", background: tk.panel2, borderRadius: 9, border: `1px solid ${tk.border}` }}>
@@ -573,6 +664,9 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
               ["Comisión", comisionOrigen === "columna" ? "Columna del archivo" : comisionOrigen === "porcentaje" ? `${comisionPct}% calculado` : "No aplica"],
               ["IVA", precioConIva ? `Incluye ${ivaPct}% IVA — se quita automáticamente` : "Precio ya sin IVA"],
               ["Devolución", devColumna ? `Columna "${devColumna}" ${devRegla} "${devValor}"` : "Sin detección automática"],
+              ["Transporte", tipoIngesta === "api" ? "API / webhook" : "Subida manual de archivo"],
+              ["Cliente en Ventas", customers.find((c) => c.id === customerId)?.name ?? "Sin asignar (solo BI)"],
+              ["Generar pedidos", autoCrearVentas ? "Automático al procesar" : "Manual (botón después de cada lote)"],
             ].map(([k, v]) => (
               <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: `1px solid ${tk.border}`, fontSize: 13 }}>
                 <span style={{ color: tk.textLo }}>{k}</span>
