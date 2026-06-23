@@ -1,8 +1,13 @@
 
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.api.v1.api import api_router
+
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -42,6 +47,15 @@ app.include_router(media.router, prefix=f"{settings.API_V1_STR}/media", tags=["m
 @app.get("/health")
 def health_check():
     return {"status": "ok", "app_name": settings.PROJECT_NAME}
+
+
+# Unhandled exceptions otherwise escape CORSMiddleware (Starlette quirk), which
+# makes the browser report a misleading "CORS blocked" instead of the real 500.
+# Catching them here keeps the CORS headers and logs the real traceback.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url)
+    return JSONResponse(status_code=500, content={"detail": "Error interno del servidor."})
 
 
 # Auto-create tables on startup (for immediate local dev)
