@@ -154,8 +154,26 @@ class StockMovementOut(StockMovementInDB):
     warehouse_name: Optional[str] = None
 
 # --- Composite Response ---
+class WarehouseNameOnly(BaseModel):
+    name: str
+
+    class Config:
+        from_attributes = True
+
+class StockLevelInVariant(BaseModel):
+    warehouse_id: int
+    quantity: int
+    reserved_quantity: int = 0
+    warehouse: WarehouseNameOnly
+
+    class Config:
+        from_attributes = True
+
+class VariantWithStock(VariantInDB):
+    stock_levels: List[StockLevelInVariant] = []
+
 class ProductWithVariants(ProductInDB):
-    variants: List[VariantInDB] = []
+    variants: List[VariantWithStock] = []
     media: List[ProductMediaInDB] = []
 
 # --- Reorder alerts ---

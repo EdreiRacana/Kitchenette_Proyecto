@@ -19,11 +19,21 @@ async def create_product(db: AsyncSession, product_in: schemas.ProductCreate) ->
     return db_product
 
 async def get_products(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Product]:
-    result = await db.execute(select(Product).offset(skip).limit(limit).options(selectinload(Product.variants).selectinload(ProductVariant.stock_levels).selectinload(StockLevel.warehouse)))
+    result = await db.execute(
+        select(Product).offset(skip).limit(limit).options(
+            selectinload(Product.variants).selectinload(ProductVariant.stock_levels).selectinload(StockLevel.warehouse),
+            selectinload(Product.media),
+        )
+    )
     return result.scalars().all()
 
 async def get_product(db: AsyncSession, product_id: int) -> Optional[Product]:
-    result = await db.execute(select(Product).where(Product.id == product_id).options(selectinload(Product.variants).selectinload(ProductVariant.stock_levels).selectinload(StockLevel.warehouse)))
+    result = await db.execute(
+        select(Product).where(Product.id == product_id).options(
+            selectinload(Product.variants).selectinload(ProductVariant.stock_levels).selectinload(StockLevel.warehouse),
+            selectinload(Product.media),
+        )
+    )
     return result.scalars().first()
 
 async def update_product(db: AsyncSession, product_id: int, product_in: schemas.ProductUpdate) -> Optional[Product]:
