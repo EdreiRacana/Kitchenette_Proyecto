@@ -170,6 +170,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [asignandoCliente, setAsignandoCliente] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const fuenteSubirRef = useRef<{ id: number; nombre: string } | null>(null);
 
   const cargarFuentes = () => {
     api.get("/ingesta/fuentes").then((r) => setFuentes(r.data)).catch(() => {});
@@ -354,11 +355,19 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
   // ── Vista: lista de fuentes ────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }}
+      <input ref={fileRef} type="file" style={{ display: "none" }}
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f && fuenteSubir) subirArchivo(fuenteSubir.id, f);
+          const objetivo = fuenteSubirRef.current;
           if (fileRef.current) fileRef.current.value = "";
+          if (!f) return;
+          if (!objetivo) { setError("No se pudo identificar la fuente. Vuelve a pulsar 'Subir reporte'."); return; }
+          const ext = f.name.split(".").pop()?.toLowerCase();
+          if (!ext || !["xlsx", "xls", "csv"].includes(ext)) {
+            setError(`Formato no soportado (.${ext ?? "?"}). Usa un archivo .xlsx, .xls o .csv.`);
+            return;
+          }
+          subirArchivo(objetivo.id, f);
         }} />
 
       {error && (
@@ -425,7 +434,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
                   <Pencil size={14} /> Editar
                 </button>
                 <button
-                  onClick={() => { setFuenteSubir({ id: f.id, nombre: f.nombre }); fileRef.current?.click(); }}
+                  onClick={() => { fuenteSubirRef.current = { id: f.id, nombre: f.nombre }; setFuenteSubir({ id: f.id, nombre: f.nombre }); fileRef.current?.click(); }}
                   disabled={subiendo}
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "none", background: tk.nova, color: "#06122B", fontSize: 13, fontWeight: 600, cursor: subiendo ? "default" : "pointer", opacity: subiendo ? 0.6 : 1 }}>
                   <Upload size={14} /> Subir reporte
