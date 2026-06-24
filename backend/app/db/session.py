@@ -5,7 +5,12 @@ from app.core.config import settings
 class Base(DeclarativeBase):
     pass
 
-engine = create_async_engine(settings.SQLALCHEMY_DATABASE_URI, echo=True)
+engine = create_async_engine(
+    settings.SQLALCHEMY_DATABASE_URI,
+    echo=True,
+    pool_pre_ping=True,
+    pool_recycle=300,
+)
 AsyncSessionLocal = sessionmaker(
     bind=engine,
     class_=AsyncSession,
