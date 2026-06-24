@@ -129,8 +129,7 @@ async def create_fuente(
         db.add(models.IngestaRegla(fuente_id=fuente.id))
 
     await db.commit()
-    await db.refresh(fuente)
-    return fuente
+    return await get_fuente(db, fuente.id)
 
 
 async def update_fuente(
@@ -168,8 +167,7 @@ async def update_fuente(
             setattr(fuente.reglas, campo, valor)
 
     await db.commit()
-    await db.refresh(fuente)
-    return fuente
+    return await get_fuente(db, fuente_id)
 
 
 async def delete_fuente(db: AsyncSession, fuente_id: int) -> bool:
