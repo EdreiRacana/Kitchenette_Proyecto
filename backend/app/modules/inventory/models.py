@@ -149,6 +149,9 @@ class StockMovement(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True) # Linked to Auth module if user is logged in
 
+    variant = relationship("ProductVariant")
+    warehouse = relationship("Warehouse")
+
 
 # ── Proveedores / Compras ───────────────────────────────────────────────────
 class PurchaseOrderStatus(str, enum.Enum):
