@@ -66,6 +66,34 @@ const glass = (t: any): React.CSSProperties =>
 
 const isNetworkError = (err: any) => !err?.response;
 
+const csvEscape = (v: any) => {
+  const s = v == null ? "" : String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+const downloadCSV = (filename: string, rows: (string | number)[][]) => {
+  const csv = rows.map(r => r.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+const exportMovementsCSV = (movements: Movement[]) => {
+  const header = ["Tipo", "Producto", "SKU", "Almacén", "Cantidad", "Costo unitario", "Referencia", "Notas", "Fecha"];
+  const rows = movements.map(m => [
+    m.movement_type, m.product_name || "", m.sku || "", m.warehouse_name || "",
+    m.quantity, m.unit_cost ?? "", m.reference || "", m.notes || "",
+    new Date(m.created_at).toLocaleString("es-MX"),
+  ]);
+  downloadCSV(`movimientos_${new Date().toISOString().slice(0, 10)}.csv`, [header, ...rows]);
+};
+
 type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "adjustments" | "purchase-orders" | "recipes" | "production";
 
 // ── Main Component ─────────────────────────────────────────────────────────
@@ -90,6 +118,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
   const [adjustForm, setAdjustForm] = useState(false);
   const [supplierForm, setSupplierForm] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
+  const [editingWarehouse, setEditingWarehouse] = useState<WarehouseT | null>(null);
   const [poForm, setPoForm] = useState(false);
   const [recipeForm, setRecipeForm] = useState(false);
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null);
@@ -103,6 +132,10 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
   const [whFilter, setWhFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [movTypeFilter, setMovTypeFilter] = useState("");
+  const [supQ, setSupQ] = useState("");
+  const [poQ, setPoQ] = useState("");
+  const [recipeQ, setRecipeQ] = useState("");
+  const [prodOrderQ, setProdOrderQ] = useState("");
 
   const lang = s?.nav ? "es" : "en";
 
@@ -155,7 +188,11 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
     const matchQ = !q || p.name.toLowerCase().includes(qs) || p.variants.some(v => v.sku.toLowerCase().includes(qs)) || (p.category || "").toLowerCase().includes(qs);
     const matchCat = !catFilter || p.category === catFilter;
     const matchWh = !whFilter || p.variants.some(v => v.stock_levels?.some(l => String(l.warehouse_id) === whFilter));
-    const matchStatus = !statusFilter || (statusFilter === "active" ? p.is_active : !p.is_active) || (statusFilter === "out" ? totalStock(p) === 0 : true) || (statusFilter === "low" ? (totalStock(p) > 0 && totalStock(p) < 20) : true);
+    const matchStatus = !statusFilter
+      || (statusFilter === "active" && p.is_active)
+      || (statusFilter === "inactive" && !p.is_active)
+      || (statusFilter === "out" && totalStock(p) === 0)
+      || (statusFilter === "low" && totalStock(p) > 0 && totalStock(p) < 20);
     return matchQ && matchCat && matchWh && matchStatus;
   }), [products, q, catFilter, whFilter, statusFilter]);
 
@@ -186,6 +223,35 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
     recipes.forEach(r => map.set(r.id, r.name || `${lang === "es" ? "Receta" : "Recipe"} #${r.id}`));
     return map;
   }, [recipes, lang]);
+
+  const filteredSuppliers = useMemo(() => suppliers.filter(sup => {
+    if (!supQ) return true;
+    const qs = supQ.toLowerCase();
+    return sup.name.toLowerCase().includes(qs) || (sup.contact_name || "").toLowerCase().includes(qs) || (sup.email || "").toLowerCase().includes(qs) || (sup.phone || "").toLowerCase().includes(qs) || (sup.rfc || "").toLowerCase().includes(qs);
+  }), [suppliers, supQ]);
+
+  const filteredPurchaseOrders = useMemo(() => purchaseOrders.filter(po => {
+    if (!poQ) return true;
+    const qs = poQ.toLowerCase();
+    const supName = supplierNameById.get(po.supplier_id) || "";
+    const whName = warehouseNameById.get(po.warehouse_id) || "";
+    return (po.folio || `PO-${po.id}`).toLowerCase().includes(qs) || supName.toLowerCase().includes(qs) || whName.toLowerCase().includes(qs);
+  }), [purchaseOrders, poQ, supplierNameById, warehouseNameById]);
+
+  const filteredRecipes = useMemo(() => recipes.filter(r => {
+    if (!recipeQ) return true;
+    const qs = recipeQ.toLowerCase();
+    const outName = productNameByVariant.get(r.output_variant_id) || "";
+    return (r.name || "").toLowerCase().includes(qs) || outName.toLowerCase().includes(qs);
+  }), [recipes, recipeQ, productNameByVariant]);
+
+  const filteredProductionOrders = useMemo(() => productionOrders.filter(po => {
+    if (!prodOrderQ) return true;
+    const qs = prodOrderQ.toLowerCase();
+    const recName = recipeNameById.get(po.recipe_id) || "";
+    const whName = warehouseNameById.get(po.warehouse_id) || "";
+    return (po.folio || `PR-${po.id}`).toLowerCase().includes(qs) || recName.toLowerCase().includes(qs) || whName.toLowerCase().includes(qs);
+  }), [productionOrders, prodOrderQ, recipeNameById, warehouseNameById]);
 
   // ── Styles ────────────────────────────────────────────────────────────────
   const inp: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
@@ -396,6 +462,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
             <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ ...inp, width: "auto", cursor: "pointer" }}>
               <option value="">{lang === "es" ? "Estado" : "Status"}</option>
               <option value="active">{lang === "es" ? "Activos" : "Active"}</option>
+              <option value="inactive">{lang === "es" ? "Inactivos" : "Inactive"}</option>
               <option value="out">{lang === "es" ? "Agotados" : "Out of stock"}</option>
               <option value="low">{lang === "es" ? "Stock bajo" : "Low stock"}</option>
             </select>
@@ -487,7 +554,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
       {tab === "warehouses" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button onClick={() => setWarehouseForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            <button onClick={() => { setEditingWarehouse(null); setWarehouseForm(true); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               <Plus size={15} /> {lang === "es" ? "Nuevo almacén" : "New warehouse"}
             </button>
           </div>
@@ -497,7 +564,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
               const stockInWh = products.reduce((a, p) => a + p.variants.reduce((b, v) => b + (v.stock_levels?.filter(l => l.warehouse_id === w.id).reduce((c, l) => c + l.quantity, 0) || 0), 0), 0);
               const skusInWh = products.filter(p => p.variants.some(v => v.stock_levels?.some(l => l.warehouse_id === w.id && l.quantity > 0))).length;
               return (
-                <div key={w.id} style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
+                <div key={w.id} onClick={() => { setEditingWarehouse(w); setWarehouseForm(true); }} style={{ ...glass(t), borderRadius: 12, padding: 20, cursor: "pointer" }}>
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <div style={{ background: wt.color + "22", color: wt.color, borderRadius: 10, padding: 9, display: "flex" }}><Warehouse size={18} /></div>
@@ -506,7 +573,10 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
                         <div style={{ fontSize: 12, color: t.textLo, marginTop: 2 }}>{w.location || "—"}</div>
                       </div>
                     </div>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: wt.color, background: wt.color + "18", padding: "3px 8px", borderRadius: 6 }}>{wt.label}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: wt.color, background: wt.color + "18", padding: "3px 8px", borderRadius: 6 }}>{wt.label}</span>
+                      <Edit2 size={14} color={t.textLo} />
+                    </div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <div style={{ background: t.panel2, borderRadius: 8, padding: "10px 12px" }}>
@@ -532,7 +602,11 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Suppliers ── */}
       {tab === "suppliers" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between" }}>
+            <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 360 }}>
+              <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.textLo }} />
+              <input value={supQ} onChange={e => setSupQ(e.target.value)} placeholder={lang === "es" ? "Buscar proveedor…" : "Search supplier…"} style={{ ...inp, paddingLeft: 34 }} />
+            </div>
             <button onClick={() => { setEditingSupplier(null); setSupplierForm(true); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               <Plus size={15} /> {lang === "es" ? "Nuevo proveedor" : "New supplier"}
             </button>
@@ -548,9 +622,9 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {suppliers.length === 0 ? (
+                  {filteredSuppliers.length === 0 ? (
                     <tr><td colSpan={7} style={{ textAlign: "center", padding: 40, color: t.textLo, fontSize: 14 }}>{lang === "es" ? "Sin proveedores registrados" : "No suppliers registered"}</td></tr>
-                  ) : suppliers.map((sup, i) => (
+                  ) : filteredSuppliers.map((sup, i) => (
                     <tr key={sup.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2, cursor: "pointer" }} onClick={() => { setEditingSupplier(sup); setSupplierForm(true); }}>
                       <td style={{ padding: "12px 16px", fontSize: 13.5, color: t.textHi, fontWeight: 600 }}>{sup.name}{sup.rfc && <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace" }}>{sup.rfc}</div>}</td>
                       <td style={{ padding: "12px 16px", fontSize: 13, color: t.textMid }}>{sup.contact_name || "—"}</td>
@@ -629,7 +703,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
               <option value="out">{lang === "es" ? "Salidas" : "Exits"}</option>
               <option value="adjustment">{lang === "es" ? "Ajustes" : "Adjustments"}</option>
             </select>
-            <button style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>
+            <button onClick={() => exportMovementsCSV(filteredMovements)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>
               <Download size={14} /> {lang === "es" ? "Exportar" : "Export"}
             </button>
           </div>
@@ -711,7 +785,11 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Purchase Orders ── */}
       {tab === "purchase-orders" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between" }}>
+            <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 360 }}>
+              <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.textLo }} />
+              <input value={poQ} onChange={e => setPoQ(e.target.value)} placeholder={lang === "es" ? "Buscar folio, proveedor o almacén…" : "Search folio, supplier or warehouse…"} style={{ ...inp, paddingLeft: 34 }} />
+            </div>
             <button onClick={() => setPoForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               <Plus size={15} /> {lang === "es" ? "Nueva orden" : "New order"}
             </button>
@@ -727,9 +805,9 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {purchaseOrders.length === 0 ? (
+                  {filteredPurchaseOrders.length === 0 ? (
                     <tr><td colSpan={7} style={{ textAlign: "center", padding: 40, color: t.textLo, fontSize: 14 }}>{lang === "es" ? "Sin órdenes de compra" : "No purchase orders"}</td></tr>
-                  ) : purchaseOrders.map((po, i) => {
+                  ) : filteredPurchaseOrders.map((po, i) => {
                     const st = PO_STATUS[po.status];
                     const canReceive = po.status === "draft" || po.status === "ordered";
                     return (
@@ -765,7 +843,11 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Recipes / BOM ── */}
       {tab === "recipes" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between" }}>
+            <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 360 }}>
+              <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.textLo }} />
+              <input value={recipeQ} onChange={e => setRecipeQ(e.target.value)} placeholder={lang === "es" ? "Buscar receta o producto…" : "Search recipe or product…"} style={{ ...inp, paddingLeft: 34 }} />
+            </div>
             <button onClick={() => { setEditingRecipe(null); setRecipeForm(true); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               <Plus size={15} /> {lang === "es" ? "Nueva receta" : "New recipe"}
             </button>
@@ -781,9 +863,9 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {recipes.length === 0 ? (
+                  {filteredRecipes.length === 0 ? (
                     <tr><td colSpan={7} style={{ textAlign: "center", padding: 40, color: t.textLo, fontSize: 14 }}>{lang === "es" ? "Sin recetas registradas" : "No recipes registered"}</td></tr>
-                  ) : recipes.map((r, i) => {
+                  ) : filteredRecipes.map((r, i) => {
                     const outName = productNameByVariant.get(r.output_variant_id) || "—";
                     return (
                       <tr key={r.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
@@ -818,7 +900,11 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Production Orders ── */}
       {tab === "production" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between" }}>
+            <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 360 }}>
+              <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.textLo }} />
+              <input value={prodOrderQ} onChange={e => setProdOrderQ(e.target.value)} placeholder={lang === "es" ? "Buscar folio, receta o almacén…" : "Search folio, recipe or warehouse…"} style={{ ...inp, paddingLeft: 34 }} />
+            </div>
             <button onClick={() => setProdOrderForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               <Plus size={15} /> {lang === "es" ? "Nueva orden de producción" : "New production order"}
             </button>
@@ -834,9 +920,9 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {productionOrders.length === 0 ? (
+                  {filteredProductionOrders.length === 0 ? (
                     <tr><td colSpan={8} style={{ textAlign: "center", padding: 40, color: t.textLo, fontSize: 14 }}>{lang === "es" ? "Sin órdenes de producción" : "No production orders"}</td></tr>
-                  ) : productionOrders.map((po, i) => {
+                  ) : filteredProductionOrders.map((po, i) => {
                     const st = PROD_STATUS[po.status];
                     return (
                       <tr key={po.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
@@ -1051,12 +1137,14 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
       {/* ── MODAL: Warehouse Form ── */}
       {warehouseForm && (
         <WarehouseFormModal
-          t={t} lang={lang}
-          onClose={() => setWarehouseForm(false)}
+          t={t} lang={lang} editing={editingWarehouse}
+          onClose={() => { setWarehouseForm(false); setEditingWarehouse(null); }}
           onSave={async (form: any) => {
-            if (demo) { alert(lang === "es" ? "Modo demo: almacén simulado ✓" : "Demo mode: simulated warehouse ✓"); setWarehouseForm(false); return; }
-            await inventoryService.createWarehouse(form);
+            if (demo) { alert(lang === "es" ? "Modo demo: almacén simulado ✓" : "Demo mode: simulated warehouse ✓"); setWarehouseForm(false); setEditingWarehouse(null); return; }
+            if (editingWarehouse) await inventoryService.updateWarehouse(editingWarehouse.id, form);
+            else await inventoryService.createWarehouse(form);
             setWarehouseForm(false);
+            setEditingWarehouse(null);
             await load();
           }}
         />
@@ -1435,16 +1523,19 @@ function AdjustmentFormModal({ t, lang, products, warehouses, onClose, onSave }:
 }
 
 // ── Warehouse Form Modal ───────────────────────────────────────────────────
-function WarehouseFormModal({ t, lang, onClose, onSave }: any) {
+function WarehouseFormModal({ t, lang, editing, onClose, onSave }: any) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ name: "", location: "", type: "own", is_active: true });
+  const [form, setForm] = useState({
+    name: editing?.name || "", location: editing?.location || "",
+    type: editing?.type || "own", is_active: editing?.is_active ?? true,
+  });
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const handleSave = async () => {
     setSaving(true); setError("");
     try { await onSave(form); }
-    catch (err: any) { setError(err?.response?.data?.detail || (lang === "es" ? "Error al crear el almacén" : "Error creating warehouse")); }
+    catch (err: any) { setError(err?.response?.data?.detail || (lang === "es" ? "Error al guardar el almacén" : "Error saving warehouse")); }
     finally { setSaving(false); }
   };
   return (
@@ -1453,7 +1544,7 @@ function WarehouseFormModal({ t, lang, onClose, onSave }: any) {
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 8, padding: 8, display: "flex" }}><Warehouse size={18} /></div>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{lang === "es" ? "Nuevo almacén" : "New warehouse"}</h2>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{editing ? (lang === "es" ? "Editar almacén" : "Edit warehouse") : (lang === "es" ? "Nuevo almacén" : "New warehouse")}</h2>
           </div>
           <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
         </div>
@@ -1465,6 +1556,15 @@ function WarehouseFormModal({ t, lang, onClose, onSave }: any) {
               {Object.entries(WAREHOUSE_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </select>
           </div>
+          {editing && (
+            <div>
+              <label style={label}>{lang === "es" ? "Estado" : "Status"}</label>
+              <select value={form.is_active ? "1" : "0"} onChange={e => setForm(f => ({ ...f, is_active: e.target.value === "1" }))} style={{ ...inp, cursor: "pointer" }}>
+                <option value="1">{lang === "es" ? "Activo" : "Active"}</option>
+                <option value="0">{lang === "es" ? "Inactivo" : "Inactive"}</option>
+              </select>
+            </div>
+          )}
           <div style={{ background: t.panel2, borderRadius: 8, padding: 12, fontSize: 12.5, color: t.textLo, lineHeight: 1.5 }}>
             {form.type === "own" && (lang === "es" ? "Almacén propio: control total de entradas, salidas y transferencias." : "Own warehouse: full control of entries, exits and transfers.")}
             {form.type === "marketplace" && (lang === "es" ? "Marketplace: stock enviado a plataforma (MercadoLibre, Amazon, etc.). Las ventas descuentan automáticamente." : "Marketplace: stock sent to platform (MercadoLibre, Amazon, etc.). Sales auto-discount.")}
@@ -1477,7 +1577,7 @@ function WarehouseFormModal({ t, lang, onClose, onSave }: any) {
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
             <button onClick={handleSave} disabled={saving || !form.name} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !form.name ? 0.5 : 1 }}>
-              {saving ? "…" : (lang === "es" ? "Crear almacén" : "Create warehouse")}
+              {saving ? "…" : (editing ? (lang === "es" ? "Guardar cambios" : "Save changes") : (lang === "es" ? "Crear almacén" : "Create warehouse"))}
             </button>
           </div>
         </div>
