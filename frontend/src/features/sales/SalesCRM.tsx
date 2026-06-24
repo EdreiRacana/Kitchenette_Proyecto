@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Search, List, Columns, BarChart3, Plus, Download, DollarSign, Clock,
   TrendingUp, Percent, ChevronRight, ArrowUp, ArrowDown, FileText, Info,
-  Upload, Zap, Settings2, CheckCircle, AlertTriangle, FileSpreadsheet, Check, Trash2, ChevronLeft,
+  Upload, Zap, Settings2, CheckCircle, AlertTriangle, FileSpreadsheet, Check, Trash2, ChevronLeft, Pencil,
 } from "lucide-react";
 import api from "../../services/api";
 import IngestaConfigurador from "./IngestaConfigurador";
@@ -140,7 +140,8 @@ function computeStats(orders: Order[]): SalesStats {
 
 // ── Módulo de Ingesta ────────────────────────────────────────────────────────
 function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => string }) {
-  const [modo, setModo] = useState<"lista" | "nueva" | "subir">("lista");
+  const [modo, setModo] = useState<"lista" | "nueva" | "editar" | "subir">("lista");
+  const [fuenteEditar, setFuenteEditar] = useState<number | null>(null);
   const [fuentes, setFuentes] = useState<{ id: number; nombre: string; moneda: string; activa: boolean; customer_id?: number | null; auto_crear_ventas?: boolean }[]>([]);
   const [fuenteSubir, setFuenteSubir] = useState<{ id: number; nombre: string } | null>(null);
   const [borrando, setBorrando] = useState<number | null>(null);
@@ -258,19 +259,20 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     </div>
   );
 
-  // ── Vista: configurador de nueva fuente ────────────────────────────────────
-  if (modo === "nueva") return (
+  // ── Vista: configurador de fuente (nueva o edición) ───────────────────────
+  if (modo === "nueva" || modo === "editar") return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-        <button onClick={() => setModo("lista")} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: "transparent", color: tk.textMid, fontSize: 13, cursor: "pointer" }}>
+        <button onClick={() => { setModo("lista"); setFuenteEditar(null); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: "transparent", color: tk.textMid, fontSize: 13, cursor: "pointer" }}>
           <ChevronLeft size={14} /> Volver
         </button>
-        <span style={{ fontSize: 15, fontWeight: 600, color: tk.textHi }}>Configurar nueva fuente</span>
+        <span style={{ fontSize: 15, fontWeight: 600, color: tk.textHi }}>{modo === "editar" ? "Editar fuente" : "Configurar nueva fuente"}</span>
       </div>
       <IngestaConfigurador
         tk={tk}
-        onGuardado={(id) => { cargarFuentes(); setModo("lista"); }}
-        onCancelar={() => setModo("lista")}
+        fuenteId={modo === "editar" ? fuenteEditar ?? undefined : undefined}
+        onGuardado={(id) => { cargarFuentes(); setModo("lista"); setFuenteEditar(null); }}
+        onCancelar={() => { setModo("lista"); setFuenteEditar(null); }}
       />
     </div>
   );
@@ -343,6 +345,11 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => { setModo("editar"); setFuenteEditar(f.id); }}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.panel2, color: tk.textMid, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  <Pencil size={14} /> Editar
+                </button>
                 <button
                   onClick={() => { setFuenteSubir({ id: f.id, nombre: f.nombre }); fileRef.current?.click(); }}
                   disabled={subiendo}

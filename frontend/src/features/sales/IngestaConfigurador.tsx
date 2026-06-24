@@ -33,6 +33,7 @@ interface Fuente {
 
 interface Props {
   tk: Tokens;
+  fuenteId?: number;
   onGuardado?: (fuenteId: number) => void;
   onCancelar?: () => void;
 }
@@ -120,12 +121,14 @@ const CAMPOS_REQUERIDOS = ["venta_bruta", "fecha_venta", "cantidad_vendida"];
 
 // ── Componente principal ──────────────────────────────────────────────────────
 
-export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Props) {
+export default function IngestaConfigurador({ tk, fuenteId, onGuardado, onCancelar }: Props) {
+  const modoEdicion = fuenteId != null;
   const [paso, setPaso] = useState<1 | 2 | 3 | 4>(1);
   const [archivo, setArchivo] = useState<File | null>(null);
   const [preview, setPreview] = useState<{ encabezados: string[]; muestra_filas: Record<string, string | null>[]; total_filas: number; nombre_archivo: string } | null>(null);
   const [leyendo, setLeyendo] = useState(false);
   const [guardando, setGuardando] = useState(false);
+  const [cargandoFuente, setCargandoFuente] = useState(modoEdicion);
   const [error, setError] = useState<string | null>(null);
 
   // Paso 1 — datos de la fuente
@@ -148,6 +151,42 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
   useEffect(() => {
     salesApi.customers().then(setCustomers).catch(() => {});
   }, []);
+
+  // Modo edición — precargar todo lo que ya estaba configurado para esta fuente
+  useEffect(() => {
+    if (!modoEdicion) return;
+    api.get(`/ingesta/fuentes/${fuenteId}`).then((res) => {
+      const f = res.data;
+      setNombre(f.nombre ?? "");
+      setTipoCliente(f.tipo_cliente ?? "marketplace");
+      setTipoIngesta(f.tipo_ingesta ?? "excel");
+      setMoneda(f.moneda ?? "MXN");
+      setPeriodicidad(f.periodicidad ?? "flexible");
+      setNombreHoja(f.nombre_hoja ?? "");
+      setTieneAnidadas(!!f.tiene_filas_anidadas);
+      setCampoIdPedido(f.campo_id_pedido ?? "");
+      setCustomerId(f.customer_id ?? "");
+      setAutoCrearVentas(!!f.auto_crear_ventas);
+      setColumnas((f.columnas ?? []).map((c: { columna_origen: string; campo_sthenova: string; muestra: string | null; etiqueta_custom?: string | null }) => ({
+        nombre: c.columna_origen,
+        muestra: c.muestra,
+        campo: c.campo_sthenova,
+        etiqueta_custom: c.etiqueta_custom ?? undefined,
+      })));
+      if (f.reglas) {
+        setComisionOrigen(f.reglas.comision_origen ?? "columna");
+        setComisionPct(f.reglas.comision_porcentaje ?? 17);
+        setPrecioConIva(!!f.reglas.precio_incluye_iva);
+        setIvaPct(f.reglas.iva_porcentaje ?? 16);
+        setDevColumna(f.reglas.dev_columna_estatus ?? "");
+        setDevRegla(f.reglas.dev_regla ?? "contiene");
+        setDevValor(f.reglas.dev_valor ?? "");
+        setDevVentana(f.reglas.dev_ventana_dias ?? 90);
+      }
+    }).catch(() => {
+      setError("No se pudo cargar la fuente para editar.");
+    }).finally(() => setCargandoFuente(false));
+  }, [modoEdicion, fuenteId]);
 
   // Paso 2 — columnas
   const [columnas, setColumnas] = useState<Columna[]>([]);
@@ -189,11 +228,13 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
         headers: { "Content-Type": "multipart/form-data" },
       });
       setPreview(res.data);
-      // Inicializar columnas con "skip" por defecto
+      // Inicializar columnas con "skip" por defecto, conservando el mapeo
+      // existente para las columnas que ya estaban configuradas (modo edición)
       setColumnas(res.data.encabezados.map((h: string) => ({
         nombre: h,
         muestra: res.data.muestra_filas[0]?.[h] ?? null,
-        campo: "skip",
+        campo: columnas.find((c) => c.nombre === h)?.campo ?? "skip",
+        etiqueta_custom: columnas.find((c) => c.nombre === h)?.etiqueta_custom,
       })));
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } } };
@@ -213,7 +254,7 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
   };
 
   // Validaciones por paso
-  const paso1Ok = nombre.trim().length > 0 && archivo !== null && preview !== null;
+  const paso1Ok = nombre.trim().length > 0 && (modoEdicion || (archivo !== null && preview !== null));
   const camposMapeados = columnas.filter((c) => c.campo !== "skip").map((c) => c.campo);
   const faltanRequeridos = CAMPOS_REQUERIDOS.filter((r) => !camposMapeados.includes(r));
   const paso2Ok = true; // siempre puede continuar, los requeridos son solo advertencia
@@ -255,8 +296,10 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
           inv_alerta_roja_dias: 180,
         },
       };
-      const res = await api.post("/ingesta/fuentes", payload);
-      if (tipoIngesta === "api" && res.data.api_key) {
+      const res = modoEdicion
+        ? await api.put(`/ingesta/fuentes/${fuenteId}`, payload)
+        : await api.post("/ingesta/fuentes", payload);
+      if (!modoEdicion && tipoIngesta === "api" && res.data.api_key) {
         setCreada({ id: res.data.id, tipo_ingesta: res.data.tipo_ingesta, api_key: res.data.api_key });
       } else if (onGuardado) {
         onGuardado(res.data.id);
@@ -268,6 +311,12 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
       setGuardando(false);
     }
   };
+
+  if (cargandoFuente) return (
+    <div style={{ padding: "40px 0", textAlign: "center", color: tk.textLo, fontSize: 14 }}>
+      Cargando configuración de la fuente...
+    </div>
+  );
 
   const stepLabel = ["Datos de la fuente", "Asignar columnas", "Reglas del negocio", "Confirmar y guardar"];
 
@@ -349,7 +398,15 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
           </div>
 
           <div style={card}>
-            <p style={{ fontSize: 13, fontWeight: 600, color: tk.textHi, margin: "0 0 14px" }}>1. Sube el archivo de tu reporte</p>
+            <p style={{ fontSize: 13, fontWeight: 600, color: tk.textHi, margin: "0 0 14px" }}>
+              1. {modoEdicion ? "Archivo de tu reporte (opcional)" : "Sube el archivo de tu reporte"}
+            </p>
+            {modoEdicion && !preview && (
+              <div style={{ fontSize: 12, color: tk.textLo, marginBottom: 10 }}>
+                Ya tienes {columnas.length} columna{columnas.length !== 1 ? "s" : ""} mapeada{columnas.length !== 1 ? "s" : ""} para esta fuente.
+                Solo sube un archivo nuevo si quieres actualizar las columnas detectadas.
+              </div>
+            )}
             <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={onFileChange} style={{ display: "none" }} />
 
             <div onClick={() => !leyendo && fileRef.current?.click()}
@@ -361,6 +418,11 @@ export default function IngestaConfigurador({ tk, onGuardado, onCancelar }: Prop
                   <FileSpreadsheet size={24} color={tk.good} style={{ margin: "0 auto 8px", display: "block" }} />
                   <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{preview.nombre_archivo}</div>
                   <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>{preview.encabezados.length} columnas · {preview.total_filas} filas · clic para cambiar</div>
+                </>
+              ) : modoEdicion ? (
+                <>
+                  <Upload size={24} color={tk.textLo} style={{ margin: "0 auto 8px", display: "block" }} />
+                  <div style={{ fontSize: 14, color: tk.textMid }}>Clic para subir un archivo y actualizar el mapeo de columnas</div>
                 </>
               ) : (
                 <>
