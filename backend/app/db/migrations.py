@@ -242,14 +242,28 @@ _INGESTA_STATEMENTS = [
 ]
 
 
+_INVENTORY_STATEMENTS = [
+    "ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS type VARCHAR DEFAULT 'own'",
+    "UPDATE warehouses SET type = 'own' WHERE type IS NULL",
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS is_manufactured BOOLEAN DEFAULT false",
+    "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS reorder_point INTEGER",
+    "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS safety_stock INTEGER",
+    "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS lead_time_days INTEGER",
+    "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS preferred_supplier_id INTEGER",
+    "ALTER TABLE stock_levels ADD COLUMN IF NOT EXISTS reserved_quantity INTEGER DEFAULT 0",
+    "ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
+]
+
+
 def _apply(sync_conn: Connection) -> None:
     if sync_conn.dialect.name != "postgresql":
         return
 
     all_statements = [
-        ("customers", _CUSTOMER_STATEMENTS),
-        ("sales",     _SALES_STATEMENTS),
-        ("ingesta",   _INGESTA_STATEMENTS),
+        ("customers",  _CUSTOMER_STATEMENTS),
+        ("sales",      _SALES_STATEMENTS),
+        ("ingesta",    _INGESTA_STATEMENTS),
+        ("inventory",  _INVENTORY_STATEMENTS),
     ]
 
     for label, statements in all_statements:
