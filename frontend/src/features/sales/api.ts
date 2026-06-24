@@ -102,9 +102,12 @@ export const salesApi = {
     const { data } = await api.get<TopProduct[]>(`/sales/analytics/top-products?limit=${limit}`);
     return data;
   },
-  exportUrl(filters: OrderFilters): string {
-    const base = api.defaults.baseURL ?? "";
-    return `${base}/sales/export${qs(filters)}`;
+  async exportFile(filters: OrderFilters, formato: "csv" | "xlsx"): Promise<Blob> {
+    const sep = qs(filters) ? "&" : "?";
+    const { data } = await api.get<Blob>(`/sales/export${qs(filters)}${sep}formato=${formato}`, {
+      responseType: "blob",
+    });
+    return data;
   },
   async customers(): Promise<CustomerLite[]> {
     const { data } = await api.get<CustomerLite[]>(`/customers/`);

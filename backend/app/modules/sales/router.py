@@ -54,19 +54,28 @@ async def customer_360(customer_id: int, db: DB, _: CurrentUser):
 
 
 @router.get("/export")
-async def export_csv(
+async def export_orders(
     db: DB, _: CurrentUser,
+    formato: str = Query("csv", pattern="^(csv|xlsx)$"),
     kind: Optional[str] = None, status: Optional[str] = None,
     customer_id: Optional[int] = None, seller_id: Optional[int] = None,
     payment_method: Optional[str] = None, channel: Optional[str] = None,
     q: Optional[str] = None,
     date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
 ):
-    csv_text = await service.export_csv(
-        db, kind=kind, status=status, customer_id=customer_id, seller_id=seller_id,
+    filtros = dict(
+        kind=kind, status=status, customer_id=customer_id, seller_id=seller_id,
         payment_method=payment_method, channel=channel, q=q,
         date_from=date_from, date_to=date_to,
     )
+    if formato == "xlsx":
+        contenido = await service.export_xlsx(db, **filtros)
+        return StreamingResponse(
+            io.BytesIO(contenido),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=ventas.xlsx"},
+        )
+    csv_text = await service.export_csv(db, **filtros)
     return StreamingResponse(
         io.StringIO(csv_text), media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=ventas.csv"},

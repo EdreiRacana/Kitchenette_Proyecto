@@ -254,7 +254,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
         </div>
       )}
       <button onClick={() => { setResultado(null); setVentasGeneradas(null); }} style={{ padding: "10px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.nova}, ${tk.navy})`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-        Volver a Ingesta
+        Volver a Carga de ventas
       </button>
     </div>
   );
@@ -580,9 +580,23 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
 
   const openEdit = useCallback((o: Order) => { setEditing(o); setSelected(null); setFormOpen(true); }, []);
   const openNew = useCallback(() => { setEditing(null); setFormOpen(true); }, []);
-  const exportCsv = useCallback(() => {
-    if (demo) { alert("Export CSV disponible con backend conectado."); return; }
-    window.open(salesApi.exportUrl(filters), "_blank");
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const exportFile = useCallback(async (formato: "csv" | "xlsx") => {
+    setExportMenuOpen(false);
+    if (demo) { alert("La exportación requiere conexión con el servidor."); return; }
+    setExporting(true);
+    try {
+      const blob = await salesApi.exportFile(filters, formato);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `ventas.${formato}`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(extractErr(e));
+    } finally {
+      setExporting(false);
+    }
   }, [demo, filters]);
 
   const toggleSort = (col: string) => {
@@ -668,7 +682,7 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
         )}
 
         <div style={{ display: "flex", gap: 4 }}>
-          {([["list", List, "Lista"], ["pipeline", Columns, "Pipeline"], ["analytics", BarChart3, "Analytics"], ["ingesta", Upload, "Ingesta"]] as const).map(([v, Icon, label]) => (
+          {([["list", List, "Lista"], ["pipeline", Columns, "Pipeline"], ["analytics", BarChart3, "Analytics"], ["ingesta", Upload, "Carga de ventas"]] as const).map(([v, Icon, label]) => (
             <button key={v} onClick={() => setView(v)} title={label}
               style={{ ...inputBase, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, background: view === v ? tk.accent : tk.inputBg, color: view === v ? "#06122B" : tk.textMid, borderColor: view === v ? tk.accent : tk.border }}>
               <Icon size={15} /><span style={{ fontSize: 12 }}>{label}</span>
@@ -678,7 +692,26 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
 
         {view !== "ingesta" && (
           <>
-            <Button tk={tk} variant="ghost" icon={<Download size={16} />} onClick={exportCsv}>{tr("sales_export", "Export")}</Button>
+            <div style={{ position: "relative" }}>
+              <Button tk={tk} variant="ghost" icon={<Download size={16} />} disabled={exporting} onClick={() => setExportMenuOpen((o) => !o)}>
+                {exporting ? "Exportando…" : tr("sales_export", "Export")}
+              </Button>
+              {exportMenuOpen && (
+                <>
+                  <div onClick={() => setExportMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 9 }} />
+                  <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", overflow: "hidden", zIndex: 10, minWidth: 160 }}>
+                    {([["xlsx", "Excel (.xlsx)"], ["csv", "CSV"]] as const).map(([fmt, label]) => (
+                      <button key={fmt} onClick={() => exportFile(fmt)}
+                        style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 14px", border: "none", background: "transparent", color: tk.textHi, fontSize: 13, cursor: "pointer" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = tk.panel2)}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
             <Button tk={tk} variant="primary" icon={<Plus size={16} />} onClick={openNew}>{tr("sales_new", "Nuevo")}</Button>
           </>
         )}

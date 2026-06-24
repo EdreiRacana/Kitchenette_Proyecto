@@ -649,22 +649,65 @@ async def customer_360(db: AsyncSession, customer_id: int) -> Optional[schemas.C
 
 # ── Export & invoice ──────────────────────────────────────────────────────────
 
-async def export_csv(db: AsyncSession, **filters) -> str:
-    filters.pop("skip", None)
-    filters.pop("limit", None)
-    orders, _ = await get_orders(db, skip=0, limit=100000, **filters)
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["Folio", "Tipo", "Cliente", "Fecha", "Estado", "Metodo",
-                "Subtotal", "Descuento", "Impuesto", "Envio", "Total", "Pagado", "Saldo"])
-    for o in orders:
-        w.writerow([
+EXPORT_HEADERS = ["Folio", "Tipo", "Cliente", "Fecha", "Estado", "Metodo",
+                  "Subtotal", "Descuento", "Impuesto", "Envio", "Total", "Pagado", "Saldo"]
+
+
+def _export_rows(orders) -> List[list]:
+    return [
+        [
             o.folio, o.kind, o.customer.name if o.customer else "",
             o.created_at.strftime("%Y-%m-%d %H:%M") if o.created_at else "",
             o.status, o.payment_method or "",
             o.subtotal, o.discount_amount, o.tax_amount, o.shipping_amount,
             o.total_amount, o.paid_amount, _r((o.total_amount or 0) - (o.paid_amount or 0)),
-        ])
+        ]
+        for o in orders
+    ]
+
+
+async def _export_orders(db: AsyncSession, **filters):
+    filters.pop("skip", None)
+    filters.pop("limit", None)
+    orders, _ = await get_orders(db, skip=0, limit=100000, **filters)
+    return orders
+
+
+async def export_csv(db: AsyncSession, **filters) -> str:
+    orders = await _export_orders(db, **filters)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(EXPORT_HEADERS)
+    w.writerows(_export_rows(orders))
+    # BOM al inicio para que Excel detecte UTF-8 y muestre acentos correctamente.
+    return "﻿" + buf.getvalue()
+
+
+async def export_xlsx(db: AsyncSession, **filters) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    orders = await _export_orders(db, **filters)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Ventas"
+    ws.append(EXPORT_HEADERS)
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="1E2E5C", end_color="1E2E5C", fill_type="solid")
+    money_cols = {7, 8, 9, 10, 11, 12, 13}  # 1-indexed: Subtotal..Saldo
+    for row in _export_rows(orders):
+        ws.append(row)
+        for col_idx in money_cols:
+            ws.cell(row=ws.max_row, column=col_idx).number_format = "#,##0.00"
+    for col_idx, header in enumerate(EXPORT_HEADERS, start=1):
+        max_len = max([len(str(header))] + [len(str(r[col_idx - 1])) for r in _export_rows(orders)] + [8])
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 2, 40)
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
     return buf.getvalue()
 
 
