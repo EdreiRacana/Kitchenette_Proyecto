@@ -25,8 +25,8 @@ class IngestaColumnaBase(BaseModel):
     columna_origen: str
     campo_sthenova: str
     muestra: Optional[str] = None
-    confianza: float = 1.0
     confirmada: bool = False
+    etiqueta_custom: Optional[str] = None
 
 
 class IngestaColumnaCreate(IngestaColumnaBase):
@@ -46,12 +46,18 @@ class IngestaColumna(IngestaColumnaBase):
 # ─────────────────────────────────────────────────────────────
 
 class IngestaReglaBase(BaseModel):
-    devolucion_fecha_venta: bool = True
-    devolucion_acepta_huerfanas: bool = True
-    devolucion_ventana_dias: int = 90
     inv_control_temporalidad: bool = True
     inv_alerta_amarilla_dias: int = 90
     inv_alerta_roja_dias: int = 180
+    comision_origen: str = "columna"
+    comision_porcentaje: Optional[float] = None
+    precio_incluye_iva: bool = False
+    iva_porcentaje: Optional[float] = 16.0
+    dev_columna_estatus: Optional[str] = None
+    dev_regla: str = "contiene"
+    dev_valor: Optional[str] = None
+    dev_fecha_venta_original: bool = True
+    dev_ventana_dias: int = 90
 
 
 class IngestaReglaCreate(IngestaReglaBase):
