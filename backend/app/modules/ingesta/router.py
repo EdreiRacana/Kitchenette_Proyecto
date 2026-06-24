@@ -20,6 +20,7 @@ Rutas:
 
 from __future__ import annotations
 
+import asyncio
 import io
 from typing import Annotated, Any, Dict, List, Optional
 
@@ -111,8 +112,8 @@ async def preview_archivo(
     extension = nombre.rsplit(".", 1)[-1].lower()
 
     try:
-        encabezados, muestra_filas, total_filas = _leer_preview(
-            contenido, extension, fila_encabezado
+        encabezados, muestra_filas, total_filas = await asyncio.to_thread(
+            _leer_preview, contenido, extension, fila_encabezado
         )
     except Exception as e:
         raise HTTPException(400, f"No se pudo leer el archivo: {e}")
@@ -260,7 +261,7 @@ async def upload_archivo(
     extension = nombre.rsplit(".", 1)[-1].lower()
 
     try:
-        filas = _leer_archivo(contenido, extension, fuente.fila_encabezado)
+        filas = await asyncio.to_thread(_leer_archivo, contenido, extension, fuente.fila_encabezado)
     except Exception as e:
         raise HTTPException(400, f"No se pudo leer el archivo: {e}")
 
