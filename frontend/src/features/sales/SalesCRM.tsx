@@ -43,7 +43,20 @@ const ingestaApi = {
     }).then((r) => r.data),
   generarVentas: (loteId: number) =>
     api.post(`/ingesta/lotes/${loteId}/generar-ventas`).then((r) => r.data),
+  lotes: (fuenteId: number) =>
+    api.get(`/ingesta/fuentes/${fuenteId}/lotes`).then((r) => r.data),
 };
+
+interface LoteHistorial {
+  id: number;
+  nombre_archivo: string | null;
+  tipo: string;
+  estado: string;
+  total_filas: number;
+  filas_ok: number;
+  filas_error: number;
+  created_at: string;
+}
 
 // ── Campos internos estándar ─────────────────────────────────────────────────
 const CAMPOS_STHENOVA = [
@@ -140,8 +153,12 @@ function computeStats(orders: Order[]): SalesStats {
 
 // ── Módulo de Ingesta ────────────────────────────────────────────────────────
 function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => string }) {
-  const [modo, setModo] = useState<"lista" | "nueva" | "editar" | "subir">("lista");
+  const [modo, setModo] = useState<"lista" | "nueva" | "editar" | "subir" | "historial">("lista");
   const [fuenteEditar, setFuenteEditar] = useState<number | null>(null);
+  const [fuenteHistorial, setFuenteHistorial] = useState<{ id: number; nombre: string } | null>(null);
+  const [lotes, setLotes] = useState<LoteHistorial[]>([]);
+  const [lotesLoading, setLotesLoading] = useState(false);
+  const [generandoLote, setGenerandoLote] = useState<number | null>(null);
   const [fuentes, setFuentes] = useState<{ id: number; nombre: string; moneda: string; activa: boolean; customer_id?: number | null; auto_crear_ventas?: boolean }[]>([]);
   const [fuenteSubir, setFuenteSubir] = useState<{ id: number; nombre: string } | null>(null);
   const [borrando, setBorrando] = useState<number | null>(null);
@@ -196,6 +213,27 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
   };
 
   const card: React.CSSProperties = { background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "18px 22px", marginBottom: 14 };
+
+  const verHistorial = async (fuenteId: number, nombre: string) => {
+    setFuenteHistorial({ id: fuenteId, nombre });
+    setModo("historial");
+    setLotesLoading(true);
+    try { setLotes(await ingestaApi.lotes(fuenteId)); }
+    catch { setLotes([]); }
+    finally { setLotesLoading(false); }
+  };
+
+  const generarVentasDeLote = async (loteId: number) => {
+    setGenerandoLote(loteId);
+    try {
+      const res = await ingestaApi.generarVentas(loteId);
+      alert(`${res.ordenes_creadas} pedido(s) generado(s) en Ventas. ${res.registros_omitidos ? `${res.registros_omitidos} registro(s) ya estaban vinculados.` : ""}`);
+      if (fuenteHistorial) await verHistorial(fuenteHistorial.id, fuenteHistorial.nombre);
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      alert(err?.response?.data?.detail ?? "No se pudieron generar las ventas de este lote.");
+    } finally { setGenerandoLote(null); }
+  };
 
   const generarVentas = async () => {
     if (!resultado) return;
@@ -277,6 +315,42 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     </div>
   );
 
+  // ── Vista: historial de lotes de una fuente ───────────────────────────────
+  if (modo === "historial" && fuenteHistorial) return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <button onClick={() => { setModo("lista"); setFuenteHistorial(null); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: "transparent", color: tk.textMid, fontSize: 13, cursor: "pointer" }}>
+          <ChevronLeft size={14} /> Volver
+        </button>
+        <span style={{ fontSize: 15, fontWeight: 600, color: tk.textHi }}>Historial de cargas — {fuenteHistorial.nombre}</span>
+      </div>
+
+      {lotesLoading ? (
+        <div style={{ padding: 24, textAlign: "center", color: tk.textLo, fontSize: 13 }}>Cargando...</div>
+      ) : lotes.length === 0 ? (
+        <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "32px 24px", textAlign: "center", color: tk.textLo, fontSize: 13 }}>
+          Esta fuente todavía no tiene cargas registradas.
+        </div>
+      ) : (
+        lotes.map((l) => (
+          <div key={l.id} style={{ ...card, display: "flex", alignItems: "center", gap: 12 }}>
+            <FileSpreadsheet size={18} color={tk.nova} style={{ flexShrink: 0 }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: tk.textHi }}>{l.nombre_archivo || "(sin nombre)"}</div>
+              <div style={{ fontSize: 12, color: tk.textLo, marginTop: 2 }}>
+                {new Date(l.created_at).toLocaleString("es-MX")} · {l.filas_ok} registros · estado: {l.estado}
+              </div>
+            </div>
+            <button onClick={() => generarVentasDeLote(l.id)} disabled={generandoLote === l.id}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: `1px solid ${tk.nova}55`, background: tk.nova + "18", color: tk.nova, fontSize: 13, fontWeight: 600, cursor: generandoLote === l.id ? "default" : "pointer", opacity: generandoLote === l.id ? 0.6 : 1 }}>
+              <Zap size={14} /> {generandoLote === l.id ? "Generando..." : "Generar / revisar ventas"}
+            </button>
+          </div>
+        ))
+      )}
+    </div>
+  );
+
   // ── Vista: lista de fuentes ────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -355,6 +429,11 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
                   disabled={subiendo}
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "none", background: tk.nova, color: "#06122B", fontSize: 13, fontWeight: 600, cursor: subiendo ? "default" : "pointer", opacity: subiendo ? 0.6 : 1 }}>
                   <Upload size={14} /> Subir reporte
+                </button>
+                <button
+                  onClick={() => verHistorial(f.id, f.nombre)}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.panel2, color: tk.textMid, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  <FileText size={14} /> Historial
                 </button>
                 <button
                   onClick={() => borrar(f.id, f.nombre)}
