@@ -149,13 +149,27 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
   const [error, setError] = useState<string | null>(null);
   const [generandoVentas, setGenerandoVentas] = useState(false);
   const [ventasGeneradas, setVentasGeneradas] = useState<{ ordenes_creadas: number } | null>(null);
+  const [customers, setCustomers] = useState<CustomerLite[]>([]);
+  const [asignandoCliente, setAsignandoCliente] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const cargarFuentes = () => {
     api.get("/ingesta/fuentes").then((r) => setFuentes(r.data)).catch(() => {});
   };
 
-  useEffect(() => { cargarFuentes(); }, []);
+  useEffect(() => { cargarFuentes(); salesApi.customers().then(setCustomers).catch(() => {}); }, []);
+
+  const asignarCliente = async (fuenteId: number, customerId: number | "") => {
+    setAsignandoCliente(fuenteId);
+    try {
+      await api.put(`/ingesta/fuentes/${fuenteId}`, { customer_id: customerId || null });
+      cargarFuentes();
+    } catch {
+      alert("No se pudo asignar el cliente. Intenta de nuevo.");
+    } finally {
+      setAsignandoCliente(null);
+    }
+  };
 
   const borrar = async (id: number, nombre: string) => {
     if (!window.confirm(`¿Eliminar la fuente "${nombre}" y todos sus datos? Esta acción no se puede deshacer.`)) return;
@@ -315,8 +329,17 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: 12, color: tk.textLo, marginTop: 2 }}>
-                  {f.moneda} · {f.activa ? "Activa" : "Inactiva"} · {f.customer_id ? "Genera pedidos en Ventas" : "Solo BI (sin cliente asignado)"}
+                <div style={{ fontSize: 12, color: tk.textLo, marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                  {f.moneda} · {f.activa ? "Activa" : "Inactiva"} ·
+                  <select
+                    value={f.customer_id ?? ""}
+                    disabled={asignandoCliente === f.id}
+                    onChange={(e) => asignarCliente(f.id, e.target.value ? Number(e.target.value) : "")}
+                    style={{ background: tk.panel2, color: tk.textMid, border: `1px solid ${tk.border}`, borderRadius: 6, fontSize: 12, padding: "2px 6px", cursor: asignandoCliente === f.id ? "default" : "pointer" }}>
+                    <option value="">Sin asignar (solo BI)</option>
+                    {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  {asignandoCliente === f.id && "guardando..."}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
