@@ -170,6 +170,7 @@ export const inventoryService = {
     getPurchaseOrders: async () => (await api.get<PurchaseOrder[]>('/inventory/purchase-orders')).data,
     createPurchaseOrder: async (data: any) => (await api.post('/inventory/purchase-orders', data)).data,
     receivePurchaseOrder: async (id: number) => (await api.post(`/inventory/purchase-orders/${id}/receive`)).data,
+    cancelPurchaseOrder: async (id: number) => (await api.post(`/inventory/purchase-orders/${id}/cancel`)).data,
 
     // Recipes (BOM)
     getRecipes: async () => (await api.get<Recipe[]>('/inventory/recipes')).data,

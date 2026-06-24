@@ -308,7 +308,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
       {tab === "dashboard" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           {/* KPI cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 12 }}>
             {[
               { label: lang === "es" ? "Valor del inventario" : "Inventory value", value: mxn(kpis.totalVal), icon: DollarSign, color: t.nova, sub: lang === "es" ? "al costo" : "at cost" },
               { label: lang === "es" ? "Total productos" : "Total products", value: String(kpis.totalProds), icon: Package, color: t.good, sub: `${kpis.activeProds} ${lang === "es" ? "activos" : "active"}` },
@@ -317,12 +317,12 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
               { label: lang === "es" ? "Compras abiertas" : "Open purchase orders", value: String(kpis.openPOs), icon: ClipboardList, color: "#33B2F5", sub: lang === "es" ? "pendientes de recibir" : "pending receipt" },
               { label: lang === "es" ? "Recetas activas" : "Active recipes", value: String(kpis.activeRecipes), icon: FlaskConical, color: t.warn, sub: lang === "es" ? "BOM en producción" : "BOM in production" },
             ].map((k) => (
-              <div key={k.label} style={{ ...glass(t), borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{ background: k.color + "22", color: k.color, borderRadius: 10, padding: 10, display: "flex" }}><k.icon size={20} /></div>
-                <div>
-                  <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 3 }}>{k.label}</div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{k.value}</div>
-                  <div style={{ fontSize: 11, color: t.textLo, marginTop: 2 }}>{k.sub}</div>
+              <div key={k.label} style={{ ...glass(t), borderRadius: 12, padding: "14px 14px", display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
+                <div style={{ background: k.color + "22", color: k.color, borderRadius: 9, padding: 8, display: "flex", width: "fit-content" }}><k.icon size={16} /></div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: t.textLo, marginBottom: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{k.label}</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{k.value}</div>
+                  <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{k.sub}</div>
                 </div>
               </div>
             ))}
@@ -636,7 +636,17 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
                           {sup.is_active ? (lang === "es" ? "Activo" : "Active") : (lang === "es" ? "Inactivo" : "Inactive")}
                         </span>
                       </td>
-                      <td style={{ padding: "12px 16px" }}><Edit2 size={14} color={t.textLo} /></td>
+                      <td style={{ padding: "12px 16px", display: "flex", gap: 10, alignItems: "center" }}>
+                        <Edit2 size={14} color={t.textLo} />
+                        <button onClick={async (e) => {
+                          e.stopPropagation();
+                          const action = sup.is_active ? (lang === "es" ? "desactivar" : "deactivate") : (lang === "es" ? "reactivar" : "reactivate");
+                          if (!confirm(lang === "es" ? `¿Seguro que quieres ${action} a ${sup.name}?` : `Are you sure you want to ${action} ${sup.name}?`)) return;
+                          try { await inventoryService.updateSupplier(sup.id, { ...sup, is_active: !sup.is_active }); await load(); } catch (err) { console.error(err); alert(lang === "es" ? "Error al actualizar el proveedor" : "Error updating supplier"); }
+                        }} title={sup.is_active ? (lang === "es" ? "Desactivar proveedor" : "Deactivate supplier") : (lang === "es" ? "Reactivar proveedor" : "Reactivate supplier")} style={{ background: "transparent", border: "none", cursor: "pointer", color: sup.is_active ? t.bad : t.good, display: "flex" }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -776,6 +786,18 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
                   <div style={{ fontSize: 14, fontWeight: 700, color: m.quantity >= 0 ? t.good : t.bad }}>{m.quantity >= 0 ? "+" : ""}{m.quantity}</div>
                   <div style={{ fontSize: 11, color: t.textLo }}>{new Date(m.created_at).toLocaleDateString("es-MX")}</div>
                 </div>
+                <button onClick={async () => {
+                  if (!confirm(lang === "es" ? `¿Revertir este ajuste? Se creará un ajuste contrario de ${-m.quantity} unidades para corregir el error, sin borrar el registro original.` : `Revert this adjustment? An opposite adjustment of ${-m.quantity} units will be created to fix the mistake, without deleting the original record.`)) return;
+                  try {
+                    await inventoryService.adjustStock({
+                      variant_id: m.variant_id, warehouse_id: m.warehouse_id, quantity: -m.quantity,
+                      movement_type: "adjustment", notes: `${lang === "es" ? "Reversión del ajuste" : "Reversal of adjustment"} #${m.id}`,
+                    });
+                    await load();
+                  } catch (err) { console.error(err); alert(lang === "es" ? "Error al revertir el ajuste" : "Error reverting adjustment"); }
+                }} title={lang === "es" ? "Revertir (crea un ajuste contrario)" : "Revert (creates an opposite adjustment)"} style={{ background: "transparent", border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 10px", cursor: "pointer", color: t.textLo, display: "flex", alignItems: "center", gap: 5, fontSize: 12 }}>
+                  <RotateCcw size={13} /> {lang === "es" ? "Revertir" : "Revert"}
+                </button>
               </div>
             ))}
           </div>
@@ -820,13 +842,21 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
                         </td>
                         <td style={{ padding: "12px 16px", fontSize: 13, color: t.textMid }}>{po.items?.length || 0}</td>
                         <td style={{ padding: "12px 16px", fontSize: 12, color: t.textLo, whiteSpace: "nowrap" }}>{new Date(po.created_at).toLocaleDateString("es-MX")}</td>
-                        <td style={{ padding: "12px 16px" }}>
+                        <td style={{ padding: "12px 16px", display: "flex", gap: 8 }}>
                           {canReceive && (
                             <button onClick={async () => {
                               if (!confirm(lang === "es" ? "¿Recibir esta orden? Esto generará lotes FIFO y actualizará el stock. Esta acción es irreversible." : "Receive this order? This will create FIFO lots and update stock. This action is irreversible.")) return;
                               try { await inventoryService.receivePurchaseOrder(po.id); await load(); } catch (err) { console.error(err); alert(lang === "es" ? "Error al recibir la orden" : "Error receiving order"); }
                             }} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: t.good, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
                               {lang === "es" ? "Recibir" : "Receive"}
+                            </button>
+                          )}
+                          {canReceive && (
+                            <button onClick={async () => {
+                              if (!confirm(lang === "es" ? "¿Cancelar esta orden de compra? No podrá recibirse después." : "Cancel this purchase order? It can't be received afterwards.")) return;
+                              try { await inventoryService.cancelPurchaseOrder(po.id); await load(); } catch (err) { console.error(err); alert(lang === "es" ? "Error al cancelar la orden" : "Error cancelling order"); }
+                            }} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.bad, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                              {lang === "es" ? "Cancelar" : "Cancel"}
                             </button>
                           )}
                         </td>

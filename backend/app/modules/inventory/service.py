@@ -316,6 +316,18 @@ async def receive_purchase_order(db: AsyncSession, po_id: int, user_id: Optional
     await db.refresh(po)
     return po
 
+async def cancel_purchase_order(db: AsyncSession, po_id: int) -> Optional[PurchaseOrder]:
+    result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po_id).options(selectinload(PurchaseOrder.items)))
+    po = result.scalars().first()
+    if not po:
+        return None
+    if po.status == PurchaseOrderStatus.RECEIVED.value:
+        raise ValueError("No se puede cancelar una orden ya recibida")
+    po.status = PurchaseOrderStatus.CANCELLED.value
+    await db.commit()
+    await db.refresh(po)
+    return po
+
 
 # --- BOM / Recipes -------------------------------------------------------------
 async def create_recipe(db: AsyncSession, recipe_in: schemas.RecipeCreate) -> Recipe:

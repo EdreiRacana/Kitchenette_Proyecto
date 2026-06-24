@@ -110,6 +110,16 @@ async def receive_purchase_order(po_id: int, db: DB, current_user: CurrentUser):
         raise HTTPException(status_code=404, detail="Purchase order not found")
     return po
 
+@router.post("/purchase-orders/{po_id}/cancel", response_model=schemas.PurchaseOrderInDB)
+async def cancel_purchase_order(po_id: int, db: DB, current_user: CurrentUser):
+    try:
+        po = await service.cancel_purchase_order(db, po_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    return po
+
 # --- BOM / Recipes ---
 @router.post("/recipes", response_model=schemas.RecipeInDB)
 async def create_recipe(recipe_in: schemas.RecipeCreate, db: DB, current_user: CurrentUser):
