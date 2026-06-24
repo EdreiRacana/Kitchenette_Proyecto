@@ -565,23 +565,32 @@ async def procesar_lote(
     db.add(lote)
     await db.flush()
 
-    # Normalizar filas
-    if fuente.tiene_filas_anidadas and fuente.campo_id_pedido:
-        registros_normalizados = _agrupar_filas_anidadas(
-            filas=filas_crudas,
-            campo_id_pedido=fuente.campo_id_pedido,
-            patron_fila_total=fuente.patron_fila_total,
-            mapeo=mapeo,
-            fuente=fuente,
-        )
-    else:
-        registros_normalizados = [
-            _normalizar_fila(fila, mapeo, fuente)
-            for fila in filas_crudas
-        ]
-
+    # Normalizar filas. Una fila individual con datos inválidos no debe
+    # tumbar el lote completo: se cuenta como error y se sigue con el resto.
     filas_ok = 0
     filas_error = 0
+
+    if fuente.tiene_filas_anidadas and fuente.campo_id_pedido:
+        try:
+            registros_normalizados = _agrupar_filas_anidadas(
+                filas=filas_crudas,
+                campo_id_pedido=fuente.campo_id_pedido,
+                patron_fila_total=fuente.patron_fila_total,
+                mapeo=mapeo,
+                fuente=fuente,
+            )
+        except Exception as e:
+            print(f"[ingesta] error al agrupar filas anidadas: {e}")
+            registros_normalizados = []
+            filas_error += len(filas_crudas)
+    else:
+        registros_normalizados = []
+        for fila in filas_crudas:
+            try:
+                registros_normalizados.append(_normalizar_fila(fila, mapeo, fuente))
+            except Exception as e:
+                filas_error += 1
+                print(f"[ingesta] error al normalizar fila: {e}")
     guardados: List[models.IngestaRegistro] = []
 
     for reg_dict in registros_normalizados:
