@@ -926,17 +926,34 @@ function scheduledDueLabel(scheduledDate, lang) {
 }
 
 /* ============================ Notification Bell ============================ */
+const ORDERS_SEEN_KEY = "kitchenette_orders_last_seen";
+
 function NotificationBell({ t, lang, onNavigate }) {
   const [open, setOpen] = useState(false);
   const [alerts, setAlerts] = useState([]);
   const [financeAlerts, setFinanceAlerts] = useState([]);
   const [scheduledAlerts, setScheduledAlerts] = useState([]);
+  const [newOrders, setNewOrders] = useState([]);
 
   useEffect(() => {
     let active = true;
     const loadInventory = () => inventoryService.getReorderAlerts()
       .then((data) => { if (active) setAlerts(data || []); })
       .catch(() => { if (active) setAlerts([]); });
+    const loadOrders = () => salesApi.list({ sort_by: "created_at", sort_dir: "desc", limit: 10 })
+      .then((data) => {
+        if (!active) return;
+        const lastSeen = localStorage.getItem(ORDERS_SEEN_KEY);
+        if (!lastSeen) {
+          localStorage.setItem(ORDERS_SEEN_KEY, new Date().toISOString());
+          setNewOrders([]);
+          return;
+        }
+        const lastSeenTime = new Date(lastSeen).getTime();
+        const fresh = (data.items || []).filter((o) => new Date(o.created_at).getTime() > lastSeenTime);
+        setNewOrders(fresh);
+      })
+      .catch(() => { if (active) setNewOrders([]); });
     const loadFinance = () => Promise.all([financeService.getCXC(), financeService.getCXP()])
       .then(([cxc, cxp]) => {
         if (!active) return;
@@ -961,15 +978,16 @@ function NotificationBell({ t, lang, onNavigate }) {
     loadInventory();
     loadFinance();
     loadScheduled();
-    const interval = setInterval(() => { loadInventory(); loadFinance(); loadScheduled(); }, 60000);
+    loadOrders();
+    const interval = setInterval(() => { loadInventory(); loadFinance(); loadScheduled(); loadOrders(); }, 60000);
     return () => { active = false; clearInterval(interval); };
   }, []);
 
-  const count = alerts.length + financeAlerts.length + scheduledAlerts.length;
+  const count = alerts.length + financeAlerts.length + scheduledAlerts.length + newOrders.length;
 
   return (
     <div style={{ position: "relative" }}>
-      <button onClick={() => setOpen((v) => !v)} style={iconBtn(t)}>
+      <button onClick={() => setOpen((v) => { const next = !v; if (next && newOrders.length > 0) localStorage.setItem(ORDERS_SEEN_KEY, new Date().toISOString()); return next; })} style={iconBtn(t)}>
         <Bell size={18} />
         {count > 0 && (
           <span style={{ position: "absolute", top: 4, right: 4, minWidth: 15, height: 15, borderRadius: 999, background: t.bad, color: "#fff", fontSize: 9.5, fontWeight: 700, display: "grid", placeItems: "center", padding: "0 2px" }}>
@@ -981,14 +999,37 @@ function NotificationBell({ t, lang, onNavigate }) {
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
           <div style={{ position: "absolute", top: 44, right: 0, width: "min(360px, 90vw)", maxHeight: 420, overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 6, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
-            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 6px" }}>
-              {lang === "es" ? "AVISOS DE INVENTARIO" : "INVENTORY ALERTS"}
-            </div>
-            {count === 0 ? (
+            {count === 0 && (
               <div style={{ padding: 16, fontSize: 13, color: t.textLo, textAlign: "center" }}>
                 {lang === "es" ? "Sin avisos pendientes" : "No pending alerts"}
               </div>
-            ) : alerts.map((a) => (
+            )}
+            {newOrders.length > 0 && (
+              <>
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 6px" }}>
+                  {lang === "es" ? "PEDIDOS NUEVOS" : "NEW ORDERS"}
+                </div>
+                {newOrders.map((o) => (
+                  <button key={`order-${o.id}`} onClick={() => { onNavigate("ventas", o.folio || `#${o.id}`); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
+                    <span style={{ marginTop: 3, width: 8, height: 8, borderRadius: 999, background: t.nova, flex: "0 0 auto" }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {o.folio || `#${o.id}`}{o.customer?.full_name ? ` · ${o.customer.full_name}` : ""}
+                      </div>
+                      <div style={{ fontSize: 11, color: t.textLo }}>
+                        {lang === "es" ? `Nuevo pedido: $${o.total_amount.toLocaleString()}` : `New order: $${o.total_amount.toLocaleString()}`}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </>
+            )}
+            {alerts.length > 0 && (
+              <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "10px 10px 6px" }}>
+                {lang === "es" ? "AVISOS DE INVENTARIO" : "INVENTORY ALERTS"}
+              </div>
+            )}
+            {alerts.map((a) => (
               <button key={`${a.variant_id}-${a.warehouse_id}`} onClick={() => { onNavigate("inventario", a.product_name); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
                 <span style={{ marginTop: 3, width: 8, height: 8, borderRadius: 999, background: a.level === "red" ? t.bad : t.warn, flex: "0 0 auto" }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
