@@ -372,10 +372,16 @@ _CREDIT_COLS = ("abono", "credito", "credit", "deposito")
 _REF_COLS = ("referencia", "reference", "folio")
 
 
+def _strip_accents(s: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+
+
 def _find_col(columns, candidates) -> Optional[str]:
-    for c in candidates:
-        if c in columns:
-            return c
+    for col in columns:
+        norm = _strip_accents(col)
+        if any(cand in norm for cand in candidates):
+            return col
     return None
 
 
@@ -391,18 +397,24 @@ def _parse_amount(v) -> float:
         return 0.0
 
 
+import re
+
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}")
+
+
 def _parse_date(v):
     import pandas as pd
     try:
-        ts = pd.to_datetime(v, dayfirst=True, errors="coerce")
+        # Las fechas ISO (YYYY-MM-DD, p.ej. las que vienen de Excel) son inequívocas;
+        # dayfirst solo aplica a formatos ambiguos como DD/MM/YYYY.
+        dayfirst = not _ISO_DATE_RE.match(str(v).strip())
+        ts = pd.to_datetime(v, dayfirst=dayfirst, errors="coerce")
         if ts is None or ts is pd.NaT:
             return None
         return ts.to_pydatetime().replace(tzinfo=timezone.utc)
     except Exception:
         return None
 
-
-import re
 
 _PDF_LINE_RE = re.compile(
     r"^(?P<date>\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(?P<desc>.+?)\s+"
@@ -506,18 +518,37 @@ def _read_pdf_table(file_bytes: bytes, password: Optional[str] = None):
     return pd.DataFrame(rows, columns=header)
 
 
+def _find_header_row(raw: "pd.DataFrame") -> int:
+    """Los estados de cuenta reales suelen tener filas de metadatos (cliente, cuenta,
+    periodo) antes de la tabla de movimientos. Busca la primera fila cuyo contenido
+    coincide con los nombres de columna esperados, en vez de asumir que es la fila 0."""
+    header_keywords = _DATE_COLS + _DESC_COLS + _AMOUNT_COLS + _DEBIT_COLS + _CREDIT_COLS
+    for idx, row in raw.iterrows():
+        cells = [_strip_accents(str(c).strip().lower()) for c in row.tolist()]
+        if any(any(k in c for k in header_keywords) for c in cells):
+            return idx
+    return 0
+
+
 def _read_bank_table(file_bytes: bytes, filename: str, password: Optional[str] = None):
     import pandas as pd
     from io import BytesIO
 
     name = (filename or "").lower()
-    if name.endswith(".csv"):
-        df = pd.read_csv(BytesIO(file_bytes), dtype=str, keep_default_na=False)
-    elif name.endswith(".pdf"):
+    if name.endswith(".pdf"):
         df = _read_pdf_table(file_bytes, password)
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        return df
+
+    if name.endswith(".csv"):
+        raw = pd.read_csv(BytesIO(file_bytes), header=None, dtype=str, keep_default_na=False)
     else:
-        df = pd.read_excel(BytesIO(file_bytes), dtype=str, keep_default_na=False)
-    df.columns = [str(c).strip().lower() for c in df.columns]
+        raw = pd.read_excel(BytesIO(file_bytes), header=None, dtype=str, keep_default_na=False)
+
+    header_row = _find_header_row(raw)
+    df = raw.iloc[header_row + 1:].reset_index(drop=True)
+    df.columns = [str(c).strip().lower() for c in raw.iloc[header_row].tolist()]
+    df = df[df.apply(lambda r: any(str(v).strip() for v in r), axis=1)].reset_index(drop=True)
     return df
 
 
