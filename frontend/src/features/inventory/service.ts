@@ -90,6 +90,15 @@ export interface ReorderAlert {
     lead_time_days?: number;
 }
 
+export interface CategoryValue { category: string; value: number; pct: number; }
+export interface InventoryStats {
+    total_value: number;
+    total_units: number;
+    out_of_stock: number;
+    low_stock: number;
+    by_category: CategoryValue[];
+}
+
 export interface PurchaseOrderItem { variant_id: number; quantity: number; unit_cost: number; }
 export interface PurchaseOrder {
     id: number;
@@ -184,6 +193,7 @@ export const inventoryService = {
 
     // Reorder alerts
     getReorderAlerts: async () => (await api.get<ReorderAlert[]>('/inventory/reorder-alerts')).data,
+    getStats: async () => (await api.get<InventoryStats>('/inventory/stats')).data,
 
     // Purchase orders
     getPurchaseOrders: async () => (await api.get<PurchaseOrder[]>('/inventory/purchase-orders')).data,

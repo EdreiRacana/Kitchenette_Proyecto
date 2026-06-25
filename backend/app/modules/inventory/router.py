@@ -126,6 +126,11 @@ async def read_stock_levels(variant_id: int, db: DB, current_user: CurrentUser):
 async def read_movements(db: DB, current_user: CurrentUser, skip: int = 0, limit: int = 200):
     return await service.get_movements(db, skip, limit)
 
+# --- Stats ---
+@router.get("/stats", response_model=schemas.InventoryStats)
+async def read_inventory_stats(db: DB, current_user: CurrentUser):
+    return await service.get_inventory_stats(db)
+
 # --- Reorder alerts ---
 @router.get("/reorder-alerts", response_model=List[schemas.ReorderAlert])
 async def read_reorder_alerts(db: DB, current_user: CurrentUser):

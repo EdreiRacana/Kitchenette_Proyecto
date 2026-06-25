@@ -276,6 +276,53 @@ async def get_reorder_alerts(db: AsyncSession) -> List[schemas.ReorderAlert]:
     return alerts
 
 
+async def get_inventory_stats(db: AsyncSession) -> schemas.InventoryStats:
+    result = await db.execute(
+        select(StockLevel).options(
+            selectinload(StockLevel.variant).selectinload(ProductVariant.product),
+        )
+    )
+    levels = result.scalars().all()
+
+    by_category: dict[str, float] = {}
+    total_value = 0.0
+    total_units = 0
+    out_of_stock = 0
+    low_stock = 0
+
+    for lvl in levels:
+        v = lvl.variant
+        if not v:
+            continue
+        available = lvl.quantity - lvl.reserved_quantity
+        unit_cost = v.cost_price if v.cost_price is not None else v.price
+        value = available * unit_cost
+        category = (v.product.category if v.product and v.product.category else "Sin categoría")
+
+        by_category[category] = by_category.get(category, 0.0) + value
+        total_value += value
+        total_units += available
+
+        if available <= 0:
+            out_of_stock += 1
+        elif v.reorder_point is not None and available <= v.reorder_point:
+            low_stock += 1
+
+    cats = [
+        schemas.CategoryValue(
+            category=cat, value=round(val, 2),
+            pct=round((val / total_value) * 100, 1) if total_value else 0.0,
+        )
+        for cat, val in by_category.items()
+    ]
+    cats.sort(key=lambda c: c.value, reverse=True)
+
+    return schemas.InventoryStats(
+        total_value=round(total_value, 2), total_units=total_units,
+        out_of_stock=out_of_stock, low_stock=low_stock, by_category=cats,
+    )
+
+
 # --- Purchase Orders -----------------------------------------------------------
 async def _next_folio(db: AsyncSession, model, prefix: str) -> str:
     result = await db.execute(select(model.id).order_by(model.id.desc()).limit(1))

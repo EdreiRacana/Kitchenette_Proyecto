@@ -192,6 +192,18 @@ class ReorderAlert(BaseModel):
     preferred_supplier_name: Optional[str] = None
     lead_time_days: Optional[int] = None
 
+class CategoryValue(BaseModel):
+    category: str
+    value: float
+    pct: float
+
+class InventoryStats(BaseModel):
+    total_value: float
+    total_units: int
+    out_of_stock: int
+    low_stock: int
+    by_category: List[CategoryValue]
+
 # --- Purchase Orders ---
 class PurchaseOrderItemCreate(BaseModel):
     variant_id: int
