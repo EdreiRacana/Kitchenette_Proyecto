@@ -37,8 +37,9 @@ RUN pip install --no-cache /wheels/*
 # Copy project
 COPY . .
 
-# Run as non-root user for security
-RUN useradd -m appuser
+# Run as non-root user for security; appuser necesita poder escribir en /app
+# (crea uploads/customers, uploads/finance, etc. al arrancar)
+RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000
