@@ -828,6 +828,44 @@ async def process_due_scheduled_payments(db: AsyncSession) -> int:
     return processed
 
 
+async def send_scheduled_payment_reminders(db: AsyncSession, lead_days: int = 2) -> int:
+    """Envia un correo (si el cliente configuro un proveedor de email activo)
+    para los pagos programados pendientes que vencen dentro de lead_days,
+    una sola vez por pago (marca reminder_sent_at)."""
+    from app.core.email import send_email
+    from app.modules.core_config.service import get_company_profile
+
+    company = await get_company_profile(db)
+    to_email = company.contact_email if company else None
+    if not to_email:
+        return 0
+
+    horizon = datetime.now(timezone.utc) + timedelta(days=lead_days)
+    res = await db.execute(
+        select(models.ScheduledPayment).where(
+            models.ScheduledPayment.status == "pending",
+            models.ScheduledPayment.reminder_sent_at.is_(None),
+            models.ScheduledPayment.scheduled_date <= horizon,
+        )
+    )
+    due_soon = res.scalars().all()
+    sent = 0
+    for sp in due_soon:
+        kind_label = "cobro" if sp.kind == "cxc" else "pago"
+        subject = f"Recordatorio: {kind_label} programado — {sp.target_name or sp.target_id}"
+        body = (
+            f"<p>Tienes un <b>{kind_label} programado</b> para <b>{sp.scheduled_date.strftime('%d/%m/%Y')}</b>.</p>"
+            f"<p>Concepto: {sp.target_name or sp.target_id}<br/>Monto: ${sp.amount:,.2f}</p>"
+        )
+        ok = await send_email(db, to=to_email, subject=subject, body_html=body)
+        if ok:
+            sp.reminder_sent_at = datetime.now(timezone.utc)
+            sent += 1
+    if sent:
+        await db.commit()
+    return sent
+
+
 # --- Reportes P&L y comparativo de periodos -------------------------------------
 
 async def get_pnl_report(db: AsyncSession, period_start: datetime, period_end: datetime) -> schemas.PnLReport:

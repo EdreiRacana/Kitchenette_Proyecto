@@ -3,7 +3,8 @@
 // Inspirado en: NetSuite, SAP, Odoo
 // Contrato { t, s } igual que App.tsx
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import configService, { type SystemIntegration } from "./service";
 import {
   Building2, Users, Shield, Receipt, Plug, Workflow, Lock, Settings,
   Plus, Search, Edit2, Trash2, Check, X, Mail, Globe,
@@ -69,8 +70,53 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const [userForm, setUserForm] = useState(false);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
   const [q, setQ] = useState("");
+  const [emailIntegration, setEmailIntegration] = useState<SystemIntegration | null>(null);
+  const [emailForm, setEmailForm] = useState({ host: "", port: "587", username: "", password: "", from_email: "", from_name: "", use_tls: true, is_active: false });
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailMsg, setEmailMsg] = useState("");
 
   const lang = "es";
+
+  const loadEmailIntegration = useCallback(async () => {
+    try {
+      const list = await configService.getIntegrations();
+      const found = list.find(i => i.integration_type === "EMAIL") || null;
+      setEmailIntegration(found);
+      if (found) {
+        const meta = found.meta_data || {};
+        setEmailForm({
+          host: meta.host || "", port: String(meta.port || 587), username: found.api_key || "",
+          password: "", from_email: meta.from_email || "", from_name: meta.from_name || "",
+          use_tls: meta.use_tls !== false, is_active: found.is_active,
+        });
+      }
+    } catch { /* sin backend (modo demo) */ }
+  }, []);
+
+  useEffect(() => { if (tab === "integrations") loadEmailIntegration(); }, [tab, loadEmailIntegration]);
+
+  const handleSaveEmailIntegration = async () => {
+    setEmailSaving(true); setEmailMsg("");
+    try {
+      const payload = {
+        provider_name: "OTHER" as const,
+        integration_type: "EMAIL" as const,
+        is_active: emailForm.is_active,
+        environment: "PRODUCTION" as const,
+        api_key: emailForm.username,
+        api_secret: emailForm.password || (emailIntegration?.api_secret ?? ""),
+        meta_data: { host: emailForm.host, port: Number(emailForm.port) || 587, use_tls: emailForm.use_tls, from_email: emailForm.from_email, from_name: emailForm.from_name },
+      };
+      if (emailIntegration) await configService.updateIntegration(emailIntegration.id, payload);
+      else await configService.createIntegration(payload);
+      setEmailMsg("Configuración de correo guardada ✓");
+      await loadEmailIntegration();
+    } catch (err: any) {
+      setEmailMsg(err?.response?.data?.detail || "No se pudo guardar la configuración de correo.");
+    } finally {
+      setEmailSaving(false);
+    }
+  };
 
   // Vidrio: en modo oscuro devuelve panel translúcido + blur; en claro, sólido.
   const glass = (t: any): React.CSSProperties =>
@@ -413,6 +459,49 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
       {/* ── TAB: Integrations ── */}
       {tab === "integrations" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ ...glass(t), borderRadius: 12, padding: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}><Mail size={16} /> Correo para recordatorios (SMTP)</div>
+                <div style={{ fontSize: 12, color: t.textLo, marginTop: 4, maxWidth: 560 }}>Configura tu propio servidor de correo (Gmail, Office 365, tu hosting, etc.) para que el sistema te envíe recordatorios de pagos programados y avisos. Cada empresa usa sus propias credenciales.</div>
+              </div>
+              {emailIntegration?.is_active && <span style={{ fontSize: 11, fontWeight: 700, color: t.good, background: t.good + "18", padding: "3px 9px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4, flex: "0 0 auto" }}><span style={{ width: 6, height: 6, borderRadius: 99, background: t.good }} />Activo</span>}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 14 }}>
+              <div><label style={{ fontSize: 11.5, fontWeight: 600, color: t.textMid, marginBottom: 4, display: "block" }}>Servidor SMTP</label>
+                <input value={emailForm.host} onChange={e => setEmailForm(f => ({ ...f, host: e.target.value }))} placeholder="smtp.gmail.com" style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" }} />
+              </div>
+              <div><label style={{ fontSize: 11.5, fontWeight: 600, color: t.textMid, marginBottom: 4, display: "block" }}>Puerto</label>
+                <input value={emailForm.port} onChange={e => setEmailForm(f => ({ ...f, port: e.target.value }))} placeholder="587" style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" }} />
+              </div>
+              <div><label style={{ fontSize: 11.5, fontWeight: 600, color: t.textMid, marginBottom: 4, display: "block" }}>Usuario / correo</label>
+                <input value={emailForm.username} onChange={e => setEmailForm(f => ({ ...f, username: e.target.value }))} placeholder="empresa@gmail.com" style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" }} />
+              </div>
+              <div><label style={{ fontSize: 11.5, fontWeight: 600, color: t.textMid, marginBottom: 4, display: "block" }}>Contraseña / token</label>
+                <input type="password" value={emailForm.password} onChange={e => setEmailForm(f => ({ ...f, password: e.target.value }))} placeholder={emailIntegration ? "•••••••• (sin cambios)" : "Contraseña de aplicación"} style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" }} />
+              </div>
+              <div><label style={{ fontSize: 11.5, fontWeight: 600, color: t.textMid, marginBottom: 4, display: "block" }}>Correo remitente</label>
+                <input value={emailForm.from_email} onChange={e => setEmailForm(f => ({ ...f, from_email: e.target.value }))} placeholder="avisos@empresa.com" style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" }} />
+              </div>
+              <div><label style={{ fontSize: 11.5, fontWeight: 600, color: t.textMid, marginBottom: 4, display: "block" }}>Nombre remitente</label>
+                <input value={emailForm.from_name} onChange={e => setEmailForm(f => ({ ...f, from_name: e.target.value }))} placeholder="Mi Empresa" style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" }} />
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 18, marginTop: 14, flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: t.textMid, cursor: "pointer" }}>
+                <input type="checkbox" checked={emailForm.use_tls} onChange={e => setEmailForm(f => ({ ...f, use_tls: e.target.checked }))} /> Usar TLS
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: t.textMid, cursor: "pointer" }}>
+                <input type="checkbox" checked={emailForm.is_active} onChange={e => setEmailForm(f => ({ ...f, is_active: e.target.checked }))} /> Activar envío de correos
+              </label>
+              <button onClick={handleSaveEmailIntegration} disabled={emailSaving || !emailForm.host || !emailForm.from_email} style={{ marginLeft: "auto", padding: "9px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: (!emailForm.host || !emailForm.from_email) ? 0.5 : 1 }}>
+                {emailSaving ? "Guardando…" : "Guardar"}
+              </button>
+            </div>
+            {emailMsg && <div style={{ fontSize: 12, color: emailMsg.includes("✓") ? t.good : t.bad, marginTop: 10 }}>{emailMsg}</div>}
+            <div style={{ fontSize: 11, color: t.textLo, marginTop: 10 }}>Los recordatorios se envían al correo de contacto de la empresa (pestaña "Empresa") cuando un pago programado está cerca de su fecha o ya vencido.</div>
+          </div>
+
           {["Marketplace", "Banco", "Paquetería", "Facturación", "Checador"].map(cat => {
             const items = integrations.filter(i => i.category === cat);
             if (items.length === 0) return null;

@@ -254,6 +254,10 @@ async def delete_recurring(rt_id: int, db: DB, current_user: CurrentUser):
 @router.get("/scheduled-payments", response_model=List[schemas.ScheduledPaymentInDB])
 async def read_scheduled_payments(db: DB, current_user: CurrentUser, status: Optional[str] = None):
     await service.process_due_scheduled_payments(db)
+    try:
+        await service.send_scheduled_payment_reminders(db)
+    except Exception:
+        pass
     return await service.get_scheduled_payments(db, status=status)
 
 
