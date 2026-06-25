@@ -169,6 +169,9 @@ class PurchaseOrder(Base):
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False)
     status = Column(String, default=PurchaseOrderStatus.DRAFT.value, nullable=False)
     notes = Column(Text, nullable=True)
+    total_amount = Column(Float, default=0.0, nullable=False)
+    paid_amount = Column(Float, default=0.0, nullable=False)
+    due_date = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     received_at = Column(DateTime(timezone=True), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -176,6 +179,25 @@ class PurchaseOrder(Base):
     supplier = relationship("Supplier", back_populates="purchase_orders")
     warehouse = relationship("Warehouse")
     items = relationship("PurchaseOrderItem", back_populates="purchase_order", cascade="all, delete-orphan")
+    supplier_payments = relationship("SupplierPayment", back_populates="purchase_order", cascade="all, delete-orphan")
+
+    @property
+    def balance(self) -> float:
+        return round((self.total_amount or 0.0) - (self.paid_amount or 0.0), 2)
+
+class SupplierPayment(Base):
+    __tablename__ = "supplier_payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=False, index=True)
+    amount = Column(Float, nullable=False)
+    method = Column(String, nullable=True)
+    reference = Column(String, nullable=True)
+    note = Column(Text, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    purchase_order = relationship("PurchaseOrder", back_populates="supplier_payments")
 
 class PurchaseOrderItem(Base):
     __tablename__ = "purchase_order_items"

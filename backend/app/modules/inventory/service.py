@@ -284,9 +284,11 @@ async def _next_folio(db: AsyncSession, model, prefix: str) -> str:
 
 async def create_purchase_order(db: AsyncSession, po_in: schemas.PurchaseOrderCreate, user_id: Optional[int] = None) -> PurchaseOrder:
     folio = await _next_folio(db, PurchaseOrder, "OC")
+    total_amount = round(sum(item.quantity * item.unit_cost for item in po_in.items), 2)
     po = PurchaseOrder(
         folio=folio, supplier_id=po_in.supplier_id, warehouse_id=po_in.warehouse_id,
         notes=po_in.notes, status=PurchaseOrderStatus.ORDERED.value, user_id=user_id,
+        total_amount=total_amount, paid_amount=0.0, due_date=po_in.due_date,
     )
     db.add(po)
     await db.flush()
@@ -326,6 +328,34 @@ async def cancel_purchase_order(db: AsyncSession, po_id: int) -> Optional[Purcha
     if po.status == PurchaseOrderStatus.RECEIVED.value:
         raise ValueError("No se puede cancelar una orden ya recibida")
     po.status = PurchaseOrderStatus.CANCELLED.value
+    await db.commit()
+    await db.refresh(po)
+    return po
+
+
+async def pay_purchase_order(db: AsyncSession, po_id: int, pay_in: "schemas.SupplierPaymentCreate", user_id: Optional[int] = None) -> Optional[PurchaseOrder]:
+    from app.modules.inventory.models import SupplierPayment
+    result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po_id).options(selectinload(PurchaseOrder.items)))
+    po = result.scalars().first()
+    if not po:
+        return None
+    if po.status == PurchaseOrderStatus.CANCELLED.value:
+        raise ValueError("No se puede pagar una orden cancelada")
+    balance = round((po.total_amount or 0.0) - (po.paid_amount or 0.0), 2)
+    if pay_in.amount > balance + 0.001:
+        raise ValueError(f"El pago (${pay_in.amount:,.2f}) excede el saldo (${balance:,.2f})")
+    db.add(SupplierPayment(
+        purchase_order_id=po.id, amount=pay_in.amount, method=pay_in.method,
+        reference=pay_in.reference, note=pay_in.note, user_id=user_id,
+    ))
+    po.paid_amount = round((po.paid_amount or 0.0) + pay_in.amount, 2)
+
+    from app.modules.finance import models as fin
+    db.add(fin.Transaction(
+        type="expense", amount=round(pay_in.amount, 2), category="supplies",
+        description=f"Pago a proveedor — OC {po.folio or '#' + str(po.id)}",
+        reference=f"po:{po.id}",
+    ))
     await db.commit()
     await db.refresh(po)
     return po

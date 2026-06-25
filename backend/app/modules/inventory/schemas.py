@@ -202,10 +202,26 @@ class PurchaseOrderCreate(BaseModel):
     supplier_id: int
     warehouse_id: int
     notes: Optional[str] = None
+    due_date: Optional[datetime] = None
     items: List[PurchaseOrderItemCreate]
 
 class PurchaseOrderItemInDB(PurchaseOrderItemCreate):
     id: int
+
+    class Config:
+        from_attributes = True
+
+class SupplierPaymentCreate(BaseModel):
+    amount: float
+    method: Optional[str] = None
+    reference: Optional[str] = None
+    note: Optional[str] = None
+
+class SupplierPaymentInDB(SupplierPaymentCreate):
+    id: int
+    purchase_order_id: int
+    user_id: Optional[int] = None
+    created_at: datetime
 
     class Config:
         from_attributes = True
@@ -217,6 +233,10 @@ class PurchaseOrderInDB(BaseModel):
     warehouse_id: int
     status: str
     notes: Optional[str] = None
+    total_amount: float = 0.0
+    paid_amount: float = 0.0
+    balance: float = 0.0
+    due_date: Optional[datetime] = None
     created_at: datetime
     received_at: Optional[datetime] = None
     items: List[PurchaseOrderItemInDB] = []
