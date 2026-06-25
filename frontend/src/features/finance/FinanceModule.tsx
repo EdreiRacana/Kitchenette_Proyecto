@@ -759,7 +759,10 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
           onSave={async (data) => {
             if (demo) { alert("Modo demo: cuenta simulada ✓"); setBankForm(false); return; }
             try { await financeService.createBank(data); setBankForm(false); await load(); }
-            catch { alert("No se pudo crear la cuenta."); }
+            catch (e: any) {
+              const detail = e?.response?.data?.detail || e?.message || "Error desconocido";
+              alert(`No se pudo crear la cuenta: ${detail}`);
+            }
           }}
         />
       )}
