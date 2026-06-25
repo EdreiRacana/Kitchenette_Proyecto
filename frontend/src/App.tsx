@@ -957,11 +957,15 @@ function NotificationBell({ t, lang, onNavigate }) {
     const loadFinance = () => Promise.all([financeService.getCXC(), financeService.getCXP()])
       .then(([cxc, cxp]) => {
         if (!active) return;
-        const overdue = [
-          ...cxc.filter((i) => i.status === "overdue").map((i) => ({ ...i, kind: "cxc" })),
-          ...cxp.filter((i) => i.status === "overdue").map((i) => ({ ...i, kind: "cxp" })),
+        const horizon = new Date();
+        horizon.setDate(horizon.getDate() + SCHEDULED_REMINDER_LEAD_DAYS);
+        const horizonStr = horizon.toISOString().slice(0, 10);
+        const relevant = (i) => i.status === "overdue" || (i.due_date && i.due_date.slice(0, 10) <= horizonStr);
+        const items = [
+          ...cxc.filter(relevant).map((i) => ({ ...i, kind: "cxc" })),
+          ...cxp.filter(relevant).map((i) => ({ ...i, kind: "cxp" })),
         ];
-        setFinanceAlerts(overdue);
+        setFinanceAlerts(items);
       })
       .catch(() => { if (active) setFinanceAlerts([]); });
     const loadScheduled = () => financeService.getScheduledPayments("pending")
@@ -1046,22 +1050,29 @@ function NotificationBell({ t, lang, onNavigate }) {
             {financeAlerts.length > 0 && (
               <>
                 <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "10px 10px 6px" }}>
-                  {lang === "es" ? "CUENTAS VENCIDAS" : "OVERDUE ACCOUNTS"}
+                  {lang === "es" ? "CUENTAS VENCIDAS Y POR VENCER" : "OVERDUE & UPCOMING ACCOUNTS"}
                 </div>
-                {financeAlerts.map((a) => (
+                {financeAlerts.map((a) => {
+                  const overdue = a.status === "overdue";
+                  return (
                   <button key={`${a.kind}-${a.id}`} onClick={() => { onNavigate("finanzas", a.name); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
-                    <span style={{ marginTop: 3, width: 8, height: 8, borderRadius: 999, background: t.bad, flex: "0 0 auto" }} />
+                    <span style={{ marginTop: 3, width: 8, height: 8, borderRadius: 999, background: overdue ? t.bad : t.warn, flex: "0 0 auto" }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
                       <div style={{ fontSize: 11, color: t.textLo }}>
                         {a.kind === "cxc"
-                          ? (lang === "es" ? `Por cobrar vencido: $${a.balance.toLocaleString()}` : `Overdue receivable: $${a.balance.toLocaleString()}`)
-                          : (lang === "es" ? `Por pagar vencido: $${a.balance.toLocaleString()}` : `Overdue payable: $${a.balance.toLocaleString()}`)}
-                        {" · "}{a.reference}
+                          ? (overdue
+                              ? (lang === "es" ? `Por cobrar vencido: $${a.balance.toLocaleString()}` : `Overdue receivable: $${a.balance.toLocaleString()}`)
+                              : (lang === "es" ? `Por cobrar próximo: $${a.balance.toLocaleString()}` : `Receivable due soon: $${a.balance.toLocaleString()}`))
+                          : (overdue
+                              ? (lang === "es" ? `Por pagar vencido: $${a.balance.toLocaleString()}` : `Overdue payable: $${a.balance.toLocaleString()}`)
+                              : (lang === "es" ? `Por pagar próximo: $${a.balance.toLocaleString()}` : `Payable due soon: $${a.balance.toLocaleString()}`))}
+                        {" · "}{a.reference}{a.due_date ? ` · ${scheduledDueLabel(a.due_date, lang)}` : ""}
                       </div>
                     </div>
                   </button>
-                ))}
+                  );
+                })}
               </>
             )}
             {scheduledAlerts.length > 0 && (
