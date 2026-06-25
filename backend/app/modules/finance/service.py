@@ -3,7 +3,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from collections import OrderedDict
 from app.modules.finance import models, schemas
 
@@ -831,9 +831,12 @@ async def process_due_scheduled_payments(db: AsyncSession) -> int:
 # --- Reportes P&L y comparativo de periodos -------------------------------------
 
 async def get_pnl_report(db: AsyncSession, period_start: datetime, period_end: datetime) -> schemas.PnLReport:
+    end_bound = period_end
+    if end_bound.time() == datetime.min.time():
+        end_bound = end_bound + timedelta(days=1)
     res = await db.execute(
         select(models.Transaction.category, models.Transaction.type, func.coalesce(func.sum(models.Transaction.amount), 0.0))
-        .where(models.Transaction.created_at >= period_start, models.Transaction.created_at <= period_end)
+        .where(models.Transaction.created_at >= period_start, models.Transaction.created_at < end_bound)
         .group_by(models.Transaction.category, models.Transaction.type)
     )
     income_by_cat = []
