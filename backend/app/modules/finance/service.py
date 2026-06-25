@@ -765,6 +765,69 @@ async def process_due_recurring_transactions(db: AsyncSession) -> int:
     return created
 
 
+# --- Pagos programados (CXC/CXP a futuro) --------------------------------------
+
+async def get_scheduled_payments(db: AsyncSession, status: Optional[str] = None) -> List[models.ScheduledPayment]:
+    query = select(models.ScheduledPayment).order_by(models.ScheduledPayment.scheduled_date)
+    if status:
+        query = query.where(models.ScheduledPayment.status == status)
+    res = await db.execute(query)
+    return res.scalars().all()
+
+
+async def create_scheduled_payment(
+    db: AsyncSession, data: schemas.ScheduledPaymentCreate, user_id: Optional[int] = None
+) -> models.ScheduledPayment:
+    sp = models.ScheduledPayment(**data.model_dump(), created_by_id=user_id)
+    db.add(sp)
+    await db.commit()
+    await db.refresh(sp)
+    await _log_audit(db, user_id, "SCHEDULE_PAYMENT", f"Pago programado de {sp.amount} ({sp.kind} #{sp.target_id}) para {sp.scheduled_date}", {"id": sp.id})
+    return sp
+
+
+async def cancel_scheduled_payment(db: AsyncSession, sp_id: int, user_id: Optional[int] = None) -> Optional[models.ScheduledPayment]:
+    res = await db.execute(select(models.ScheduledPayment).where(models.ScheduledPayment.id == sp_id))
+    sp = res.scalars().first()
+    if not sp:
+        return None
+    if sp.status == "pending":
+        sp.status = "cancelled"
+        await db.commit()
+        await db.refresh(sp)
+        await _log_audit(db, user_id, "CANCEL_SCHEDULED_PAYMENT", f"Pago programado #{sp_id} cancelado", {"id": sp_id})
+    return sp
+
+
+async def process_due_scheduled_payments(db: AsyncSession) -> int:
+    now = datetime.now(timezone.utc)
+    res = await db.execute(
+        select(models.ScheduledPayment).where(
+            models.ScheduledPayment.status == "pending",
+            models.ScheduledPayment.scheduled_date <= now,
+        )
+    )
+    due = res.scalars().all()
+    processed = 0
+    for sp in due:
+        pay_in = schemas.PayDebtRequest(amount=sp.amount, method=sp.method, reference=sp.reference, note=sp.note)
+        try:
+            if sp.kind == "cxc":
+                result = await pay_cxc(db, sp.target_id, pay_in, user_id=sp.created_by_id)
+            else:
+                result = await pay_cxp(db, sp.target_id, pay_in, user_id=sp.created_by_id)
+            if not result:
+                raise ValueError("No se encontró el registro a pagar (¿fue eliminado?).")
+            sp.status = "paid"
+        except Exception as exc:
+            sp.status = "failed"
+            sp.error = str(exc)
+        processed += 1
+    if processed:
+        await db.commit()
+    return processed
+
+
 # --- Reportes P&L y comparativo de periodos -------------------------------------
 
 async def get_pnl_report(db: AsyncSession, period_start: datetime, period_end: datetime) -> schemas.PnLReport:

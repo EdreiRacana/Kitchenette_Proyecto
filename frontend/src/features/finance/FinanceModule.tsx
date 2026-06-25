@@ -10,7 +10,7 @@ import {
   X, DollarSign, CreditCard, BarChart3,
   Clock, CheckCircle, XCircle, AlertCircle, ArrowLeftRight,
   PiggyBank, Receipt, Edit2, Trash2, ArrowRightLeft, Upload,
-  Wallet, FileText, History, Paperclip,
+  Wallet, FileText, History, Paperclip, CalendarClock, Ban,
 } from "lucide-react";
 import { financeService, downloadCSV } from "./service";
 
@@ -205,12 +205,26 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
     catch { alert("No se pudo eliminar la transacción."); }
   };
 
-  const handlePay = async (data: { amount: number; method?: string; reference?: string; note?: string }) => {
+  const handlePay = async (data: { amount: number; method?: string; reference?: string; note?: string; scheduled?: boolean; scheduled_date?: string }) => {
     if (!payTarget) return;
-    if (demo) { alert("Modo demo: pago simulado ✓"); setPayTarget(null); return; }
+    if (demo) { alert(data.scheduled ? "Modo demo: pago programado simulado ✓" : "Modo demo: pago simulado ✓"); setPayTarget(null); return; }
     try {
-      if (payTarget.kind === "cxc") await financeService.payCXC(payTarget.item.id, data);
-      else await financeService.payCXP(payTarget.item.id, data);
+      if (data.scheduled) {
+        await financeService.createScheduledPayment({
+          kind: payTarget.kind,
+          target_id: payTarget.item.id,
+          target_name: payTarget.item.name,
+          amount: data.amount,
+          method: data.method,
+          reference: data.reference,
+          note: data.note,
+          scheduled_date: data.scheduled_date,
+        });
+      } else if (payTarget.kind === "cxc") {
+        await financeService.payCXC(payTarget.item.id, data);
+      } else {
+        await financeService.payCXP(payTarget.item.id, data);
+      }
       setPayTarget(null);
       await load();
     } catch (e: any) {
@@ -853,15 +867,24 @@ function TransactionFormModal({ t, tx, onClose, onSave }: any) {
 // ── Pay Debt Modal (CXC / CXP) ───────────────────────────────────────────────
 function PayDebtModal({ t, item, kind, onClose, onSave }: any) {
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ amount: String(item.balance), method: "transfer", reference: "", note: "" });
+  const [mode, setMode] = useState<"now" | "schedule">("now");
+  const todayPlus1 = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const [form, setForm] = useState({ amount: String(item.balance), method: "transfer", reference: "", note: "", scheduled_date: todayPlus1 });
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const color = kind === "cxc" ? t.good : t.bad;
   const handleSave = async () => {
     const amount = parseFloat(form.amount);
     if (!amount || amount <= 0) return;
+    if (mode === "schedule" && !form.scheduled_date) return;
     setSaving(true);
-    try { await onSave({ amount, method: form.method, reference: form.reference, note: form.note }); }
+    try {
+      await onSave({
+        amount, method: form.method, reference: form.reference, note: form.note,
+        scheduled: mode === "schedule",
+        scheduled_date: mode === "schedule" ? form.scheduled_date : undefined,
+      });
+    }
     finally { setSaving(false); }
   };
   return (
@@ -874,9 +897,21 @@ function PayDebtModal({ t, item, kind, onClose, onSave }: any) {
         <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ fontSize: 13, color: t.textMid }}>{item.name} · {item.reference}</div>
           <div style={{ fontSize: 13, color: t.textLo }}>Saldo pendiente: <b style={{ color }}>{mxn(item.balance)}</b></div>
+          <div style={{ display: "flex", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 4, gap: 4 }}>
+            {[{ v: "now", label: "Pagar ahora" }, { v: "schedule", label: "Programar pago" }].map(opt => (
+              <button key={opt.v} onClick={() => setMode(opt.v as any)} style={{ flex: 1, padding: "9px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13, background: mode === opt.v ? color + "22" : "transparent", color: mode === opt.v ? color : t.textLo, transition: "all .15s" }}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <div><label style={label}>Monto a pagar *</label>
             <input type="number" max={item.balance} value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} style={inp} />
           </div>
+          {mode === "schedule" && (
+            <div><label style={label}>Fecha de pago *</label>
+              <input type="date" min={todayPlus1} value={form.scheduled_date} onChange={e => setForm(f => ({ ...f, scheduled_date: e.target.value }))} style={inp} />
+            </div>
+          )}
           <div><label style={label}>Método</label>
             <select value={form.method} onChange={e => setForm(f => ({ ...f, method: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
               <option value="cash">Efectivo</option>
@@ -892,7 +927,7 @@ function PayDebtModal({ t, item, kind, onClose, onSave }: any) {
         <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
           <button onClick={handleSave} disabled={saving} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${color}, ${color})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-            {saving ? "…" : "Confirmar pago"} {!saving && <Check size={14} style={{ marginLeft: 4, verticalAlign: "-2px" }} />}
+            {saving ? "…" : mode === "schedule" ? "Programar pago" : "Confirmar pago"} {!saving && <Check size={14} style={{ marginLeft: 4, verticalAlign: "-2px" }} />}
           </button>
         </div>
       </div>
@@ -1098,7 +1133,8 @@ function BankMovementsModal({ t, bank, demo, onClose, onChanged }: any) {
 
 // ── Advanced Panel — Presupuestos, recurrentes, reportes y auditoría ────────
 function AdvancedPanel({ t, demo }: any) {
-  const [section, setSection] = useState<"budgets" | "recurring" | "reports" | "audit">("budgets");
+  const [section, setSection] = useState<"budgets" | "recurring" | "scheduled" | "reports" | "audit">("budgets");
+  const [scheduled, setScheduled] = useState<any[]>([]);
   const [budgets, setBudgets] = useState<any[]>([]);
   const [comparison, setComparison] = useState<any[]>([]);
   const [period, setPeriod] = useState(() => new Date().toISOString().slice(0, 7));
@@ -1130,11 +1166,24 @@ function AdvancedPanel({ t, demo }: any) {
     try { setAuditLogs(await financeService.getAuditLogs()); } catch { setAuditLogs([]); }
   }, [demo]);
 
+  const loadScheduled = useCallback(async () => {
+    if (demo) { setScheduled([]); return; }
+    try { setScheduled(await financeService.getScheduledPayments()); } catch { setScheduled([]); }
+  }, [demo]);
+
   useEffect(() => {
     if (section === "budgets") loadBudgets();
     if (section === "recurring") loadRecurring();
+    if (section === "scheduled") loadScheduled();
     if (section === "audit") loadAudit();
-  }, [section, loadBudgets, loadRecurring, loadAudit]);
+  }, [section, loadBudgets, loadRecurring, loadScheduled, loadAudit]);
+
+  const handleCancelScheduled = async (id: number) => {
+    if (!window.confirm("¿Cancelar este pago programado?")) return;
+    if (demo) { alert("Modo demo: no se puede cancelar (backend no disponible)."); return; }
+    try { await financeService.cancelScheduledPayment(id); await loadScheduled(); }
+    catch { alert("No se pudo cancelar el pago programado."); }
+  };
 
   const handleCreateBudget = async () => {
     if (!budgetForm.amount) return;
@@ -1164,6 +1213,7 @@ function AdvancedPanel({ t, demo }: any) {
   const SECTIONS = [
     { id: "budgets", label: "Presupuestos", icon: PiggyBank },
     { id: "recurring", label: "Recurrentes", icon: RefreshCw },
+    { id: "scheduled", label: "Pagos programados", icon: CalendarClock },
     { id: "reports", label: "Reportes P&L", icon: FileText },
     { id: "audit", label: "Auditoría", icon: History },
   ] as const;
@@ -1261,6 +1311,42 @@ function AdvancedPanel({ t, demo }: any) {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {section === "scheduled" && (
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr style={{ background: t.panel2 }}>
+              {["Tipo", "Cliente/Proveedor", "Monto", "Fecha programada", "Estado", ""].map((h, i) => (
+                <th key={i} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textLo, textTransform: "uppercase" }}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {scheduled.length === 0 ? (
+                <tr><td colSpan={6} style={{ textAlign: "center", padding: 32, color: t.textLo }}>Sin pagos programados.</td></tr>
+              ) : scheduled.map((sp) => {
+                const statusColor = sp.status === "paid" ? t.good : sp.status === "failed" ? t.bad : sp.status === "cancelled" ? t.textLo : t.nova;
+                const statusLabel = { pending: "Pendiente", paid: "Pagado", cancelled: "Cancelado", failed: "Falló" }[sp.status] || sp.status;
+                return (
+                  <tr key={sp.id}>
+                    <td style={{ padding: "10px 14px", fontSize: 12.5, color: sp.kind === "cxc" ? t.good : t.bad }}>{sp.kind === "cxc" ? "Por cobrar" : "Por pagar"}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 13, color: t.textHi }}>{sp.target_name || `#${sp.target_id}`}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 13, fontWeight: 700 }}>{mxn(sp.amount)}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 12.5 }}>{fmtDate(sp.scheduled_date)}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 12.5, fontWeight: 600, color: statusColor }} title={sp.error || undefined}>{statusLabel}</td>
+                    <td style={{ padding: "10px 14px" }}>
+                      {sp.status === "pending" && (
+                        <button onClick={() => handleCancelScheduled(sp.id)} title="Cancelar" style={{ background: "transparent", border: "none", cursor: "pointer", color: t.bad, display: "flex", alignItems: "center" }}>
+                          <Ban size={15} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 

@@ -198,6 +198,35 @@ class RecurringTransactionInDB(RecurringTransactionBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+# --- Pagos programados (CXC/CXP a futuro) ---
+class ScheduledPaymentCreate(BaseModel):
+    kind: str  # cxc, cxp
+    target_id: int
+    target_name: Optional[str] = None
+    amount: float
+    method: Optional[str] = None
+    reference: Optional[str] = None
+    note: Optional[str] = None
+    scheduled_date: datetime
+
+
+class ScheduledPaymentInDB(BaseModel):
+    id: int
+    kind: str
+    target_id: int
+    target_name: Optional[str] = None
+    amount: float
+    method: Optional[str] = None
+    reference: Optional[str] = None
+    note: Optional[str] = None
+    scheduled_date: datetime
+    status: str
+    error: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # --- Reportes ---
 class PnLCategory(BaseModel):
     category: str

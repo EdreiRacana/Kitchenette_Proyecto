@@ -72,3 +72,21 @@ class RecurringTransaction(Base):
     next_run_date = Column(DateTime(timezone=True), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ScheduledPayment(Base):
+    __tablename__ = "scheduled_payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String, nullable=False)  # cxc, cxp
+    target_id = Column(Integer, nullable=False)  # order_id (cxc) o purchase_order_id (cxp)
+    target_name = Column(String, nullable=True)  # snapshot del nombre para mostrarlo aunque cambie
+    amount = Column(Float, nullable=False)
+    method = Column(String, nullable=True)
+    reference = Column(String, nullable=True)
+    note = Column(Text, nullable=True)
+    scheduled_date = Column(DateTime(timezone=True), nullable=False)
+    status = Column(String, nullable=False, default="pending")  # pending, paid, cancelled, failed
+    error = Column(Text, nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

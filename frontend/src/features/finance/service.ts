@@ -87,6 +87,21 @@ export interface PeriodComparison {
     net_change_pct?: number;
 }
 
+export interface ScheduledPayment {
+    id: number;
+    kind: 'cxc' | 'cxp';
+    target_id: number;
+    target_name?: string;
+    amount: number;
+    method?: string;
+    reference?: string;
+    note?: string;
+    scheduled_date: string;
+    status: 'pending' | 'paid' | 'cancelled' | 'failed';
+    error?: string;
+    created_at: string;
+}
+
 export interface AuditLogItem {
     id: string;
     action: string;
@@ -155,6 +170,13 @@ export const financeService = {
 
     getCXP: async () => (await api.get<AgingItem[]>('/finance/cxp')).data,
     payCXP: async (poId: number, data: any) => (await api.post(`/finance/cxp/${poId}/pay`, data)).data,
+
+    getScheduledPayments: async (status?: string) =>
+        (await api.get<ScheduledPayment[]>('/finance/scheduled-payments', { params: { status } })).data,
+    createScheduledPayment: async (data: any) =>
+        (await api.post<ScheduledPayment>('/finance/scheduled-payments', data)).data,
+    cancelScheduledPayment: async (id: number) =>
+        (await api.delete<ScheduledPayment>(`/finance/scheduled-payments/${id}`)).data,
 
     getBanks: async () => (await api.get<BankAccount[]>('/finance/banks')).data,
     createBank: async (data: any) => (await api.post<BankAccount>('/finance/banks', data)).data,

@@ -250,6 +250,26 @@ async def delete_recurring(rt_id: int, db: DB, current_user: CurrentUser):
     return {"ok": True}
 
 
+# --- Pagos programados ---
+@router.get("/scheduled-payments", response_model=List[schemas.ScheduledPaymentInDB])
+async def read_scheduled_payments(db: DB, current_user: CurrentUser, status: Optional[str] = None):
+    await service.process_due_scheduled_payments(db)
+    return await service.get_scheduled_payments(db, status=status)
+
+
+@router.post("/scheduled-payments", response_model=schemas.ScheduledPaymentInDB)
+async def create_scheduled_payment(data: schemas.ScheduledPaymentCreate, db: DB, current_user: CurrentUser):
+    return await service.create_scheduled_payment(db, data, user_id=current_user.id)
+
+
+@router.delete("/scheduled-payments/{sp_id}", response_model=schemas.ScheduledPaymentInDB)
+async def cancel_scheduled_payment(sp_id: int, db: DB, current_user: CurrentUser):
+    sp = await service.cancel_scheduled_payment(db, sp_id, user_id=current_user.id)
+    if not sp:
+        raise HTTPException(status_code=404, detail="Pago programado no encontrado")
+    return sp
+
+
 # --- Reportes P&L y comparativo ---
 @router.get("/reports/pnl", response_model=schemas.PnLReport)
 async def read_pnl(db: DB, current_user: CurrentUser, start: datetime, end: datetime):
