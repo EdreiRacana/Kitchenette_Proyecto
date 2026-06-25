@@ -19,9 +19,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (libpq-dev para asyncpg, tesseract/poppler para OCR de PDFs escaneados)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libpq-dev && \
+    apt-get install -y --no-install-recommends \
+        libpq-dev \
+        tesseract-ocr \
+        tesseract-ocr-spa \
+        poppler-utils && \
     rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies
@@ -39,4 +43,4 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
