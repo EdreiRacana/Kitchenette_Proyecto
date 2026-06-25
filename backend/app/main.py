@@ -78,3 +78,13 @@ async def startup():
     # Migrations run isolated (own connection) and can never crash startup.
     await run_startup_migrations(engine)
 
+    from app.core.scheduler import start_scheduler
+    start_scheduler()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    from app.core.scheduler import _scheduler
+    if _scheduler.running:
+        _scheduler.shutdown(wait=False)
+
