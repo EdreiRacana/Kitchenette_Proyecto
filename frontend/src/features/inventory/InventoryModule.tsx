@@ -675,7 +675,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
             {[
               { icon: FileSpreadsheet, title: lang === "es" ? "Entrada manual" : "Manual entry", desc: lang === "es" ? "Registra entradas producto por producto" : "Register entries one by one", color: t.nova, action: () => setEntryForm(true) },
-              { icon: Upload, title: lang === "es" ? "Importar plantilla" : "Import template", desc: lang === "es" ? "Sube un CSV/Excel con múltiples productos" : "Upload a CSV/Excel with multiple products", color: t.good, action: () => alert(lang === "es" ? "Próximamente: importación por plantilla Excel" : "Coming soon: Excel template import") },
+              { icon: Upload, title: lang === "es" ? "Importar plantilla" : "Import template", desc: lang === "es" ? "Sube un CSV/Excel con múltiples productos" : "Upload a CSV/Excel with multiple products", color: t.good, action: () => setTab("import") },
               { icon: Truck, title: lang === "es" ? "Orden de compra" : "Purchase order", desc: lang === "es" ? "Recibe mercancía de una orden existente" : "Receive goods from an existing order", color: "#A78BFA", action: () => setTab("purchase-orders") },
               { icon: RotateCcw, title: lang === "es" ? "Devolución de cliente" : "Customer return", desc: lang === "es" ? "Regresa stock por devolución" : "Return stock from customer return", color: t.warn, action: () => alert(lang === "es" ? "Próximamente: devoluciones" : "Coming soon: returns") },
             ].map(card => (
