@@ -263,6 +263,7 @@ _FINANCE_STATEMENTS = [
     "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_by_id INTEGER",
     "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS attachment_url TEXT",
     "ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS reconciled BOOLEAN DEFAULT FALSE",
 ]
 
 

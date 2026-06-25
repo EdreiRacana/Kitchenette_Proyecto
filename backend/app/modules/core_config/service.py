@@ -66,6 +66,9 @@ async def create_audit_log(db: AsyncSession, *, user_id: int, action: str, modul
     await db.refresh(db_obj)
     return db_obj
 
-async def get_audit_logs(db: AsyncSession, skip: int = 0, limit: int = 100):
-    result = await db.execute(select(AuditLog).order_by(AuditLog.timestamp.desc()).offset(skip).limit(limit))
+async def get_audit_logs(db: AsyncSession, skip: int = 0, limit: int = 100, module: str = None):
+    query = select(AuditLog).order_by(AuditLog.timestamp.desc())
+    if module:
+        query = query.filter(AuditLog.module == module)
+    result = await db.execute(query.offset(skip).limit(limit))
     return result.scalars().all()

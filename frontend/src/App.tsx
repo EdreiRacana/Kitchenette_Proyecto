@@ -13,6 +13,7 @@ import SalesCRM from "./features/sales/SalesCRM";
 import CustomersModule from "./features/customers/CustomersModule";
 import InventoryModule from "./features/inventory/InventoryModule";
 import FinanceModule from "./features/finance/FinanceModule";
+import { financeService } from "./features/finance/service";
 import HRModule from "./features/hr/HRModule";
 import BIModule from "./features/bi/BIModule";
 import ConfigModule from "./features/config/ConfigModule";
@@ -917,19 +918,31 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
 function NotificationBell({ t, lang, onNavigate }) {
   const [open, setOpen] = useState(false);
   const [alerts, setAlerts] = useState([]);
+  const [financeAlerts, setFinanceAlerts] = useState([]);
 
   useEffect(() => {
     let active = true;
-    inventoryService.getReorderAlerts()
+    const loadInventory = () => inventoryService.getReorderAlerts()
       .then((data) => { if (active) setAlerts(data || []); })
       .catch(() => { if (active) setAlerts([]); });
-    const interval = setInterval(() => {
-      inventoryService.getReorderAlerts().then((data) => { if (active) setAlerts(data || []); }).catch(() => {});
-    }, 60000);
+    const loadFinance = () => Promise.all([financeService.getCXC(), financeService.getCXP()])
+      .then(([cxc, cxp]) => {
+        if (!active) return;
+        const overdue = [
+          ...cxc.filter((i) => i.status === "overdue").map((i) => ({ ...i, kind: "cxc" })),
+          ...cxp.filter((i) => i.status === "overdue").map((i) => ({ ...i, kind: "cxp" })),
+        ];
+        setFinanceAlerts(overdue);
+      })
+      .catch(() => { if (active) setFinanceAlerts([]); });
+
+    loadInventory();
+    loadFinance();
+    const interval = setInterval(() => { loadInventory(); loadFinance(); }, 60000);
     return () => { active = false; clearInterval(interval); };
   }, []);
 
-  const count = alerts.length;
+  const count = alerts.length + financeAlerts.length;
 
   return (
     <div style={{ position: "relative" }}>
@@ -966,6 +979,27 @@ function NotificationBell({ t, lang, onNavigate }) {
                 </div>
               </button>
             ))}
+            {financeAlerts.length > 0 && (
+              <>
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "10px 10px 6px" }}>
+                  {lang === "es" ? "CUENTAS VENCIDAS" : "OVERDUE ACCOUNTS"}
+                </div>
+                {financeAlerts.map((a) => (
+                  <button key={`${a.kind}-${a.id}`} onClick={() => { onNavigate("finanzas", a.name); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
+                    <span style={{ marginTop: 3, width: 8, height: 8, borderRadius: 999, background: t.bad, flex: "0 0 auto" }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
+                      <div style={{ fontSize: 11, color: t.textLo }}>
+                        {a.kind === "cxc"
+                          ? (lang === "es" ? `Por cobrar vencido: $${a.balance.toLocaleString()}` : `Overdue receivable: $${a.balance.toLocaleString()}`)
+                          : (lang === "es" ? `Por pagar vencido: $${a.balance.toLocaleString()}` : `Overdue payable: $${a.balance.toLocaleString()}`)}
+                        {" · "}{a.reference}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </>
+            )}
           </div>
         </>
       )}

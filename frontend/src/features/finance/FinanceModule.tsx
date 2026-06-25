@@ -10,6 +10,7 @@ import {
   X, DollarSign, CreditCard, BarChart3,
   Clock, CheckCircle, XCircle, AlertCircle, ArrowLeftRight,
   PiggyBank, Receipt, Edit2, Trash2, ArrowRightLeft, Upload,
+  Wallet, FileText, History, Paperclip,
 } from "lucide-react";
 import { financeService, downloadCSV } from "./service";
 
@@ -21,6 +22,7 @@ interface Transaction {
   category: string;
   description?: string;
   reference?: string;
+  attachment_url?: string;
   created_at: string;
 }
 interface AgingItem {
@@ -33,6 +35,7 @@ interface AgingItem {
   due_date?: string;
   aging: "current" | "1-30" | "31-60" | "61-90" | "90+";
   status: "pending" | "partial" | "overdue" | "paid";
+  late_fee?: number;
 }
 interface BankAccount {
   id: number;
@@ -108,13 +111,14 @@ const CATEGORIES: Record<string, { label: string; color: string }> = {
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function FinanceModule({ t, s }: { t: any; s: any }) {
-  const [tab, setTab] = useState<"dashboard" | "cxc" | "cxp" | "banks" | "transactions" | "flow">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "cxc" | "cxp" | "banks" | "transactions" | "flow" | "advanced">("dashboard");
   const [demo, setDemo] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [cxc, setCxc] = useState<AgingItem[]>([]);
   const [cxp, setCxp] = useState<AgingItem[]>([]);
   const [banks, setBanks] = useState<BankAccount[]>([]);
   const [flow, setFlow] = useState<FlowPoint[]>([]);
+  const [dash, setDash] = useState<{ projected_balance?: number; bank_balance?: number; cxc_balance?: number; cxp_balance?: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [txForm, setTxForm] = useState<null | "new" | Transaction>(null);
   const [payTarget, setPayTarget] = useState<null | { kind: "cxc" | "cxp"; item: AgingItem }>(null);
@@ -136,7 +140,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
         financeService.getBanks(),
         financeService.getCashFlow(6),
       ]);
-      void dash;
+      setDash(dash);
       setTransactions(tx);
       setCxc(cxcRes);
       setCxp(cxpRes);
@@ -147,6 +151,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
       setDemo(true);
       setTransactions(DEMO_TRANSACTIONS);
       setCxc(DEMO_CXC); setCxp(DEMO_CXP); setBanks(DEMO_BANKS); setFlow(DEMO_FLOW);
+      setDash(null);
     } finally { setLoading(false); }
   }, []);
 
@@ -225,6 +230,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
     { id: "banks", label: "Bancos", icon: Building2 },
     { id: "transactions", label: "Transacciones", icon: ArrowLeftRight },
     { id: "flow", label: "Flujo de caja", icon: BarChart3 },
+    { id: "advanced", label: "Avanzado", icon: Wallet },
   ] as const;
 
   return (
@@ -269,6 +275,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
               { label: "Por cobrar", value: mxn(kpis.totalCXC), icon: Receipt, color: t.warn, sub: `${mxn(kpis.overdueCXC)} vencido` },
               { label: "Por pagar", value: mxn(kpis.totalCXP), icon: CreditCard, color: "#F87171", sub: `${cxp.filter(c => c.status === "overdue").length} facturas vencidas` },
               { label: "Saldo en bancos", value: mxn(kpis.totalBankBalance), icon: PiggyBank, color: t.nova, sub: `${banks.length} cuentas` },
+              { label: "Saldo proyectado", value: dash?.projected_balance != null ? mxn(dash.projected_balance) : "—", icon: Wallet, color: t.good, sub: "Bancos + CXC − CXP" },
             ].map(k => (
               <div key={k.label} style={{ ...glass(t), borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
                 <div style={{ background: k.color + "22", color: k.color, borderRadius: 10, padding: 10, display: "flex", flexShrink: 0 }}><k.icon size={20} /></div>
@@ -399,14 +406,14 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
                 <thead>
                   <tr style={{ background: t.panel2 }}>
-                    {["Cliente", "Folio", "Total", "Pagado", "Saldo", "Vencimiento", "Antigüedad", "Estado", ""].map((h, i) => (
+                    {["Cliente", "Folio", "Total", "Pagado", "Saldo", "Recargo", "Vencimiento", "Antigüedad", "Estado", ""].map((h, i) => (
                       <th key={i} style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {cxc.length === 0 ? (
-                    <tr><td colSpan={9} style={{ textAlign: "center", padding: 48, color: t.textLo }}>Sin cuentas por cobrar pendientes.</td></tr>
+                    <tr><td colSpan={10} style={{ textAlign: "center", padding: 48, color: t.textLo }}>Sin cuentas por cobrar pendientes.</td></tr>
                   ) : cxc.map((c, i) => {
                     const sm = STATUS_META[c.status];
                     const ac = AGING_COLORS[c.aging];
@@ -417,6 +424,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
                         <td style={{ padding: "13px 16px", fontSize: 13.5, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(c.total)}</td>
                         <td style={{ padding: "13px 16px", fontSize: 13, color: t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(c.paid)}</td>
                         <td style={{ padding: "13px 16px", fontSize: 14, fontWeight: 700, color: c.balance > 0 ? t.warn : t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(c.balance)}</td>
+                        <td style={{ padding: "13px 16px", fontSize: 12.5, color: (c.late_fee || 0) > 0 ? t.bad : t.textLo, fontVariantNumeric: "tabular-nums" }}>{(c.late_fee || 0) > 0 ? mxn(c.late_fee!) : "—"}</td>
                         <td style={{ padding: "13px 16px", fontSize: 12.5, color: t.textMid, whiteSpace: "nowrap" }}>{fmtDate(c.due_date)}</td>
                         <td style={{ padding: "13px 16px" }}>
                           <span style={{ fontSize: 12, fontWeight: 700, color: ac, background: ac + "18", padding: "3px 8px", borderRadius: 20 }}>
@@ -470,14 +478,14 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
                 <thead>
                   <tr style={{ background: t.panel2 }}>
-                    {["Proveedor", "Folio", "Total", "Pagado", "Saldo", "Vencimiento", "Antigüedad", "Estado", ""].map((h, i) => (
+                    {["Proveedor", "Folio", "Total", "Pagado", "Saldo", "Recargo", "Vencimiento", "Antigüedad", "Estado", ""].map((h, i) => (
                       <th key={i} style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {cxp.length === 0 ? (
-                    <tr><td colSpan={9} style={{ textAlign: "center", padding: 48, color: t.textLo }}>Sin cuentas por pagar pendientes.</td></tr>
+                    <tr><td colSpan={10} style={{ textAlign: "center", padding: 48, color: t.textLo }}>Sin cuentas por pagar pendientes.</td></tr>
                   ) : cxp.map((c, i) => {
                     const sm = STATUS_META[c.status];
                     const ac = AGING_COLORS[c.aging];
@@ -488,6 +496,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
                         <td style={{ padding: "13px 16px", fontSize: 13.5, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(c.total)}</td>
                         <td style={{ padding: "13px 16px", fontSize: 13, color: t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(c.paid)}</td>
                         <td style={{ padding: "13px 16px", fontSize: 14, fontWeight: 700, color: c.balance > 0 ? t.bad : t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(c.balance)}</td>
+                        <td style={{ padding: "13px 16px", fontSize: 12.5, color: (c.late_fee || 0) > 0 ? t.bad : t.textLo, fontVariantNumeric: "tabular-nums" }}>{(c.late_fee || 0) > 0 ? mxn(c.late_fee!) : "—"}</td>
                         <td style={{ padding: "13px 16px", fontSize: 12.5, color: t.textMid, whiteSpace: "nowrap" }}>{fmtDate(c.due_date)}</td>
                         <td style={{ padding: "13px 16px" }}>
                           <span style={{ fontSize: 12, fontWeight: 700, color: ac, background: ac + "18", padding: "3px 8px", borderRadius: 20 }}>
@@ -631,6 +640,16 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
                         <td style={{ padding: "12px 16px", fontSize: 12.5, color: t.textLo, whiteSpace: "nowrap" }}>{fmtDate(tx.created_at)}</td>
                         <td style={{ padding: "12px 16px" }}>
                           <div style={{ display: "flex", gap: 6 }}>
+                            <label title={tx.attachment_url ? "Comprobante adjunto" : "Adjuntar comprobante"} style={{ background: "transparent", border: `1px solid ${tx.attachment_url ? t.good : t.border}44`, borderRadius: 6, padding: 5, cursor: "pointer", color: tx.attachment_url ? t.good : t.textMid, display: "flex" }}>
+                              <Paperclip size={13} />
+                              <input type="file" style={{ display: "none" }} onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                if (demo) { alert("Modo demo: no se puede adjuntar (backend no disponible)."); return; }
+                                try { await financeService.uploadAttachment(tx.id, file); await load(); }
+                                catch { alert("No se pudo adjuntar el comprobante."); }
+                              }} />
+                            </label>
                             <button onClick={() => setTxForm(tx)} title="Editar" style={{ background: "transparent", border: `1px solid ${t.border}`, borderRadius: 6, padding: 5, cursor: "pointer", color: t.textMid, display: "flex" }}><Edit2 size={13} /></button>
                             <button onClick={() => handleDeleteTx(tx.id)} title="Eliminar" style={{ background: "transparent", border: `1px solid ${t.bad}44`, borderRadius: 6, padding: 5, cursor: "pointer", color: t.bad, display: "flex" }}><Trash2 size={13} /></button>
                           </div>
@@ -703,6 +722,9 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
           </div>
         </div>
       )}
+
+      {/* ── TAB: Avanzado (presupuestos, recurrentes, reportes, auditoría) ── */}
+      {tab === "advanced" && <AdvancedPanel t={t} demo={demo} />}
 
       {/* ── MODALS ── */}
       {txForm && (
@@ -1017,7 +1039,7 @@ function BankMovementsModal({ t, bank, demo, onClose, onChanged }: any) {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["Tipo", "Monto", "Descripción", "Fecha"].map((h, i) => (
+                  {["Tipo", "Monto", "Descripción", "Fecha", "Conciliado"].map((h, i) => (
                     <th key={i} style={{ padding: "8px 10px", textAlign: "left", fontSize: 10.5, fontWeight: 700, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase" }}>{h}</th>
                   ))}
                 </tr>
@@ -1035,6 +1057,19 @@ function BankMovementsModal({ t, bank, demo, onClose, onChanged }: any) {
                       <td style={{ padding: "9px 10px", fontSize: 13, fontWeight: 700, color: inFlow ? t.good : t.bad }}>{inFlow ? "+" : "-"}{mxn(m.amount)}</td>
                       <td style={{ padding: "9px 10px", fontSize: 12.5, color: t.textMid }}>{m.description || "—"}</td>
                       <td style={{ padding: "9px 10px", fontSize: 12, color: t.textLo, whiteSpace: "nowrap" }}>{fmtDate(m.created_at)}</td>
+                      <td style={{ padding: "9px 10px" }}>
+                        <input
+                          type="checkbox" checked={!!m.reconciled}
+                          onChange={async (e) => {
+                            if (demo) { alert("Modo demo: no se puede conciliar (backend no disponible)."); return; }
+                            try {
+                              await financeService.reconcileMovement(m.id, e.target.checked);
+                              await fetchMovs();
+                            } catch { alert("No se pudo actualizar la conciliación."); }
+                          }}
+                          style={{ cursor: "pointer" }}
+                        />
+                      </td>
                     </tr>
                   );
                 })}
@@ -1043,6 +1078,221 @@ function BankMovementsModal({ t, bank, demo, onClose, onChanged }: any) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Advanced Panel — Presupuestos, recurrentes, reportes y auditoría ────────
+function AdvancedPanel({ t, demo }: any) {
+  const [section, setSection] = useState<"budgets" | "recurring" | "reports" | "audit">("budgets");
+  const [budgets, setBudgets] = useState<any[]>([]);
+  const [comparison, setComparison] = useState<any[]>([]);
+  const [period, setPeriod] = useState(() => new Date().toISOString().slice(0, 7));
+  const [budgetForm, setBudgetForm] = useState({ category: "rent", type: "expense", period, amount: "" });
+  const [recurring, setRecurring] = useState<any[]>([]);
+  const [recForm, setRecForm] = useState({ type: "expense", amount: "", category: "rent", description: "", frequency: "monthly", next_run_date: "" });
+  const [reportStart, setReportStart] = useState(() => `${new Date().toISOString().slice(0, 7)}-01`);
+  const [reportEnd, setReportEnd] = useState(() => new Date().toISOString().slice(0, 10));
+  const [pnl, setPnl] = useState<any>(null);
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const inp: React.CSSProperties = { padding: "9px 11px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, outline: "none" };
+  const ghostBtn: React.CSSProperties = { display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 };
+
+  const loadBudgets = useCallback(async () => {
+    if (demo) { setBudgets([]); setComparison([]); return; }
+    try {
+      setBudgets(await financeService.getBudgets(period));
+      setComparison(await financeService.getBudgetComparison(period));
+    } catch { setBudgets([]); setComparison([]); }
+  }, [demo, period]);
+
+  const loadRecurring = useCallback(async () => {
+    if (demo) { setRecurring([]); return; }
+    try { setRecurring(await financeService.getRecurring()); } catch { setRecurring([]); }
+  }, [demo]);
+
+  const loadAudit = useCallback(async () => {
+    if (demo) { setAuditLogs([]); return; }
+    try { setAuditLogs(await financeService.getAuditLogs()); } catch { setAuditLogs([]); }
+  }, [demo]);
+
+  useEffect(() => {
+    if (section === "budgets") loadBudgets();
+    if (section === "recurring") loadRecurring();
+    if (section === "audit") loadAudit();
+  }, [section, loadBudgets, loadRecurring, loadAudit]);
+
+  const handleCreateBudget = async () => {
+    if (!budgetForm.amount) return;
+    if (demo) { alert("Modo demo: presupuesto simulado ✓"); return; }
+    try {
+      await financeService.createBudget({ ...budgetForm, period, amount: parseFloat(budgetForm.amount) });
+      setBudgetForm(f => ({ ...f, amount: "" }));
+      await loadBudgets();
+    } catch { alert("No se pudo crear el presupuesto."); }
+  };
+
+  const handleCreateRecurring = async () => {
+    if (!recForm.amount || !recForm.next_run_date) return;
+    if (demo) { alert("Modo demo: transacción recurrente simulada ✓"); return; }
+    try {
+      await financeService.createRecurring({ ...recForm, amount: parseFloat(recForm.amount), next_run_date: recForm.next_run_date });
+      setRecForm(f => ({ ...f, amount: "", description: "" }));
+      await loadRecurring();
+    } catch { alert("No se pudo crear la transacción recurrente."); }
+  };
+
+  const handleRunPnL = async () => {
+    if (demo) { alert("Modo demo: reporte no disponible sin backend."); return; }
+    try { setPnl(await financeService.getPnL(reportStart, reportEnd)); } catch { alert("No se pudo generar el reporte."); }
+  };
+
+  const SECTIONS = [
+    { id: "budgets", label: "Presupuestos", icon: PiggyBank },
+    { id: "recurring", label: "Recurrentes", icon: RefreshCw },
+    { id: "reports", label: "Reportes P&L", icon: FileText },
+    { id: "audit", label: "Auditoría", icon: History },
+  ] as const;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {SECTIONS.map(({ id, label, icon: Icon }) => (
+          <button key={id} onClick={() => setSection(id)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 999, border: `1px solid ${section === id ? t.nova : t.border}`, background: section === id ? t.nova + "18" : t.panel2, color: section === id ? t.nova : t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+            <Icon size={13} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {section === "budgets" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <input type="month" value={period} onChange={e => setPeriod(e.target.value)} style={inp} />
+            <select value={budgetForm.type} onChange={e => setBudgetForm(f => ({ ...f, type: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+              <option value="expense">Gasto</option>
+              <option value="income">Ingreso</option>
+            </select>
+            <select value={budgetForm.category} onChange={e => setBudgetForm(f => ({ ...f, category: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+              {Object.entries(CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+            <input type="number" placeholder="Monto presupuestado" value={budgetForm.amount} onChange={e => setBudgetForm(f => ({ ...f, amount: e.target.value }))} style={{ ...inp, width: 160 }} />
+            <button onClick={handleCreateBudget} disabled={!budgetForm.amount} style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: t.nova, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !budgetForm.amount ? 0.5 : 1 }}>Agregar presupuesto</button>
+          </div>
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr style={{ background: t.panel2 }}>
+                {["Categoría", "Tipo", "Presupuestado", "Real", "Variación", "% usado"].map((h, i) => (
+                  <th key={i} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textLo, textTransform: "uppercase" }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {comparison.length === 0 ? (
+                  <tr><td colSpan={6} style={{ textAlign: "center", padding: 32, color: t.textLo }}>Sin presupuestos para {period}.</td></tr>
+                ) : comparison.map((c, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
+                    <td style={{ padding: "10px 14px", fontSize: 13, color: t.textHi }}>{(CATEGORIES[c.category] || { label: c.category }).label}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 12.5, color: t.textMid }}>{c.type === "income" ? "Ingreso" : "Gasto"}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 13 }}>{mxn(c.budgeted)}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 13 }}>{mxn(c.actual)}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 13, fontWeight: 700, color: c.variance >= 0 ? t.good : t.bad }}>{mxn(c.variance)}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 13, color: c.percent_used > 100 ? t.bad : t.textHi }}>{c.percent_used}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {section === "recurring" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <select value={recForm.type} onChange={e => setRecForm(f => ({ ...f, type: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+              <option value="expense">Gasto</option>
+              <option value="income">Ingreso</option>
+            </select>
+            <select value={recForm.category} onChange={e => setRecForm(f => ({ ...f, category: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+              {Object.entries(CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+            <input type="number" placeholder="Monto" value={recForm.amount} onChange={e => setRecForm(f => ({ ...f, amount: e.target.value }))} style={{ ...inp, width: 110 }} />
+            <input placeholder="Descripción" value={recForm.description} onChange={e => setRecForm(f => ({ ...f, description: e.target.value }))} style={{ ...inp, minWidth: 160 }} />
+            <select value={recForm.frequency} onChange={e => setRecForm(f => ({ ...f, frequency: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+              <option value="monthly">Mensual</option>
+              <option value="weekly">Semanal</option>
+            </select>
+            <input type="date" value={recForm.next_run_date} onChange={e => setRecForm(f => ({ ...f, next_run_date: e.target.value }))} style={inp} />
+            <button onClick={handleCreateRecurring} disabled={!recForm.amount || !recForm.next_run_date} style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: t.nova, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: (!recForm.amount || !recForm.next_run_date) ? 0.5 : 1 }}>Agregar recurrente</button>
+          </div>
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr style={{ background: t.panel2 }}>
+                {["Tipo", "Categoría", "Monto", "Descripción", "Frecuencia", "Próxima ejecución", "Activa"].map((h, i) => (
+                  <th key={i} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textLo, textTransform: "uppercase" }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {recurring.length === 0 ? (
+                  <tr><td colSpan={7} style={{ textAlign: "center", padding: 32, color: t.textLo }}>Sin transacciones recurrentes.</td></tr>
+                ) : recurring.map((r) => (
+                  <tr key={r.id}>
+                    <td style={{ padding: "10px 14px", fontSize: 12.5, color: r.type === "income" ? t.good : t.bad }}>{r.type === "income" ? "Ingreso" : "Gasto"}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 13 }}>{(CATEGORIES[r.category] || { label: r.category }).label}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 13, fontWeight: 700 }}>{mxn(r.amount)}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 12.5, color: t.textMid }}>{r.description || "—"}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 12.5 }}>{r.frequency === "monthly" ? "Mensual" : "Semanal"}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 12.5 }}>{fmtDate(r.next_run_date)}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 12.5, color: r.is_active ? t.good : t.textLo }}>{r.is_active ? "Sí" : "No"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {section === "reports" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <input type="date" value={reportStart} onChange={e => setReportStart(e.target.value)} style={inp} />
+            <input type="date" value={reportEnd} onChange={e => setReportEnd(e.target.value)} style={inp} />
+            <button onClick={handleRunPnL} style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: t.nova, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Generar P&L</button>
+            <button onClick={() => !demo && financeService.exportPnLPdf(reportStart, reportEnd)} disabled={demo} style={{ ...ghostBtn, opacity: demo ? 0.5 : 1 }}><Download size={14} /> Exportar PDF</button>
+          </div>
+          {pnl && (
+            <div style={{ ...glass(t), borderRadius: 12, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+                <div><div style={{ fontSize: 11.5, color: t.textLo }}>Ingresos</div><div style={{ fontSize: 18, fontWeight: 800, color: t.good }}>{mxn(pnl.total_income)}</div></div>
+                <div><div style={{ fontSize: 11.5, color: t.textLo }}>Gastos</div><div style={{ fontSize: 18, fontWeight: 800, color: t.bad }}>{mxn(pnl.total_expenses)}</div></div>
+                <div><div style={{ fontSize: 11.5, color: t.textLo }}>Utilidad neta</div><div style={{ fontSize: 18, fontWeight: 800, color: t.nova }}>{mxn(pnl.net_profit)}</div></div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {section === "audit" && (
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr style={{ background: t.panel2 }}>
+              {["Acción", "Descripción", "Usuario", "Fecha"].map((h, i) => (
+                <th key={i} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textLo, textTransform: "uppercase" }}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {auditLogs.length === 0 ? (
+                <tr><td colSpan={4} style={{ textAlign: "center", padding: 32, color: t.textLo }}>Sin registros de auditoría.</td></tr>
+              ) : auditLogs.map((log) => (
+                <tr key={log.id}>
+                  <td style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: t.nova }}>{log.action}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 12.5, color: t.textMid }}>{log.description || "—"}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 12.5, color: t.textLo }}>{log.user_id ?? "—"}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 12, color: t.textLo, whiteSpace: "nowrap" }}>{fmtDate(log.timestamp)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

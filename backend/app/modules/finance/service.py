@@ -8,6 +8,14 @@ from collections import OrderedDict
 from app.modules.finance import models, schemas
 
 
+async def _log_audit(db: AsyncSession, user_id: Optional[int], action: str, description: str = None, details: dict = None):
+    try:
+        from app.modules.core_config.service import create_audit_log
+        await create_audit_log(db, user_id=user_id, action=action, module="finance", description=description, details=details)
+    except Exception:
+        pass
+
+
 async def create_transaction(
     db: AsyncSession, tx_in: schemas.TransactionCreate, user_id: Optional[int] = None
 ) -> models.Transaction:
@@ -15,10 +23,11 @@ async def create_transaction(
     db.add(db_tx)
     await db.commit()
     await db.refresh(db_tx)
+    await _log_audit(db, user_id, "CREATE_TRANSACTION", f"{tx_in.type} {tx_in.amount} ({tx_in.category or 's/cat'})", {"id": db_tx.id})
     return db_tx
 
 
-async def update_transaction(db: AsyncSession, tx_id: int, data: schemas.TransactionUpdate) -> Optional[models.Transaction]:
+async def update_transaction(db: AsyncSession, tx_id: int, data: schemas.TransactionUpdate, user_id: Optional[int] = None) -> Optional[models.Transaction]:
     res = await db.execute(select(models.Transaction).where(models.Transaction.id == tx_id))
     tx = res.scalars().first()
     if not tx:
@@ -27,17 +36,31 @@ async def update_transaction(db: AsyncSession, tx_id: int, data: schemas.Transac
         setattr(tx, field, value)
     await db.commit()
     await db.refresh(tx)
+    await _log_audit(db, user_id, "UPDATE_TRANSACTION", f"Transacción #{tx_id} actualizada", {"id": tx_id})
     return tx
 
 
-async def delete_transaction(db: AsyncSession, tx_id: int) -> bool:
+async def delete_transaction(db: AsyncSession, tx_id: int, user_id: Optional[int] = None) -> bool:
     res = await db.execute(select(models.Transaction).where(models.Transaction.id == tx_id))
     tx = res.scalars().first()
     if not tx:
         return False
     await db.delete(tx)
     await db.commit()
+    await _log_audit(db, user_id, "DELETE_TRANSACTION", f"Transacción #{tx_id} eliminada", {"id": tx_id})
     return True
+
+
+async def set_transaction_attachment(db: AsyncSession, tx_id: int, attachment_url: str, user_id: Optional[int] = None) -> Optional[models.Transaction]:
+    res = await db.execute(select(models.Transaction).where(models.Transaction.id == tx_id))
+    tx = res.scalars().first()
+    if not tx:
+        return None
+    tx.attachment_url = attachment_url
+    await db.commit()
+    await db.refresh(tx)
+    await _log_audit(db, user_id, "ATTACH_FILE", f"Comprobante adjuntado a transacción #{tx_id}", {"id": tx_id, "url": attachment_url})
+    return tx
 
 
 async def get_transactions(
@@ -69,11 +92,26 @@ async def get_dashboard(db: AsyncSession) -> schemas.FinanceDashboard:
     total_income = float(income_result.scalar() or 0.0)
     total_expenses = float(expense_result.scalar() or 0.0)
 
+    bank_result = await db.execute(
+        select(func.coalesce(func.sum(models.BankAccount.balance), 0.0)).where(models.BankAccount.is_active == True)  # noqa: E712
+    )
+    bank_balance = float(bank_result.scalar() or 0.0)
+
+    cxc = await get_cxc(db)
+    cxp = await get_cxp(db)
+    cxc_balance = _r(sum(i.balance for i in cxc))
+    cxp_balance = _r(sum(i.balance for i in cxp))
+    projected_balance = _r(bank_balance + cxc_balance - cxp_balance)
+
     return schemas.FinanceDashboard(
         total_income=total_income,
         total_expenses=total_expenses,
         net_profit=total_income - total_expenses,
         transaction_count=int(count_result.scalar() or 0),
+        projected_balance=projected_balance,
+        bank_balance=_r(bank_balance),
+        cxc_balance=cxc_balance,
+        cxp_balance=cxp_balance,
     )
 
 
@@ -99,6 +137,22 @@ def _aging_bucket(due_date, balance: float, today=None) -> str:
     if days_late <= 90:
         return "61-90"
     return "90+"
+
+
+LATE_FEE_MONTHLY_RATE = 0.02  # 2% mensual sobre saldo vencido
+
+
+def _late_fee(balance: float, due_date, today=None) -> float:
+    today = today or datetime.now(timezone.utc)
+    if balance <= 0 or not due_date:
+        return 0.0
+    if due_date.tzinfo is None:
+        due_date = due_date.replace(tzinfo=timezone.utc)
+    days_late = (today - due_date).days
+    if days_late <= 0:
+        return 0.0
+    months_late = days_late / 30.0
+    return _r(balance * LATE_FEE_MONTHLY_RATE * months_late)
 
 
 def _status_for(paid: float, balance: float, due_date, today=None) -> str:
@@ -139,6 +193,7 @@ async def get_cxc(db: AsyncSession) -> List[schemas.AgingItem]:
             due_date=o.due_date,
             aging=_aging_bucket(o.due_date, balance, today),
             status=_status_for(o.paid_amount, balance, o.due_date, today),
+            late_fee=_late_fee(balance, o.due_date, today),
         ))
     return out
 
@@ -147,11 +202,13 @@ async def pay_cxc(db: AsyncSession, order_id: int, pay_in: schemas.PayDebtReques
     from app.modules.sales import service as sales_service
     from app.modules.sales import schemas as sales_schemas
 
-    return await sales_service.register_payment(
+    result = await sales_service.register_payment(
         db, order_id,
         sales_schemas.PaymentCreate(amount=pay_in.amount, method=pay_in.method, reference=pay_in.reference, note=pay_in.note),
         user_id=user_id,
     )
+    await _log_audit(db, user_id, "PAY_CXC", f"Pago de {pay_in.amount} a cuenta por cobrar #{order_id}", {"order_id": order_id, "amount": pay_in.amount})
+    return result
 
 
 # --- CXP (cuentas por pagar) --------------------------------------------------
@@ -179,6 +236,7 @@ async def get_cxp(db: AsyncSession) -> List[schemas.AgingItem]:
             due_date=po.due_date,
             aging=_aging_bucket(po.due_date, balance, today),
             status=_status_for(po.paid_amount, balance, po.due_date, today),
+            late_fee=_late_fee(balance, po.due_date, today),
         ))
     return out
 
@@ -187,11 +245,13 @@ async def pay_cxp(db: AsyncSession, po_id: int, pay_in: schemas.PayDebtRequest, 
     from app.modules.inventory import service as inv_service
     from app.modules.inventory import schemas as inv_schemas
 
-    return await inv_service.pay_purchase_order(
+    result = await inv_service.pay_purchase_order(
         db, po_id,
         inv_schemas.SupplierPaymentCreate(amount=pay_in.amount, method=pay_in.method, reference=pay_in.reference, note=pay_in.note),
         user_id=user_id,
     )
+    await _log_audit(db, user_id, "PAY_CXP", f"Pago de {pay_in.amount} a cuenta por pagar #{po_id}", {"po_id": po_id, "amount": pay_in.amount})
+    return result
 
 
 # --- Bank accounts -------------------------------------------------------------
@@ -261,6 +321,17 @@ async def transfer_between_banks(db: AsyncSession, from_id: int, data: schemas.B
     await db.commit()
     await db.refresh(src)
     return src
+
+
+async def toggle_reconciled(db: AsyncSession, movement_id: int, reconciled: bool) -> Optional[models.BankTransaction]:
+    res = await db.execute(select(models.BankTransaction).where(models.BankTransaction.id == movement_id))
+    mv = res.scalars().first()
+    if not mv:
+        return None
+    mv.reconciled = reconciled
+    await db.commit()
+    await db.refresh(mv)
+    return mv
 
 
 # --- Cash flow -----------------------------------------------------------------
@@ -339,21 +410,53 @@ _PDF_LINE_RE = re.compile(
 )
 
 
+def _ocr_pdf_text(file_bytes: bytes) -> str:
+    """Best-effort OCR para PDFs escaneados (imagen). Requiere tesseract-ocr y poppler-utils
+    instalados en el sistema; si no están disponibles (p.ej. en el runtime nativo de Render
+    sin Dockerfile), lanza una excepción clara en vez de fallar silenciosamente."""
+    import pytesseract
+    from pdf2image import convert_from_bytes
+
+    images = convert_from_bytes(file_bytes)
+    text_parts = []
+    for img in images:
+        text_parts.append(pytesseract.image_to_string(img, lang="spa+eng"))
+    return "\n".join(text_parts)
+
+
 def _read_pdf_text_fallback(file_bytes: bytes):
     import pandas as pd
     import pdfplumber
     from io import BytesIO
 
     records = []
+
+    def _extract(lines):
+        for line in lines:
+            m = _PDF_LINE_RE.match(line.strip())
+            if not m:
+                continue
+            amount = m.group("amount2") or m.group("amount")
+            records.append({"fecha": m.group("date"), "descripcion": m.group("desc").strip(), "monto": amount})
+
+    has_text = False
     with pdfplumber.open(BytesIO(file_bytes)) as pdf:
         for page in pdf.pages:
             text = page.extract_text() or ""
-            for line in text.split("\n"):
-                m = _PDF_LINE_RE.match(line.strip())
-                if not m:
-                    continue
-                amount = m.group("amount2") or m.group("amount")
-                records.append({"fecha": m.group("date"), "descripcion": m.group("desc").strip(), "monto": amount})
+            if text.strip():
+                has_text = True
+            _extract(text.split("\n"))
+
+    if not records and not has_text:
+        try:
+            ocr_text = _ocr_pdf_text(file_bytes)
+            _extract(ocr_text.split("\n"))
+        except Exception as exc:
+            raise ValueError(
+                "El PDF parece ser una imagen escaneada (sin texto seleccionable) y el "
+                "reconocimiento OCR no está disponible en este servidor "
+                f"({exc}). Sube el CSV/Excel del banco o un PDF con texto seleccionable."
+            )
 
     if not records:
         raise ValueError(
@@ -491,3 +594,235 @@ async def import_bank_statement(
         total_rows=len(df), imported=imported, skipped_duplicates=skipped,
         errors=errors, new_balance=bank.balance,
     )
+
+
+# --- Presupuestos (Budget vs. real) ---------------------------------------------
+
+async def get_budgets(db: AsyncSession, period: Optional[str] = None) -> List[models.Budget]:
+    stmt = select(models.Budget).order_by(models.Budget.period.desc(), models.Budget.category)
+    if period:
+        stmt = stmt.where(models.Budget.period == period)
+    res = await db.execute(stmt)
+    return res.scalars().all()
+
+
+async def create_budget(db: AsyncSession, data: schemas.BudgetCreate) -> models.Budget:
+    budget = models.Budget(**data.model_dump())
+    db.add(budget)
+    await db.commit()
+    await db.refresh(budget)
+    return budget
+
+
+async def delete_budget(db: AsyncSession, budget_id: int) -> bool:
+    res = await db.execute(select(models.Budget).where(models.Budget.id == budget_id))
+    budget = res.scalars().first()
+    if not budget:
+        return False
+    await db.delete(budget)
+    await db.commit()
+    return True
+
+
+async def get_budget_comparison(db: AsyncSession, period: str) -> List[schemas.BudgetComparisonItem]:
+    budgets = await get_budgets(db, period=period)
+    year, month = (int(p) for p in period.split("-"))
+    res = await db.execute(
+        select(models.Transaction.category, models.Transaction.type, func.coalesce(func.sum(models.Transaction.amount), 0.0))
+        .where(func.extract("year", models.Transaction.created_at) == year, func.extract("month", models.Transaction.created_at) == month)
+        .group_by(models.Transaction.category, models.Transaction.type)
+    )
+    actuals = {(cat or "sin categoría", ttype): float(total or 0.0) for cat, ttype, total in res.all()}
+
+    out = []
+    for b in budgets:
+        actual = actuals.get((b.category, b.type), 0.0)
+        variance = _r(b.amount - actual) if b.type == "expense" else _r(actual - b.amount)
+        percent_used = _r((actual / b.amount * 100) if b.amount else 0.0)
+        out.append(schemas.BudgetComparisonItem(
+            category=b.category, type=b.type, period=period,
+            budgeted=_r(b.amount), actual=_r(actual), variance=variance, percent_used=percent_used,
+        ))
+    return out
+
+
+# --- Transacciones recurrentes --------------------------------------------------
+
+async def get_recurring_transactions(db: AsyncSession) -> List[models.RecurringTransaction]:
+    res = await db.execute(select(models.RecurringTransaction).order_by(models.RecurringTransaction.next_run_date))
+    return res.scalars().all()
+
+
+async def create_recurring_transaction(db: AsyncSession, data: schemas.RecurringTransactionCreate) -> models.RecurringTransaction:
+    rt = models.RecurringTransaction(**data.model_dump())
+    db.add(rt)
+    await db.commit()
+    await db.refresh(rt)
+    return rt
+
+
+async def update_recurring_transaction(db: AsyncSession, rt_id: int, data: schemas.RecurringTransactionUpdate) -> Optional[models.RecurringTransaction]:
+    res = await db.execute(select(models.RecurringTransaction).where(models.RecurringTransaction.id == rt_id))
+    rt = res.scalars().first()
+    if not rt:
+        return None
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(rt, field, value)
+    await db.commit()
+    await db.refresh(rt)
+    return rt
+
+
+async def delete_recurring_transaction(db: AsyncSession, rt_id: int) -> bool:
+    res = await db.execute(select(models.RecurringTransaction).where(models.RecurringTransaction.id == rt_id))
+    rt = res.scalars().first()
+    if not rt:
+        return False
+    await db.delete(rt)
+    await db.commit()
+    return True
+
+
+def _advance_next_run(current: datetime, frequency: str) -> datetime:
+    if frequency == "weekly":
+        days = 7
+    else:
+        days = 30
+    from datetime import timedelta
+    return current + timedelta(days=days)
+
+
+async def process_due_recurring_transactions(db: AsyncSession) -> int:
+    now = datetime.now(timezone.utc)
+    res = await db.execute(
+        select(models.RecurringTransaction).where(
+            models.RecurringTransaction.is_active == True,  # noqa: E712
+            models.RecurringTransaction.next_run_date <= now,
+        )
+    )
+    due = res.scalars().all()
+    created = 0
+    for rt in due:
+        db.add(models.Transaction(
+            type=rt.type, amount=rt.amount, category=rt.category,
+            description=f"{rt.description or ''} (recurrente)".strip(),
+            reference=f"recurring:{rt.id}",
+        ))
+        next_run = rt.next_run_date
+        while next_run <= now:
+            next_run = _advance_next_run(next_run, rt.frequency)
+        rt.next_run_date = next_run
+        created += 1
+    if created:
+        await db.commit()
+    return created
+
+
+# --- Reportes P&L y comparativo de periodos -------------------------------------
+
+async def get_pnl_report(db: AsyncSession, period_start: datetime, period_end: datetime) -> schemas.PnLReport:
+    res = await db.execute(
+        select(models.Transaction.category, models.Transaction.type, func.coalesce(func.sum(models.Transaction.amount), 0.0))
+        .where(models.Transaction.created_at >= period_start, models.Transaction.created_at <= period_end)
+        .group_by(models.Transaction.category, models.Transaction.type)
+    )
+    income_by_cat = []
+    expenses_by_cat = []
+    total_income = 0.0
+    total_expenses = 0.0
+    for cat, ttype, total in res.all():
+        amount = _r(total)
+        if ttype == "income":
+            total_income += amount
+            income_by_cat.append(schemas.PnLCategory(category=cat or "sin categoría", amount=amount))
+        else:
+            total_expenses += amount
+            expenses_by_cat.append(schemas.PnLCategory(category=cat or "sin categoría", amount=amount))
+
+    return schemas.PnLReport(
+        period_start=period_start, period_end=period_end,
+        total_income=_r(total_income), total_expenses=_r(total_expenses),
+        net_profit=_r(total_income - total_expenses),
+        income_by_category=income_by_cat, expenses_by_category=expenses_by_cat,
+    )
+
+
+def _pct_change(curr: float, prev: float) -> Optional[float]:
+    if prev == 0:
+        return None
+    return _r((curr - prev) / abs(prev) * 100)
+
+
+async def get_period_comparison(db: AsyncSession, period_start: datetime, period_end: datetime) -> schemas.PeriodComparison:
+    from datetime import timedelta
+    duration = period_end - period_start
+    prev_end = period_start - timedelta(seconds=1)
+    prev_start = prev_end - duration
+
+    current = await get_pnl_report(db, period_start, period_end)
+    previous = await get_pnl_report(db, prev_start, prev_end)
+
+    return schemas.PeriodComparison(
+        current=current, previous=previous,
+        income_change_pct=_pct_change(current.total_income, previous.total_income),
+        expenses_change_pct=_pct_change(current.total_expenses, previous.total_expenses),
+        net_change_pct=_pct_change(current.net_profit, previous.net_profit),
+    )
+
+
+async def get_finance_audit_logs(db: AsyncSession, skip: int = 0, limit: int = 100):
+    from app.modules.core_config.service import get_audit_logs
+    return await get_audit_logs(db, skip=skip, limit=limit, module="finance")
+
+
+def generate_pnl_pdf(report: schemas.PnLReport) -> bytes:
+    from io import BytesIO
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    width, height = letter
+    y = height - 50
+
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(40, y, "Estado de Resultados (P&L)")
+    y -= 25
+    c.setFont("Helvetica", 10)
+    c.drawString(40, y, f"Periodo: {report.period_start.strftime('%Y-%m-%d')} a {report.period_end.strftime('%Y-%m-%d')}")
+    y -= 30
+
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(40, y, f"Ingresos totales: ${report.total_income:,.2f}")
+    y -= 18
+    c.drawString(40, y, f"Gastos totales: ${report.total_expenses:,.2f}")
+    y -= 18
+    c.drawString(40, y, f"Utilidad neta: ${report.net_profit:,.2f}")
+    y -= 30
+
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, y, "Ingresos por categoría")
+    y -= 16
+    c.setFont("Helvetica", 10)
+    for item in report.income_by_category:
+        c.drawString(50, y, f"{item.category}: ${item.amount:,.2f}")
+        y -= 14
+        if y < 60:
+            c.showPage()
+            y = height - 50
+
+    y -= 10
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, y, "Gastos por categoría")
+    y -= 16
+    c.setFont("Helvetica", 10)
+    for item in report.expenses_by_category:
+        c.drawString(50, y, f"{item.category}: ${item.amount:,.2f}")
+        y -= 14
+        if y < 60:
+            c.showPage()
+            y = height - 50
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()
