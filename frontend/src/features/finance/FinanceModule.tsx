@@ -821,7 +821,7 @@ function TransactionFormModal({ t, tx, onClose, onSave }: any) {
   const isIncome = form.type === "income";
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ width: "100%", maxWidth: 460, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
+      <div style={{ width: "100%", maxWidth: 460, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ background: (isIncome ? t.good : t.bad) + "22", color: isIncome ? t.good : t.bad, borderRadius: 8, padding: 8, display: "flex" }}>
@@ -831,7 +831,7 @@ function TransactionFormModal({ t, tx, onClose, onSave }: any) {
           </div>
           <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
         </div>
-        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
           <div style={{ display: "flex", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 4, gap: 4 }}>
             {[{ v: "income", label: "Ingreso", color: t.good }, { v: "expense", label: "Egreso", color: t.bad }].map(opt => (
               <button key={opt.v} onClick={() => setForm(f => ({ ...f, type: opt.v }))} style={{ flex: 1, padding: "9px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13, background: form.type === opt.v ? opt.color + "22" : "transparent", color: form.type === opt.v ? opt.color : t.textLo, transition: "all .15s" }}>
@@ -889,12 +889,12 @@ function PayDebtModal({ t, item, kind, onClose, onSave }: any) {
   };
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
+      <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{kind === "cxc" ? "Registrar pago de cliente" : "Pagar a proveedor"}</h2>
           <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
         </div>
-        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
           <div style={{ fontSize: 13, color: t.textMid }}>{item.name} · {item.reference}</div>
           <div style={{ fontSize: 13, color: t.textLo }}>Saldo pendiente: <b style={{ color }}>{mxn(item.balance)}</b></div>
           <div style={{ display: "flex", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 4, gap: 4 }}>
@@ -944,12 +944,12 @@ function BankFormModal({ t, onClose, onSave }: any) {
   const handleSave = async () => { if (!form.name) return; setSaving(true); try { await onSave({ ...form, balance: parseFloat(form.balance) || 0 }); } finally { setSaving(false); } };
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
+      <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>Agregar cuenta bancaria</h2>
           <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
         </div>
-        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
           <div><label style={label}>Nombre de la cuenta *</label><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Cuenta principal" style={inp} /></div>
           <div><label style={label}>Banco</label><input value={form.bank} onChange={e => setForm(f => ({ ...f, bank: e.target.value }))} placeholder="BBVA, Santander…" style={inp} /></div>
           <div><label style={label}>Número de cuenta</label><input value={form.account_number} onChange={e => setForm(f => ({ ...f, account_number: e.target.value }))} placeholder="****4821" style={inp} /></div>
@@ -1413,12 +1413,12 @@ function TransferModal({ t, from, banks, onClose, onSave }: any) {
   };
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
+      <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}><ArrowRightLeft size={18} /> Transferir</h2>
           <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
         </div>
-        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
           <div style={{ fontSize: 13, color: t.textLo }}>Desde: <b style={{ color: t.textHi }}>{from.name}</b> ({mxn(from.balance)})</div>
           <div><label style={label}>Cuenta destino *</label>
             <select value={toId} onChange={e => setToId(Number(e.target.value))} style={{ ...inp, cursor: "pointer" }}>
