@@ -913,6 +913,66 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
   );
 }
 
+/* ============================ Notification Bell ============================ */
+function NotificationBell({ t, lang, onNavigate }) {
+  const [open, setOpen] = useState(false);
+  const [alerts, setAlerts] = useState([]);
+
+  useEffect(() => {
+    let active = true;
+    inventoryService.getReorderAlerts()
+      .then((data) => { if (active) setAlerts(data || []); })
+      .catch(() => { if (active) setAlerts([]); });
+    const interval = setInterval(() => {
+      inventoryService.getReorderAlerts().then((data) => { if (active) setAlerts(data || []); }).catch(() => {});
+    }, 60000);
+    return () => { active = false; clearInterval(interval); };
+  }, []);
+
+  const count = alerts.length;
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button onClick={() => setOpen((v) => !v)} style={iconBtn(t)}>
+        <Bell size={18} />
+        {count > 0 && (
+          <span style={{ position: "absolute", top: 4, right: 4, minWidth: 15, height: 15, borderRadius: 999, background: t.bad, color: "#fff", fontSize: 9.5, fontWeight: 700, display: "grid", placeItems: "center", padding: "0 2px" }}>
+            {count > 9 ? "9+" : count}
+          </span>
+        )}
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
+          <div style={{ position: "absolute", top: 44, right: 0, width: "min(360px, 90vw)", maxHeight: 420, overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 6, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 6px" }}>
+              {lang === "es" ? "AVISOS DE INVENTARIO" : "INVENTORY ALERTS"}
+            </div>
+            {count === 0 ? (
+              <div style={{ padding: 16, fontSize: 13, color: t.textLo, textAlign: "center" }}>
+                {lang === "es" ? "Sin avisos pendientes" : "No pending alerts"}
+              </div>
+            ) : alerts.map((a) => (
+              <button key={`${a.variant_id}-${a.warehouse_id}`} onClick={() => { onNavigate("inventario", a.product_name); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
+                <span style={{ marginTop: 3, width: 8, height: 8, borderRadius: 999, background: a.level === "red" ? t.bad : t.warn, flex: "0 0 auto" }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.product_name}</div>
+                  <div style={{ fontSize: 11, color: t.textLo }}>
+                    {a.available <= 0
+                      ? (lang === "es" ? "Agotado" : "Out of stock")
+                      : (lang === "es" ? `Stock bajo: ${a.available} disponibles` : `Low stock: ${a.available} available`)}
+                    {" · "}{a.warehouse_name}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ============================ Topbar ============================ */
 function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMenuClick, onNavigate }) {
   return (
@@ -928,7 +988,7 @@ function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMe
           </button>
         )}
         <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title="Tema / Theme" style={iconBtn(t)}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
-        {!isMobile && <button style={iconBtn(t)}><Bell size={18} /><span style={{ position: "absolute", top: 8, right: 8, width: 7, height: 7, borderRadius: 999, background: t.nova }} /></button>}
+        {!isMobile && <NotificationBell t={t} lang={lang} onNavigate={onNavigate} />}
         <div style={{ width: 1, height: 26, background: t.border, margin: "0 4px" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <span style={{ width: 32, height: 32, borderRadius: 999, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: 13, flex: "0 0 auto" }}>ER</span>
