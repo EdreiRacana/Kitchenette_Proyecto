@@ -162,9 +162,10 @@ export const financeService = {
     getBankTransactions: async (id: number) => (await api.get<BankTransaction[]>(`/finance/banks/${id}/transactions`)).data,
     createBankTransaction: async (id: number, data: any) => (await api.post<BankAccount>(`/finance/banks/${id}/transactions`, data)).data,
     transferBank: async (id: number, data: any) => (await api.post<BankAccount>(`/finance/banks/${id}/transfer`, data)).data,
-    importBankStatement: async (id: number, file: File) => {
+    importBankStatement: async (id: number, file: File, password?: string) => {
         const form = new FormData();
         form.append('file', file);
+        if (password) form.append('password', password);
         return (await api.post<BankImportResult>(`/finance/banks/${id}/import`, form, {
             headers: { 'Content-Type': 'multipart/form-data' },
         })).data;

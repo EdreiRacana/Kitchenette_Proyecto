@@ -1,7 +1,7 @@
 import os
 import shutil
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response
 from typing import List, Annotated, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
@@ -164,11 +164,19 @@ async def transfer_bank(bank_id: int, data: schemas.BankTransferCreate, db: DB, 
 
 
 @router.post("/banks/{bank_id}/import", response_model=schemas.BankImportResult)
-async def import_bank_statement(bank_id: int, db: DB, current_user: CurrentUser, file: UploadFile = File(...)):
+async def import_bank_statement(
+    bank_id: int,
+    db: DB,
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+    password: Optional[str] = Form(None),
+):
     content = await file.read()
     try:
-        result = await service.import_bank_statement(db, bank_id, content, file.filename)
+        result = await service.import_bank_statement(db, bank_id, content, file.filename, password)
     except ValueError as e:
+        if str(e) == "PDF_PASSWORD_REQUIRED":
+            raise HTTPException(status_code=422, detail="PDF_PASSWORD_REQUIRED")
         raise HTTPException(status_code=400, detail=str(e))
     if not result:
         raise HTTPException(status_code=404, detail="Cuenta no encontrada")

@@ -424,10 +424,23 @@ def _ocr_pdf_text(file_bytes: bytes) -> str:
     return "\n".join(text_parts)
 
 
-def _read_pdf_text_fallback(file_bytes: bytes):
-    import pandas as pd
+def _open_pdf(file_bytes: bytes, password: Optional[str] = None):
     import pdfplumber
     from io import BytesIO
+
+    try:
+        return pdfplumber.open(BytesIO(file_bytes), password=password or "")
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "password" in msg or "encrypt" in msg:
+            if password:
+                raise ValueError("La contraseña del PDF es incorrecta. Verifica e inténtalo de nuevo.")
+            raise ValueError("PDF_PASSWORD_REQUIRED")
+        raise
+
+
+def _read_pdf_text_fallback(file_bytes: bytes, password: Optional[str] = None):
+    import pandas as pd
 
     records = []
 
@@ -440,7 +453,7 @@ def _read_pdf_text_fallback(file_bytes: bytes):
             records.append({"fecha": m.group("date"), "descripcion": m.group("desc").strip(), "monto": amount})
 
     has_text = False
-    with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+    with _open_pdf(file_bytes, password) as pdf:
         for page in pdf.pages:
             text = page.extract_text() or ""
             if text.strip():
@@ -466,16 +479,14 @@ def _read_pdf_text_fallback(file_bytes: bytes):
     return pd.DataFrame(records)
 
 
-def _read_pdf_table(file_bytes: bytes):
+def _read_pdf_table(file_bytes: bytes, password: Optional[str] = None):
     import pandas as pd
-    import pdfplumber
-    from io import BytesIO
 
     header_keywords = _DATE_COLS + _DESC_COLS + _AMOUNT_COLS + _DEBIT_COLS + _CREDIT_COLS
     rows: list = []
     header: Optional[list] = None
 
-    with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+    with _open_pdf(file_bytes, password) as pdf:
         for page in pdf.pages:
             for table in (page.extract_tables() or []):
                 for raw_row in table:
@@ -488,14 +499,14 @@ def _read_pdf_table(file_bytes: bytes):
                         rows.append(cells)
 
     if header is None or not rows:
-        return _read_pdf_text_fallback(file_bytes)
+        return _read_pdf_text_fallback(file_bytes, password)
 
     width = len(header)
     rows = [r[:width] + [""] * (width - len(r)) for r in rows]
     return pd.DataFrame(rows, columns=header)
 
 
-def _read_bank_table(file_bytes: bytes, filename: str):
+def _read_bank_table(file_bytes: bytes, filename: str, password: Optional[str] = None):
     import pandas as pd
     from io import BytesIO
 
@@ -503,7 +514,7 @@ def _read_bank_table(file_bytes: bytes, filename: str):
     if name.endswith(".csv"):
         df = pd.read_csv(BytesIO(file_bytes), dtype=str, keep_default_na=False)
     elif name.endswith(".pdf"):
-        df = _read_pdf_table(file_bytes)
+        df = _read_pdf_table(file_bytes, password)
     else:
         df = pd.read_excel(BytesIO(file_bytes), dtype=str, keep_default_na=False)
     df.columns = [str(c).strip().lower() for c in df.columns]
@@ -511,14 +522,19 @@ def _read_bank_table(file_bytes: bytes, filename: str):
 
 
 async def import_bank_statement(
-    db: AsyncSession, bank_id: int, file_bytes: bytes, filename: str
+    db: AsyncSession, bank_id: int, file_bytes: bytes, filename: str, password: Optional[str] = None
 ) -> Optional[schemas.BankImportResult]:
     res = await db.execute(select(models.BankAccount).where(models.BankAccount.id == bank_id))
     bank = res.scalars().first()
     if not bank:
         return None
 
-    df = _read_bank_table(file_bytes, filename)
+    try:
+        df = _read_bank_table(file_bytes, filename, password)
+    except ValueError as exc:
+        if str(exc) == "PDF_PASSWORD_REQUIRED":
+            raise ValueError("PDF_PASSWORD_REQUIRED")
+        raise
 
     date_col = _find_col(df.columns, _DATE_COLS)
     desc_col = _find_col(df.columns, _DESC_COLS)

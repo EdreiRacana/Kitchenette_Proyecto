@@ -982,7 +982,18 @@ function BankMovementsModal({ t, bank, demo, onClose, onChanged }: any) {
     setImporting(true);
     setImportMsg(null);
     try {
-      const r = await financeService.importBankStatement(bank.id, file);
+      let r;
+      try {
+        r = await financeService.importBankStatement(bank.id, file);
+      } catch (e: any) {
+        if (e?.response?.data?.detail === "PDF_PASSWORD_REQUIRED") {
+          const password = window.prompt("Este PDF está protegido con contraseña. Ingresa la contraseña del estado de cuenta:") || undefined;
+          if (!password) { setImportMsg("Importación cancelada: se requiere la contraseña del PDF."); return; }
+          r = await financeService.importBankStatement(bank.id, file, password);
+        } else {
+          throw e;
+        }
+      }
       setImportMsg(
         `Importados: ${r.imported} · Duplicados omitidos: ${r.skipped_duplicates}` +
         (r.errors.length ? ` · Filas con error: ${r.errors.length}` : "")
