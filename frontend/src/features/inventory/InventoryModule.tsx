@@ -1866,6 +1866,7 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, onCl
   const [error, setError] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
+  const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState([{ variant_id: "", quantity: "", unit_cost: "" }]);
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
@@ -1881,7 +1882,7 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, onCl
 
   const handleSave = async () => {
     setSaving(true); setError("");
-    try { await onSave({ supplier_id: supplierId, warehouse_id: warehouseId, notes, items }); }
+    try { await onSave({ supplier_id: supplierId, warehouse_id: warehouseId, due_date: dueDate || undefined, notes, items }); }
     catch (err: any) { setError(err?.response?.data?.detail || (lang === "es" ? "Error al crear la orden de compra" : "Error creating purchase order")); }
     finally { setSaving(false); }
   };
@@ -1897,7 +1898,7 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, onCl
           <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
         </div>
         <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16, overflowY: "auto" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
             <div><label style={label}>{lang === "es" ? "Proveedor *" : "Supplier *"}</label>
               <select value={supplierId} onChange={e => setSupplierId(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
                 <option value="">{lang === "es" ? "Seleccionar…" : "Select…"}</option>
@@ -1909,6 +1910,9 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, onCl
                 <option value="">{lang === "es" ? "Seleccionar…" : "Select…"}</option>
                 {warehouses.map((w: any) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
+            </div>
+            <div><label style={label}>{lang === "es" ? "Fecha de vencimiento (pago)" : "Due date (payment)"}</label>
+              <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inp} />
             </div>
           </div>
 
