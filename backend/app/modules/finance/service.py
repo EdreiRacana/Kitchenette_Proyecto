@@ -331,23 +331,91 @@ def _parse_date(v):
         return None
 
 
-async def import_bank_statement(
-    db: AsyncSession, bank_id: int, file_bytes: bytes, filename: str
-) -> Optional[schemas.BankImportResult]:
+import re
+
+_PDF_LINE_RE = re.compile(
+    r"^(?P<date>\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(?P<desc>.+?)\s+"
+    r"(?P<amount>-?\$?[\d,]+\.\d{2})(?:\s+(?P<amount2>-?\$?[\d,]+\.\d{2}))?\s*$"
+)
+
+
+def _read_pdf_text_fallback(file_bytes: bytes):
+    import pandas as pd
+    import pdfplumber
+    from io import BytesIO
+
+    records = []
+    with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            for line in text.split("\n"):
+                m = _PDF_LINE_RE.match(line.strip())
+                if not m:
+                    continue
+                amount = m.group("amount2") or m.group("amount")
+                records.append({"fecha": m.group("date"), "descripcion": m.group("desc").strip(), "monto": amount})
+
+    if not records:
+        raise ValueError(
+            "No se pudieron extraer movimientos del PDF. Verifica que sea un estado de cuenta con "
+            "texto seleccionable (no una imagen escaneada) o sube el CSV/Excel del banco."
+        )
+    return pd.DataFrame(records)
+
+
+def _read_pdf_table(file_bytes: bytes):
+    import pandas as pd
+    import pdfplumber
+    from io import BytesIO
+
+    header_keywords = _DATE_COLS + _DESC_COLS + _AMOUNT_COLS + _DEBIT_COLS + _CREDIT_COLS
+    rows: list = []
+    header: Optional[list] = None
+
+    with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+        for page in pdf.pages:
+            for table in (page.extract_tables() or []):
+                for raw_row in table:
+                    cells = [(c or "").strip() for c in raw_row]
+                    norm = [c.lower() for c in cells]
+                    if header is None and any(any(k in c for k in header_keywords) for c in norm):
+                        header = norm
+                        continue
+                    if header is not None and any(cells):
+                        rows.append(cells)
+
+    if header is None or not rows:
+        return _read_pdf_text_fallback(file_bytes)
+
+    width = len(header)
+    rows = [r[:width] + [""] * (width - len(r)) for r in rows]
+    return pd.DataFrame(rows, columns=header)
+
+
+def _read_bank_table(file_bytes: bytes, filename: str):
     import pandas as pd
     from io import BytesIO
 
+    name = (filename or "").lower()
+    if name.endswith(".csv"):
+        df = pd.read_csv(BytesIO(file_bytes), dtype=str, keep_default_na=False)
+    elif name.endswith(".pdf"):
+        df = _read_pdf_table(file_bytes)
+    else:
+        df = pd.read_excel(BytesIO(file_bytes), dtype=str, keep_default_na=False)
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    return df
+
+
+async def import_bank_statement(
+    db: AsyncSession, bank_id: int, file_bytes: bytes, filename: str
+) -> Optional[schemas.BankImportResult]:
     res = await db.execute(select(models.BankAccount).where(models.BankAccount.id == bank_id))
     bank = res.scalars().first()
     if not bank:
         return None
 
-    name = (filename or "").lower()
-    if name.endswith(".csv"):
-        df = pd.read_csv(BytesIO(file_bytes), dtype=str, keep_default_na=False)
-    else:
-        df = pd.read_excel(BytesIO(file_bytes), dtype=str, keep_default_na=False)
-    df.columns = [str(c).strip().lower() for c in df.columns]
+    df = _read_bank_table(file_bytes, filename)
 
     date_col = _find_col(df.columns, _DATE_COLS)
     desc_col = _find_col(df.columns, _DESC_COLS)

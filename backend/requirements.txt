@@ -20,3 +20,4 @@ pytest-asyncio==0.23.5
 python-dotenv==1.0.1
 pandas==2.2.1
 openpyxl==3.1.2
+pdfplumber==0.11.4

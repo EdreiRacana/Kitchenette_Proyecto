@@ -995,14 +995,14 @@ function BankMovementsModal({ t, bank, demo, onClose, onChanged }: any) {
           <button onClick={handleAdd} disabled={saving || !form.amount} style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: t.nova, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !form.amount ? 0.5 : 1 }}>Agregar</button>
           <button onClick={exportMovs} style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}><Download size={13} /> Descargar</button>
           <input
-            ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" style={{ display: "none" }}
+            ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls,.pdf" style={{ display: "none" }}
             onChange={e => handleImportFile(e.target.files?.[0])}
           />
           <button
             onClick={() => fileInputRef.current?.click()} disabled={importing}
             style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 6, opacity: importing ? 0.6 : 1 }}
           >
-            <Upload size={13} /> {importing ? "Importando…" : "Cargar estado de cuenta (CSV/Excel)"}
+            <Upload size={13} /> {importing ? "Importando…" : "Cargar estado de cuenta (CSV/Excel/PDF)"}
           </button>
         </div>
         {importMsg && (
