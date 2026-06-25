@@ -3,8 +3,9 @@
 // Inspirado en: NetSuite, SAP, Odoo
 // Contrato { t, s } igual que App.tsx
 
-import { useState, useEffect, useCallback } from "react";
-import configService, { type SystemIntegration } from "./service";
+import { useState, useEffect, useCallback, useRef } from "react";
+import api from "../../services/api";
+import configService, { type SystemIntegration, type CompanyProfile } from "./service";
 import {
   Building2, Users, Shield, Receipt, Plug, Workflow, Lock, Settings,
   Plus, Search, Edit2, Trash2, Check, X, Mail, Globe,
@@ -75,7 +76,74 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailMsg, setEmailMsg] = useState("");
 
+  const [companyExists, setCompanyExists] = useState(false);
+  const [companyForm, setCompanyForm] = useState<CompanyProfile>({
+    legal_name: "", tax_id: "", contact_email: "", contact_phone: "", address: "",
+    base_currency: "MXN", timezone: "America/Mexico_City", logo_url: "",
+  });
+  const [companySaving, setCompanySaving] = useState(false);
+  const [companyMsg, setCompanyMsg] = useState("");
+  const [logoUploading, setLogoUploading] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
   const lang = "es";
+
+  const loadCompanyProfile = useCallback(async () => {
+    try {
+      const data = await configService.getCompanyProfile();
+      setCompanyForm({
+        legal_name: data.legal_name || "", tax_id: data.tax_id || "",
+        contact_email: data.contact_email || "", contact_phone: data.contact_phone || "",
+        address: data.address || "", base_currency: data.base_currency || "MXN",
+        timezone: data.timezone || "America/Mexico_City", logo_url: data.logo_url || "",
+      });
+      setCompanyExists(true);
+    } catch { setCompanyExists(false); }
+  }, []);
+
+  useEffect(() => { if (tab === "company") loadCompanyProfile(); }, [tab, loadCompanyProfile]);
+
+  const handleSaveCompanyProfile = async () => {
+    setCompanySaving(true); setCompanyMsg("");
+    try {
+      if (companyExists) await configService.updateCompanyProfile(companyForm);
+      else await configService.createCompanyProfile(companyForm);
+      setCompanyMsg("Datos de la empresa guardados ✓");
+      await loadCompanyProfile();
+    } catch (err: any) {
+      setCompanyMsg(err?.response?.data?.detail || "No se pudo guardar la información de la empresa.");
+    } finally {
+      setCompanySaving(false);
+    }
+  };
+
+  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!companyExists && !companyForm.legal_name) {
+      setCompanyMsg("Primero escribe el nombre de la empresa y guarda, luego sube el logo.");
+      if (logoInputRef.current) logoInputRef.current.value = "";
+      return;
+    }
+    setLogoUploading(true); setCompanyMsg("");
+    try {
+      const fd = new FormData();
+      fd.append("files", file);
+      const { data } = await api.post<string[]>("/media/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      const url = data[0];
+      const nextForm = { ...companyForm, logo_url: url };
+      setCompanyForm(nextForm);
+      if (companyExists) await configService.updateCompanyProfile({ logo_url: url });
+      else await configService.createCompanyProfile(nextForm);
+      setCompanyExists(true);
+      setCompanyMsg("Logo actualizado ✓");
+    } catch (err: any) {
+      setCompanyMsg(err?.response?.data?.detail || "No se pudo subir el logo.");
+    } finally {
+      setLogoUploading(false);
+      if (logoInputRef.current) logoInputRef.current.value = "";
+    }
+  };
 
   const loadEmailIntegration = useCallback(async () => {
     try {
@@ -177,39 +245,30 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
             <div style={card}>
               {sectionTitle(Building2, "Identidad de la empresa", t.nova)}
               <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
-                <div style={{ width: 64, height: 64, borderRadius: 16, background: comp.color + "26", color: comp.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 800 }}>{comp.initials}</div>
+                {companyForm.logo_url
+                  ? <img src={companyForm.logo_url.startsWith("http") ? companyForm.logo_url : `${(import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1").replace(/\/api\/v1\/?$/, "")}${companyForm.logo_url}`} alt="Logo" style={{ width: 64, height: 64, borderRadius: 16, objectFit: "cover", border: `1px solid ${t.border}` }} />
+                  : <div style={{ width: 64, height: 64, borderRadius: 16, background: comp.color + "26", color: comp.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 800 }}>{comp.initials}</div>}
                 <div>
-                  <button style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
-                    <Upload size={14} /> Cambiar logo
+                  <input ref={logoInputRef} type="file" accept="image/png,image/svg+xml,image/jpeg" style={{ display: "none" }} onChange={handleLogoChange} />
+                  <button onClick={() => logoInputRef.current?.click()} disabled={logoUploading} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+                    <Upload size={14} /> {logoUploading ? "Subiendo…" : "Cambiar logo"}
                   </button>
-                  <div style={{ fontSize: 11, color: t.textLo, marginTop: 6 }}>PNG o SVG, máx 2MB</div>
+                  <div style={{ fontSize: 11, color: t.textLo, marginTop: 6 }}>PNG, JPG o SVG, máx 2MB</div>
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div><label style={lbl}>Nombre comercial</label><input defaultValue={comp.name} style={inp} /></div>
-                <div><label style={lbl}>Razón social</label><input defaultValue="Comercializadora del Valle S.A. de C.V." style={inp} /></div>
+                <div><label style={lbl}>Nombre / razón social</label><input value={companyForm.legal_name} onChange={e => setCompanyForm(f => ({ ...f, legal_name: e.target.value }))} style={inp} /></div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div><label style={lbl}>Teléfono</label><input defaultValue="55 1234 5678" style={inp} /></div>
-                  <div><label style={lbl}>Email</label><input defaultValue="contacto@empresa.mx" style={inp} /></div>
+                  <div><label style={lbl}>Teléfono</label><input value={companyForm.contact_phone || ""} onChange={e => setCompanyForm(f => ({ ...f, contact_phone: e.target.value }))} style={inp} /></div>
+                  <div><label style={lbl}>Email de contacto</label><input value={companyForm.contact_email || ""} onChange={e => setCompanyForm(f => ({ ...f, contact_email: e.target.value }))} style={inp} /></div>
                 </div>
               </div>
             </div>
             <div style={card}>
               {sectionTitle(FileText, "Datos fiscales", t.good)}
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div><label style={lbl}>RFC</label><input defaultValue="CVA180921AB2" style={{ ...inp, fontFamily: "monospace" }} /></div>
-                <div><label style={lbl}>Régimen fiscal</label>
-                  <select style={{ ...inp, cursor: "pointer" }}>
-                    <option>601 - General de Ley Personas Morales</option>
-                    <option>612 - Personas Físicas con Actividades Empresariales</option>
-                    <option>626 - Régimen Simplificado de Confianza</option>
-                  </select>
-                </div>
-                <div><label style={lbl}>Dirección fiscal</label><input defaultValue="Av. Reforma 123, Col. Centro" style={inp} /></div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div><label style={lbl}>Código postal</label><input defaultValue="06000" style={inp} /></div>
-                  <div><label style={lbl}>Ciudad</label><input defaultValue="CDMX" style={inp} /></div>
-                </div>
+                <div><label style={lbl}>RFC</label><input value={companyForm.tax_id || ""} onChange={e => setCompanyForm(f => ({ ...f, tax_id: e.target.value }))} style={{ ...inp, fontFamily: "monospace" }} /></div>
+                <div><label style={lbl}>Dirección fiscal</label><input value={companyForm.address || ""} onChange={e => setCompanyForm(f => ({ ...f, address: e.target.value }))} style={inp} /></div>
               </div>
             </div>
           </div>
@@ -218,10 +277,16 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
             <div style={card}>
               {sectionTitle(Globe, "Configuración regional", "#A78BFA")}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div><label style={lbl}>Moneda base</label><select style={{ ...inp, cursor: "pointer" }}><option>MXN - Peso Mexicano</option><option>USD - Dólar</option></select></div>
-                <div><label style={lbl}>Zona horaria</label><select style={{ ...inp, cursor: "pointer" }}><option>(GMT-6) Ciudad de México</option><option>(GMT-7) Tijuana</option></select></div>
-                <div><label style={lbl}>Inicio de año fiscal</label><select style={{ ...inp, cursor: "pointer" }}><option>Enero</option><option>Abril</option><option>Julio</option></select></div>
-                <div><label style={lbl}>Idioma</label><select style={{ ...inp, cursor: "pointer" }}><option>Español</option><option>English</option></select></div>
+                <div><label style={lbl}>Moneda base</label>
+                  <select value={companyForm.base_currency} onChange={e => setCompanyForm(f => ({ ...f, base_currency: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+                    <option value="MXN">MXN - Peso Mexicano</option><option value="USD">USD - Dólar</option>
+                  </select>
+                </div>
+                <div><label style={lbl}>Zona horaria</label>
+                  <select value={companyForm.timezone} onChange={e => setCompanyForm(f => ({ ...f, timezone: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+                    <option value="America/Mexico_City">(GMT-6) Ciudad de México</option><option value="America/Tijuana">(GMT-7) Tijuana</option>
+                  </select>
+                </div>
               </div>
             </div>
             <div style={card}>
@@ -241,9 +306,10 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
             </div>
           </div>
 
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-              <Save size={15} /> Guardar cambios
+          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12 }}>
+            {companyMsg && <span style={{ fontSize: 12, color: companyMsg.includes("✓") ? t.good : t.bad }}>{companyMsg}</span>}
+            <button onClick={handleSaveCompanyProfile} disabled={companySaving || !companyForm.legal_name} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !companyForm.legal_name ? 0.5 : 1 }}>
+              <Save size={15} /> {companySaving ? "Guardando…" : "Guardar cambios"}
             </button>
           </div>
         </div>
