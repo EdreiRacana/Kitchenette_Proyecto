@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from typing import List, Annotated, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
@@ -24,7 +24,7 @@ async def create_transaction(
     db: Annotated[AsyncSession, Depends(deps.get_db)],
     current_user: Annotated[User, Depends(deps.get_current_active_user)],
 ):
-    return await service.create_transaction(db, tx_in)
+    return await service.create_transaction(db, tx_in, user_id=current_user.id)
 
 
 @router.get("/transactions", response_model=List[schemas.TransactionInDB])
@@ -129,6 +129,18 @@ async def transfer_bank(bank_id: int, data: schemas.BankTransferCreate, db: DB, 
     if not bank:
         raise HTTPException(status_code=404, detail="Cuenta no encontrada")
     return bank
+
+
+@router.post("/banks/{bank_id}/import", response_model=schemas.BankImportResult)
+async def import_bank_statement(bank_id: int, db: DB, current_user: CurrentUser, file: UploadFile = File(...)):
+    content = await file.read()
+    try:
+        result = await service.import_bank_statement(db, bank_id, content, file.filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not result:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+    return result
 
 
 # --- Flujo de caja ---

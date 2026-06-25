@@ -13,6 +13,8 @@ class Transaction(Base):
     category = Column(String, nullable=True, index=True)  # sales, payroll, rent, supplies, etc.
     description = Column(Text, nullable=True)
     reference = Column(String, nullable=True)  # e.g. order:12, invoice:A-100
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    attachment_url = Column(Text, nullable=True)  # comprobante adjunto (factura/recibo)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -2,14 +2,14 @@
 // Pestañas: Dashboard · CXC · CXP · Bancos · Transacciones · Flujo de caja
 // Mismo contrato { t, s } que App.tsx — modo demo automático si el backend no responde
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   LayoutDashboard, TrendingUp, TrendingDown, Building2,
   ArrowDownToLine, ArrowUpFromLine, RefreshCw, Plus, Search,
   Download, Info, Check,
   X, DollarSign, CreditCard, BarChart3,
   Clock, CheckCircle, XCircle, AlertCircle, ArrowLeftRight,
-  PiggyBank, Receipt, Edit2, Trash2, ArrowRightLeft,
+  PiggyBank, Receipt, Edit2, Trash2, ArrowRightLeft, Upload,
 } from "lucide-react";
 import { financeService, downloadCSV } from "./service";
 
@@ -919,6 +919,9 @@ function BankMovementsModal({ t, bank, demo, onClose, onChanged }: any) {
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ type: "deposit", amount: "", description: "" });
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const inp: React.CSSProperties = { padding: "9px 11px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, outline: "none" };
 
   const fetchMovs = useCallback(async () => {
@@ -951,6 +954,27 @@ function BankMovementsModal({ t, bank, demo, onClose, onChanged }: any) {
     finally { setSaving(false); }
   };
 
+  const handleImportFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (demo) { alert("Modo demo: no se puede importar sin conexión al backend."); return; }
+    setImporting(true);
+    setImportMsg(null);
+    try {
+      const r = await financeService.importBankStatement(bank.id, file);
+      setImportMsg(
+        `Importados: ${r.imported} · Duplicados omitidos: ${r.skipped_duplicates}` +
+        (r.errors.length ? ` · Filas con error: ${r.errors.length}` : "")
+      );
+      await fetchMovs();
+      await onChanged();
+    } catch (e: any) {
+      setImportMsg(e?.response?.data?.detail || "No se pudo importar el archivo.");
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 560, maxHeight: "85vh", display: "flex", flexDirection: "column", background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
@@ -970,7 +994,20 @@ function BankMovementsModal({ t, bank, demo, onClose, onChanged }: any) {
           <input placeholder="Descripción" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} style={{ ...inp, flex: 1, minWidth: 140 }} />
           <button onClick={handleAdd} disabled={saving || !form.amount} style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: t.nova, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !form.amount ? 0.5 : 1 }}>Agregar</button>
           <button onClick={exportMovs} style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}><Download size={13} /> Descargar</button>
+          <input
+            ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" style={{ display: "none" }}
+            onChange={e => handleImportFile(e.target.files?.[0])}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()} disabled={importing}
+            style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 6, opacity: importing ? 0.6 : 1 }}
+          >
+            <Upload size={13} /> {importing ? "Importando…" : "Cargar estado de cuenta (CSV/Excel)"}
+          </button>
         </div>
+        {importMsg && (
+          <div style={{ padding: "8px 24px", fontSize: 12, color: t.textMid, borderBottom: `1px solid ${t.border}` }}>{importMsg}</div>
+        )}
         <div style={{ overflowY: "auto", flex: 1, padding: "8px 24px 20px" }}>
           {loading ? (
             <div style={{ padding: 24, textAlign: "center", color: t.textLo, fontSize: 13 }}>Cargando…</div>

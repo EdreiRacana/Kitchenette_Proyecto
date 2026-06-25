@@ -25,6 +25,8 @@ class TransactionUpdate(BaseModel):
 
 class TransactionInDB(TransactionBase):
     id: int
+    created_by_id: Optional[int] = None
+    attachment_url: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -109,3 +111,17 @@ class FlowPoint(BaseModel):
     income: float
     expenses: float
     net: float
+
+
+# --- Importación de estados de cuenta ---
+class BankImportRowError(BaseModel):
+    row: int
+    error: str
+
+
+class BankImportResult(BaseModel):
+    total_rows: int
+    imported: int
+    skipped_duplicates: int
+    errors: List[BankImportRowError] = []
+    new_balance: float

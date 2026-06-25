@@ -58,6 +58,14 @@ export interface FlowPoint {
     net: number;
 }
 
+export interface BankImportResult {
+    total_rows: number;
+    imported: number;
+    skipped_duplicates: number;
+    errors: { row: number; error: string }[];
+    new_balance: number;
+}
+
 export const financeService = {
     getDashboard: async () => (await api.get<FinanceDashboard>('/finance/dashboard')).data,
 
@@ -79,6 +87,13 @@ export const financeService = {
     getBankTransactions: async (id: number) => (await api.get<BankTransaction[]>(`/finance/banks/${id}/transactions`)).data,
     createBankTransaction: async (id: number, data: any) => (await api.post<BankAccount>(`/finance/banks/${id}/transactions`, data)).data,
     transferBank: async (id: number, data: any) => (await api.post<BankAccount>(`/finance/banks/${id}/transfer`, data)).data,
+    importBankStatement: async (id: number, file: File) => {
+        const form = new FormData();
+        form.append('file', file);
+        return (await api.post<BankImportResult>(`/finance/banks/${id}/import`, form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        })).data;
+    },
 
     getCashFlow: async (months = 6) => (await api.get<FlowPoint[]>('/finance/cash-flow', { params: { months } })).data,
 };
