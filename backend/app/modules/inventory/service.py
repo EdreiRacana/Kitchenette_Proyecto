@@ -3,6 +3,8 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import datetime, timezone
+from io import BytesIO
+import pandas as pd
 from app.modules.inventory.models import (
     Product, ProductVariant, Warehouse, StockLevel, StockMovement, StockMovementType,
     Supplier, StockLot, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus,
@@ -450,3 +452,217 @@ async def complete_production_order(db: AsyncSession, prod_id: int, user_id: Opt
     await db.commit()
     await db.refresh(prod)
     return prod
+
+
+# --- Carga masiva (Excel/CSV) ---------------------------------------------------
+PRODUCTS_TEMPLATE_COLUMNS = [
+    "sku", "producto", "categoria", "fabricado_interno", "talla", "color", "material",
+    "precio", "costo", "almacen", "stock_inicial", "punto_reorden", "stock_seguridad",
+    "dias_entrega_proveedor",
+]
+
+RECIPES_TEMPLATE_COLUMNS = [
+    "sku_producto_terminado", "nombre_receta", "sku_insumo", "cantidad_insumo",
+    "costo_mano_obra_maquila", "costo_indirectos", "unidades_por_corrida",
+]
+
+def _build_xlsx(columns: List[str], example_rows: List[list], sheet_name: str) -> bytes:
+    df = pd.DataFrame(example_rows, columns=columns)
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    return buffer.getvalue()
+
+def generate_products_template() -> bytes:
+    example = [
+        ["CAM-001-AZ-CH", "Camisa de algodón", "Ropa", "no", "CH", "Azul", "Algodón",
+         350.0, 180.0, "Almacén Principal", 50, 10, 5, 7],
+        ["TEL-ALG-001", "Tela de algodón (insumo)", "Materia prima", "no", "", "", "Algodón",
+         0, 45.0, "Almacén Principal", 500, 100, 50, 15],
+    ]
+    return _build_xlsx(PRODUCTS_TEMPLATE_COLUMNS, example, "productos")
+
+def generate_recipes_template() -> bytes:
+    example = [
+        ["CAM-001-AZ-CH", "Camisa de algodón - receta", "TEL-ALG-001", 1.5, 30.0, 10.0, 1],
+    ]
+    return _build_xlsx(RECIPES_TEMPLATE_COLUMNS, example, "recetas")
+
+def _read_table(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    name = (filename or "").lower()
+    if name.endswith(".csv"):
+        df = pd.read_csv(BytesIO(file_bytes), dtype=str, keep_default_na=False)
+    else:
+        df = pd.read_excel(BytesIO(file_bytes), dtype=str, keep_default_na=False)
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    return df
+
+def _to_float(v, default=None):
+    v = (v or "").strip() if isinstance(v, str) else v
+    if v in (None, ""):
+        return default
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+def _to_int(v, default=None):
+    f = _to_float(v, None)
+    return int(f) if f is not None else default
+
+def _to_bool_si_no(v) -> bool:
+    return str(v).strip().lower() in ("si", "sí", "true", "1", "yes")
+
+async def bulk_import_products(db: AsyncSession, file_bytes: bytes, filename: str, user_id: Optional[int] = None) -> schemas.BulkImportResult:
+    df = _read_table(file_bytes, filename)
+    missing_cols = [c for c in ("sku", "producto", "precio") if c not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Faltan columnas requeridas en el archivo: {', '.join(missing_cols)}")
+
+    products_by_name: dict[str, Product] = {}
+    result_warehouses: dict[str, Warehouse] = {}
+    created, updated = 0, 0
+    errors: List[schemas.BulkImportRowError] = []
+
+    for idx, row in df.iterrows():
+        row_num = idx + 2  # +1 por encabezado, +1 porque idx es 0-based
+        try:
+            sku = str(row.get("sku", "")).strip()
+            product_name = str(row.get("producto", "")).strip()
+            if not sku or not product_name:
+                errors.append(schemas.BulkImportRowError(row=row_num, message="sku y producto son obligatorios"))
+                continue
+            price = _to_float(row.get("precio"))
+            if price is None:
+                errors.append(schemas.BulkImportRowError(row=row_num, message="precio es obligatorio y debe ser numérico"))
+                continue
+
+            product = products_by_name.get(product_name.lower())
+            if not product:
+                result = await db.execute(select(Product).where(Product.name == product_name))
+                product = result.scalars().first()
+                if not product:
+                    product = Product(
+                        name=product_name,
+                        category=str(row.get("categoria", "")).strip() or None,
+                        is_manufactured=_to_bool_si_no(row.get("fabricado_interno", "no")),
+                    )
+                    db.add(product)
+                    await db.flush()
+                products_by_name[product_name.lower()] = product
+
+            result = await db.execute(select(ProductVariant).where(ProductVariant.sku == sku))
+            variant = result.scalars().first()
+            cost_price = _to_float(row.get("costo"))
+            if variant:
+                variant.price = price
+                if cost_price is not None:
+                    variant.cost_price = cost_price
+                variant.size = str(row.get("talla", "")).strip() or None
+                variant.color = str(row.get("color", "")).strip() or None
+                variant.material = str(row.get("material", "")).strip() or None
+                variant.reorder_point = _to_int(row.get("punto_reorden"))
+                variant.safety_stock = _to_int(row.get("stock_seguridad"))
+                variant.lead_time_days = _to_int(row.get("dias_entrega_proveedor"))
+                updated += 1
+            else:
+                variant = ProductVariant(
+                    product_id=product.id, sku=sku, price=price, cost_price=cost_price,
+                    size=str(row.get("talla", "")).strip() or None,
+                    color=str(row.get("color", "")).strip() or None,
+                    material=str(row.get("material", "")).strip() or None,
+                    reorder_point=_to_int(row.get("punto_reorden")),
+                    safety_stock=_to_int(row.get("stock_seguridad")),
+                    lead_time_days=_to_int(row.get("dias_entrega_proveedor")),
+                )
+                db.add(variant)
+                await db.flush()
+                created += 1
+
+            stock_inicial = _to_int(row.get("stock_inicial"))
+            almacen_name = str(row.get("almacen", "")).strip()
+            if stock_inicial and stock_inicial > 0 and almacen_name:
+                warehouse = result_warehouses.get(almacen_name.lower())
+                if not warehouse:
+                    result = await db.execute(select(Warehouse).where(Warehouse.name == almacen_name))
+                    warehouse = result.scalars().first()
+                    if not warehouse:
+                        warehouse = Warehouse(name=almacen_name)
+                        db.add(warehouse)
+                        await db.flush()
+                    result_warehouses[almacen_name.lower()] = warehouse
+                movement_in = schemas.StockMovementCreate(
+                    variant_id=variant.id, warehouse_id=warehouse.id, quantity=stock_inicial,
+                    movement_type=StockMovementType.IN.value, unit_cost=cost_price,
+                    reference="CARGA-MASIVA", notes="Stock inicial por carga masiva de inventario",
+                )
+                await adjust_stock(db, movement_in, user_id=user_id)
+        except Exception as e:
+            errors.append(schemas.BulkImportRowError(row=row_num, message=str(e)))
+
+    await db.commit()
+    return schemas.BulkImportResult(total_rows=len(df), created=created, updated=updated, errors=errors)
+
+async def bulk_import_recipes(db: AsyncSession, file_bytes: bytes, filename: str) -> schemas.BulkImportResult:
+    df = _read_table(file_bytes, filename)
+    missing_cols = [c for c in ("sku_producto_terminado", "sku_insumo", "cantidad_insumo") if c not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Faltan columnas requeridas en el archivo: {', '.join(missing_cols)}")
+
+    grouped: dict[str, dict] = {}
+    errors: List[schemas.BulkImportRowError] = []
+
+    for idx, row in df.iterrows():
+        row_num = idx + 2
+        try:
+            output_sku = str(row.get("sku_producto_terminado", "")).strip()
+            input_sku = str(row.get("sku_insumo", "")).strip()
+            quantity = _to_float(row.get("cantidad_insumo"))
+            if not output_sku or not input_sku or quantity is None:
+                errors.append(schemas.BulkImportRowError(
+                    row=row_num, message="sku_producto_terminado, sku_insumo y cantidad_insumo son obligatorios"))
+                continue
+
+            result = await db.execute(select(ProductVariant).where(ProductVariant.sku == output_sku))
+            output_variant = result.scalars().first()
+            if not output_variant:
+                errors.append(schemas.BulkImportRowError(row=row_num, message=f"SKU de producto terminado no encontrado: {output_sku}"))
+                continue
+            result = await db.execute(select(ProductVariant).where(ProductVariant.sku == input_sku))
+            input_variant = result.scalars().first()
+            if not input_variant:
+                errors.append(schemas.BulkImportRowError(row=row_num, message=f"SKU de insumo no encontrado: {input_sku}"))
+                continue
+
+            entry = grouped.setdefault(output_sku, {
+                "output_variant_id": output_variant.id,
+                "name": str(row.get("nombre_receta", "")).strip() or None,
+                "labor_cost": _to_float(row.get("costo_mano_obra_maquila"), 0) or 0,
+                "overhead_cost": _to_float(row.get("costo_indirectos"), 0) or 0,
+                "yield_quantity": _to_int(row.get("unidades_por_corrida"), 1) or 1,
+                "items": [],
+            })
+            entry["items"].append(schemas.RecipeItemCreate(input_variant_id=input_variant.id, quantity=quantity))
+        except Exception as e:
+            errors.append(schemas.BulkImportRowError(row=row_num, message=str(e)))
+
+    created, updated = 0, 0
+    for output_sku, entry in grouped.items():
+        try:
+            result = await db.execute(select(Recipe).where(Recipe.output_variant_id == entry["output_variant_id"]))
+            existing = result.scalars().first()
+            recipe_in = schemas.RecipeCreate(
+                output_variant_id=entry["output_variant_id"], name=entry["name"],
+                labor_cost=entry["labor_cost"], overhead_cost=entry["overhead_cost"],
+                yield_quantity=entry["yield_quantity"], items=entry["items"],
+            )
+            if existing:
+                await update_recipe(db, existing.id, schemas.RecipeUpdate(**recipe_in.model_dump(), is_active=True))
+                updated += 1
+            else:
+                await create_recipe(db, recipe_in)
+                created += 1
+        except Exception as e:
+            errors.append(schemas.BulkImportRowError(row=0, message=f"Receta para {output_sku}: {e}"))
+
+    return schemas.BulkImportResult(total_rows=len(df), created=created, updated=updated, errors=errors)

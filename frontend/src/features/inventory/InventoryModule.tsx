@@ -18,6 +18,7 @@ import {
   type Product, type Variant, type Warehouse as WarehouseT, type Movement,
   type Supplier, type ReorderAlert, type PurchaseOrder, type PurchaseOrderItem,
   type Recipe, type RecipeItem, type RecipeCostBreakdown, type ProductionOrder,
+  type BulkImportResult,
 } from "./service";
 
 type Warehouse_ = WarehouseT;
@@ -94,7 +95,7 @@ const exportMovementsCSV = (movements: Movement[]) => {
   downloadCSV(`movimientos_${new Date().toISOString().slice(0, 10)}.csv`, [header, ...rows]);
 };
 
-type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "adjustments" | "purchase-orders" | "recipes" | "production";
+type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "adjustments" | "purchase-orders" | "recipes" | "production" | "import";
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any; initialQuery?: string }) {
@@ -125,6 +126,16 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
   const [prodOrderForm, setProdOrderForm] = useState(false);
   const [recipeCostView, setRecipeCostView] = useState<{ recipe: Recipe; cost: RecipeCostBreakdown } | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+
+  // Carga masiva
+  const [productsImportBusy, setProductsImportBusy] = useState(false);
+  const [productsImportResult, setProductsImportResult] = useState<BulkImportResult | null>(null);
+  const [productsImportError, setProductsImportError] = useState<string | null>(null);
+  const [productsDragging, setProductsDragging] = useState(false);
+  const [recipesImportBusy, setRecipesImportBusy] = useState(false);
+  const [recipesImportResult, setRecipesImportResult] = useState<BulkImportResult | null>(null);
+  const [recipesImportError, setRecipesImportError] = useState<string | null>(null);
+  const [recipesDragging, setRecipesDragging] = useState(false);
 
   // Filters
   const [q, setQ] = useState(initialQuery || "");
@@ -269,6 +280,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
     { id: "purchase-orders", label: lang === "es" ? "Compras" : "Purchase orders", icon: ClipboardList },
     { id: "recipes", label: lang === "es" ? "Construcción" : "Recipes / BOM", icon: FlaskConical },
     { id: "production", label: lang === "es" ? "Producción" : "Production", icon: Factory },
+    { id: "import", label: lang === "es" ? "Carga masiva" : "Bulk import", icon: Upload },
   ] as const;
 
   return (
@@ -986,6 +998,66 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
         </div>
       )}
 
+      {/* ── TAB: Carga masiva ── */}
+      {tab === "import" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <BulkImportCard
+            t={t} lang={lang}
+            title={lang === "es" ? "Productos e insumos" : "Products & raw materials"}
+            description={lang === "es"
+              ? "Descarga la plantilla, llénala con tus productos terminados e insumos (materia prima) y súbela aquí. Ideal para catálogos grandes (miles de SKUs)."
+              : "Download the template, fill it with your finished products and raw materials, and upload it here. Ideal for large catalogs (thousands of SKUs)."}
+            onDownloadTemplate={() => inventoryService.downloadProductsTemplate()}
+            busy={productsImportBusy}
+            dragging={productsDragging}
+            setDragging={setProductsDragging}
+            result={productsImportResult}
+            error={productsImportError}
+            onFile={async (file) => {
+              setProductsImportBusy(true);
+              setProductsImportError(null);
+              setProductsImportResult(null);
+              try {
+                const res = await inventoryService.uploadProductsBulkImport(file);
+                setProductsImportResult(res);
+                await load();
+              } catch (err: any) {
+                setProductsImportError(err?.response?.data?.detail || (lang === "es" ? "Error al procesar el archivo" : "Error processing file"));
+              } finally {
+                setProductsImportBusy(false);
+              }
+            }}
+          />
+          <BulkImportCard
+            t={t} lang={lang}
+            title={lang === "es" ? "Recetas / BOM (incluye costo de maquila)" : "Recipes / BOM (includes tooling cost)"}
+            description={lang === "es"
+              ? "Vincula insumos a un producto fabricado, con cantidades, mano de obra/maquila y gastos indirectos. Los SKU deben existir previamente (cárgalos primero con la plantilla de productos)."
+              : "Link raw materials to a manufactured product, with quantities, labor/tooling cost and overhead. SKUs must already exist (load them first with the products template)."}
+            onDownloadTemplate={() => inventoryService.downloadRecipesTemplate()}
+            busy={recipesImportBusy}
+            dragging={recipesDragging}
+            setDragging={setRecipesDragging}
+            result={recipesImportResult}
+            error={recipesImportError}
+            onFile={async (file) => {
+              setRecipesImportBusy(true);
+              setRecipesImportError(null);
+              setRecipesImportResult(null);
+              try {
+                const res = await inventoryService.uploadRecipesBulkImport(file);
+                setRecipesImportResult(res);
+                await load();
+              } catch (err: any) {
+                setRecipesImportError(err?.response?.data?.detail || (lang === "es" ? "Error al procesar el archivo" : "Error processing file"));
+              } finally {
+                setRecipesImportBusy(false);
+              }
+            }}
+          />
+        </div>
+      )}
+
       {/* ── MODAL: Product Detail (drawer sólido) ── */}
       {selectedProduct && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }} onClick={() => setSelectedProduct(null)}>
@@ -1251,6 +1323,107 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       )}
 
       <style>{`@keyframes shimmer{0%{opacity:.4}50%{opacity:.8}100%{opacity:.4}}`}</style>
+    </div>
+  );
+}
+
+// ── Bulk Import Card (dropzone + plantilla + resultados) ──────────────────
+function BulkImportCard({ t, lang, title, description, onDownloadTemplate, busy, dragging, setDragging, result, error, onFile }: {
+  t: any; lang: string; title: string; description: string;
+  onDownloadTemplate: () => Promise<void> | void;
+  busy: boolean; dragging: boolean; setDragging: (v: boolean) => void;
+  result: BulkImportResult | null; error: string | null;
+  onFile: (file: File) => void;
+}) {
+  const inputId = useMemo(() => `bulk-import-${Math.random().toString(36).slice(2)}`, []);
+  return (
+    <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+      <div>
+        <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700, color: t.textHi }}>{title}</h3>
+        <p style={{ margin: "6px 0 0", fontSize: 13, color: t.textLo, lineHeight: 1.6 }}>{description}</p>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <button onClick={() => onDownloadTemplate()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+          <Download size={15} /> {lang === "es" ? "Descargar plantilla" : "Download template"}
+        </button>
+      </div>
+
+      <label
+        htmlFor={inputId}
+        onDragOver={e => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={e => {
+          e.preventDefault();
+          setDragging(false);
+          const file = e.dataTransfer.files?.[0];
+          if (file) onFile(file);
+        }}
+        style={{
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8,
+          padding: "32px 16px", borderRadius: 12, cursor: busy ? "wait" : "pointer",
+          border: `2px dashed ${dragging ? t.nova : t.border}`,
+          background: dragging ? t.nova + "0d" : t.panel2,
+          transition: "all .15s",
+        }}
+      >
+        <input
+          id={inputId} type="file" accept=".xlsx,.xls,.csv" disabled={busy}
+          style={{ display: "none" }}
+          onChange={e => { const file = e.target.files?.[0]; if (file) onFile(file); e.target.value = ""; }}
+        />
+        {busy ? (
+          <>
+            <RefreshCw size={26} className="spin" style={{ color: t.nova }} />
+            <span style={{ fontSize: 13, color: t.textMid }}>{lang === "es" ? "Procesando archivo…" : "Processing file…"}</span>
+          </>
+        ) : (
+          <>
+            <FileSpreadsheet size={26} style={{ color: t.textLo }} />
+            <span style={{ fontSize: 13.5, color: t.textHi, fontWeight: 600 }}>
+              {lang === "es" ? "Arrastra tu archivo aquí o haz clic para elegirlo" : "Drag your file here or click to choose it"}
+            </span>
+            <span style={{ fontSize: 12, color: t.textLo }}>.xlsx, .xls, .csv</span>
+          </>
+        )}
+      </label>
+
+      {error && (
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: t.bad + "18", border: `1px solid ${t.bad}44`, color: t.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
+          <AlertTriangle size={16} style={{ marginTop: 1, flexShrink: 0 }} /> {error}
+        </div>
+      )}
+
+      {result && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: t.good, background: t.good + "18", padding: "5px 12px", borderRadius: 20 }}>
+              <Check size={13} style={{ verticalAlign: -2, marginRight: 4 }} />
+              {result.created} {lang === "es" ? "creados" : "created"}
+            </span>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: t.nova, background: t.nova + "18", padding: "5px 12px", borderRadius: 20 }}>
+              {result.updated} {lang === "es" ? "actualizados" : "updated"}
+            </span>
+            {result.errors.length > 0 && (
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: t.bad, background: t.bad + "18", padding: "5px 12px", borderRadius: 20 }}>
+                {result.errors.length} {lang === "es" ? "con error" : "with errors"}
+              </span>
+            )}
+            <span style={{ fontSize: 12.5, color: t.textLo, padding: "5px 0" }}>
+              {result.total_rows} {lang === "es" ? "filas procesadas" : "rows processed"}
+            </span>
+          </div>
+          {result.errors.length > 0 && (
+            <div style={{ maxHeight: 200, overflowY: "auto", background: t.panel3, borderRadius: 10, padding: "10px 14px" }}>
+              {result.errors.map((e, i) => (
+                <div key={i} style={{ fontSize: 12.5, color: t.textMid, padding: "4px 0", borderBottom: i < result.errors.length - 1 ? `1px solid ${t.border}` : "none" }}>
+                  <strong style={{ color: t.bad }}>{lang === "es" ? "Fila" : "Row"} {e.row}:</strong> {e.message}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

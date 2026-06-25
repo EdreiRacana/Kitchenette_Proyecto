@@ -289,3 +289,14 @@ class ProductionOrderInDB(BaseModel):
 
     class Config:
         from_attributes = True
+
+# --- Bulk import (productos / insumos y recetas vía Excel/CSV) ---
+class BulkImportRowError(BaseModel):
+    row: int
+    message: str
+
+class BulkImportResult(BaseModel):
+    total_rows: int
+    created: int
+    updated: int
+    errors: List[BulkImportRowError] = []

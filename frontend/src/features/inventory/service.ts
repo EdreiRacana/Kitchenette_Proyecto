@@ -137,6 +137,25 @@ export interface ProductionOrder {
     completed_at?: string;
 }
 
+export interface BulkImportRowError { row: number; message: string; }
+export interface BulkImportResult {
+    total_rows: number;
+    created: number;
+    updated: number;
+    errors: BulkImportRowError[];
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+}
+
 export const inventoryService = {
     // Products
     getProducts: async () => (await api.get<Product[]>('/inventory/products')).data,
@@ -182,4 +201,30 @@ export const inventoryService = {
     getProductionOrders: async () => (await api.get<ProductionOrder[]>('/inventory/production-orders')).data,
     createProductionOrder: async (data: any) => (await api.post('/inventory/production-orders', data)).data,
     completeProductionOrder: async (id: number) => (await api.post(`/inventory/production-orders/${id}/complete`)).data,
+
+    // Carga masiva (Excel/CSV)
+    downloadProductsTemplate: async () => {
+        const res = await api.get('/inventory/products/bulk-import/template', { responseType: 'blob' });
+        downloadBlob(res.data, 'plantilla_productos_insumos.xlsx');
+    },
+    uploadProductsBulkImport: async (file: File) => {
+        const form = new FormData();
+        form.append('file', file);
+        const { data } = await api.post<BulkImportResult>('/inventory/products/bulk-import', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return data;
+    },
+    downloadRecipesTemplate: async () => {
+        const res = await api.get('/inventory/recipes/bulk-import/template', { responseType: 'blob' });
+        downloadBlob(res.data, 'plantilla_recetas_bom.xlsx');
+    },
+    uploadRecipesBulkImport: async (file: File) => {
+        const form = new FormData();
+        form.append('file', file);
+        const { data } = await api.post<BulkImportResult>('/inventory/recipes/bulk-import', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return data;
+    },
 };

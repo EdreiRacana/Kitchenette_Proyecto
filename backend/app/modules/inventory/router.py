@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import StreamingResponse
 from typing import List, Annotated
+from io import BytesIO
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
 from app.modules.inventory import schemas, service, models
@@ -17,6 +19,41 @@ async def create_product(product_in: schemas.ProductCreate, db: DB, current_user
 @router.get("/products", response_model=List[schemas.ProductWithVariants])
 async def read_products(db: DB, skip: int = 0, limit: int = 200):
     return await service.get_products(db, skip, limit)
+
+# --- Carga masiva (Excel/CSV) ---
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+@router.get("/products/bulk-import/template")
+async def download_products_template(current_user: CurrentUser):
+    content = service.generate_products_template()
+    return StreamingResponse(
+        BytesIO(content), media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": "attachment; filename=plantilla_productos_insumos.xlsx"},
+    )
+
+@router.post("/products/bulk-import", response_model=schemas.BulkImportResult)
+async def upload_products_bulk_import(db: DB, current_user: CurrentUser, file: UploadFile = File(...)):
+    content = await file.read()
+    try:
+        return await service.bulk_import_products(db, content, file.filename, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/recipes/bulk-import/template")
+async def download_recipes_template(current_user: CurrentUser):
+    content = service.generate_recipes_template()
+    return StreamingResponse(
+        BytesIO(content), media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": "attachment; filename=plantilla_recetas_bom.xlsx"},
+    )
+
+@router.post("/recipes/bulk-import", response_model=schemas.BulkImportResult)
+async def upload_recipes_bulk_import(db: DB, current_user: CurrentUser, file: UploadFile = File(...)):
+    content = await file.read()
+    try:
+        return await service.bulk_import_recipes(db, content, file.filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/products/{product_id}", response_model=schemas.ProductWithVariants)
 async def read_product(product_id: int, db: DB, current_user: CurrentUser):
