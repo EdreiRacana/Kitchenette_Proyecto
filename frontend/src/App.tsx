@@ -914,6 +914,17 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
   );
 }
 
+const SCHEDULED_REMINDER_LEAD_DAYS = 2;
+
+function scheduledDueLabel(scheduledDate, lang) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const due = new Date(scheduledDate); due.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((due.getTime() - today.getTime()) / 86400000);
+  if (diffDays < 0) return lang === "es" ? `Vencido hace ${-diffDays} día(s)` : `${-diffDays} day(s) overdue`;
+  if (diffDays === 0) return lang === "es" ? "Vence hoy" : "Due today";
+  return lang === "es" ? `Vence en ${diffDays} día(s)` : `Due in ${diffDays} day(s)`;
+}
+
 /* ============================ Notification Bell ============================ */
 function NotificationBell({ t, lang, onNavigate }) {
   const [open, setOpen] = useState(false);
@@ -939,8 +950,10 @@ function NotificationBell({ t, lang, onNavigate }) {
     const loadScheduled = () => financeService.getScheduledPayments("pending")
       .then((data) => {
         if (!active) return;
-        const today = new Date().toISOString().slice(0, 10);
-        const due = (data || []).filter((sp) => sp.scheduled_date && sp.scheduled_date.slice(0, 10) <= today);
+        const horizon = new Date();
+        horizon.setDate(horizon.getDate() + SCHEDULED_REMINDER_LEAD_DAYS);
+        const horizonStr = horizon.toISOString().slice(0, 10);
+        const due = (data || []).filter((sp) => sp.scheduled_date && sp.scheduled_date.slice(0, 10) <= horizonStr);
         setScheduledAlerts(due);
       })
       .catch(() => { if (active) setScheduledAlerts([]); });
@@ -1015,20 +1028,23 @@ function NotificationBell({ t, lang, onNavigate }) {
                 <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "10px 10px 6px" }}>
                   {lang === "es" ? "PAGOS PROGRAMADOS POR EJECUTAR" : "SCHEDULED PAYMENTS DUE"}
                 </div>
-                {scheduledAlerts.map((sp) => (
+                {scheduledAlerts.map((sp) => {
+                  const overdue = new Date(sp.scheduled_date) < new Date(new Date().setHours(0, 0, 0, 0));
+                  return (
                   <button key={`sp-${sp.id}`} onClick={() => { onNavigate("finanzas", sp.target_name); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
-                    <span style={{ marginTop: 3, width: 8, height: 8, borderRadius: 999, background: t.warn, flex: "0 0 auto" }} />
+                    <span style={{ marginTop: 3, width: 8, height: 8, borderRadius: 999, background: overdue ? t.bad : t.warn, flex: "0 0 auto" }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sp.target_name || `#${sp.target_id}`}</div>
                       <div style={{ fontSize: 11, color: t.textLo }}>
                         {sp.kind === "cxc"
                           ? (lang === "es" ? `Cobro programado: $${sp.amount.toLocaleString()}` : `Scheduled collection: $${sp.amount.toLocaleString()}`)
                           : (lang === "es" ? `Pago programado: $${sp.amount.toLocaleString()}` : `Scheduled payment: $${sp.amount.toLocaleString()}`)}
-                        {" · "}{sp.scheduled_date?.slice(0, 10)}
+                        {" · "}{scheduledDueLabel(sp.scheduled_date, lang)}
                       </div>
                     </div>
                   </button>
-                ))}
+                  );
+                })}
               </>
             )}
           </div>
