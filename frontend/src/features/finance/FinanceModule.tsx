@@ -1395,7 +1395,7 @@ function AdvancedPanel({ t, demo }: any) {
         </div>
       )}
     </div>
-  , document.body);
+  );
 }
 
 // ── Transfer Modal ───────────────────────────────────────────────────────────
