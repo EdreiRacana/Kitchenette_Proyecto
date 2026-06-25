@@ -27,7 +27,7 @@ const typeColor = (tk: Tokens, t: string | null): string => {
   }
 };
 
-export default function CustomersModule({ t, s }: { t: unknown; s: unknown }) {
+export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s: unknown; initialQuery?: string }) {
   const tk = useMemo<Tokens>(() => resolveTheme(t as Record<string, unknown>), [t]);
   const tr = useMemo(() => makeTr(s), [s]);
 
@@ -40,7 +40,8 @@ export default function CustomersModule({ t, s }: { t: unknown; s: unknown }) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQuery || "");
+  useEffect(() => { if (initialQuery) setQ(initialQuery); }, [initialQuery]);
   const [sucursal, setSucursal] = useState("");
   const [clientType, setClientType] = useState("");
   const [priceList, setPriceList] = useState("");

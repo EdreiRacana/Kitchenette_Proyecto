@@ -461,7 +461,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
 
 
 // ── SalesCRM principal ───────────────────────────────────────────────────────
-export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
+export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknown; initialQuery?: string }) {
   const tk = useMemo<Tokens>(() => resolveTheme(t as Record<string, unknown>), [t]);
   const tr = useMemo(() => makeTr(s), [s]);
 
@@ -483,7 +483,8 @@ export default function SalesCRM({ t, s }: { t: unknown; s: unknown }) {
   const [view, setView] = useState<ViewMode>("list");
   const [saving, setSaving] = useState(false);
 
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQuery || "");
+  useEffect(() => { if (initialQuery) setQ(initialQuery); }, [initialQuery]);
   const [kind, setKind] = useState("");
   const [status, setStatus] = useState("");
   const [payment, setPayment] = useState("");

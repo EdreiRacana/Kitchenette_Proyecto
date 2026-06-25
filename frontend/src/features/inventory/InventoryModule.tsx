@@ -97,8 +97,8 @@ const exportMovementsCSV = (movements: Movement[]) => {
 type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "adjustments" | "purchase-orders" | "recipes" | "production";
 
 // ── Main Component ─────────────────────────────────────────────────────────
-export default function InventoryModule({ t, s }: { t: any; s: any }) {
-  const [tab, setTab] = useState<Tab>("dashboard");
+export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any; initialQuery?: string }) {
+  const [tab, setTab] = useState<Tab>(initialQuery ? "products" : "dashboard");
   const [demo, setDemo] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse_[]>([]);
@@ -127,7 +127,8 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
   // Filters
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQuery || "");
+  useEffect(() => { if (initialQuery) { setQ(initialQuery); setTab("products"); } }, [initialQuery]);
   const [catFilter, setCatFilter] = useState("");
   const [whFilter, setWhFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -308,7 +309,7 @@ export default function InventoryModule({ t, s }: { t: any; s: any }) {
       {tab === "dashboard" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           {/* KPI cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
             {[
               { label: lang === "es" ? "Valor del inventario" : "Inventory value", value: mxn(kpis.totalVal), icon: DollarSign, color: t.nova, sub: lang === "es" ? "al costo" : "at cost" },
               { label: lang === "es" ? "Total productos" : "Total products", value: String(kpis.totalProds), icon: Package, color: t.good, sub: `${kpis.activeProds} ${lang === "es" ? "activos" : "active"}` },

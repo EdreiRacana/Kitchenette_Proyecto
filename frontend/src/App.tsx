@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   LayoutDashboard, TrendingUp, Package, PackageX, Wallet, Users, Sliders,
   SlidersHorizontal, ArrowUpRight, ArrowDownRight, Minus, AlertTriangle,
@@ -7,7 +7,7 @@ import {
   ShoppingCart, Clock, Star, Info, Calendar, Calendar as CalIcon,
   FileText, FileWarning, Mail, Bell, Maximize2, X, TrendingDown, Activity,
   Zap, Award, Eye, Check, IdCard, Settings, Plus, Search, Globe, Sun, Moon,
-  Lock, LogOut, User as UserIcon,
+  Lock, LogOut, User as UserIcon, Menu, UserCircle2, ShoppingBag, Box,
 } from "lucide-react";
 import SalesCRM from "./features/sales/SalesCRM";
 import CustomersModule from "./features/customers/CustomersModule";
@@ -17,6 +17,20 @@ import HRModule from "./features/hr/HRModule";
 import BIModule from "./features/bi/BIModule";
 import ConfigModule from "./features/config/ConfigModule";
 import api from "./services/api";
+import { customersApi } from "./features/customers/api";
+import { salesApi } from "./features/sales/api";
+import { inventoryService } from "./features/inventory/service";
+
+/* ============================ Responsive ============================ */
+function useIsMobile(breakpoint = 880) {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= breakpoint);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= breakpoint);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [breakpoint]);
+  return isMobile;
+}
 
 
 /* ============================ Theme ============================ */
@@ -153,11 +167,6 @@ function NovaMark({ size = 40 }) {
 }
 
 /* ============================ Data ============================ */
-const COMPANIES = [
-  { id: "valle", name: "Comercializadora del Valle", initials: "CV", color: "#33B2F5" },
-  { id: "norte", name: "Insumos del Norte", initials: "IN", color: "#34D399" },
-  { id: "azteca", name: "Grupo Azteca Retail", initials: "GA", color: "#FBBF24" },
-];
 const TODAY = new Date(2026, 5, 12);
 const fmtDate = (d, s) => `${d.getDate()} ${s.monShort[d.getMonth()]} ${d.getFullYear()}`;
 const sameDay = (a, b) => a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
@@ -402,7 +411,7 @@ function MiniCalendar({ t, s, start, end, onPick }) {
 const calNav = (t) => ({ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", display: "grid", placeItems: "center" });
 
 /* ============================ Dashboard ============================ */
-function Dashboard({ t, s, lang, setPage }) {
+function Dashboard({ t, s, lang, setPage, isMobile }) {
   const [preset, setPreset] = useState("month");
   const [calOpen, setCalOpen] = useState(false);
   const [rStart, setRStart] = useState(DATASETS.month.range[0]);
@@ -523,7 +532,7 @@ function Dashboard({ t, s, lang, setPage }) {
         })}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 2fr) minmax(0, 1fr)", gap: 14 }}>
         <Card t={t} style={{ padding: 18 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, flexWrap: "wrap", gap: 8 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>{s.dash.chartTitle} <span style={{ color: t.textLo, fontWeight: 400 }}>{s.dash.chartUnit}</span></div>
@@ -713,108 +722,229 @@ function Login({ t, s, lang, onEnter }) {
 }
 
 /* ============================ Sidebar ============================ */
-function Sidebar({ t, s, page, setPage, collapsed, setCollapsed }) {
-  const w = collapsed ? 72 : 248;
+function Sidebar({ t, s, page, setPage, collapsed, setCollapsed, mobile, mobileOpen, setMobileOpen }) {
+  const w = mobile ? 248 : (collapsed ? 72 : 248);
+  const showLabels = mobile || !collapsed;
+  const goTo = (id) => { setPage(id); if (mobile) setMobileOpen(false); };
   return (
-    <aside style={{ width: w, flex: `0 0 ${w}px`, background: t.panel, borderRight: `1px solid ${t.border}`, display: "flex", flexDirection: "column", transition: "width .18s ease", height: "100vh", position: "sticky", top: 0 }}>
-      <div style={{ height: 64, display: "flex", alignItems: "center", gap: 8, padding: collapsed ? "0 16px" : "0 18px", borderBottom: `1px solid ${t.border}` }}>
-        <NovaMark size={30} />
-        {!collapsed && <span style={{ fontWeight: 700, letterSpacing: 2.5, color: t.textHi, fontSize: 15 }}>STHENOVA®</span>}
-      </div>
-      <nav style={{ flex: 1, padding: "12px 10px", overflowY: "auto" }}>
-        {!collapsed && <div style={{ fontSize: 10.5, letterSpacing: 1.5, color: t.textLo, fontWeight: 600, padding: "6px 10px 8px" }}>{s.modules}</div>}
-        {MODULES.map((m) => {
-          const active = page === m.id; const Icon = m.icon;
-          return (
-            <button key={m.id} onClick={() => setPage(m.id)} title={s.nav[m.id]} style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, cursor: "pointer", padding: collapsed ? "11px 0" : "10px 12px", justifyContent: collapsed ? "center" : "flex-start", marginBottom: 3, borderRadius: 10, border: "none", textAlign: "left", background: active ? `linear-gradient(90deg, ${t.nova}24, transparent)` : "transparent", color: active ? t.textHi : t.textMid, position: "relative" }}>
-              {active && <span style={{ position: "absolute", left: 0, top: 8, bottom: 8, width: 3, borderRadius: 3, background: t.nova }} />}
-              <Icon size={18} color={active ? t.nova : t.textLo} />
-              {!collapsed && <span style={{ fontSize: 13.5, fontWeight: active ? 600 : 500 }}>{s.nav[m.id]}</span>}
-              {!collapsed && m.live && <span style={{ marginLeft: "auto", fontSize: 9, fontWeight: 700, color: t.good, background: t.good + "22", padding: "2px 6px", borderRadius: 6 }}>{s.api}</span>}
-              {!collapsed && m.soon && <span style={{ marginLeft: "auto", fontSize: 9, fontWeight: 700, color: t.textLo, background: t.panel3, padding: "2px 6px", borderRadius: 6 }}>{s.soonTag}</span>}
-            </button>
-          );
-        })}
-      </nav>
-
-      {!collapsed && (
-        <div style={{
-          padding: "8px 18px 10px",
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          borderTop: `1px solid ${t.borderSoft}`,
-        }}>
-          <span style={{
-            fontSize: 13,
-            color: "#34D399",
-            animation: "securePulse 2.8s ease-in-out infinite",
-            lineHeight: 1,
-          }}>◍</span>
-          <span style={{
-            fontSize: 10,
-            color: "#34D399",
-            opacity: 0.5,
-            fontWeight: 500,
-            letterSpacing: 0.4,
-          }}>{s.secure}</span>
-        </div>
+    <>
+      {mobile && mobileOpen && (
+        <div onClick={() => setMobileOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 99 }} />
       )}
+      <aside style={{
+        width: w, flex: mobile ? undefined : `0 0 ${w}px`, background: t.panel, borderRight: `1px solid ${t.border}`,
+        display: "flex", flexDirection: "column", transition: mobile ? "transform .22s ease" : "width .18s ease",
+        height: "100vh", position: mobile ? "fixed" : "sticky", top: 0, left: 0, zIndex: 100,
+        transform: mobile ? (mobileOpen ? "translateX(0)" : "translateX(-100%)") : "none",
+      }}>
+        <div style={{ height: 64, display: "flex", alignItems: "center", gap: 8, padding: !showLabels ? "0 16px" : "0 18px", borderBottom: `1px solid ${t.border}` }}>
+          <NovaMark size={30} />
+          {showLabels && <span style={{ fontWeight: 700, letterSpacing: 2.5, color: t.textHi, fontSize: 15 }}>STHENOVA®</span>}
+          {mobile && <button onClick={() => setMobileOpen(false)} style={{ marginLeft: "auto", background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={18} /></button>}
+        </div>
+        <nav style={{ flex: 1, padding: "12px 10px", overflowY: "auto" }}>
+          {showLabels && <div style={{ fontSize: 10.5, letterSpacing: 1.5, color: t.textLo, fontWeight: 600, padding: "6px 10px 8px" }}>{s.modules}</div>}
+          {MODULES.map((m) => {
+            const active = page === m.id; const Icon = m.icon;
+            return (
+              <button key={m.id} onClick={() => goTo(m.id)} title={s.nav[m.id]} style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, cursor: "pointer", padding: !showLabels ? "11px 0" : "10px 12px", justifyContent: !showLabels ? "center" : "flex-start", marginBottom: 3, borderRadius: 10, border: "none", textAlign: "left", background: active ? `linear-gradient(90deg, ${t.nova}24, transparent)` : "transparent", color: active ? t.textHi : t.textMid, position: "relative" }}>
+                {active && <span style={{ position: "absolute", left: 0, top: 8, bottom: 8, width: 3, borderRadius: 3, background: t.nova }} />}
+                <Icon size={18} color={active ? t.nova : t.textLo} />
+                {showLabels && <span style={{ fontSize: 13.5, fontWeight: active ? 600 : 500 }}>{s.nav[m.id]}</span>}
+                {showLabels && m.live && <span style={{ marginLeft: "auto", fontSize: 9, fontWeight: 700, color: t.good, background: t.good + "22", padding: "2px 6px", borderRadius: 6 }}>{s.api}</span>}
+                {showLabels && m.soon && <span style={{ marginLeft: "auto", fontSize: 9, fontWeight: 700, color: t.textLo, background: t.panel3, padding: "2px 6px", borderRadius: 6 }}>{s.soonTag}</span>}
+              </button>
+            );
+          })}
+        </nav>
 
-      <div style={{ borderTop: `1px solid ${t.border}`, padding: collapsed ? 12 : "14px 16px", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "space-between" }}>
-        {!collapsed ? (<div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}><NovaMark size={20} /><div style={{ lineHeight: 1.1 }}><div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: t.textLo }}>STHENOVA®</div><div style={{ fontSize: 8, letterSpacing: 1, color: t.textLo }}>v0.1 · demo</div></div></div>) : <NovaMark size={20} />}
-        {!collapsed && <button onClick={() => setCollapsed(true)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><ChevronLeft size={18} /></button>}
+        {showLabels && (
+          <div style={{
+            padding: "8px 18px 10px",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            borderTop: `1px solid ${t.borderSoft}`,
+          }}>
+            <span style={{
+              fontSize: 13,
+              color: "#34D399",
+              animation: "securePulse 2.8s ease-in-out infinite",
+              lineHeight: 1,
+            }}>◍</span>
+            <span style={{
+              fontSize: 10,
+              color: "#34D399",
+              opacity: 0.5,
+              fontWeight: 500,
+              letterSpacing: 0.4,
+            }}>{s.secure}</span>
+          </div>
+        )}
+
+        <div style={{ borderTop: `1px solid ${t.border}`, padding: !showLabels ? 12 : "14px 16px", display: "flex", alignItems: "center", justifyContent: !showLabels ? "center" : "space-between" }}>
+          {showLabels ? (<div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}><NovaMark size={20} /><div style={{ lineHeight: 1.1 }}><div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: t.textLo }}>STHENOVA®</div><div style={{ fontSize: 8, letterSpacing: 1, color: t.textLo }}>v0.1 · demo</div></div></div>) : <NovaMark size={20} />}
+          {!mobile && showLabels && <button onClick={() => setCollapsed(true)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><ChevronLeft size={18} /></button>}
+        </div>
+        {!mobile && collapsed && <button onClick={() => setCollapsed(false)} style={{ position: "absolute", top: 76, right: -12, width: 24, height: 24, borderRadius: 999, background: t.panel2, border: `1px solid ${t.border}`, cursor: "pointer", color: t.textMid, display: "grid", placeItems: "center" }}><ChevronRight size={14} /></button>}
+      </aside>
+    </>
+  );
+}
+
+/* ============================ Universal search ============================ */
+function GlobalSearch({ t, s, lang, onNavigate }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState({ customers: [], orders: [], products: [] });
+  const debounceRef = useRef(null);
+
+  useEffect(() => {
+    if (!query.trim()) {
+      setResults({ customers: [], orders: [], products: [] });
+      setOpen(false);
+      return;
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const [custRes, orderRes, prodRes] = await Promise.allSettled([
+          customersApi.search({ q: query, limit: 5 }),
+          salesApi.list({ q: query, limit: 5 }),
+          inventoryService.getProducts(),
+        ]);
+        const customers = custRes.status === "fulfilled" ? custRes.value.items : [];
+        const orders = orderRes.status === "fulfilled" ? orderRes.value.items : [];
+        const qLower = query.toLowerCase();
+        const products = prodRes.status === "fulfilled"
+          ? prodRes.value
+              .filter((p) => p.name?.toLowerCase().includes(qLower) || p.variants?.some((v) => v.sku?.toLowerCase().includes(qLower)))
+              .slice(0, 5)
+          : [];
+        setResults({ customers, orders, products });
+        setOpen(true);
+      } catch {
+        setResults({ customers: [], orders: [], products: [] });
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query]);
+
+  const hasResults = results.customers.length > 0 || results.orders.length > 0 || results.products.length > 0;
+  const select = (page, q) => { onNavigate(page, q); setQuery(""); setOpen(false); };
+  const noResultsLabel = lang === "es" ? "Sin resultados" : "No results";
+  const sectionLabels = {
+    customers: lang === "es" ? "Clientes" : "Customers",
+    orders: lang === "es" ? "Pedidos" : "Orders",
+    products: lang === "es" ? "Productos" : "Products",
+  };
+
+  return (
+    <div style={{ position: "relative", flex: 1, maxWidth: 460, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 9, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "9px 12px" }}>
+        <Search size={16} color={t.textLo} />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => { if (hasResults) setOpen(true); }}
+          placeholder={s.search}
+          style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 13.5 }}
+        />
+        {loading && <RefreshCw size={14} className="spin" color={t.textLo} />}
+        {!loading && query && (
+          <button onClick={() => { setQuery(""); setOpen(false); }} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo, display: "flex" }}><X size={14} /></button>
+        )}
       </div>
-      {collapsed && <button onClick={() => setCollapsed(false)} style={{ position: "absolute", top: 76, right: -12, width: 24, height: 24, borderRadius: 999, background: t.panel2, border: `1px solid ${t.border}`, cursor: "pointer", color: t.textMid, display: "grid", placeItems: "center" }}><ChevronRight size={14} /></button>}
-    </aside>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
+          <div style={{ position: "absolute", top: 48, left: 0, width: "min(420px, 90vw)", maxHeight: 440, overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 6, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
+            {!hasResults && <div style={{ padding: 16, fontSize: 13, color: t.textLo, textAlign: "center" }}>{noResultsLabel}</div>}
+            {results.customers.length > 0 && (
+              <div style={{ marginBottom: 4 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 4px" }}>{sectionLabels.customers}</div>
+                {results.customers.map((c) => (
+                  <button key={c.id} onClick={() => select("clientes", c.name)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
+                    <UserCircle2 size={16} color={t.textLo} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                      {c.rfc && <div style={{ fontSize: 11, color: t.textLo }}>{c.rfc}</div>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {results.orders.length > 0 && (
+              <div style={{ marginBottom: 4 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 4px" }}>{sectionLabels.orders}</div>
+                {results.orders.map((o) => (
+                  <button key={o.id} onClick={() => select("ventas", o.folio || String(o.id))} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
+                    <ShoppingBag size={16} color={t.textLo} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.folio || `#${o.id}`} · {o.customer?.name || ""}</div>
+                      <div style={{ fontSize: 11, color: t.textLo }}>{mxn(o.total || 0)}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {results.products.length > 0 && (
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 4px" }}>{sectionLabels.products}</div>
+                {results.products.map((p) => (
+                  <button key={p.id} onClick={() => select("inventario", p.name)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
+                    <Box size={16} color={t.textLo} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                      {p.category && <div style={{ fontSize: 11, color: t.textLo }}>{p.category}</div>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
 /* ============================ Topbar ============================ */
-function Topbar({ t, s, lang, setLang, company, setCompany, theme, setTheme, onLogout }) {
-  const [open, setOpen] = useState(false);
+function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMenuClick, onNavigate }) {
   return (
-    <header style={{ height: 64, flex: "0 0 64px", background: t.panel, borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: 14, padding: "0 20px", position: "sticky", top: 0, zIndex: 20 }}>
-      <div style={{ position: "relative" }}>
-        <button onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: "7px 11px", color: t.textHi }}>
-          <span style={{ width: 24, height: 24, borderRadius: 7, background: company.color + "26", color: company.color, fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center" }}>{company.initials}</span>
-          <span style={{ fontSize: 13.5, fontWeight: 600, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{company.name}</span>
-          <ChevronDown size={15} color={t.textLo} />
-        </button>
-        {open && (
-          <div style={{ position: "absolute", top: 48, left: 0, width: 260, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 6, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 50 }}>
-            {COMPANIES.map((c) => (
-              <button key={c.id} onClick={() => { setCompany(c); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "9px 10px", borderRadius: 9, border: "none", background: c.id === company.id ? t.panel2 : "transparent", color: t.textHi }}>
-                <span style={{ width: 26, height: 26, borderRadius: 7, background: c.color + "26", color: c.color, fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center" }}>{c.initials}</span>
-                <span style={{ fontSize: 13, flex: 1 }}>{c.name}</span>{c.id === company.id && <Check size={15} color={t.nova} />}
-              </button>
-            ))}
-          </div>
+    <header style={{ height: 64, flex: "0 0 64px", background: t.panel, borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 14, padding: isMobile ? "0 12px" : "0 20px", position: "sticky", top: 0, zIndex: 20 }}>
+      {isMobile && (
+        <button onClick={onMenuClick} style={iconBtn(t)}><Menu size={20} /></button>
+      )}
+      <GlobalSearch t={t} s={s} lang={lang} onNavigate={onNavigate} />
+      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: isMobile ? 4 : 6 }}>
+        {!isMobile && (
+          <button onClick={() => setLang(lang === "es" ? "en" : "es")} title="Language / Idioma" style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 11px", borderRadius: 10, cursor: "pointer", background: t.panel2, border: `1px solid ${t.border}`, color: t.textMid, fontSize: 12.5, fontWeight: 700 }}>
+            <Globe size={15} />{lang.toUpperCase()}
+          </button>
         )}
-      </div>
-      <div style={{ flex: 1, maxWidth: 420, display: "flex", alignItems: "center", gap: 9, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "9px 12px" }}>
-        <Search size={16} color={t.textLo} /><input placeholder={s.search} style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 13.5 }} />
-      </div>
-      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-        <button onClick={() => setLang(lang === "es" ? "en" : "es")} title="Language / Idioma" style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 11px", borderRadius: 10, cursor: "pointer", background: t.panel2, border: `1px solid ${t.border}`, color: t.textMid, fontSize: 12.5, fontWeight: 700 }}>
-          <Globe size={15} />{lang.toUpperCase()}
-        </button>
         <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title="Tema / Theme" style={iconBtn(t)}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
-        <button style={iconBtn(t)}><Bell size={18} /><span style={{ position: "absolute", top: 8, right: 8, width: 7, height: 7, borderRadius: 999, background: t.nova }} /></button>
+        {!isMobile && <button style={iconBtn(t)}><Bell size={18} /><span style={{ position: "absolute", top: 8, right: 8, width: 7, height: 7, borderRadius: 999, background: t.nova }} /></button>}
         <div style={{ width: 1, height: 26, background: t.border, margin: "0 4px" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <span style={{ width: 32, height: 32, borderRadius: 999, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: 13 }}>ER</span>
-          <div style={{ lineHeight: 1.2 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textHi }}>Edrei</div>
-            <div style={{ fontSize: 10.5, color: t.textLo }}>{s.role}</div>
-          </div>
+          <span style={{ width: 32, height: 32, borderRadius: 999, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: 13, flex: "0 0 auto" }}>ER</span>
+          {!isMobile && (
+            <div style={{ lineHeight: 1.2 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textHi }}>Edrei</div>
+              <div style={{ fontSize: 10.5, color: t.textLo }}>{s.role}</div>
+            </div>
+          )}
         </div>
         <button onClick={onLogout} style={iconBtn(t)}><LogOut size={17} /></button>
       </div>
     </header>
   );
 }
-const iconBtn = (t) => ({ position: "relative", width: 36, height: 36, borderRadius: 10, cursor: "pointer", background: "transparent", border: "1px solid transparent", color: t.textMid, display: "grid", placeItems: "center" });
+const iconBtn = (t) => ({ position: "relative", width: 36, height: 36, borderRadius: 10, cursor: "pointer", background: "transparent", border: "1px solid transparent", color: t.textMid, display: "grid", placeItems: "center", flex: "0 0 auto" });
 
 /* ============================ Module pages ============================ */
 function Table({ t, head, children }) {
@@ -943,9 +1073,17 @@ export default function App() {
   const [authed, setAuthed] = useState(() => !!localStorage.getItem("token"));
   const [page, setPage] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
-  const [company, setCompany] = useState(COMPANIES[0]);
+  const isMobile = useIsMobile();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [searchNav, setSearchNav] = useState(null);
   const t = THEMES[theme];
   const s = STRINGS[lang];
+
+  const goToPage = (id) => { setPage(id); if (isMobile) setMobileNavOpen(false); };
+  const handleSearchNavigate = (targetPage, query) => {
+    setSearchNav({ page: targetPage, query, ts: Date.now() });
+    goToPage(targetPage);
+  };
 
   if (!authed) {
     return (<>
@@ -965,15 +1103,17 @@ export default function App() {
     </>);
   }
 
+  const qFor = (id) => (searchNav && searchNav.page === id ? searchNav.query : undefined);
+
   const PAGES = {
-    dashboard: <Dashboard t={t} s={s} lang={lang} setPage={setPage} />,
-    inventario: <InventoryModule t={t} s={s} />,
-    ventas: <SalesCRM t={t} s={s} />,
-    clientes: <CustomersModule t={t} s={s} />,
+    dashboard: <Dashboard t={t} s={s} lang={lang} setPage={setPage} isMobile={isMobile} />,
+    inventario: <InventoryModule t={t} s={s} initialQuery={qFor("inventario")} />,
+    ventas: <SalesCRM t={t} s={s} initialQuery={qFor("ventas")} />,
+    clientes: <CustomersModule t={t} s={s} initialQuery={qFor("clientes")} />,
     finanzas: <FinanceModule t={t} s={s} />,
     rh: <HRModule t={t} s={s} />,
     reportes: <BIModule t={t} s={s} />,
-    config: <ConfigModule t={t} s={s} company={company} />,
+    config: <ConfigModule t={t} s={s} />,
   };
 
   return (
@@ -989,11 +1129,13 @@ export default function App() {
         @keyframes glowDrift{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(20px,-16px) scale(1.06)}}
         .bg-orb{position:absolute;border-radius:50%;pointer-events:none;filter:blur(8px);animation:glowDrift 18s ease-in-out infinite}
         @media (prefers-reduced-motion:reduce){.bg-orb{animation:none}}
+        .spin{animation:spin360 .9s linear infinite}
+        @keyframes spin360{to{transform:rotate(360deg)}}
       `}</style>
-      <Sidebar t={t} s={s} page={page} setPage={setPage} collapsed={collapsed} setCollapsed={setCollapsed} />
+      <Sidebar t={t} s={s} page={page} setPage={goToPage} collapsed={collapsed} setCollapsed={setCollapsed} mobile={isMobile} mobileOpen={mobileNavOpen} setMobileOpen={setMobileNavOpen} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
-        <Topbar t={t} s={s} lang={lang} setLang={setLang} company={company} setCompany={setCompany} theme={theme} setTheme={setTheme} onLogout={() => { localStorage.removeItem("token"); setAuthed(false); }} />
-        <main style={{ flex: 1, padding: 24, overflowX: "hidden", position: "relative" }}>
+        <Topbar t={t} s={s} lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} onLogout={() => { localStorage.removeItem("token"); setAuthed(false); }} isMobile={isMobile} onMenuClick={() => setMobileNavOpen(true)} onNavigate={handleSearchNavigate} />
+        <main style={{ flex: 1, padding: isMobile ? 12 : 24, overflowX: "hidden", position: "relative" }}>
           {theme === "dark" && (
             <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>
               <span className="bg-orb" style={{ width: 460, height: 460, top: -160, right: -120, background: "radial-gradient(circle, rgba(51,178,245,0.22), transparent 70%)" }} />
