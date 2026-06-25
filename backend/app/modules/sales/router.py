@@ -24,25 +24,38 @@ CurrentUser = Annotated[User, Depends(deps.get_current_active_user)]
 # ── Analytics (declared before /{order_id} so paths don't collide) ────────────
 
 @router.get("/stats", response_model=schemas.SalesStats)
-async def stats(db: DB, _: CurrentUser):
-    return await service.get_stats(db)
+async def stats(db: DB, _: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
+    return await service.get_stats(db, start=start, end=end)
 
 
 @router.get("/analytics/trend", response_model=List[schemas.TrendPoint])
 async def trend(db: DB, _: CurrentUser,
                 granularity: str = Query("day", pattern="^(day|week|month)$"),
-                days: int = Query(30, ge=1, le=365)):
-    return await service.sales_trend(db, granularity=granularity, days=days)
+                days: int = Query(30, ge=1, le=365),
+                end: Optional[datetime] = None):
+    return await service.sales_trend(db, granularity=granularity, days=days, end=end)
 
 
 @router.get("/analytics/top-customers", response_model=List[schemas.TopCustomer])
-async def top_customers(db: DB, _: CurrentUser, limit: int = Query(5, ge=1, le=50)):
-    return await service.top_customers(db, limit=limit)
+async def top_customers(db: DB, _: CurrentUser, limit: int = Query(5, ge=1, le=50),
+                         start: Optional[datetime] = None, end: Optional[datetime] = None):
+    return await service.top_customers(db, limit=limit, start=start, end=end)
 
 
 @router.get("/analytics/top-products", response_model=List[schemas.TopProduct])
-async def top_products(db: DB, _: CurrentUser, limit: int = Query(5, ge=1, le=50)):
-    return await service.top_products(db, limit=limit)
+async def top_products(db: DB, _: CurrentUser, limit: int = Query(5, ge=1, le=50),
+                        start: Optional[datetime] = None, end: Optional[datetime] = None):
+    return await service.top_products(db, limit=limit, start=start, end=end)
+
+
+@router.get("/analytics/by-seller", response_model=List[schemas.SalesBySeller])
+async def by_seller(db: DB, _: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
+    return await service.sales_by_seller(db, start=start, end=end)
+
+
+@router.get("/analytics/by-channel", response_model=List[schemas.SalesByChannel])
+async def by_channel(db: DB, _: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
+    return await service.sales_by_channel(db, start=start, end=end)
 
 
 @router.get("/customers/{customer_id}/360", response_model=schemas.Customer360)

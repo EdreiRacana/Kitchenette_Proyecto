@@ -113,6 +113,8 @@ export interface SalesStats {
 export interface TrendPoint { period: string; total: number; count: number; }
 export interface TopCustomer { customer_id: number | null; name: string; total: number; orders: number; }
 export interface TopProduct { variant_id: number | null; name: string; quantity: number; total: number; }
+export interface SalesBySeller { user_id: number | null; name: string; total: number; orders: number; }
+export interface SalesByChannel { channel: string; total: number; orders: number; }
 
 export interface OrderFilters {
   q?: string;

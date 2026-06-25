@@ -245,6 +245,19 @@ class TopProduct(BaseModel):
     total: float
 
 
+class SalesBySeller(BaseModel):
+    user_id: Optional[int] = None
+    name: str
+    total: float
+    orders: int
+
+
+class SalesByChannel(BaseModel):
+    channel: str
+    total: float
+    orders: int
+
+
 class Customer360(BaseModel):
     customer: CustomerLite
     total_spent: float

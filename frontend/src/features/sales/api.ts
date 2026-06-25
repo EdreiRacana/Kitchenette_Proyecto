@@ -3,7 +3,7 @@
 import api from "../../services/api";
 import type {
   Order, Paginated, SalesStats, TrendPoint, TopCustomer, TopProduct,
-  OrderFilters, OrderDraft, CustomerLite,
+  SalesBySeller, SalesByChannel, OrderFilters, OrderDraft, CustomerLite,
 } from "./types";
 
 export interface VariantOption {
@@ -86,20 +86,28 @@ export const salesApi = {
     const { data } = await api.post<Order>(`/sales/${id}/cancel`, {});
     return data;
   },
-  async stats(): Promise<SalesStats> {
-    const { data } = await api.get<SalesStats>(`/sales/stats`);
+  async stats(start?: string, end?: string): Promise<SalesStats> {
+    const { data } = await api.get<SalesStats>(`/sales/stats`, { params: { start, end } });
     return data;
   },
-  async trend(granularity = "day", days = 30): Promise<TrendPoint[]> {
-    const { data } = await api.get<TrendPoint[]>(`/sales/analytics/trend?granularity=${granularity}&days=${days}`);
+  async trend(granularity = "day", days = 30, end?: string): Promise<TrendPoint[]> {
+    const { data } = await api.get<TrendPoint[]>(`/sales/analytics/trend`, { params: { granularity, days, end } });
     return data;
   },
-  async topCustomers(limit = 5): Promise<TopCustomer[]> {
-    const { data } = await api.get<TopCustomer[]>(`/sales/analytics/top-customers?limit=${limit}`);
+  async topCustomers(limit = 5, start?: string, end?: string): Promise<TopCustomer[]> {
+    const { data } = await api.get<TopCustomer[]>(`/sales/analytics/top-customers`, { params: { limit, start, end } });
     return data;
   },
-  async topProducts(limit = 5): Promise<TopProduct[]> {
-    const { data } = await api.get<TopProduct[]>(`/sales/analytics/top-products?limit=${limit}`);
+  async topProducts(limit = 5, start?: string, end?: string): Promise<TopProduct[]> {
+    const { data } = await api.get<TopProduct[]>(`/sales/analytics/top-products`, { params: { limit, start, end } });
+    return data;
+  },
+  async bySeller(start?: string, end?: string): Promise<SalesBySeller[]> {
+    const { data } = await api.get<SalesBySeller[]>(`/sales/analytics/by-seller`, { params: { start, end } });
+    return data;
+  },
+  async byChannel(start?: string, end?: string): Promise<SalesByChannel[]> {
+    const { data } = await api.get<SalesByChannel[]>(`/sales/analytics/by-channel`, { params: { start, end } });
     return data;
   },
   async exportFile(filters: OrderFilters, formato: "csv" | "xlsx"): Promise<Blob> {

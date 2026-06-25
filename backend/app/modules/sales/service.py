@@ -502,7 +502,7 @@ async def cancel_order(db: AsyncSession, order_id: int, user_id: Optional[int] =
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
-async def get_stats(db: AsyncSession) -> schemas.SalesStats:
+async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None) -> schemas.SalesStats:
     """All KPIs in a SINGLE aggregated query (no rows pulled into Python).
 
     Uses portable conditional aggregation (CASE inside COUNT/SUM) so it runs the
@@ -512,6 +512,12 @@ async def get_stats(db: AsyncSession) -> schemas.SalesStats:
     active = and_(O.kind == "order", O.status != "cancelled")
     pending = and_(active, O.status.in_(("pending", "partial")))
 
+    date_filters = []
+    if start is not None:
+        date_filters.append(O.created_at >= start)
+    if end is not None:
+        date_filters.append(O.created_at < end)
+
     stmt = select(
         func.count(case((active, 1))).label("orders_count"),
         func.coalesce(func.sum(case((active, O.paid_amount), else_=0.0)), 0.0).label("total_sold"),
@@ -520,7 +526,7 @@ async def get_stats(db: AsyncSession) -> schemas.SalesStats:
         func.coalesce(func.sum(case((pending, O.total_amount - O.paid_amount), else_=0.0)), 0.0).label("pending_amount"),
         func.coalesce(func.sum(case((active, O.total_amount), else_=0.0)), 0.0).label("active_total"),
         func.count(case((O.kind == "quote", 1))).label("quotes_count"),
-    )
+    ).where(*date_filters)
     r = (await db.execute(stmt)).one()
     oc = r.orders_count or 0
 
@@ -533,13 +539,17 @@ async def get_stats(db: AsyncSession) -> schemas.SalesStats:
     )
 
 
-async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30) -> List[schemas.TrendPoint]:
+async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30, end: Optional[datetime] = None) -> List[schemas.TrendPoint]:
     """Aggregate revenue by day in SQL, bounded to the relevant date window so we
     never scan the whole history; then roll days up to week/month in Python.
+
+    `end` lets the caller anchor the window somewhere other than "now" (e.g. to
+    build a comparable previous-period series for BI charts).
     """
     O = models.Order
     mult = {"day": 1, "week": 7, "month": 31}.get(granularity, 1)
-    cutoff = _now() - timedelta(days=days * mult + 1)
+    end_bound = end or _now()
+    cutoff = end_bound - timedelta(days=days * mult + 1)
 
     stmt = (
         select(
@@ -547,7 +557,7 @@ async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30
             func.coalesce(func.sum(O.total_amount), 0.0).label("total"),
             func.count(O.id).label("count"),
         )
-        .where(O.kind == "order", O.status != "cancelled", O.created_at >= cutoff)
+        .where(O.kind == "order", O.status != "cancelled", O.created_at >= cutoff, O.created_at < end_bound)
         .group_by(func.date(O.created_at))
         .order_by(func.date(O.created_at))
     )
@@ -572,9 +582,14 @@ async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30
     return points[-days:]
 
 
-async def top_customers(db: AsyncSession, limit: int = 5) -> List[schemas.TopCustomer]:
+async def top_customers(db: AsyncSession, limit: int = 5, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.TopCustomer]:
     from app.modules.customers import models as cust
     O = models.Order
+    conds = [O.kind == "order", O.status != "cancelled"]
+    if start is not None:
+        conds.append(O.created_at >= start)
+    if end is not None:
+        conds.append(O.created_at < end)
     stmt = (
         select(
             O.customer_id,
@@ -583,7 +598,7 @@ async def top_customers(db: AsyncSession, limit: int = 5) -> List[schemas.TopCus
             func.count(O.id).label("orders"),
         )
         .outerjoin(cust.Customer, O.customer_id == cust.Customer.id)
-        .where(O.kind == "order", O.status != "cancelled")
+        .where(*conds)
         .group_by(O.customer_id, cust.Customer.name)
         .order_by(func.sum(O.total_amount).desc())
         .limit(limit)
@@ -595,9 +610,14 @@ async def top_customers(db: AsyncSession, limit: int = 5) -> List[schemas.TopCus
     ]
 
 
-async def top_products(db: AsyncSession, limit: int = 5) -> List[schemas.TopProduct]:
+async def top_products(db: AsyncSession, limit: int = 5, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.TopProduct]:
     O = models.Order
     OI = models.OrderItem
+    conds = [O.kind == "order", O.status != "cancelled"]
+    if start is not None:
+        conds.append(O.created_at >= start)
+    if end is not None:
+        conds.append(O.created_at < end)
     stmt = (
         select(
             OI.variant_id,
@@ -606,7 +626,7 @@ async def top_products(db: AsyncSession, limit: int = 5) -> List[schemas.TopProd
             func.coalesce(func.sum(OI.total), 0.0).label("total"),
         )
         .join(O, OI.order_id == O.id)
-        .where(O.kind == "order", O.status != "cancelled")
+        .where(*conds)
         .group_by(OI.variant_id, OI.product_name)
         .order_by(func.sum(OI.total).desc())
         .limit(limit)
@@ -614,6 +634,55 @@ async def top_products(db: AsyncSession, limit: int = 5) -> List[schemas.TopProd
     return [
         schemas.TopProduct(variant_id=r.variant_id, name=r.name,
                            quantity=r.qty, total=_r(r.total))
+        for r in (await db.execute(stmt)).all()
+    ]
+
+
+async def sales_by_seller(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.SalesBySeller]:
+    from app.modules.auth import models as auth_models
+    O = models.Order
+    conds = [O.kind == "order", O.status != "cancelled"]
+    if start is not None:
+        conds.append(O.created_at >= start)
+    if end is not None:
+        conds.append(O.created_at < end)
+    stmt = (
+        select(
+            O.user_id,
+            func.coalesce(auth_models.User.full_name, auth_models.User.email, "Sin vendedor").label("name"),
+            func.coalesce(func.sum(O.total_amount), 0.0).label("total"),
+            func.count(O.id).label("orders"),
+        )
+        .outerjoin(auth_models.User, O.user_id == auth_models.User.id)
+        .where(*conds)
+        .group_by(O.user_id, auth_models.User.full_name, auth_models.User.email)
+        .order_by(func.sum(O.total_amount).desc())
+    )
+    return [
+        schemas.SalesBySeller(user_id=r.user_id, name=r.name, total=_r(r.total), orders=r.orders)
+        for r in (await db.execute(stmt)).all()
+    ]
+
+
+async def sales_by_channel(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.SalesByChannel]:
+    O = models.Order
+    conds = [O.kind == "order", O.status != "cancelled"]
+    if start is not None:
+        conds.append(O.created_at >= start)
+    if end is not None:
+        conds.append(O.created_at < end)
+    stmt = (
+        select(
+            func.coalesce(O.channel, "Sin canal").label("channel"),
+            func.coalesce(func.sum(O.total_amount), 0.0).label("total"),
+            func.count(O.id).label("orders"),
+        )
+        .where(*conds)
+        .group_by(func.coalesce(O.channel, "Sin canal"))
+        .order_by(func.sum(O.total_amount).desc())
+    )
+    return [
+        schemas.SalesByChannel(channel=r.channel, total=_r(r.total), orders=r.orders)
         for r in (await db.execute(stmt)).all()
     ]
 
