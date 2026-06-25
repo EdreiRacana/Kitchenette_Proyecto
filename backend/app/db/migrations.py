@@ -257,6 +257,7 @@ _INVENTORY_STATEMENTS = [
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS due_date     TIMESTAMPTZ",
     "UPDATE purchase_orders SET total_amount = 0 WHERE total_amount IS NULL",
     "UPDATE purchase_orders SET paid_amount = 0 WHERE paid_amount IS NULL",
+    "UPDATE stock_movements SET movement_type = lower(movement_type) WHERE movement_type <> lower(movement_type)",
 ]
 
 _FINANCE_STATEMENTS = [

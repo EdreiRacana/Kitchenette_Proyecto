@@ -117,7 +117,7 @@ async def _move_stock(db: AsyncSession, *, variant_id: int, warehouse_id: Option
 
     db.add(inv.StockMovement(
         variant_id=variant_id, warehouse_id=warehouse_id,
-        quantity=delta, movement_type="OUT" if direction == "out" else "IN",
+        quantity=delta, movement_type="out" if direction == "out" else "in",
         reference=f"order:{order_id}", user_id=user_id,
         notes=f"Auto {'venta' if direction == 'out' else 'cancelación/devolución'} pedido #{order_id}",
     ))

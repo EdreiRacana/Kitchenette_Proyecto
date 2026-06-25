@@ -439,7 +439,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
               <ArrowLeftRight size={16} color={t.nova} /> {lang === "es" ? "Movimientos recientes" : "Recent movements"}
             </div>
             {movements.slice(0, 5).map(m => {
-              const mt = MOVEMENT_TYPES[m.movement_type];
+              const mt = MOVEMENT_TYPES[String(m.movement_type).toLowerCase()] || MOVEMENT_TYPES.adjustment;
               return (
                 <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: `1px solid ${t.borderSoft}` }}>
                   <div style={{ background: mt.color + "22", color: mt.color, borderRadius: 8, padding: 7, display: "flex" }}><mt.icon size={14} /></div>
@@ -576,7 +576,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
             {warehouses.map(w => {
-              const wt = WAREHOUSE_TYPES[w.type || "own"];
+              const wt = WAREHOUSE_TYPES[w.type || "own"] || WAREHOUSE_TYPES.own;
               const stockInWh = products.reduce((a, p) => a + p.variants.reduce((b, v) => b + (v.stock_levels?.filter(l => l.warehouse_id === w.id).reduce((c, l) => c + l.quantity, 0) || 0), 0), 0);
               const skusInWh = products.filter(p => p.variants.some(v => v.stock_levels?.some(l => l.warehouse_id === w.id && l.quantity > 0))).length;
               return (
@@ -748,7 +748,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                   {filteredMovements.length === 0 ? (
                     <tr><td colSpan={9} style={{ textAlign: "center", padding: 40, color: t.textLo }}>{lang === "es" ? "Sin movimientos" : "No movements"}</td></tr>
                   ) : filteredMovements.map((m, i) => {
-                    const mt = MOVEMENT_TYPES[m.movement_type];
+                    const mt = MOVEMENT_TYPES[String(m.movement_type).toLowerCase()] || MOVEMENT_TYPES.adjustment;
                     return (
                       <tr key={m.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
                         <td style={{ padding: "12px 16px" }}>
@@ -846,7 +846,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                   {filteredPurchaseOrders.length === 0 ? (
                     <tr><td colSpan={7} style={{ textAlign: "center", padding: 40, color: t.textLo, fontSize: 14 }}>{lang === "es" ? "Sin órdenes de compra" : "No purchase orders"}</td></tr>
                   ) : filteredPurchaseOrders.map((po, i) => {
-                    const st = PO_STATUS[po.status];
+                    const st = PO_STATUS[po.status] || PO_STATUS.draft;
                     const canReceive = po.status === "draft" || po.status === "ordered";
                     return (
                       <tr key={po.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
@@ -969,7 +969,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                   {filteredProductionOrders.length === 0 ? (
                     <tr><td colSpan={8} style={{ textAlign: "center", padding: 40, color: t.textLo, fontSize: 14 }}>{lang === "es" ? "Sin órdenes de producción" : "No production orders"}</td></tr>
                   ) : filteredProductionOrders.map((po, i) => {
-                    const st = PROD_STATUS[po.status];
+                    const st = PROD_STATUS[po.status] || PROD_STATUS.draft;
                     return (
                       <tr key={po.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
                         <td style={{ padding: "12px 16px", fontSize: 13, color: t.nova, fontFamily: "monospace", fontWeight: 700 }}>{po.folio || `PR-${po.id}`}</td>
