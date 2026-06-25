@@ -60,6 +60,16 @@ const DEMO_INTEGRATIONS: Integration[] = [
   { id: "zkteco", name: "ZKTeco", category: "Checador", icon: Fingerprint, color: "#34D399", connected: false, description: "Checador biométrico de huella y rostro" },
 ];
 
+function errorMessage(err: any, fallback: string): string {
+  const detail = err?.response?.data?.detail;
+  if (!detail) return fallback;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d: any) => (typeof d === "string" ? d : d?.msg || JSON.stringify(d))).join(" · ") || fallback;
+  }
+  return typeof detail === "object" ? (detail.msg || JSON.stringify(detail)) : String(detail);
+}
+
 const PERM_LABELS = { view: "Ver", create: "Crear", edit: "Editar", delete: "Eliminar", approve: "Aprobar" };
 const PERM_COLORS = { view: "#60A5FA", create: "#34D399", edit: "#FBBF24", delete: "#F87171", approve: "#A78BFA" };
 
@@ -106,12 +116,13 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const handleSaveCompanyProfile = async () => {
     setCompanySaving(true); setCompanyMsg("");
     try {
-      if (companyExists) await configService.updateCompanyProfile(companyForm);
-      else await configService.createCompanyProfile(companyForm);
+      const payload = { ...companyForm, contact_email: companyForm.contact_email?.trim() || undefined };
+      if (companyExists) await configService.updateCompanyProfile(payload);
+      else await configService.createCompanyProfile(payload);
       setCompanyMsg("Datos de la empresa guardados ✓");
       await loadCompanyProfile();
     } catch (err: any) {
-      setCompanyMsg(err?.response?.data?.detail || "No se pudo guardar la información de la empresa.");
+      setCompanyMsg(errorMessage(err, "No se pudo guardar la información de la empresa."));
     } finally {
       setCompanySaving(false);
     }
@@ -133,12 +144,13 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
       const url = data[0];
       const nextForm = { ...companyForm, logo_url: url };
       setCompanyForm(nextForm);
+      const safeNextForm = { ...nextForm, contact_email: nextForm.contact_email?.trim() || undefined };
       if (companyExists) await configService.updateCompanyProfile({ logo_url: url });
-      else await configService.createCompanyProfile(nextForm);
+      else await configService.createCompanyProfile(safeNextForm);
       setCompanyExists(true);
       setCompanyMsg("Logo actualizado ✓");
     } catch (err: any) {
-      setCompanyMsg(err?.response?.data?.detail || "No se pudo subir el logo.");
+      setCompanyMsg(errorMessage(err, "No se pudo subir el logo."));
     } finally {
       setLogoUploading(false);
       if (logoInputRef.current) logoInputRef.current.value = "";
@@ -180,7 +192,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
       setEmailMsg("Configuración de correo guardada ✓");
       await loadEmailIntegration();
     } catch (err: any) {
-      setEmailMsg(err?.response?.data?.detail || "No se pudo guardar la configuración de correo.");
+      setEmailMsg(errorMessage(err, "No se pudo guardar la configuración de correo."));
     } finally {
       setEmailSaving(false);
     }
