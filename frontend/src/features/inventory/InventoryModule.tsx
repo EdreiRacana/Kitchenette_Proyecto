@@ -208,6 +208,11 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
     return matchQ && matchCat && matchWh && matchStatus;
   }), [products, q, catFilter, whFilter, statusFilter]);
 
+  const availableCategories = useMemo(() => {
+    const fromProducts = Array.from(new Set(products.map(p => (p.category || "").trim()).filter(Boolean)));
+    return Array.from(new Set([...fromProducts, ...CATEGORIES])).sort((a, b) => a.localeCompare(b, "es"));
+  }, [products]);
+
   const filteredMovements = useMemo(() => movements.filter(m => {
     const matchType = !movTypeFilter || m.movement_type === movTypeFilter;
     const matchQ = !q || (m.product_name || "").toLowerCase().includes(q.toLowerCase()) || (m.sku || "").toLowerCase().includes(q.toLowerCase());
@@ -466,7 +471,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
             </div>
             <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ ...inp, width: "auto", cursor: "pointer" }}>
               <option value="">{lang === "es" ? "Categoría" : "Category"}</option>
-              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              {availableCategories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
             <select value={whFilter} onChange={e => setWhFilter(e.target.value)} style={{ ...inp, width: "auto", cursor: "pointer" }}>
               <option value="">{lang === "es" ? "Almacén" : "Warehouse"}</option>
@@ -1167,7 +1172,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       {/* ── MODAL: Product Form ── */}
       {productForm && (
         <ProductFormModal
-          t={t} s={s} lang={lang} warehouses={warehouses} suppliers={suppliers} editing={editingProduct}
+          t={t} s={s} lang={lang} warehouses={warehouses} suppliers={suppliers} editing={editingProduct} categories={availableCategories}
           onClose={() => { setProductForm(false); setEditingProduct(null); }}
           onSave={async (data: any) => {
             if (demo) { alert(lang === "es" ? "Modo demo: guardado simulado ✓" : "Demo mode: simulated save ✓"); setProductForm(false); setEditingProduct(null); return; }
@@ -1429,7 +1434,7 @@ function BulkImportCard({ t, lang, title, description, onDownloadTemplate, busy,
 }
 
 // ── Product Form Modal ─────────────────────────────────────────────────────
-function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose, onSave }: any) {
+function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose, onSave, categories }: any) {
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1492,7 +1497,7 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
                 <div><label style={label}>{lang === "es" ? "Categoría" : "Category"}</label>
                   <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
                     <option value="">{lang === "es" ? "Seleccionar…" : "Select…"}</option>
-                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    {(categories || CATEGORIES).map((c: string) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div><label style={label}>{lang === "es" ? "URL imagen" : "Image URL"}</label><input value={form.image_url} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} placeholder="https://…" style={inp} /></div>
