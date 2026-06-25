@@ -47,7 +47,6 @@ const DEMO_MOVEMENTS: Movement[] = [
   { id: 5, variant_id: 6, warehouse_id: 1, quantity: 5, movement_type: "adjustment", reference: "AJU-001", notes: "Corrección conteo físico", created_at: "2026-06-07T10:00:00Z", product_name: "Cable THW cal. 12", sku: "CAB-THW-12", warehouse_name: "Almacén Principal" },
 ];
 
-const CATEGORIES = ["Construcción", "Acero", "Pinturas", "Plomería", "Eléctrico", "Herramienta", "Madera", "Vidrio", "Otro"];
 const WAREHOUSE_TYPES = { own: { label: "Propio", color: "#33B2F5" }, marketplace: { label: "Marketplace", color: "#FBBF24" }, consignment: { label: "Consignación", color: "#A78BFA" }, transit: { label: "Tránsito", color: "#34D399" } };
 const MOVEMENT_TYPES = { in: { label: "Entrada", color: "#34D399", icon: ArrowDownToLine }, out: { label: "Salida", color: "#F87171", icon: ArrowUpFromLine }, adjustment: { label: "Ajuste", color: "#FBBF24", icon: SlidersHorizontal } };
 const PO_STATUS = { draft: { label: "Borrador", color: "#94A3B8" }, ordered: { label: "Enviada", color: "#33B2F5" }, received: { label: "Recibida", color: "#34D399" }, cancelled: { label: "Cancelada", color: "#F87171" } };
@@ -209,8 +208,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
   }), [products, q, catFilter, whFilter, statusFilter]);
 
   const availableCategories = useMemo(() => {
-    const fromProducts = Array.from(new Set(products.map(p => (p.category || "").trim()).filter(Boolean)));
-    return Array.from(new Set([...fromProducts, ...CATEGORIES])).sort((a, b) => a.localeCompare(b, "es"));
+    return Array.from(new Set(products.map(p => (p.category || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
   }, [products]);
 
   const filteredMovements = useMemo(() => movements.filter(m => {
@@ -1497,7 +1495,7 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
                 <div><label style={label}>{lang === "es" ? "Categoría" : "Category"}</label>
                   <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
                     <option value="">{lang === "es" ? "Seleccionar…" : "Select…"}</option>
-                    {(categories || CATEGORIES).map((c: string) => <option key={c} value={c}>{c}</option>)}
+                    {(categories || []).map((c: string) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div><label style={label}>{lang === "es" ? "URL imagen" : "Image URL"}</label><input value={form.image_url} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} placeholder="https://…" style={inp} /></div>
