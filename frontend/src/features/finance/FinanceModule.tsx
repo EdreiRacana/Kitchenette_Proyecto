@@ -3,6 +3,7 @@
 // Mismo contrato { t, s } que App.tsx — modo demo automático si el backend no responde
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   LayoutDashboard, TrendingUp, TrendingDown, Building2,
   ArrowDownToLine, ArrowUpFromLine, RefreshCw, Plus, Search,
@@ -819,7 +820,7 @@ function TransactionFormModal({ t, tx, onClose, onSave }: any) {
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const handleSave = async () => { setSaving(true); try { await onSave({ ...form, amount: parseFloat(form.amount) }); } finally { setSaving(false); } };
   const isIncome = form.type === "income";
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 460, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -861,7 +862,7 @@ function TransactionFormModal({ t, tx, onClose, onSave }: any) {
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 // ── Pay Debt Modal (CXC / CXP) ───────────────────────────────────────────────
@@ -887,7 +888,7 @@ function PayDebtModal({ t, item, kind, onClose, onSave }: any) {
     }
     finally { setSaving(false); }
   };
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -932,7 +933,7 @@ function PayDebtModal({ t, item, kind, onClose, onSave }: any) {
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 // ── Bank Account Form Modal ──────────────────────────────────────────────────
@@ -942,7 +943,7 @@ function BankFormModal({ t, onClose, onSave }: any) {
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const handleSave = async () => { if (!form.name) return; setSaving(true); try { await onSave({ ...form, balance: parseFloat(form.balance) || 0 }); } finally { setSaving(false); } };
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -970,7 +971,7 @@ function BankFormModal({ t, onClose, onSave }: any) {
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 // ── Bank Movements Modal ─────────────────────────────────────────────────────
@@ -1046,7 +1047,7 @@ function BankMovementsModal({ t, bank, demo, onClose, onChanged }: any) {
     }
   };
 
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 560, maxHeight: "85vh", display: "flex", flexDirection: "column", background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1394,7 +1395,7 @@ function AdvancedPanel({ t, demo }: any) {
         </div>
       )}
     </div>
-  );
+  , document.body);
 }
 
 // ── Transfer Modal ───────────────────────────────────────────────────────────
@@ -1411,7 +1412,7 @@ function TransferModal({ t, from, banks, onClose, onSave }: any) {
     setSaving(true);
     try { await onSave(toId, amt, description); } finally { setSaving(false); }
   };
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1437,5 +1438,5 @@ function TransferModal({ t, from, banks, onClose, onSave }: any) {
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
