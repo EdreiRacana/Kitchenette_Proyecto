@@ -988,7 +988,7 @@ function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMe
           </button>
         )}
         <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title="Tema / Theme" style={iconBtn(t)}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
-        {!isMobile && <NotificationBell t={t} lang={lang} onNavigate={onNavigate} />}
+        <NotificationBell t={t} lang={lang} onNavigate={onNavigate} />
         <div style={{ width: 1, height: 26, background: t.border, margin: "0 4px" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <span style={{ width: 32, height: 32, borderRadius: 999, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: 13, flex: "0 0 auto" }}>ER</span>
