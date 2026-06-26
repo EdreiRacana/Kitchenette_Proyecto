@@ -1,7 +1,7 @@
 // HRModule.tsx — Módulo RH / Nómina Premium
 // Arquitectura: Dashboard · Empleados · Asistencia · Checador · Nómina · Dispersión · Reportes
 // Cumplimiento: LFT 2026, IMSS, ISR SAT, CFDI 4.0, Reforma 40hrs
-// Contrato { t, s } igual que App.tsx — modo demo automático
+// Contrato { t, s } igual que App.tsx
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
@@ -14,6 +14,7 @@ import {
   ChevronDown, ChevronUp, Filter, MoreVertical, Play, Pause,
   CheckSquare, Clock3, UserCheck, UserX, Cake, Award,
 } from "lucide-react";
+import { hrApi, downloadBlob } from "./api";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type ContractType = "indefinido" | "prueba" | "capacitacion" | "temporal" | "eventual" | "honorarios" | "outsourcing" | "proyecto" | "partime";
@@ -115,43 +116,6 @@ interface Alert {
   action: string;
 }
 
-// ── Demo Data ─────────────────────────────────────────────────────────────
-const DEMO_EMPLOYEES: Employee[] = [
-  { id: 1, employee_number: "EMP-001", name: "Carlos", last_name: "Mendoza López", email: "c.mendoza@empresa.mx", phone: "5512345678", department: "Ventas", position: "Gerente Comercial", cost_center: "CC-VTA", contract_type: "indefinido", status: "activo", hire_date: "2022-03-15", curp: "MELC820315HDFNRL09", rfc: "MELC820315AB2", nss: "12345678901", bank: "BBVA", clabe: "012345678901234567", base_salary: 28000, sbc: 29400, pay_frequency: "quincenal", tax_regime: "605", vacation_days: 16, vacation_used: 6, is_active: true },
-  { id: 2, employee_number: "EMP-002", name: "Ana", last_name: "Torres Ruiz", email: "a.torres@empresa.mx", phone: "5587654321", department: "Contabilidad", position: "Contador Senior", cost_center: "CC-ADM", contract_type: "indefinido", status: "activo", hire_date: "2021-08-01", curp: "TORA950801MDFRZN07", rfc: "TORA950801KL3", nss: "09876543210", bank: "Santander", clabe: "014123456789012345", base_salary: 22000, sbc: 23100, pay_frequency: "quincenal", tax_regime: "605", vacation_days: 18, vacation_used: 10, is_active: true },
-  { id: 3, employee_number: "EMP-003", name: "Miguel", last_name: "Sánchez García", email: "m.sanchez@empresa.mx", department: "Almacén", position: "Jefe de Almacén", cost_center: "CC-ALM", contract_type: "indefinido", status: "activo", hire_date: "2020-01-06", curp: "SAGM800106HDFNCG08", rfc: "SAGM800106PQ7", nss: "11122233344", bank: "Banamex", clabe: "002456789012345678", base_salary: 18000, sbc: 18900, pay_frequency: "semanal", tax_regime: "605", vacation_days: 20, vacation_used: 8, is_active: true },
-  { id: 4, employee_number: "EMP-004", name: "Laura", last_name: "Jiménez Castro", email: "l.jimenez@empresa.mx", department: "Ventas", position: "Ejecutiva de Ventas", cost_center: "CC-VTA", contract_type: "prueba", status: "activo", hire_date: "2026-05-01", trial_end: "2026-07-31", curp: "JICL010201MDFMSR01", rfc: "JICL010201AB8", nss: "55566677788", bank: "BBVA", clabe: "012789012345678901", base_salary: 14000, sbc: 14700, pay_frequency: "quincenal", tax_regime: "605", vacation_days: 6, vacation_used: 0, is_active: true },
-  { id: 5, employee_number: "EMP-005", name: "Roberto", last_name: "Flores Herrera", email: "r.flores@empresa.mx", department: "Operaciones", position: "Auxiliar Operativo", cost_center: "CC-OPS", contract_type: "temporal", status: "activo", hire_date: "2026-04-01", contract_end: "2026-06-30", curp: "FOHR990215HDFRLB06", rfc: "FOHR990215CD4", nss: "99988877766", bank: "Santander", clabe: "014901234567890123", base_salary: 10000, sbc: 10500, pay_frequency: "semanal", tax_regime: "605", vacation_days: 6, vacation_used: 2, is_active: true },
-  { id: 6, employee_number: "EMP-006", name: "Patricia", last_name: "Morales Vega", email: "p.morales@empresa.mx", department: "Diseño", position: "Diseñadora Gráfica", cost_center: "CC-MKT", contract_type: "honorarios", status: "activo", hire_date: "2026-01-15", curp: "MOVP850320MDFRGR05", rfc: "MOVP850320EF9", nss: "", bank: "HSBC", clabe: "021234567890123456", base_salary: 15000, sbc: 0, pay_frequency: "mensual", tax_regime: "612", vacation_days: 0, vacation_used: 0, is_active: true },
-  { id: 7, employee_number: "EMP-007", name: "Jorge", last_name: "Ramírez Peña", email: "j.ramirez@empresa.mx", department: "Sistemas", position: "Desarrollador Senior", cost_center: "CC-TI", contract_type: "proyecto", status: "activo", hire_date: "2026-03-01", contract_end: "2026-08-31", curp: "RAPJ920710HDFMNR04", rfc: "RAPJ920710GH1", nss: "44455566677", bank: "Banamex", clabe: "002567890123456789", base_salary: 35000, sbc: 36750, pay_frequency: "quincenal", tax_regime: "605", vacation_days: 6, vacation_used: 0, is_active: true },
-];
-
-const DEMO_ATTENDANCE: Attendance[] = [
-  { id: 1, employee_id: 1, employee_name: "Carlos Mendoza", date: "2026-06-18", type: "entrada", time: "08:02", approved: true, channel: "biometric" },
-  { id: 2, employee_id: 2, employee_name: "Ana Torres", date: "2026-06-18", type: "entrada", time: "08:15", approved: true, channel: "app" },
-  { id: 3, employee_id: 3, employee_name: "Miguel Sánchez", date: "2026-06-18", type: "retardo", time: "09:12", notes: "70 min de retraso", approved: true, channel: "qr" },
-  { id: 4, employee_id: 4, employee_name: "Laura Jiménez", date: "2026-06-18", type: "entrada", time: "07:58", approved: true, channel: "kiosk" },
-  { id: 5, employee_id: 5, employee_name: "Roberto Flores", date: "2026-06-18", type: "falta", approved: false, notes: "Sin justificación" },
-  { id: 6, employee_id: 1, employee_name: "Carlos Mendoza", date: "2026-06-17", type: "entrada", time: "08:00", approved: true, channel: "biometric" },
-  { id: 7, employee_id: 2, employee_name: "Ana Torres", date: "2026-06-17", type: "vacacion", approved: true },
-  { id: 8, employee_id: 6, employee_name: "Patricia Morales", date: "2026-06-18", type: "entrada", time: "10:00", approved: true, channel: "whatsapp" },
-];
-
-const DEMO_PERIODS: PayrollPeriod[] = [
-  { id: 1, name: "Quincena Jun 1-15 2026", frequency: "quincenal", start_date: "2026-06-01", end_date: "2026-06-15", payment_date: "2026-06-17", status: "dispersed", total_employees: 5, total_gross: 96500, total_deductions: 18240, total_net: 78260 },
-  { id: 2, name: "Semana 24 - Jun 2026", frequency: "semanal", start_date: "2026-06-09", end_date: "2026-06-15", payment_date: "2026-06-16", status: "dispersed", total_employees: 2, total_gross: 14000, total_deductions: 2100, total_net: 11900 },
-  { id: 3, name: "Quincena Jun 16-30 2026", frequency: "quincenal", start_date: "2026-06-16", end_date: "2026-06-30", payment_date: "2026-07-02", status: "calculated", total_employees: 5, total_gross: 97200, total_deductions: 18390, total_net: 78810 },
-  { id: 4, name: "Semana 25 - Jun 2026", frequency: "semanal", start_date: "2026-06-16", end_date: "2026-06-22", payment_date: "2026-06-23", status: "draft", total_employees: 2, total_gross: 0, total_deductions: 0, total_net: 0 },
-];
-
-const DEMO_ALERTS: Alert[] = [
-  { id: 1, type: "danger", employee_id: 5, employee_name: "Roberto Flores", message: "Contrato temporal vence en 12 días (30 Jun 2026)", date: "2026-06-18", action: "Renovar / Hacer fijo / Liquidar" },
-  { id: 2, type: "warning", employee_id: 4, employee_name: "Laura Jiménez", message: "Período de prueba vence en 43 días (31 Jul 2026)", date: "2026-06-18", action: "Evaluar para hacer fijo" },
-  { id: 3, type: "warning", employee_id: 7, employee_name: "Jorge Ramírez", message: "Contrato por proyecto vence en 74 días (31 Ago 2026)", date: "2026-06-18", action: "Renovar / Finalizar proyecto" },
-  { id: 4, type: "info", employee_id: 2, employee_name: "Ana Torres", message: "Cumpleaños el 1 de agosto", date: "2026-06-18", action: "Enviar felicitación" },
-  { id: 5, type: "info", employee_id: 3, employee_name: "Miguel Sánchez", message: "Aniversario laboral: 6 años el 6 de enero", date: "2026-06-18", action: "Reconocimiento + revisión salarial" },
-];
-
 // ── Catalogs ──────────────────────────────────────────────────────────────
 const CONTRACT_TYPES: Record<ContractType, { label: string; color: string; desc: string }> = {
   indefinido: { label: "Tiempo indeterminado", color: "#34D399", desc: "Empleado de planta fija" },
@@ -195,7 +159,7 @@ const CHANNEL_META: Record<string, { label: string; icon: any; color: string }> 
 
 const PERIOD_STATUS: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Borrador", color: "#94A3B8", icon: FileText },
-  calculated: { label: "Calculada", color: "#FBBF24", icon: Calculator },
+  calculated: { label: "Calculada", color: "#FBBF24", icon: Receipt },
   approved: { label: "Aprobada", color: "#33B2F5", icon: CheckCircle },
   dispersed: { label: "Dispersada", color: "#34D399", icon: Banknote },
 };
@@ -240,25 +204,24 @@ const calcIMSS = (sbc: number, freq: PayFrequency): number => {
   return Math.round((enfermedadMaternidad + invalidezVida + cesantiaVejez) * 100) / 100;
 };
 
-// Fake calculator component reference
-function Calculator(props: any) { return <Receipt {...props} />; }
-
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function HRModule({ t, s }: { t: any; s: any }) {
   const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports">("dashboard");
-  const [demo, setDemo] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errors, setErrors] = useState<{ employees?: boolean; alerts?: boolean; periods?: boolean; attendance?: boolean }>({});
 
   // UI State
   const [employeeForm, setEmployeeForm] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [selectedPeriod, setSelectedPeriod] = useState<PayrollPeriod | null>(null);
+  const [periodDetail, setPeriodDetail] = useState<any | null>(null);
   const [attendanceForm, setAttendanceForm] = useState(false);
+  const [periodForm, setPeriodForm] = useState(false);
 
   // Filters
   const [q, setQ] = useState("");
@@ -269,21 +232,38 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
 
   const load = useCallback(async () => {
     setLoading(true);
+    const [empR, alertR, periodR] = await Promise.allSettled([
+      hrApi.employees(), hrApi.alerts(), hrApi.periods(),
+    ]);
+    setEmployees(empR.status === "fulfilled" ? empR.value : []);
+    setAlerts(alertR.status === "fulfilled" ? alertR.value : []);
+    setPeriods(periodR.status === "fulfilled" ? periodR.value : []);
+    setErrors({
+      employees: empR.status === "rejected",
+      alerts: alertR.status === "rejected",
+      periods: periodR.status === "rejected",
+    });
+    setLoading(false);
+  }, []);
+
+  const loadAttendance = useCallback(async (date: string) => {
     try {
-      const res = await fetch("/api/v1/hr/employees");
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      setEmployees(data); setDemo(false);
+      const data = await hrApi.attendance(date);
+      setAttendance(data);
+      setErrors(e => ({ ...e, attendance: false }));
     } catch {
-      setDemo(true);
-      setEmployees(DEMO_EMPLOYEES);
-      setAttendance(DEMO_ATTENDANCE);
-      setPeriods(DEMO_PERIODS);
-      setAlerts(DEMO_ALERTS);
-    } finally { setLoading(false); }
+      setAttendance([]);
+      setErrors(e => ({ ...e, attendance: true }));
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadAttendance(attendanceDateFilter); }, [loadAttendance, attendanceDateFilter]);
+
+  useEffect(() => {
+    if (!selectedPeriod) { setPeriodDetail(null); return; }
+    hrApi.periodDetail(selectedPeriod.id).then(setPeriodDetail).catch(() => setPeriodDetail(null));
+  }, [selectedPeriod]);
 
   // ── KPIs ──────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
@@ -325,10 +305,10 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-      {/* Demo banner */}
-      {demo && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, background: t.warn + "18", border: `1px solid ${t.warn}44`, color: t.warn, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 16 }}>
-          <Info size={16} /> Modo demo: backend no disponible. Los cambios no se guardan.
+      {/* Error banner */}
+      {(errors.employees || errors.alerts || errors.periods) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: t.bad + "18", border: `1px solid ${t.bad}44`, color: t.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 16 }}>
+          <AlertTriangle size={16} /> No se pudo cargar información del servidor. Intenta recargar.
         </div>
       )}
 
@@ -608,10 +588,10 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
             <button onClick={() => setAttendanceForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               <Plus size={15} /> Registrar incidencia
             </button>
-            <button style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>
-              <Download size={14} /> Exportar
-            </button>
           </div>
+          {errors.attendance && (
+            <div style={{ fontSize: 12.5, color: t.bad }}>No se pudo cargar la asistencia de esta fecha.</div>
+          )}
 
           {/* Attendance Table */}
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -687,8 +667,8 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                   </div>
                   <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>{card.title}</div>
                   <div style={{ fontSize: 12.5, color: t.textLo, lineHeight: 1.5, marginBottom: 14 }}>{card.desc}</div>
-                  <button style={{ width: "100%", padding: "8px", borderRadius: 8, border: card.configured ? `1px solid ${t.border}` : "none", background: card.configured ? t.panel3 : `linear-gradient(135deg, ${card.color}, ${card.color}99)`, color: card.configured ? t.textMid : "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
-                    {card.configured ? "⚙ Configuración" : "Conectar"}
+                  <button disabled style={{ width: "100%", padding: "8px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textLo, cursor: "not-allowed", fontSize: 12.5, fontWeight: 600 }}>
+                    No disponible — requiere integración externa
                   </button>
                 </div>
               ))}
@@ -738,7 +718,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           {/* Periods */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>Períodos de nómina</div>
-            <button style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            <button onClick={() => setPeriodForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               <Plus size={15} /> Nuevo período
             </button>
           </div>
@@ -784,28 +764,28 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                   )}
                   <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
                     {p.status === "draft" && (
-                      <button onClick={e => { e.stopPropagation(); alert(demo ? "Demo: cálculo simulado" : "Calculando..."); }} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                      <button onClick={async e => { e.stopPropagation(); try { await hrApi.calculatePeriod(p.id); await load(); } catch (err: any) { alert(err?.response?.data?.detail || "Error al calcular la nómina"); } }} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
                         Calcular nómina
                       </button>
                     )}
                     {p.status === "calculated" && (
                       <>
-                        <button onClick={e => { e.stopPropagation(); alert(demo ? "Demo: aprobación simulada" : "Aprobando..."); }} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                        <button onClick={async e => { e.stopPropagation(); try { await hrApi.approvePeriod(p.id); await load(); } catch (err: any) { alert(err?.response?.data?.detail || "Error al aprobar"); } }} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
                           Aprobar
                         </button>
-                        <button onClick={e => e.stopPropagation()} style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12 }}>
+                        <button onClick={e => { e.stopPropagation(); setSelectedPeriod(p); setTab("dispersion"); }} style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12 }}>
                           <Eye size={14} />
                         </button>
                       </>
                     )}
                     {p.status === "approved" && (
-                      <button onClick={e => { e.stopPropagation(); setTab("dispersion"); }} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                      <button onClick={e => { e.stopPropagation(); setSelectedPeriod(p); setTab("dispersion"); }} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
                         Ir a dispersión →
                       </button>
                     )}
                     {p.status === "dispersed" && (
-                      <button onClick={e => e.stopPropagation()} style={{ flex: 1, padding: "8px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12 }}>
-                        Ver recibos
+                      <button onClick={e => { e.stopPropagation(); setSelectedPeriod(p); setTab("dispersion"); }} style={{ flex: 1, padding: "8px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12 }}>
+                        Ver detalle
                       </button>
                     )}
                   </div>
@@ -864,66 +844,86 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
             <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>Dispersión de pagos</div>
             <div style={{ fontSize: 13, color: t.textLo, marginBottom: 20 }}>Genera el archivo bancario para dispersar el pago de nómina directamente a las cuentas CLABE de tus empleados.</div>
 
-            {/* Bank layouts */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12, marginBottom: 20 }}>
-              {["BBVA", "Santander", "Banamex", "HSBC", "Banorte", "Scotiabank"].map(bank => (
-                <button key={bank} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: "14px 16px", cursor: "pointer", textAlign: "left", transition: "all .15s" }}
-                  onMouseEnter={e => { (e.currentTarget as any).style.borderColor = t.nova + "66"; (e.currentTarget as any).style.background = t.panel3; }}
-                  onMouseLeave={e => { (e.currentTarget as any).style.borderColor = t.border; (e.currentTarget as any).style.background = t.panel2; }}
-                  onClick={() => alert(demo ? `Demo: generando layout ${bank}...` : `Generando layout ${bank}`)}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>{bank}</div>
-                  <div style={{ fontSize: 11.5, color: t.textLo }}>Layout bancario</div>
-                  <div style={{ marginTop: 10, fontSize: 12, color: t.nova, display: "flex", alignItems: "center", gap: 4 }}>
-                    <Download size={12} /> Generar archivo
-                  </div>
-                </button>
-              ))}
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>Período</label>
+              <select value={selectedPeriod?.id || ""} onChange={e => setSelectedPeriod(periods.find(p => p.id === Number(e.target.value)) || null)} style={{ ...inp, cursor: "pointer", maxWidth: 360 }}>
+                <option value="">Seleccionar período…</option>
+                {periods.filter(p => p.status !== "draft").map(p => <option key={p.id} value={p.id}>{p.name} — {PERIOD_STATUS[p.status].label}</option>)}
+              </select>
             </div>
 
-            {/* Dispersion table */}
-            <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 12 }}>Detalle de dispersión — Quincena Jun 16-30 2026</div>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
-                <thead>
-                  <tr style={{ background: t.panel2 }}>
-                    {["Empleado", "Banco", "CLABE", "Importe neto", "Estado"].map((h, i) => (
-                      <th key={i} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.4 }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {employees.filter(e => e.is_active && e.pay_frequency === "quincenal").map((e, i) => {
-                    const salarioGanado = (e.base_salary / 30) * 15;
-                    const imss = calcIMSS(e.sbc, "quincenal");
-                    const isr = calcISR(salarioGanado - imss);
-                    const neto = salarioGanado - imss - isr;
-                    const statuses = ["Pendiente", "Enviado", "Confirmado"];
-                    const stColors = [t.warn, t.nova, t.good];
-                    const stIdx = i % 3;
-                    return (
-                      <tr key={e.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
-                        <td style={{ padding: "12px 16px", fontSize: 13.5, color: t.textHi, fontWeight: 600 }}>{fullName(e)}</td>
-                        <td style={{ padding: "12px 16px", fontSize: 13, color: t.textMid }}>{e.bank}</td>
-                        <td style={{ padding: "12px 16px", fontSize: 12, color: t.textLo, fontFamily: "monospace" }}>{e.clabe}</td>
-                        <td style={{ padding: "12px 16px", fontSize: 14, fontWeight: 700, color: t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(neto)}</td>
-                        <td style={{ padding: "12px 16px" }}>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: stColors[stIdx], background: stColors[stIdx] + "18", padding: "3px 9px", borderRadius: 20 }}>{statuses[stIdx]}</span>
-                        </td>
+            {!selectedPeriod ? (
+              <div style={{ textAlign: "center", padding: 40, color: t.textLo, fontSize: 13 }}>Selecciona un período calculado, aprobado o dispersado para ver su detalle.</div>
+            ) : !periodDetail ? (
+              <div style={{ textAlign: "center", padding: 40, color: t.textLo, fontSize: 13 }}>Cargando detalle…</div>
+            ) : (
+              <>
+                {/* Bank layout downloads */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12, marginBottom: 20 }}>
+                  {["Todos", ...BANKS].map(bank => (
+                    <button key={bank} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: "14px 16px", cursor: "pointer", textAlign: "left", transition: "all .15s" }}
+                      onMouseEnter={e => { (e.currentTarget as any).style.borderColor = t.nova + "66"; (e.currentTarget as any).style.background = t.panel3; }}
+                      onMouseLeave={e => { (e.currentTarget as any).style.borderColor = t.border; (e.currentTarget as any).style.background = t.panel2; }}
+                      onClick={async () => {
+                        try {
+                          const res = await hrApi.downloadBankLayout(selectedPeriod.id, bank === "Todos" ? undefined : bank);
+                          downloadBlob(res.data, `layout_${bank}_${selectedPeriod.id}.csv`);
+                        } catch { alert("Error al generar el layout bancario"); }
+                      }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>{bank}</div>
+                      <div style={{ fontSize: 11.5, color: t.textLo }}>Layout bancario</div>
+                      <div style={{ marginTop: 10, fontSize: 12, color: t.nova, display: "flex", alignItems: "center", gap: 4 }}>
+                        <Download size={12} /> Descargar CSV
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Dispersion table */}
+                <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 12 }}>Detalle de dispersión — {selectedPeriod.name}</div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
+                    <thead>
+                      <tr style={{ background: t.panel2 }}>
+                        {["Empleado", "Banco", "CLABE", "Importe neto", "Estado"].map((h, i) => (
+                          <th key={i} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.4 }}>{h}</th>
+                        ))}
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {(periodDetail.details || []).length === 0 ? (
+                        <tr><td colSpan={5} style={{ textAlign: "center", padding: 30, color: t.textLo }}>Sin detalle disponible.</td></tr>
+                      ) : (periodDetail.details || []).map((d: any, i: number) => {
+                        const emp = employees.find(e => e.id === d.employee_id);
+                        const dispersed = d.dispersion_status === "confirmado";
+                        const stColor = dispersed ? t.good : t.warn;
+                        return (
+                          <tr key={d.employee_id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
+                            <td style={{ padding: "12px 16px", fontSize: 13.5, color: t.textHi, fontWeight: 600 }}>{d.employee_name}</td>
+                            <td style={{ padding: "12px 16px", fontSize: 13, color: t.textMid }}>{emp?.bank || "—"}</td>
+                            <td style={{ padding: "12px 16px", fontSize: 12, color: t.textLo, fontFamily: "monospace" }}>{emp?.clabe || "—"}</td>
+                            <td style={{ padding: "12px 16px", fontSize: 14, fontWeight: 700, color: t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(d.total_net)}</td>
+                            <td style={{ padding: "12px 16px" }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: stColor, background: stColor + "18", padding: "3px 9px", borderRadius: 20 }}>{dispersed ? "Confirmado" : "Pendiente"}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
-            <div style={{ display: "flex", gap: 10, marginTop: 16, justifyContent: "flex-end" }}>
-              <button style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>
-                <Download size={14} /> Exportar todos los layouts
-              </button>
-              <button onClick={() => alert(demo ? "Demo: dispersión simulada ✓" : "Iniciando dispersión...")} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-                <Banknote size={15} /> Dispersar pagos
-              </button>
-            </div>
+                {selectedPeriod.status === "approved" && (
+                  <div style={{ display: "flex", gap: 10, marginTop: 16, justifyContent: "flex-end" }}>
+                    <button onClick={async () => {
+                      try { await hrApi.dispersePeriod(selectedPeriod.id); await load(); const detail = await hrApi.periodDetail(selectedPeriod.id); setPeriodDetail(detail); } catch (err: any) { alert(err?.response?.data?.detail || "Error al dispersar"); }
+                    }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+                      <Banknote size={15} /> Dispersar pagos
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -933,19 +933,13 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
             {[
-              { icon: FileText, title: "SUA — IMSS", desc: "Archivo SUA cuadrado automáticamente con cuotas patronales y obreras del período.", color: t.nova, tag: "IMSS" },
-              { icon: Receipt, title: "Confronta SAT", desc: "Compara CFDI de nómina timbrados contra lo declarado. Detecta discrepancias antes de auditoría.", color: "#A78BFA", tag: "SAT" },
-              { icon: BarChart3, title: "Acumulado anual", desc: "Total de percepciones y deducciones por empleado en el año. Base para ISR anual.", color: t.good, tag: "ISR" },
-              { icon: DollarSign, title: "PTU — Participación de utilidades", desc: "Cálculo de PTU con base en días trabajados y salario. Lista de reparto.", color: t.warn, tag: "LFT" },
-              { icon: TrendingDown, title: "Reporte INFONAVIT", desc: "Créditos activos, montos descontados y saldos por empleado.", color: "#FB923C", tag: "INFONAVIT" },
-              { icon: Users, title: "Plantilla STPS", desc: "Reporte de personal activo para registro STPS. Incluye tipos de contrato y jornada.", color: t.bad, tag: "STPS" },
-              { icon: Calendar, title: "Control de vacaciones", desc: "Días generados, tomados y pendientes por empleado y período.", color: t.nova, tag: "RH" },
-              { icon: Clock, title: "Horas extra LFT 2026", desc: "Reporte de horas ordinarias, dobles y triples con clasificación fiscal.", color: t.good, tag: "LFT" },
+              { icon: Users, title: "Plantilla STPS", desc: "Reporte de personal activo para registro STPS. Incluye tipos de contrato y jornada.", color: t.bad, tag: "STPS", action: async () => { const res = await hrApi.downloadHeadcountReport(); downloadBlob(res.data, "plantilla_stps.csv"); } },
+              { icon: Calendar, title: "Control de vacaciones", desc: "Días generados, tomados y pendientes por empleado y período.", color: t.nova, tag: "RH", action: async () => { const res = await hrApi.downloadVacationReport(); downloadBlob(res.data, "control_vacaciones.csv"); } },
             ].map(r => (
               <button key={r.title} style={{ ...glass(t), borderRadius: 12, padding: 20, textAlign: "left", cursor: "pointer" }}
                 onMouseEnter={e => { (e.currentTarget as any).style.transform = "translateY(-2px)"; (e.currentTarget as any).style.boxShadow = `0 8px 20px rgba(0,0,0,0.15)`; }}
                 onMouseLeave={e => { (e.currentTarget as any).style.transform = ""; (e.currentTarget as any).style.boxShadow = ""; }}
-                onClick={() => alert(demo ? `Demo: generando ${r.title}...` : `Generando ${r.title}`)}>
+                onClick={async () => { try { await r.action(); } catch { alert(`Error al generar: ${r.title}`); } }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                   <div style={{ background: r.color + "22", color: r.color, borderRadius: 10, padding: 10, display: "flex" }}><r.icon size={20} /></div>
                   <span style={{ fontSize: 10, fontWeight: 700, color: r.color, background: r.color + "18", padding: "2px 7px", borderRadius: 6 }}>{r.tag}</span>
@@ -953,11 +947,26 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>{r.title}</div>
                 <div style={{ fontSize: 12.5, color: t.textLo, lineHeight: 1.5, marginBottom: 14 }}>{r.desc}</div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <span style={{ fontSize: 12, color: r.color, display: "flex", alignItems: "center", gap: 4 }}><Download size={12} /> Excel</span>
-                  <span style={{ fontSize: 12, color: t.textLo }}>·</span>
-                  <span style={{ fontSize: 12, color: r.color, display: "flex", alignItems: "center", gap: 4 }}><Eye size={12} /> PDF</span>
+                  <span style={{ fontSize: 12, color: r.color, display: "flex", alignItems: "center", gap: 4 }}><Download size={12} /> CSV</span>
                 </div>
               </button>
+            ))}
+            {[
+              { icon: FileText, title: "SUA — IMSS", tag: "IMSS" },
+              { icon: Receipt, title: "Confronta SAT", tag: "SAT" },
+              { icon: BarChart3, title: "Acumulado anual", tag: "ISR" },
+              { icon: DollarSign, title: "PTU — Participación de utilidades", tag: "LFT" },
+              { icon: TrendingDown, title: "Reporte INFONAVIT", tag: "INFONAVIT" },
+              { icon: Clock, title: "Horas extra LFT 2026", tag: "LFT" },
+            ].map(r => (
+              <div key={r.title} style={{ ...glass(t), borderRadius: 12, padding: 20, opacity: 0.55 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                  <div style={{ background: t.textLo + "22", color: t.textLo, borderRadius: 10, padding: 10, display: "flex" }}><r.icon size={20} /></div>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: t.textLo, background: t.textLo + "18", padding: "2px 7px", borderRadius: 6 }}>{r.tag}</span>
+                </div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>{r.title}</div>
+                <div style={{ fontSize: 12.5, color: t.textLo, lineHeight: 1.5 }}>Próximamente — no disponible aún.</div>
+              </div>
             ))}
           </div>
         </div>
@@ -1052,7 +1061,24 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
       )}
 
       {/* ── MODAL: Employee Form ── */}
-      {employeeForm && <EmployeeFormModal t={t} editing={editingEmployee} onClose={() => { setEmployeeForm(false); setEditingEmployee(null); }} onSave={async () => { if (demo) alert("Modo demo: guardado simulado ✓"); setEmployeeForm(false); setEditingEmployee(null); await load(); }} />}
+      {employeeForm && <EmployeeFormModal t={t} editing={editingEmployee} onClose={() => { setEmployeeForm(false); setEditingEmployee(null); }} onSave={async (form: any) => {
+        const payload = { ...form, base_salary: Number(form.base_salary) || 0, sbc: Number(form.sbc) || 0 };
+        if (editingEmployee) await hrApi.updateEmployee(editingEmployee.id, payload);
+        else await hrApi.createEmployee(payload);
+        setEmployeeForm(false); setEditingEmployee(null); await load();
+      }} />}
+
+      {/* ── MODAL: Attendance Form ── */}
+      {attendanceForm && <AttendanceFormModal t={t} employees={employees} onClose={() => setAttendanceForm(false)} onSave={async (form: any) => {
+        await hrApi.createAttendance(form);
+        setAttendanceForm(false); await loadAttendance(attendanceDateFilter);
+      }} />}
+
+      {/* ── MODAL: Period Form ── */}
+      {periodForm && <PeriodFormModal t={t} onClose={() => setPeriodForm(false)} onSave={async (form: any) => {
+        await hrApi.createPeriod(form);
+        setPeriodForm(false); await load();
+      }} />}
 
       <style>{`@keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}`}</style>
     </div>
@@ -1271,6 +1297,135 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
               {saving ? "Guardando…" : "Guardar empleado"}
             </button>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Attendance Form Modal ──────────────────────────────────────────────────
+function AttendanceFormModal({ t, employees, onClose, onSave }: any) {
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    employee_id: employees[0]?.id || "",
+    date: new Date().toISOString().slice(0, 10),
+    type: "entrada" as AttendanceType,
+    time: "",
+    channel: "manual",
+    notes: "",
+  });
+
+  const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
+  const lbl: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
+
+  const handleSave = async () => {
+    if (!form.employee_id) return;
+    setSaving(true);
+    try { await onSave({ ...form, employee_id: Number(form.employee_id) }); } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ width: "100%", maxWidth: 460, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, padding: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: t.textHi }}>Registrar incidencia</h2>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label style={lbl}>Empleado *</label>
+            <select value={form.employee_id} onChange={e => setForm(f => ({ ...f, employee_id: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+              <option value="">Seleccionar…</option>
+              {employees.map((e: Employee) => <option key={e.id} value={e.id}>{fullName(e)}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Fecha *</label>
+            <input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} style={inp} />
+          </div>
+          <div>
+            <label style={lbl}>Tipo *</label>
+            <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value as AttendanceType }))} style={{ ...inp, cursor: "pointer" }}>
+              {Object.entries(ATTENDANCE_META).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Hora</label>
+            <input type="time" value={form.time} onChange={e => setForm(f => ({ ...f, time: e.target.value }))} style={inp} />
+          </div>
+          <div>
+            <label style={lbl}>Notas</label>
+            <input value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} style={inp} />
+          </div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+          <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Cancelar</button>
+          <button onClick={handleSave} disabled={saving || !form.employee_id} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !form.employee_id ? 0.5 : 1 }}>
+            {saving ? "Guardando…" : "Registrar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Period Form Modal ──────────────────────────────────────────────────────
+function PeriodFormModal({ t, onClose, onSave }: any) {
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    frequency: "quincenal" as PayFrequency,
+    start_date: "",
+    end_date: "",
+    payment_date: "",
+  });
+
+  const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
+  const lbl: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
+  const valid = form.name && form.start_date && form.end_date && form.payment_date;
+
+  const handleSave = async () => {
+    if (!valid) return;
+    setSaving(true);
+    try { await onSave(form); } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ width: "100%", maxWidth: 460, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, padding: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: t.textHi }}>Nuevo período de nómina</h2>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label style={lbl}>Nombre *</label>
+            <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Quincena Jul 1-15 2026" style={inp} />
+          </div>
+          <div>
+            <label style={lbl}>Frecuencia *</label>
+            <select value={form.frequency} onChange={e => setForm(f => ({ ...f, frequency: e.target.value as PayFrequency }))} style={{ ...inp, cursor: "pointer" }}>
+              {(["semanal", "catorcenal", "quincenal", "mensual"] as PayFrequency[]).map(fr => <option key={fr} value={fr}>{fr}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Fecha inicio *</label>
+            <input type="date" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} style={inp} />
+          </div>
+          <div>
+            <label style={lbl}>Fecha fin *</label>
+            <input type="date" value={form.end_date} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} style={inp} />
+          </div>
+          <div>
+            <label style={lbl}>Fecha de pago *</label>
+            <input type="date" value={form.payment_date} onChange={e => setForm(f => ({ ...f, payment_date: e.target.value }))} style={inp} />
+          </div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+          <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Cancelar</button>
+          <button onClick={handleSave} disabled={saving || !valid} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !valid ? 0.5 : 1 }}>
+            {saving ? "Creando…" : "Crear período"}
+          </button>
         </div>
       </div>
     </div>

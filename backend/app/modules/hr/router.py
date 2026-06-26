@@ -1,0 +1,149 @@
+from typing import List, Annotated, Optional
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api import deps
+from app.modules.hr import schemas, service
+from app.modules.auth.models import User
+
+router = APIRouter()
+DB = Annotated[AsyncSession, Depends(deps.get_db)]
+CurrentUser = Annotated[User, Depends(deps.get_current_active_user)]
+
+
+def _require_manager(current_user: User):
+    if not current_user.is_superuser and (current_user.role or "user") not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Se requiere rol admin o manager para esta acción")
+
+
+# ── Dashboard ──────────────────────────────────────────────────────────
+@router.get("/dashboard")
+async def read_dashboard(db: DB, current_user: CurrentUser):
+    return await service.get_dashboard(db)
+
+
+@router.get("/alerts")
+async def read_alerts(db: DB, current_user: CurrentUser):
+    return await service.get_alerts(db)
+
+
+# ── Employees ──────────────────────────────────────────────────────────
+@router.get("/employees", response_model=List[schemas.EmployeeInDB])
+async def read_employees(db: DB, current_user: CurrentUser):
+    return await service.get_employees(db)
+
+
+@router.post("/employees", response_model=schemas.EmployeeInDB)
+async def create_employee(emp_in: schemas.EmployeeCreate, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    return await service.create_employee(db, emp_in, user_id=current_user.id)
+
+
+@router.patch("/employees/{employee_id}", response_model=schemas.EmployeeInDB)
+async def update_employee(employee_id: int, data: schemas.EmployeeUpdate, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    emp = await service.update_employee(db, employee_id, data, user_id=current_user.id)
+    if not emp:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    return emp
+
+
+@router.delete("/employees/{employee_id}")
+async def delete_employee(employee_id: int, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    ok = await service.delete_employee(db, employee_id, user_id=current_user.id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    return {"ok": True}
+
+
+# ── Attendance ─────────────────────────────────────────────────────────
+@router.get("/attendance")
+async def read_attendance(db: DB, current_user: CurrentUser, date: Optional[str] = None):
+    return await service.get_attendance(db, date_filter=date)
+
+
+@router.post("/attendance")
+async def create_attendance(data: schemas.AttendanceCreate, db: DB, current_user: CurrentUser):
+    att = await service.create_attendance(db, data, user_id=current_user.id)
+    return {"id": att.id}
+
+
+# ── Payroll periods ────────────────────────────────────────────────────
+@router.get("/payroll/periods")
+async def read_periods(db: DB, current_user: CurrentUser):
+    return await service.get_periods(db)
+
+
+@router.post("/payroll/periods")
+async def create_period(data: schemas.PayrollPeriodCreate, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    period = await service.create_period(db, data, user_id=current_user.id)
+    return {"id": period.id}
+
+
+@router.get("/payroll/periods/{period_id}")
+async def read_period_detail(period_id: int, db: DB, current_user: CurrentUser):
+    detail = await service.get_period_detail(db, period_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Período no encontrado")
+    return detail
+
+
+@router.post("/payroll/periods/{period_id}/calculate")
+async def calculate_period(period_id: int, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    try:
+        detail = await service.calculate_period(db, period_id, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not detail:
+        raise HTTPException(status_code=404, detail="Período no encontrado")
+    return detail
+
+
+@router.post("/payroll/periods/{period_id}/approve")
+async def approve_period(period_id: int, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    try:
+        detail = await service.approve_period(db, period_id, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not detail:
+        raise HTTPException(status_code=404, detail="Período no encontrado")
+    return detail
+
+
+@router.post("/payroll/periods/{period_id}/disperse")
+async def disperse_period(period_id: int, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    try:
+        detail = await service.disperse_period(db, period_id, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not detail:
+        raise HTTPException(status_code=404, detail="Período no encontrado")
+    return detail
+
+
+@router.get("/payroll/periods/{period_id}/bank-layout")
+async def bank_layout(period_id: int, db: DB, current_user: CurrentUser, bank: Optional[str] = None):
+    try:
+        csv_text = await service.generate_bank_layout_csv(db, period_id, bank=bank)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    filename = f"layout_{bank or 'todos'}_{period_id}.csv"
+    return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+# ── Reports ────────────────────────────────────────────────────────────
+@router.get("/reports/headcount")
+async def report_headcount(db: DB, current_user: CurrentUser):
+    csv_text = await service.generate_headcount_csv(db)
+    return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="plantilla_stps.csv"'})
+
+
+@router.get("/reports/vacations")
+async def report_vacations(db: DB, current_user: CurrentUser):
+    csv_text = await service.generate_vacation_csv(db)
+    return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="control_vacaciones.csv"'})
