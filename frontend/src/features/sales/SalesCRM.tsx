@@ -651,7 +651,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   }, [demo, demoStore, commitDemo, refreshData]);
 
   const cancel = useCallback(async (o: Order) => {
-    if (!window.confirm(tr("sales_confirm_cancel", "¿Cancelar este documento?"))) return;
+    if (!window.confirm(tr("sales_confirm_cancel", `¿Cancelar la venta completa ${o.folio ?? ""}? Esto NO cancela un ticket o recibo individual: anula todo el pedido del cliente y no se puede revertir.`))) return;
     if (demo) { const idx = demoStore.list.findIndex((x) => x.id === o.id); if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: "cancelled", balance: 0 }; commitDemo(); setSelected(null); return; }
     try { await salesApi.cancel(o.id); await refreshData(); setSelected(null); } catch (e) { alert(extractErr(e)); }
   }, [demo, demoStore, commitDemo, refreshData, tr]);
