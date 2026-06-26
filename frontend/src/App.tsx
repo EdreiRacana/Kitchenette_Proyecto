@@ -72,11 +72,13 @@ const STRINGS = {
     presets: { week: "Semana", month: "Mes", quarter: "Trimestre", year: "Año" },
     dash: {
       to: "al", custom: "Personalizado", marginLabel: "MARGEN", target: "obj.",
-      focos: { agotados: "agotados", cartera: "vencida", margen: "margen bajo" },
+      focos: { agotados: "agotados", cartera: "vencida", margen: "stock bajo" },
       vsPrev: "vs ant.", chartTitle: "Ventas del periodo", chartUnit: "(miles MXN)",
       legendCur: "Actual", legendPrev: "Periodo anterior",
       metaTitle: "Meta vs real", metaSub: "de la meta del periodo", real: "Real", meta: "Meta",
       remaining: (a) => `Faltan ${a} para llegar al objetivo.`, skus: (n) => `${n} SKUs`,
+      noGoal: "Sin meta configurada para este periodo. Crea un presupuesto de ingresos en Finanzas para activarla.",
+      loading: "Cargando datos del tablero…", loadError: "No se pudieron cargar los datos del tablero.",
       ofTarget: "de meta", current: "Periodo actual", previous: "Periodo anterior",
       variation: "vs periodo anterior", growth: "Crecimiento", drop: "Caída",
       goalProgress: "Avance hacia la meta", trend: "Tendencia del periodo",
@@ -104,11 +106,13 @@ const STRINGS = {
     presets: { week: "Week", month: "Month", quarter: "Quarter", year: "Year" },
     dash: {
       to: "to", custom: "Custom", marginLabel: "MARGIN", target: "target",
-      focos: { agotados: "out of stock", cartera: "overdue", margen: "low margin" },
+      focos: { agotados: "out of stock", cartera: "overdue", margen: "low stock" },
       vsPrev: "vs prev.", chartTitle: "Period sales", chartUnit: "(thousands MXN)",
       legendCur: "Current", legendPrev: "Previous period",
       metaTitle: "Goal vs actual", metaSub: "of the period goal", real: "Actual", meta: "Goal",
       remaining: (a) => `${a} left to reach the goal.`, skus: (n) => `${n} SKUs`,
+      noGoal: "No goal configured for this period. Create an income budget in Finance to enable it.",
+      loading: "Loading dashboard data…", loadError: "Could not load dashboard data.",
       ofTarget: "of target", current: "Current period", previous: "Previous period",
       variation: "vs previous period", growth: "Growth", drop: "Drop",
       goalProgress: "Progress to goal", trend: "Period trend",
@@ -125,14 +129,6 @@ const STRINGS = {
     aging: { "30+ días": "30+ days", "0-15 días": "0-15 days", "15-30 días": "15-30 days" },
     roles: { Administrador: "Administrator", Inventario: "Inventory", Ventas: "Sales" },
   },
-};
-
-const XLABELS = {
-  week: { es: ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"], en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] },
-  month: { es: ["Sem 1", "Sem 2", "Sem 3", "Sem 4"], en: ["Wk 1", "Wk 2", "Wk 3", "Wk 4"] },
-  quarter: { es: ["Abr", "May", "Jun"], en: ["Apr", "May", "Jun"] },
-  year: { es: ["Ene", "Feb", "Mar", "Abr", "May", "Jun"], en: ["Jan", "Feb", "Mar", "Apr", "May", "Jun"] },
-  custom: { es: ["Sem 1", "Sem 2", "Sem 3", "Sem 4"], en: ["Wk 1", "Wk 2", "Wk 3", "Wk 4"] },
 };
 
 /* ============================ Logo ============================ */
@@ -168,61 +164,97 @@ function NovaMark({ size = 40 }) {
 }
 
 /* ============================ Data ============================ */
-const TODAY = new Date(2026, 5, 12);
+const TODAY = new Date();
 const fmtDate = (d, s) => `${d.getDate()} ${s.monShort[d.getMonth()]} ${d.getFullYear()}`;
 const sameDay = (a, b) => a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const PRESET_IDS = ["week", "month", "quarter", "year"];
 
-const DATASETS = {
-  week: {
-    range: [new Date(2026, 5, 6), new Date(2026, 5, 12)],
-    kpis: [
-      { label: "Ventas", value: 286400, money: true, delta: 6.2, spark: [31, 35, 33, 40, 38, 44, 46] },
-      { label: "Utilidad neta", value: 71600, money: true, delta: 4.1, spark: [8, 9, 8, 10, 10, 11, 12] },
-      { label: "Pedidos", value: 112, money: false, delta: -2.3, spark: [18, 16, 17, 15, 16, 15, 15] },
-      { label: "Ticket promedio", value: 2557, money: true, delta: 1.8, spark: [24, 25, 24, 26, 25, 26, 26] },
-    ],
-    margin: 31, marginTarget: 38, goal: { actual: 286400, target: 350000 },
-    attention: { agotados: 4, cartera: 196400, margenBajo: 12 },
-    series: { cur: [31, 35, 33, 40, 38, 44, 46], prev: [28, 30, 31, 33, 36, 38, 40] },
-  },
-  month: {
-    range: [new Date(2026, 5, 1), new Date(2026, 5, 12)],
-    kpis: [
-      { label: "Ventas", value: 1284500, money: true, delta: 12.4, spark: [820, 932, 901, 1034, 1190, 1284] },
-      { label: "Utilidad neta", value: 436730, money: true, delta: 9.1, spark: [270, 300, 295, 330, 395, 437] },
-      { label: "Pedidos", value: 472, money: false, delta: 8.0, spark: [33, 36, 34, 39, 44, 47] },
-      { label: "Ticket promedio", value: 2721, money: true, delta: -2.4, spark: [29, 28, 28, 27, 28, 27] },
-    ],
-    margin: 34, marginTarget: 38, goal: { actual: 1284500, target: 1600000 },
-    attention: { agotados: 4, cartera: 196400, margenBajo: 12 },
-    series: { cur: [286, 318, 341, 339], prev: [250, 270, 290, 310] },
-  },
-  quarter: {
-    range: [new Date(2026, 3, 1), new Date(2026, 5, 12)],
-    kpis: [
-      { label: "Ventas", value: 3508000, money: true, delta: 14.7, spark: [820, 1034, 1190, 1284] },
-      { label: "Utilidad neta", value: 1192720, money: true, delta: 11.3, spark: [270, 330, 395, 437] },
-      { label: "Pedidos", value: 1380, money: false, delta: 6.4, spark: [380, 420, 490, 470] },
-      { label: "Ticket promedio", value: 2542, money: true, delta: 3.1, spark: [24, 25, 26, 26] },
-    ],
-    margin: 33, marginTarget: 38, goal: { actual: 3508000, target: 4200000 },
-    attention: { agotados: 6, cartera: 284900, margenBajo: 18 },
-    series: { cur: [1034, 1190, 1284], prev: [820, 932, 901] },
-  },
-  year: {
-    range: [new Date(2026, 0, 1), new Date(2026, 5, 12)],
-    kpis: [
-      { label: "Ventas", value: 6161000, money: true, delta: 18.2, spark: [820, 932, 901, 1034, 1190, 1284] },
-      { label: "Utilidad neta", value: 2094740, money: true, delta: 15.6, spark: [270, 300, 295, 330, 395, 437] },
-      { label: "Pedidos", value: 2431, money: false, delta: 9.8, spark: [330, 360, 340, 390, 440, 470] },
-      { label: "Ticket promedio", value: 2534, money: true, delta: 2.2, spark: [24, 25, 24, 26, 25, 26] },
-    ],
-    margin: 35, marginTarget: 38, goal: { actual: 6161000, target: 9000000 },
-    attention: { agotados: 7, cartera: 342800, margenBajo: 21 },
-    series: { cur: [820, 932, 901, 1034, 1190, 1284], prev: [690, 710, 780, 860, 910, 1010] },
-  },
-};
+/* ── Tablero: helpers de rango de fechas y carga de datos reales del backend ── */
+function addPeriodDash(d, period, mult) {
+  const r = new Date(d);
+  if (period === "week") r.setDate(r.getDate() + 7 * mult);
+  else if (period === "month") r.setMonth(r.getMonth() + 1 * mult);
+  else if (period === "quarter") r.setMonth(r.getMonth() + 3 * mult);
+  else r.setFullYear(r.getFullYear() + 1 * mult);
+  return r;
+}
+function computeDashRanges(preset, customStart, customEnd) {
+  if (preset === "custom" && customStart && customEnd) {
+    const curStart = customStart, curEnd = customEnd;
+    const spanMs = curEnd.getTime() - curStart.getTime();
+    const prevEnd = new Date(curStart.getTime() - 1);
+    const prevStart = new Date(prevEnd.getTime() - spanMs);
+    return { curStart, curEnd, prevStart, prevEnd };
+  }
+  const curEnd = TODAY;
+  const curStart = addPeriodDash(curEnd, preset, -1);
+  const prevEnd = curStart;
+  const prevStart = addPeriodDash(prevEnd, preset, -1);
+  return { curStart, curEnd, prevStart, prevEnd };
+}
+function dashTrendParams(preset) {
+  if (preset === "week" || preset === "custom") return { granularity: "day", days: 7 };
+  if (preset === "month") return { granularity: "day", days: 30 };
+  if (preset === "quarter") return { granularity: "week", days: 13 };
+  return { granularity: "month", days: 12 };
+}
+function monthsInRange(start, end) {
+  const months = [];
+  const d = new Date(start.getFullYear(), start.getMonth(), 1);
+  const last = new Date(end.getFullYear(), end.getMonth(), 1);
+  while (d <= last) {
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    d.setMonth(d.getMonth() + 1);
+  }
+  return months;
+}
+const pctDelta = (cur, prev) => (prev === 0 ? 0 : Math.round(((cur - prev) / prev) * 1000) / 10);
+
+async function loadDashboardData(preset, customStart, customEnd) {
+  const { curStart, curEnd, prevStart, prevEnd } = computeDashRanges(preset, customStart, customEnd);
+  const curStartISO = curStart.toISOString(), curEndISO = curEnd.toISOString();
+  const prevStartISO = prevStart.toISOString(), prevEndISO = prevEnd.toISOString();
+  const { granularity, days } = dashTrendParams(preset);
+
+  const [statsCur, statsPrev, trendCur, trendPrev, finComparison, invStats, finDashboard, budgets] = await Promise.all([
+    salesApi.stats(curStartISO, curEndISO),
+    salesApi.stats(prevStartISO, prevEndISO),
+    salesApi.trend(granularity, days, curEndISO),
+    salesApi.trend(granularity, days, curStartISO),
+    financeService.getPeriodComparison(curStartISO, curEndISO),
+    inventoryService.getStats(),
+    financeService.getDashboard(),
+    financeService.getBudgets(),
+  ]);
+
+  const n = Math.max(trendCur.length, trendPrev.length);
+  const seriesCur = Array.from({ length: n }, (_, i) => trendCur[i]?.total ?? 0);
+  const seriesPrev = Array.from({ length: n }, (_, i) => trendPrev[i]?.total ?? 0);
+  const xlabels = Array.from({ length: n }, (_, i) => (trendCur[i]?.period ?? trendPrev[i]?.period ?? "").slice(5));
+
+  const months = monthsInRange(curStart, curEnd);
+  const goalTarget = budgets.filter((b) => b.type === "income" && months.includes(b.period)).reduce((a, b) => a + b.amount, 0);
+
+  const kpis = [
+    { label: "Ventas", value: statsCur.total_sold, money: true, delta: pctDelta(statsCur.total_sold, statsPrev.total_sold), spark: trendCur.map((p) => p.total) },
+    { label: "Utilidad neta", value: finComparison.current.net_profit, money: true, delta: pctDelta(finComparison.current.net_profit, finComparison.previous.net_profit), spark: [] },
+    { label: "Pedidos", value: statsCur.orders_count, money: false, delta: pctDelta(statsCur.orders_count, statsPrev.orders_count), spark: trendCur.map((p) => p.count) },
+    { label: "Ticket promedio", value: statsCur.avg_ticket, money: true, delta: pctDelta(statsCur.avg_ticket, statsPrev.avg_ticket), spark: trendCur.map((p) => (p.count ? p.total / p.count : 0)) },
+  ];
+
+  const totalIncome = finComparison.current.total_income || 0;
+  const margin = totalIncome ? Math.round((finComparison.current.net_profit / totalIncome) * 100) : 0;
+
+  return {
+    range: [curStart, curEnd],
+    kpis,
+    margin, marginTarget: 35,
+    goal: { actual: statsCur.total_sold, target: goalTarget, configured: goalTarget > 0 },
+    attention: { agotados: invStats.out_of_stock, cartera: finDashboard.cxc_balance ?? 0, stockBajo: invStats.low_stock },
+    series: { cur: seriesCur, prev: seriesPrev },
+    xlabels,
+  };
+}
 
 const PRODUCTS = [
   { id: 1, name: "Cemento gris CPC 30R", cat: "Construcción", variants: 2, stock: 480, price: 215 },
@@ -413,37 +445,61 @@ const calNav = (t) => ({ width: 28, height: 28, borderRadius: 8, border: `1px so
 
 /* ============================ Dashboard ============================ */
 function Dashboard({ t, s, lang, setPage, isMobile }) {
+  void lang;
   const [preset, setPreset] = useState("month");
   const [calOpen, setCalOpen] = useState(false);
-  const [rStart, setRStart] = useState(DATASETS.month.range[0]);
-  const [rEnd, setREnd] = useState(DATASETS.month.range[1]);
+  const [rStart, setRStart] = useState(null);
+  const [rEnd, setREnd] = useState(null);
   const [kpiDrill, setKpiDrill] = useState(null);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const data = preset === "custom" ? DATASETS.month : DATASETS[preset];
-  const r0 = preset === "custom" ? rStart : data.range[0];
-  const r1 = preset === "custom" ? (rEnd || rStart) : data.range[1];
-  const xlabels = XLABELS[preset][lang];
+  useEffect(() => {
+    if (preset === "custom" && (!rStart || !rEnd)) return;
+    let active = true;
+    setLoading(true);
+    setError(null);
+    loadDashboardData(preset, preset === "custom" ? rStart : undefined, preset === "custom" ? rEnd : undefined)
+      .then((d) => { if (active) { setData(d); setLoading(false); } })
+      .catch((e) => { if (active) { setError(e?.message || "Error"); setLoading(false); } });
+    return () => { active = false; };
+  }, [preset, rStart, rEnd]);
 
-  const choose = (id) => { setPreset(id); setRStart(DATASETS[id].range[0]); setREnd(DATASETS[id].range[1]); setCalOpen(false); };
+  const choose = (id) => {
+    setPreset(id);
+    const { curStart, curEnd } = computeDashRanges(id);
+    setRStart(curStart); setREnd(curEnd);
+    setCalOpen(false);
+  };
   const pick = (d) => {
     if (!rStart || (rStart && rEnd)) { setRStart(d); setREnd(null); setPreset("custom"); }
     else if (d >= rStart) { setREnd(d); setPreset("custom"); setCalOpen(false); }
     else { setRStart(d); setREnd(null); }
   };
 
-  const goalPct = Math.round((data.goal.actual / data.goal.target) * 100);
+  if (loading || !data) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 320, gap: 10 }}>
+        <div style={{ fontSize: 14, color: t.textLo }}>{error ? `${s.dash.loadError} (${error})` : s.dash.loading}</div>
+      </div>
+    );
+  }
+
+  const r0 = data.range[0];
+  const r1 = data.range[1];
+  const xlabels = data.xlabels;
+
+  const goalPct = data.goal.configured ? Math.round((data.goal.actual / data.goal.target) * 100) : 0;
 
   const kpiTargets = {
-    "Ventas": data.goal.target,
-    "Utilidad neta": Math.round(data.goal.target * 0.34),
-    "Pedidos": Math.round(data.kpis[2].value * 1.12),
-    "Ticket promedio": 2900,
+    "Ventas": data.goal.configured ? data.goal.target : undefined,
   };
 
   const chips = [
     { icon: PackageX, value: String(data.attention.agotados), label: s.dash.focos.agotados, color: t.bad, go: "inventario" },
     { icon: FileWarning, value: mxnShort(data.attention.cartera), label: s.dash.focos.cartera, color: t.warn, go: "finanzas" },
-    { icon: AlertTriangle, value: `${data.attention.margenBajo}`, label: s.dash.focos.margen, color: t.warn, go: "inventario" },
+    { icon: AlertTriangle, value: `${data.attention.stockBajo}`, label: s.dash.focos.margen, color: t.warn, go: "inventario" },
   ];
 
   const kpiIcons = { "Ventas": TrendingUp, "Utilidad neta": DollarSign, "Pedidos": ShoppingCart, "Ticket promedio": Star };
@@ -518,7 +574,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
                   <span style={{ fontSize: 12.5, fontWeight: 600, color: up ? t.good : t.bad }}>{Math.abs(k.delta)}%</span>
                   <span style={{ fontSize: 11, color: t.textLo }}>{s.dash.vsPrev}</span>
                 </span>
-                <Sparkline data={k.spark} color={c} gid={`spk${i}`} />
+                {k.spark && k.spark.length > 1 && <Sparkline data={k.spark} color={c} gid={`spk${i}`} />}
               </div>
               {target && (
                 <div style={{ marginTop: 10 }}>
@@ -542,18 +598,24 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
               <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: t.textMid }}><span style={{ width: 14, height: 0, borderTop: `2px dashed ${t.textLo}` }} /> {s.dash.legendPrev}</span>
             </div>
           </div>
-          <ComparisonChart t={t} series={data.series} xlabels={xlabels} />
+          {xlabels.length > 0 ? <ComparisonChart t={t} series={data.series} xlabels={xlabels} /> : <div style={{ fontSize: 13, color: t.textLo, padding: "40px 0", textAlign: "center" }}>{s.dash.loadError}</div>}
         </Card>
         <Card t={t} style={{ padding: 20, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}><Target size={17} color={t.nova} /><span style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>{s.dash.metaTitle}</span></div>
-          <div style={{ fontSize: 30, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{goalPct}%</div>
-          <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 16 }}>{s.dash.metaSub}</div>
-          <div style={{ height: 12, background: t.panel3, borderRadius: 999, overflow: "hidden" }}><div style={{ width: `${Math.min(100, goalPct)}%`, height: "100%", borderRadius: 999, background: goalPct >= 90 ? t.good : goalPct >= 65 ? t.nova : t.warn }} /></div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, fontSize: 12.5 }}>
-            <span style={{ color: t.textLo }}>{s.dash.real} <b style={{ color: t.textHi }}>{mxnShort(data.goal.actual)}</b></span>
-            <span style={{ color: t.textLo }}>{s.dash.meta} <b style={{ color: t.textHi }}>{mxnShort(data.goal.target)}</b></span>
-          </div>
-          <div style={{ marginTop: "auto", paddingTop: 16, fontSize: 12.5, color: t.textMid, borderTop: `1px solid ${t.borderSoft}` }}>{s.dash.remaining(mxn(Math.max(0, data.goal.target - data.goal.actual)))}</div>
+          {data.goal.configured ? (
+            <>
+              <div style={{ fontSize: 30, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{goalPct}%</div>
+              <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 16 }}>{s.dash.metaSub}</div>
+              <div style={{ height: 12, background: t.panel3, borderRadius: 999, overflow: "hidden" }}><div style={{ width: `${Math.min(100, goalPct)}%`, height: "100%", borderRadius: 999, background: goalPct >= 90 ? t.good : goalPct >= 65 ? t.nova : t.warn }} /></div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, fontSize: 12.5 }}>
+                <span style={{ color: t.textLo }}>{s.dash.real} <b style={{ color: t.textHi }}>{mxnShort(data.goal.actual)}</b></span>
+                <span style={{ color: t.textLo }}>{s.dash.meta} <b style={{ color: t.textHi }}>{mxnShort(data.goal.target)}</b></span>
+              </div>
+              <div style={{ marginTop: "auto", paddingTop: 16, fontSize: 12.5, color: t.textMid, borderTop: `1px solid ${t.borderSoft}` }}>{s.dash.remaining(mxn(Math.max(0, data.goal.target - data.goal.actual)))}</div>
+            </>
+          ) : (
+            <div style={{ marginTop: 6, fontSize: 13, color: t.textLo, lineHeight: 1.5 }}>{s.dash.noGoal}</div>
+          )}
         </Card>
       </div>
 
@@ -616,12 +678,14 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
                   </div>
                 )}
 
-                <div>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textMid, marginBottom: 10 }}>{s.dash.trend}</div>
-                  <Card t={t} style={{ padding: 14, background: t.panel2 }}>
-                    <ComparisonChart t={t} series={{ cur: k.spark, prev: k.spark.map((v) => Math.round(v * 0.88)) }} xlabels={k.spark.map((_, idx) => `${idx + 1}`)} />
-                  </Card>
-                </div>
+                {xlabels.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textMid, marginBottom: 10 }}>{s.dash.trend}</div>
+                    <Card t={t} style={{ padding: 14, background: t.panel2 }}>
+                      <ComparisonChart t={t} series={data.series} xlabels={xlabels} />
+                    </Card>
+                  </div>
+                )}
 
                 <button onClick={() => { setKpiDrill(null); setPage(k.label === "Pedidos" || k.label === "Ticket promedio" ? "ventas" : "reportes"); }} style={{ marginTop: 4, padding: "11px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                   {s.dash.seeAnalysis} <ArrowUpRight size={15} />
