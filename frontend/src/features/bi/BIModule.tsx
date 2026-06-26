@@ -1,7 +1,6 @@
 // BIModule.tsx — Reportes / Business Intelligence Premium
 // Pestañas: Ejecutivo · Ventas · Inventario · Finanzas · RH · Personalizado
-// Todos los números mostrados se obtienen de endpoints reales del backend.
-// RH se muestra como "no disponible" porque no existe módulo de RH en el backend.
+// Todos los números mostrados se obtienen de endpoints reales del backend (incluyendo RH/Nómina).
 // Contrato { t, s } igual que App.tsx
 
 import { useState, useEffect, useMemo } from "react";
@@ -16,6 +15,7 @@ import {
 import { salesApi } from "../sales/api";
 import { financeService } from "../finance/service";
 import { inventoryService, type ReorderAlert } from "../inventory/service";
+import { hrApi } from "../hr/api";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Period = "week" | "month" | "quarter" | "year";
@@ -390,6 +390,10 @@ interface BIState {
   inventarioBajoStock: number;
   inventarioCat: DrillRow[];
   reorderAlerts: ReorderAlert[];
+
+  hrTotal: number; hrActive: number; hrOnTrial: number; hrExpiring30: number;
+  hrPayrollMonthly: number; hrPresentToday: number; hrAbsentToday: number;
+  hrByDepartment: DrillRow[];
 }
 
 const CHANNEL_COLORS = ["#33B2F5", "#34D399", "#A78BFA", "#FBBF24", "#F472B6", "#60A5FA"];
@@ -407,6 +411,7 @@ async function loadBIState(period: Period): Promise<BIState> {
     bySeller, byChannel,
     finComparison, finDashboard,
     invStats, reorderAlerts,
+    hrDashboard,
   ] = await Promise.all([
     salesApi.stats(curStartISO, curEndISO),
     salesApi.stats(prevStartISO, prevEndISO),
@@ -420,6 +425,7 @@ async function loadBIState(period: Period): Promise<BIState> {
     financeService.getDashboard(),
     inventoryService.getStats(),
     inventoryService.getReorderAlerts(),
+    hrApi.dashboard(),
   ]);
 
   const n = Math.max(trendCur.length, trendPrev.length);
@@ -484,6 +490,12 @@ async function loadBIState(period: Period): Promise<BIState> {
     inventarioBajoStock: invStats.low_stock,
     inventarioCat: invStats.by_category.map(c => ({ label: c.category, value: c.value, pct: c.pct })),
     reorderAlerts,
+
+    hrTotal: hrDashboard.total, hrActive: hrDashboard.active,
+    hrOnTrial: hrDashboard.on_trial, hrExpiring30: hrDashboard.expiring_30,
+    hrPayrollMonthly: hrDashboard.total_payroll_monthly,
+    hrPresentToday: hrDashboard.present_today, hrAbsentToday: hrDashboard.absent_today,
+    hrByDepartment: Object.entries(hrDashboard.by_department ?? {}).map(([label, value]) => ({ label, value: value as number })),
   };
 }
 
@@ -939,20 +951,20 @@ function BIModuleBody({
       {tab === "hr" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <SectionTitle icon={Users} title="Análisis de RH & Nómina" color="#A78BFA" t={t} />
-          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 32, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-            <Users size={36} color={t.textLo} />
-            <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi }}>Módulo de RH no disponible</div>
-            <div style={{ fontSize: 13, color: t.textMid, maxWidth: 460 }}>
-              Todavía no existe un módulo de Recursos Humanos / Nómina en el backend (sin empleados, contratos ni asistencia).
-              Esta sección se habilitará con datos reales en cuanto se implemente ese módulo — no se muestran cifras
-              estimadas para evitar reportes engañosos.
-            </div>
-            {D.nomina !== null && (
-              <div style={{ marginTop: 8, fontSize: 12.5, color: t.textLo }}>
-                Dato disponible vía Finanzas: gasto de nómina registrado en transacciones = <b style={{ color: t.textHi }}>{fmtFull(D.nomina)}</b> en este período.
-              </div>
-            )}
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>
+            {[
+              { id: "hr_tot", label: "Empleados totales", value: D.hrTotal, format: "number" as const, icon: Users, color: "#A78BFA" },
+              { id: "hr_act", label: "Empleados activos", value: D.hrActive, format: "number" as const, icon: CheckCircle, color: t.good },
+              { id: "hr_tri", label: "En periodo de prueba", value: D.hrOnTrial, format: "number" as const, icon: Clock, color: t.warn },
+              { id: "hr_exp", label: "Contratos por vencer (30 días)", value: D.hrExpiring30, format: "number" as const, icon: AlertTriangle, color: t.bad },
+              { id: "hr_pay", label: "Nómina mensual", value: D.hrPayrollMonthly, format: "money" as const, icon: DollarSign, color: t.nova },
+              { id: "hr_pre", label: "Asistencia hoy (presentes)", value: D.hrPresentToday, format: "number" as const, icon: TrendingUp, color: t.good },
+              { id: "hr_abs", label: "Ausentes hoy", value: D.hrAbsentToday, format: "number" as const, icon: TrendingDown, color: t.bad },
+            ].map((k: any) => <KPIBlock key={k.id} {...k} t={t} onClick={() => openDrill(k)} />)}
           </div>
+
+          <DrillTable rows={D.hrByDepartment} t={t} title="Empleados por departamento" emptyMsg="No hay empleados registrados." />
         </div>
       )}
 

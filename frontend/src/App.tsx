@@ -249,8 +249,8 @@ const CUSTOMERS = [
 const MODULES = [
   { id: "dashboard", icon: LayoutDashboard }, { id: "ventas", icon: ShoppingCart },
   { id: "clientes", icon: Users }, { id: "inventario", icon: Package, live: true },
-  { id: "finanzas", icon: Wallet }, { id: "rh", icon: IdCard, soon: true },
-  { id: "reportes", icon: BarChart3, soon: true }, { id: "config", icon: Settings },
+  { id: "finanzas", icon: Wallet }, { id: "rh", icon: IdCard },
+  { id: "reportes", icon: BarChart3 }, { id: "config", icon: Settings },
 ];
 
 const mxn = (n) => "$" + n.toLocaleString("es-MX");
