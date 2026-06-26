@@ -8,6 +8,7 @@ import {
   FileText, FileWarning, Mail, Bell, Maximize2, X, TrendingDown, Activity,
   Zap, Award, Eye, Check, IdCard, Settings, Plus, Search, Globe, Sun, Moon,
   Lock, LogOut, User as UserIcon, Menu, UserCircle2, ShoppingBag, Box,
+  Truck, ClipboardList,
 } from "lucide-react";
 import SalesCRM from "./features/sales/SalesCRM";
 import CustomersModule from "./features/customers/CustomersModule";
@@ -18,7 +19,6 @@ import HRModule from "./features/hr/HRModule";
 import BIModule from "./features/bi/BIModule";
 import ConfigModule from "./features/config/ConfigModule";
 import api from "./services/api";
-import { customersApi } from "./features/customers/api";
 import { salesApi } from "./features/sales/api";
 import { inventoryService } from "./features/inventory/service";
 
@@ -857,17 +857,28 @@ function Sidebar({ t, s, page, setPage, collapsed, setCollapsed, mobile, mobileO
   );
 }
 
-/* ============================ Universal search ============================ */
+/* ============================ Nexus: universal search ============================
+   "Nexus" is this app's internal codename for the cross-module search bar — it
+   queries every module (clientes, ventas, inventario, proveedores, compras, RH)
+   through a single backend endpoint (GET /search) instead of fanning out N
+   per-module requests from the client. */
+const NEXUS_ICONS = {
+  customers: UserCircle2, orders: ShoppingBag, products: Box,
+  suppliers: Truck, purchase_orders: ClipboardList, employees: Users,
+};
+
 function GlobalSearch({ t, s, lang, onNavigate }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState({ customers: [], orders: [], products: [] });
+  const [results, setResults] = useState({ customers: [], orders: [], products: [], suppliers: [], purchase_orders: [], employees: [] });
   const debounceRef = useRef(null);
+
+  const EMPTY = { customers: [], orders: [], products: [], suppliers: [], purchase_orders: [], employees: [] };
 
   useEffect(() => {
     if (!query.trim()) {
-      setResults({ customers: [], orders: [], products: [] });
+      setResults(EMPTY);
       setOpen(false);
       return;
     }
@@ -875,23 +886,11 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const [custRes, orderRes, prodRes] = await Promise.allSettled([
-          customersApi.search({ q: query, limit: 5 }),
-          salesApi.list({ q: query, limit: 5 }),
-          inventoryService.getProducts(),
-        ]);
-        const customers = custRes.status === "fulfilled" ? custRes.value.items : [];
-        const orders = orderRes.status === "fulfilled" ? orderRes.value.items : [];
-        const qLower = query.toLowerCase();
-        const products = prodRes.status === "fulfilled"
-          ? prodRes.value
-              .filter((p) => p.name?.toLowerCase().includes(qLower) || p.variants?.some((v) => v.sku?.toLowerCase().includes(qLower)))
-              .slice(0, 5)
-          : [];
-        setResults({ customers, orders, products });
+        const { data } = await api.get("/search/", { params: { q: query, limit: 5 } });
+        setResults({ ...EMPTY, ...data });
         setOpen(true);
       } catch {
-        setResults({ customers: [], orders: [], products: [] });
+        setResults(EMPTY);
       } finally {
         setLoading(false);
       }
@@ -899,13 +898,17 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [query]);
 
-  const hasResults = results.customers.length > 0 || results.orders.length > 0 || results.products.length > 0;
+  const sections = ["customers", "orders", "products", "suppliers", "purchase_orders", "employees"];
+  const hasResults = sections.some((k) => (results[k] || []).length > 0);
   const select = (page, q) => { onNavigate(page, q); setQuery(""); setOpen(false); };
   const noResultsLabel = lang === "es" ? "Sin resultados" : "No results";
   const sectionLabels = {
     customers: lang === "es" ? "Clientes" : "Customers",
     orders: lang === "es" ? "Pedidos" : "Orders",
     products: lang === "es" ? "Productos" : "Products",
+    suppliers: lang === "es" ? "Proveedores" : "Suppliers",
+    purchase_orders: lang === "es" ? "Órdenes de compra" : "Purchase orders",
+    employees: lang === "es" ? "Empleados" : "Employees",
   };
 
   return (
@@ -917,6 +920,7 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => { if (hasResults) setOpen(true); }}
           placeholder={s.search}
+          title="Nexus"
           style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 13.5 }}
         />
         {loading && <RefreshCw size={14} className="spin" color={t.textLo} />}
@@ -929,48 +933,25 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
           <div style={{ position: "absolute", top: 48, left: 0, width: "min(420px, 90vw)", maxHeight: 440, overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 6, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
             {!hasResults && <div style={{ padding: 16, fontSize: 13, color: t.textLo, textAlign: "center" }}>{noResultsLabel}</div>}
-            {results.customers.length > 0 && (
-              <div style={{ marginBottom: 4 }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 4px" }}>{sectionLabels.customers}</div>
-                {results.customers.map((c) => (
-                  <button key={c.id} onClick={() => select("clientes", c.name)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
-                    <UserCircle2 size={16} color={t.textLo} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
-                      {c.rfc && <div style={{ fontSize: 11, color: t.textLo }}>{c.rfc}</div>}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-            {results.orders.length > 0 && (
-              <div style={{ marginBottom: 4 }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 4px" }}>{sectionLabels.orders}</div>
-                {results.orders.map((o) => (
-                  <button key={o.id} onClick={() => select("ventas", o.folio || String(o.id))} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
-                    <ShoppingBag size={16} color={t.textLo} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.folio || `#${o.id}`} · {o.customer?.name || ""}</div>
-                      <div style={{ fontSize: 11, color: t.textLo }}>{mxn(o.total || 0)}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-            {results.products.length > 0 && (
-              <div>
-                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 4px" }}>{sectionLabels.products}</div>
-                {results.products.map((p) => (
-                  <button key={p.id} onClick={() => select("inventario", p.name)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
-                    <Box size={16} color={t.textLo} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
-                      {p.category && <div style={{ fontSize: 11, color: t.textLo }}>{p.category}</div>}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
+            {sections.map((key) => {
+              const items = results[key] || [];
+              if (items.length === 0) return null;
+              const Icon = NEXUS_ICONS[key];
+              return (
+                <div key={key} style={{ marginBottom: 4 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 4px" }}>{sectionLabels[key]}</div>
+                  {items.map((r) => (
+                    <button key={`${key}-${r.id}`} onClick={() => select(r.page, r.query)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
+                      <Icon size={16} color={t.textLo} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.title}</div>
+                        {r.subtitle && <div style={{ fontSize: 11, color: t.textLo }}>{r.subtitle}</div>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </>
       )}
