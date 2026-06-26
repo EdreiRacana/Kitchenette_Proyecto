@@ -42,6 +42,11 @@ async def returns_avg(db: DB, _: CurrentUser, customer_id: Optional[int] = None)
     return await service.get_average_returns(db, customer_id=customer_id)
 
 
+@router.get("/analytics/forecast/{customer_id}", response_model=schemas.CustomerForecast)
+async def customer_forecast(customer_id: int, db: DB, _: CurrentUser, months: int = Query(6, ge=2, le=24)):
+    return await service.get_customer_forecast(db, customer_id, months=months)
+
+
 @router.get("/analytics/top-customers", response_model=List[schemas.TopCustomer])
 async def top_customers(db: DB, _: CurrentUser, limit: int = Query(5, ge=1, le=50),
                          start: Optional[datetime] = None, end: Optional[datetime] = None):

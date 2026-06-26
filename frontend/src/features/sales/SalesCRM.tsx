@@ -12,7 +12,7 @@ import api from "../../services/api";
 import IngestaConfigurador from "./IngestaConfigurador";
 import { resolveTheme, makeTr, money, dateShort, statusColors, statusMeta, paymentLabel, ORDER_PIPELINE, PAYMENT_METHODS } from "./theme";
 import type { Tokens } from "./theme";
-import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns } from "./types";
+import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns, CustomerForecast } from "./types";
 import { salesApi } from "./api";
 import type { VariantOption } from "./api";
 import { Spinner, Badge, Button, EmptyState, Spinkeyframes } from "./ui";
@@ -474,6 +474,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [analyticsCustomer, setAnalyticsCustomer] = useState<number | null>(null);
   const [avgReturns, setAvgReturns] = useState<AverageReturns | null>(null);
+  const [forecast, setForecast] = useState<CustomerForecast | null>(null);
   const [variants, setVariants] = useState<VariantOption[]>([]);
 
   const [ordersLoading, setOrdersLoading] = useState(true);
@@ -588,6 +589,11 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
       setTrend(tr1); setTopCustomers(tc); setTopProducts(tp); setAvgReturns(ar); setAnalyticsLoaded(true);
     } catch { } finally { setAnalyticsLoading(false); }
   }, [analyticsCustomer]);
+
+  useEffect(() => {
+    if (demo || analyticsCustomer == null) { setForecast(null); return; }
+    salesApi.customerForecast(analyticsCustomer).then(setForecast).catch(() => setForecast(null));
+  }, [analyticsCustomer, demo]);
 
   const loadCatalogs = useCallback(async () => {
     salesApi.customers().then(setCustomers).catch(() => {});
@@ -833,7 +839,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
         ) : (
           <Analytics tk={tk} tr={tr} trend={trend} topCustomers={topCustomers} topProducts={topProducts}
             customers={customers} selectedCustomer={analyticsCustomer} onSelectCustomer={setAnalyticsCustomer}
-            avgReturns={avgReturns} />
+            avgReturns={avgReturns} forecast={forecast} />
         )
       ) : view === "pipeline" ? (
         <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 8 }}>

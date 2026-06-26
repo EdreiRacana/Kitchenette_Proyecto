@@ -664,6 +664,85 @@ async def get_average_returns(db: AsyncSession, customer_id: Optional[int] = Non
     return schemas.AverageReturns(customer_id=customer_id, average_amount=_r(row.avg_amount or 0.0), count=row.count or 0)
 
 
+async def get_customer_forecast(db: AsyncSession, customer_id: int, months: int = 6) -> schemas.CustomerForecast:
+    """Simple per-customer sales forecast: average of the last `months` of
+    actual sales (cancelled orders excluded), used to project next month, and
+    weighed against the customer's historical share of the company-wide
+    monthly sales goal (Finance `Budget`, type=income, category~venta/sales).
+
+    This is a moving-average forecast, not a statistical model — there isn't
+    enough order volume in this app to justify anything more sophisticated,
+    and a transparent average is easier to audit than a black-box estimate.
+    """
+    from app.modules.customers import models as cust
+
+    O = models.Order
+    now = _now()
+    start = (now.replace(day=1) - timedelta(days=1)).replace(day=1)
+    for _ in range(months - 1):
+        start = (start - timedelta(days=1)).replace(day=1)
+
+    cust_row = (await db.execute(select(cust.Customer).where(cust.Customer.id == customer_id))).scalars().first()
+    customer_name = cust_row.name if cust_row else "Cliente"
+
+    # Group by day in SQL (portable across SQLite/Postgres) and roll up to
+    # months in Python, same approach as sales_trend() above.
+    month_stmt = (
+        select(
+            func.date(O.created_at).label("d"),
+            func.coalesce(func.sum(O.total_amount), 0.0).label("total"),
+        )
+        .where(O.kind == "order", O.status != "cancelled", O.customer_id == customer_id, O.created_at >= start)
+        .group_by(func.date(O.created_at))
+        .order_by(func.date(O.created_at))
+    )
+    rows = (await db.execute(month_stmt)).all()
+    monthly: dict[str, float] = {}
+    for r in rows:
+        month_key = str(r.d)[:7]
+        monthly[month_key] = monthly.get(month_key, 0.0) + float(r.total or 0.0)
+    history_months = sorted(monthly.keys())
+    history_totals = [_r(monthly[m]) for m in history_months]
+
+    avg_monthly = _r(sum(history_totals) / len(history_totals)) if history_totals else 0.0
+    if len(history_totals) >= 3:
+        forecast_next_month = _r(sum(history_totals[-3:]) / 3)
+    elif history_totals:
+        forecast_next_month = avg_monthly
+    else:
+        forecast_next_month = 0.0
+
+    trend_pct = None
+    if len(history_totals) >= 2:
+        prev = history_totals[:-1]
+        prev_avg = sum(prev) / len(prev)
+        if prev_avg:
+            trend_pct = _r((history_totals[-1] - prev_avg) / prev_avg * 100)
+
+    total_stmt = (
+        select(func.coalesce(func.sum(O.total_amount), 0.0))
+        .where(O.kind == "order", O.status != "cancelled", O.created_at >= start)
+    )
+    total_all_customers = float((await db.execute(total_stmt)).scalar() or 0.0)
+    goal_share_pct = _r(sum(history_totals) / total_all_customers) if total_all_customers else None
+
+    next_month_dt = (now.replace(day=1) + timedelta(days=32)).replace(day=1)
+    goal_month = next_month_dt.strftime("%Y-%m")
+    goal_by_month = await _sales_goal_by_month(db, next_month_dt, next_month_dt)
+    goal_amount = goal_by_month.get(goal_month)
+
+    goal_allocated = _r(goal_amount * goal_share_pct) if (goal_amount is not None and goal_share_pct is not None) else None
+    variance_vs_goal = _r(forecast_next_month - goal_allocated) if goal_allocated is not None else None
+
+    return schemas.CustomerForecast(
+        customer_id=customer_id, customer_name=customer_name,
+        history_months=history_months, history_totals=history_totals,
+        avg_monthly=avg_monthly, forecast_next_month=forecast_next_month, trend_pct=trend_pct,
+        goal_month=goal_month, goal_amount=_r(goal_amount) if goal_amount is not None else None,
+        goal_share_pct=goal_share_pct, goal_allocated=goal_allocated, variance_vs_goal=variance_vs_goal,
+    )
+
+
 async def top_customers(db: AsyncSession, limit: int = 5, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.TopCustomer]:
     from app.modules.customers import models as cust
     O = models.Order

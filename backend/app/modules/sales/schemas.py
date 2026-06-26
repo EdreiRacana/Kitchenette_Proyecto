@@ -246,6 +246,21 @@ class AverageReturns(BaseModel):
     count: int
 
 
+class CustomerForecast(BaseModel):
+    customer_id: Optional[int] = None
+    customer_name: str
+    history_months: List[str] = []
+    history_totals: List[float] = []
+    avg_monthly: float
+    forecast_next_month: float
+    trend_pct: Optional[float] = None  # % change of last month vs. avg of previous months
+    goal_month: Optional[str] = None
+    goal_amount: Optional[float] = None       # total income/sales goal for that month
+    goal_share_pct: Optional[float] = None    # this customer's historical share of total sales (used to allocate the goal)
+    goal_allocated: Optional[float] = None    # goal_amount * goal_share_pct
+    variance_vs_goal: Optional[float] = None  # forecast_next_month - goal_allocated
+
+
 class TopProduct(BaseModel):
     variant_id: Optional[int] = None
     name: str

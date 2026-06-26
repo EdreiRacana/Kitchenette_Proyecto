@@ -4,7 +4,7 @@
 
 import type { Tokens, Translator } from "./theme";
 import { money } from "./theme";
-import type { TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns } from "./types";
+import type { TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns, CustomerForecast } from "./types";
 import { EmptyState } from "./ui";
 
 function CombinedChart({ tk, data }: { tk: Tokens; data: TrendPoint[] }) {
@@ -121,10 +121,54 @@ function AverageReturnsCard({ tk, tr, avgReturns, customerName }: {
   );
 }
 
-export function Analytics({ tk, tr, trend, topCustomers, topProducts, customers, selectedCustomer, onSelectCustomer, avgReturns }: {
+function ForecastCard({ tk, tr, forecast }: { tk: Tokens; tr: Translator; forecast: CustomerForecast | null }) {
+  if (!forecast) return null;
+  const hasGoal = forecast.goal_allocated != null;
+  const overGoal = hasGoal && (forecast.variance_vs_goal ?? 0) >= 0;
+  return (
+    <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: 16, minWidth: 260, flex: 1 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: tk.textHi, marginBottom: 6 }}>
+        {tr("sales_forecast", "Pronóstico de ventas")}
+      </div>
+      <div style={{ fontSize: 11, color: tk.textLo, marginBottom: 10 }}>{forecast.customer_name}</div>
+      <div style={{ fontSize: 24, fontWeight: 800, color: tk.textHi }}>{money(forecast.forecast_next_month)}</div>
+      <div style={{ fontSize: 12, color: tk.textLo, marginTop: 2 }}>
+        {tr("sales_forecast_next_month", "Próximo mes")} {forecast.goal_month ?? ""}
+        {forecast.trend_pct != null && (
+          <span style={{ color: forecast.trend_pct >= 0 ? (tk.good ?? "#3dd68c") : (tk.bad ?? "#e5484d"), marginLeft: 6, fontWeight: 700 }}>
+            {forecast.trend_pct >= 0 ? "+" : ""}{forecast.trend_pct.toFixed(1)}%
+          </span>
+        )}
+      </div>
+      <div style={{ borderTop: `1px solid ${tk.border}`, marginTop: 12, paddingTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: tk.textLo }}>
+          <span>{tr("sales_avg_monthly", "Promedio mensual")}</span><span style={{ color: tk.textHi, fontWeight: 600 }}>{money(forecast.avg_monthly)}</span>
+        </div>
+        {hasGoal && (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: tk.textLo }}>
+              <span>{tr("sales_goal_allocated", "Meta asignada")}</span><span style={{ color: tk.textHi, fontWeight: 600 }}>{money(forecast.goal_allocated ?? 0)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: tk.textLo }}>
+              <span>{tr("sales_goal_variance", "Variación vs. meta")}</span>
+              <span style={{ color: overGoal ? (tk.good ?? "#3dd68c") : (tk.bad ?? "#e5484d"), fontWeight: 700 }}>
+                {overGoal ? "+" : ""}{money(forecast.variance_vs_goal ?? 0)}
+              </span>
+            </div>
+          </>
+        )}
+        {!hasGoal && (
+          <div style={{ fontSize: 11, color: tk.textLo }}>{tr("sales_no_goal", "Sin meta de ingresos configurada para este mes")}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function Analytics({ tk, tr, trend, topCustomers, topProducts, customers, selectedCustomer, onSelectCustomer, avgReturns, forecast }: {
   tk: Tokens; tr: Translator; trend: TrendPoint[]; topCustomers: TopCustomer[]; topProducts: TopProduct[];
   customers: CustomerLite[]; selectedCustomer: number | null; onSelectCustomer: (id: number | null) => void;
-  avgReturns: AverageReturns | null;
+  avgReturns: AverageReturns | null; forecast?: CustomerForecast | null;
 }) {
   const hasGoal = trend.some((d) => d.goal != null);
   const customerName = selectedCustomer != null
@@ -152,6 +196,7 @@ export function Analytics({ tk, tr, trend, topCustomers, topProducts, customers,
           <ChartLegend tk={tk} hasGoal={hasGoal} />
         </div>
         <AverageReturnsCard tk={tk} tr={tr} avgReturns={avgReturns} customerName={customerName} />
+        {selectedCustomer != null && <ForecastCard tk={tk} tr={tr} forecast={forecast ?? null} />}
       </div>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
         <RankPanel tk={tk} title={tr("sales_top_customers", "Top clientes")} rows={topCustomers}
