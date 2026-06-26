@@ -580,7 +580,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
               const stockInWh = products.reduce((a, p) => a + p.variants.reduce((b, v) => b + (v.stock_levels?.filter(l => l.warehouse_id === w.id).reduce((c, l) => c + l.quantity, 0) || 0), 0), 0);
               const skusInWh = products.filter(p => p.variants.some(v => v.stock_levels?.some(l => l.warehouse_id === w.id && l.quantity > 0))).length;
               return (
-                <div key={w.id} onClick={() => { setEditingWarehouse(w); setWarehouseForm(true); }} style={{ ...glass(t), borderRadius: 12, padding: 20, cursor: "pointer" }}>
+                <div key={w.id} onClick={() => { setWhFilter(String(w.id)); setTab("products"); }} title={lang === "es" ? "Ver productos de este almacén" : "View this warehouse's products"} style={{ ...glass(t), borderRadius: 12, padding: 20, cursor: "pointer" }}>
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <div style={{ background: wt.color + "22", color: wt.color, borderRadius: 10, padding: 9, display: "flex" }}><Warehouse size={18} /></div>
@@ -591,7 +591,9 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 11, fontWeight: 700, color: wt.color, background: wt.color + "18", padding: "3px 8px", borderRadius: 6 }}>{wt.label}</span>
-                      <Edit2 size={14} color={t.textLo} />
+                      <button onClick={(e) => { e.stopPropagation(); setEditingWarehouse(w); setWarehouseForm(true); }} title={lang === "es" ? "Editar almacén" : "Edit warehouse"} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo, display: "flex" }}>
+                        <Edit2 size={14} />
+                      </button>
                     </div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>

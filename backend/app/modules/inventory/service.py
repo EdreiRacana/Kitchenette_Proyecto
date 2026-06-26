@@ -325,12 +325,16 @@ async def get_reorder_alerts(db: AsyncSession) -> List[schemas.ReorderAlert]:
 
 
 async def get_inventory_stats(db: AsyncSession) -> schemas.InventoryStats:
+    # Se parte de TODAS las variantes activas (no solo las que ya tienen un
+    # registro de StockLevel) para que una variante nunca surtida también
+    # cuente como agotada, igual que el cálculo a nivel producto del frontend.
     result = await db.execute(
-        select(StockLevel).options(
-            selectinload(StockLevel.variant).selectinload(ProductVariant.product),
+        select(ProductVariant).where(ProductVariant.is_active == True).options(
+            selectinload(ProductVariant.product),
+            selectinload(ProductVariant.stock_levels),
         )
     )
-    levels = result.scalars().all()
+    all_variants = result.scalars().all()
 
     by_category: dict[str, float] = {}
     total_value = 0.0
@@ -338,11 +342,8 @@ async def get_inventory_stats(db: AsyncSession) -> schemas.InventoryStats:
     out_of_stock = 0
     low_stock = 0
 
-    for lvl in levels:
-        v = lvl.variant
-        if not v:
-            continue
-        available = lvl.quantity - lvl.reserved_quantity
+    for v in all_variants:
+        available = sum((lvl.quantity - lvl.reserved_quantity) for lvl in (v.stock_levels or []))
         unit_cost = v.cost_price if v.cost_price is not None else v.price
         value = available * unit_cost
         category = (v.product.category if v.product and v.product.category else "Sin categoría")
