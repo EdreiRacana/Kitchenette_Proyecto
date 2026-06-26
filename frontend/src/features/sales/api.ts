@@ -3,7 +3,7 @@
 import api from "../../services/api";
 import type {
   Order, Paginated, SalesStats, TrendPoint, TopCustomer, TopProduct,
-  SalesBySeller, SalesByChannel, OrderFilters, OrderDraft, CustomerLite,
+  SalesBySeller, SalesByChannel, OrderFilters, OrderDraft, CustomerLite, AverageReturns,
 } from "./types";
 
 export interface VariantOption {
@@ -90,8 +90,16 @@ export const salesApi = {
     const { data } = await api.get<SalesStats>(`/sales/stats`, { params: { start, end } });
     return data;
   },
-  async trend(granularity = "day", days = 30, end?: string): Promise<TrendPoint[]> {
-    const { data } = await api.get<TrendPoint[]>(`/sales/analytics/trend`, { params: { granularity, days, end } });
+  async trend(granularity = "day", days = 30, end?: string, customerId?: number | null): Promise<TrendPoint[]> {
+    const { data } = await api.get<TrendPoint[]>(`/sales/analytics/trend`, {
+      params: { granularity, days, end, customer_id: customerId ?? undefined },
+    });
+    return data;
+  },
+  async returnsAvg(customerId?: number | null): Promise<AverageReturns> {
+    const { data } = await api.get<AverageReturns>(`/sales/analytics/returns-avg`, {
+      params: { customer_id: customerId ?? undefined },
+    });
     return data;
   },
   async topCustomers(limit = 5, start?: string, end?: string): Promise<TopCustomer[]> {

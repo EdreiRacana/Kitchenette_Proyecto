@@ -1,16 +1,26 @@
-// Lightweight analytics: dependency-free SVG trend chart + top lists.
+// Lightweight analytics: dependency-free SVG combined chart (sales bars +
+// returns line + goal line) + top lists + average-returns metric, all
+// filterable by customer.
 
 import type { Tokens, Translator } from "./theme";
 import { money } from "./theme";
-import type { TrendPoint, TopCustomer, TopProduct } from "./types";
+import type { TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns } from "./types";
 import { EmptyState } from "./ui";
 
-function TrendChart({ tk, data }: { tk: Tokens; data: TrendPoint[] }) {
+function CombinedChart({ tk, data }: { tk: Tokens; data: TrendPoint[] }) {
   if (!data.length) return <EmptyState tk={tk} title="Sin datos de tendencia" />;
-  const W = 720, H = 200, pad = 28;
-  const max = Math.max(...data.map((d) => d.total), 1);
+  const W = 720, H = 220, pad = 28;
+  const max = Math.max(...data.map((d) => Math.max(d.total, d.returns_total, d.goal ?? 0)), 1);
   const bw = (W - pad * 2) / data.length;
   const labelEvery = Math.ceil(data.length / 8);
+  const yFor = (v: number) => H - pad - (H - pad * 2) * (v / max);
+  const xFor = (i: number) => pad + i * bw + bw / 2;
+
+  const returnsPath = data.map((d, i) => `${i === 0 ? "M" : "L"}${xFor(i)},${yFor(d.returns_total)}`).join(" ");
+  const hasGoal = data.some((d) => d.goal != null);
+  const goalPath = hasGoal
+    ? data.map((d, i) => `${i === 0 ? "M" : "L"}${xFor(i)},${yFor(d.goal ?? 0)}`).join(" ")
+    : "";
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
@@ -26,7 +36,7 @@ function TrendChart({ tk, data }: { tk: Tokens; data: TrendPoint[] }) {
         return (
           <g key={i}>
             <rect x={x} y={y} width={w} height={Math.max(h, 1)} rx={3} fill={tk.accent} opacity={0.85}>
-              <title>{`${d.period}: ${money(d.total)} (${d.count})`}</title>
+              <title>{`${d.period}: ${money(d.total)} ventas, ${money(d.returns_total)} devoluciones`}</title>
             </rect>
             {i % labelEvery === 0 && (
               <text x={x + w / 2} y={H - pad + 14} fontSize={9} fill={tk.textLo} textAnchor="middle">
@@ -36,7 +46,28 @@ function TrendChart({ tk, data }: { tk: Tokens; data: TrendPoint[] }) {
           </g>
         );
       })}
+      <path d={returnsPath} fill="none" stroke={tk.bad ?? "#e5484d"} strokeWidth={2} />
+      {data.map((d, i) => (
+        <circle key={i} cx={xFor(i)} cy={yFor(d.returns_total)} r={2.5} fill={tk.bad ?? "#e5484d"} />
+      ))}
+      {hasGoal && <path d={goalPath} fill="none" stroke={tk.textLo} strokeWidth={1.5} strokeDasharray="5 4" />}
     </svg>
+  );
+}
+
+function ChartLegend({ tk, hasGoal }: { tk: Tokens; hasGoal: boolean }) {
+  const item = (color: string, label: string, dashed = false) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: tk.textLo }}>
+      <span style={{ width: 14, height: dashed ? 0 : 8, borderRadius: dashed ? 0 : 2, background: dashed ? "none" : color, borderTop: dashed ? `2px dashed ${color}` : undefined }} />
+      {label}
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap" }}>
+      {item(tk.accent, "Ventas")}
+      {item(tk.bad ?? "#e5484d", "Devoluciones")}
+      {hasGoal && item(tk.textLo, "Meta", true)}
+    </div>
   );
 }
 
@@ -69,14 +100,58 @@ function RankPanel<T>({ tk, title, rows, render }: {
   );
 }
 
-export function Analytics({ tk, tr, trend, topCustomers, topProducts }: {
-  tk: Tokens; tr: Translator; trend: TrendPoint[]; topCustomers: TopCustomer[]; topProducts: TopProduct[];
+function AverageReturnsCard({ tk, tr, avgReturns, customerName }: {
+  tk: Tokens; tr: Translator; avgReturns: AverageReturns | null; customerName: string | null;
 }) {
   return (
+    <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: 16, minWidth: 220 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: tk.textHi, marginBottom: 6 }}>
+        {tr("sales_avg_returns", "Promedio de devoluciones")}
+      </div>
+      <div style={{ fontSize: 11, color: tk.textLo, marginBottom: 10 }}>
+        {customerName ? customerName : tr("sales_avg_returns_all", "Todos los clientes")}
+      </div>
+      <div style={{ fontSize: 24, fontWeight: 800, color: tk.textHi }}>
+        {money(avgReturns?.average_amount ?? 0)}
+      </div>
+      <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>
+        {avgReturns?.count ?? 0} {tr("sales_returns_count", "ventas canceladas")}
+      </div>
+    </div>
+  );
+}
+
+export function Analytics({ tk, tr, trend, topCustomers, topProducts, customers, selectedCustomer, onSelectCustomer, avgReturns }: {
+  tk: Tokens; tr: Translator; trend: TrendPoint[]; topCustomers: TopCustomer[]; topProducts: TopProduct[];
+  customers: CustomerLite[]; selectedCustomer: number | null; onSelectCustomer: (id: number | null) => void;
+  avgReturns: AverageReturns | null;
+}) {
+  const hasGoal = trend.some((d) => d.goal != null);
+  const customerName = selectedCustomer != null
+    ? (customers.find((c) => c.id === selectedCustomer)?.name ?? null)
+    : null;
+
+  return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: tk.textHi, marginBottom: 12 }}>{tr("sales_trend", "Tendencia de ventas")}</div>
-        <TrendChart tk={tk} data={trend} />
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "stretch" }}>
+        <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: 16, flex: 1, minWidth: 320 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 12, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: tk.textHi }}>
+              {tr("sales_trend_combined", "Ventas, devoluciones y meta")}
+            </div>
+            <select
+              value={selectedCustomer ?? ""}
+              onChange={(e) => onSelectCustomer(e.target.value ? Number(e.target.value) : null)}
+              style={{ background: tk.bg, color: tk.textHi, border: `1px solid ${tk.border}`, borderRadius: 8, padding: "6px 10px", fontSize: 12 }}
+            >
+              <option value="">{tr("sales_avg_returns_all", "Todos los clientes")}</option>
+              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <CombinedChart tk={tk} data={trend} />
+          <ChartLegend tk={tk} hasGoal={hasGoal} />
+        </div>
+        <AverageReturnsCard tk={tk} tr={tr} avgReturns={avgReturns} customerName={customerName} />
       </div>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
         <RankPanel tk={tk} title={tr("sales_top_customers", "Top clientes")} rows={topCustomers}

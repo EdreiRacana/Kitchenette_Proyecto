@@ -229,6 +229,8 @@ class TrendPoint(BaseModel):
     period: str
     total: float
     count: int
+    returns_total: float = 0.0
+    goal: Optional[float] = None
 
 
 class TopCustomer(BaseModel):
@@ -236,6 +238,12 @@ class TopCustomer(BaseModel):
     name: str
     total: float
     orders: int
+
+
+class AverageReturns(BaseModel):
+    customer_id: Optional[int] = None
+    average_amount: float
+    count: int
 
 
 class TopProduct(BaseModel):

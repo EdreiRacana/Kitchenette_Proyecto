@@ -32,8 +32,14 @@ async def stats(db: DB, _: CurrentUser, start: Optional[datetime] = None, end: O
 async def trend(db: DB, _: CurrentUser,
                 granularity: str = Query("day", pattern="^(day|week|month)$"),
                 days: int = Query(30, ge=1, le=365),
-                end: Optional[datetime] = None):
-    return await service.sales_trend(db, granularity=granularity, days=days, end=end)
+                end: Optional[datetime] = None,
+                customer_id: Optional[int] = None):
+    return await service.sales_trend(db, granularity=granularity, days=days, end=end, customer_id=customer_id)
+
+
+@router.get("/analytics/returns-avg", response_model=schemas.AverageReturns)
+async def returns_avg(db: DB, _: CurrentUser, customer_id: Optional[int] = None):
+    return await service.get_average_returns(db, customer_id=customer_id)
 
 
 @router.get("/analytics/top-customers", response_model=List[schemas.TopCustomer])

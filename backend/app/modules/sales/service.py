@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import io
+from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
@@ -539,17 +540,29 @@ async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Opt
     )
 
 
-async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30, end: Optional[datetime] = None) -> List[schemas.TrendPoint]:
+async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30, end: Optional[datetime] = None,
+                       customer_id: Optional[int] = None) -> List[schemas.TrendPoint]:
     """Aggregate revenue by day in SQL, bounded to the relevant date window so we
     never scan the whole history; then roll days up to week/month in Python.
 
     `end` lets the caller anchor the window somewhere other than "now" (e.g. to
-    build a comparable previous-period series for BI charts).
+    build a comparable previous-period series for BI charts). `customer_id`
+    restricts both the sales and returns series to a single customer.
+
+    "Returns" has no dedicated ledger in this app today; cancelled orders are
+    the closest existing concept (see Order.status), so they're used as the
+    returns series.
     """
     O = models.Order
     mult = {"day": 1, "week": 7, "month": 31}.get(granularity, 1)
     end_bound = end or _now()
     cutoff = end_bound - timedelta(days=days * mult + 1)
+
+    sales_conds = [O.kind == "order", O.status != "cancelled", O.created_at >= cutoff, O.created_at < end_bound]
+    returns_conds = [O.kind == "order", O.status == "cancelled", O.created_at >= cutoff, O.created_at < end_bound]
+    if customer_id is not None:
+        sales_conds.append(O.customer_id == customer_id)
+        returns_conds.append(O.customer_id == customer_id)
 
     stmt = (
         select(
@@ -557,12 +570,25 @@ async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30
             func.coalesce(func.sum(O.total_amount), 0.0).label("total"),
             func.count(O.id).label("count"),
         )
-        .where(O.kind == "order", O.status != "cancelled", O.created_at >= cutoff, O.created_at < end_bound)
+        .where(*sales_conds)
         .group_by(func.date(O.created_at))
         .order_by(func.date(O.created_at))
     )
     daily = [(str(row.d)[:10], float(row.total or 0.0), int(row.count or 0))
              for row in (await db.execute(stmt)).all()]
+
+    returns_stmt = (
+        select(
+            func.date(O.created_at).label("d"),
+            func.coalesce(func.sum(O.total_amount), 0.0).label("returns_total"),
+        )
+        .where(*returns_conds)
+        .group_by(func.date(O.created_at))
+    )
+    returns_daily = {str(row.d)[:10]: float(row.returns_total or 0.0)
+                     for row in (await db.execute(returns_stmt)).all()}
+
+    goal_by_month = await _sales_goal_by_month(db, cutoff, end_bound)
 
     def bucket_key(dstr: str) -> str:
         dt = datetime.strptime(dstr, "%Y-%m-%d")
@@ -574,12 +600,68 @@ async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30
 
     buckets: dict[str, list] = {}
     for dstr, total, count in daily:
-        e = buckets.setdefault(bucket_key(dstr), [0.0, 0])
+        e = buckets.setdefault(bucket_key(dstr), [0.0, 0, 0.0, 0.0])
         e[0] += total
         e[1] += count
-    points = [schemas.TrendPoint(period=k, total=_r(v[0]), count=v[1])
-              for k, v in sorted(buckets.items())]
+    for dstr, rtotal in returns_daily.items():
+        e = buckets.setdefault(bucket_key(dstr), [0.0, 0, 0.0, 0.0])
+        e[2] += rtotal
+    for dstr in {d for d, *_ in daily} | set(returns_daily.keys()):
+        dt = datetime.strptime(dstr, "%Y-%m-%d")
+        month_key = dt.strftime("%Y-%m")
+        monthly_goal = goal_by_month.get(month_key)
+        if monthly_goal is not None:
+            days_in_month = monthrange(dt.year, dt.month)[1]
+            per_day_goal = monthly_goal / days_in_month
+            e = buckets.setdefault(bucket_key(dstr), [0.0, 0, 0.0, 0.0])
+            e[3] += per_day_goal
+
+    points = [
+        schemas.TrendPoint(period=k, total=_r(v[0]), count=v[1], returns_total=_r(v[2]),
+                            goal=_r(v[3]) if v[3] else None)
+        for k, v in sorted(buckets.items())
+    ]
     return points[-days:]
+
+
+async def _sales_goal_by_month(db: AsyncSession, start: datetime, end: datetime) -> dict[str, float]:
+    """Pull the income budget tagged as a sales goal (category containing
+    "venta"/"sales") for each "YYYY-MM" period overlapping the window."""
+    from app.modules.finance import models as fin
+
+    periods = set()
+    cur = start.replace(day=1)
+    while cur <= end:
+        periods.add(cur.strftime("%Y-%m"))
+        cur = (cur.replace(day=28) + timedelta(days=4)).replace(day=1)
+
+    if not periods:
+        return {}
+    stmt = select(fin.Budget).where(
+        fin.Budget.type == "income",
+        fin.Budget.period.in_(periods),
+        or_(fin.Budget.category.ilike("%venta%"), fin.Budget.category.ilike("%sales%")),
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    out: dict[str, float] = {}
+    for b in rows:
+        out[b.period] = out.get(b.period, 0.0) + b.amount
+    return out
+
+
+async def get_average_returns(db: AsyncSession, customer_id: Optional[int] = None) -> schemas.AverageReturns:
+    """Average size of cancelled ("returned") orders, optionally scoped to one
+    customer. Cancellations are the closest existing concept to a return."""
+    O = models.Order
+    conds = [O.kind == "order", O.status == "cancelled"]
+    if customer_id is not None:
+        conds.append(O.customer_id == customer_id)
+    stmt = select(
+        func.coalesce(func.avg(O.total_amount), 0.0).label("avg_amount"),
+        func.count(O.id).label("count"),
+    ).where(*conds)
+    row = (await db.execute(stmt)).one()
+    return schemas.AverageReturns(customer_id=customer_id, average_amount=_r(row.avg_amount or 0.0), count=row.count or 0)
 
 
 async def top_customers(db: AsyncSession, limit: int = 5, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.TopCustomer]:
