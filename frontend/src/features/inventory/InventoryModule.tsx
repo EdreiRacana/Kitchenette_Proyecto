@@ -120,6 +120,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [editingWarehouse, setEditingWarehouse] = useState<WarehouseT | null>(null);
   const [poForm, setPoForm] = useState(false);
+  const [editingPO, setEditingPO] = useState<PurchaseOrder | null>(null);
   const [recipeForm, setRecipeForm] = useState(false);
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null);
   const [prodOrderForm, setProdOrderForm] = useState(false);
@@ -837,7 +838,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
               <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.textLo }} />
               <input value={poQ} onChange={e => setPoQ(e.target.value)} placeholder={lang === "es" ? "Buscar folio, proveedor o almacén…" : "Search folio, supplier or warehouse…"} style={{ ...inp, paddingLeft: 34 }} />
             </div>
-            <button onClick={() => setPoForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            <button onClick={() => { setEditingPO(null); setPoForm(true); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               <Plus size={15} /> {lang === "es" ? "Nueva orden" : "New order"}
             </button>
           </div>
@@ -868,6 +869,11 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                         <td style={{ padding: "12px 16px", fontSize: 13, color: t.textMid }}>{po.items?.length || 0}</td>
                         <td style={{ padding: "12px 16px", fontSize: 12, color: t.textLo, whiteSpace: "nowrap" }}>{new Date(po.created_at).toLocaleDateString("es-MX")}</td>
                         <td style={{ padding: "12px 16px", display: "flex", gap: 8 }}>
+                          {canReceive && (
+                            <button onClick={() => { setEditingPO(po); setPoForm(true); }} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                              {lang === "es" ? "Editar" : "Edit"}
+                            </button>
+                          )}
                           {canReceive && (
                             <button onClick={async () => {
                               if (!confirm(lang === "es" ? "¿Recibir esta orden? Esto generará lotes FIFO y actualizará el stock. Esta acción es irreversible." : "Receive this order? This will create FIFO lots and update stock. This action is irreversible.")) return;
@@ -1283,15 +1289,21 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       {/* ── MODAL: Purchase Order Form ── */}
       {poForm && (
         <PurchaseOrderFormModal
-          t={t} lang={lang} suppliers={suppliers} warehouses={warehouses} products={products}
-          onClose={() => setPoForm(false)}
+          t={t} lang={lang} suppliers={suppliers} warehouses={warehouses} products={products} editing={editingPO}
+          onClose={() => { setPoForm(false); setEditingPO(null); }}
           onSave={async (data: any) => {
-            if (demo) { alert(lang === "es" ? "Modo demo: orden simulada ✓" : "Demo mode: simulated order ✓"); setPoForm(false); return; }
-            await inventoryService.createPurchaseOrder({
+            if (demo) { alert(lang === "es" ? "Modo demo: orden simulada ✓" : "Demo mode: simulated order ✓"); setPoForm(false); setEditingPO(null); return; }
+            const payload = {
               supplier_id: Number(data.supplier_id), warehouse_id: Number(data.warehouse_id), notes: data.notes || undefined,
               items: data.items.map((it: any) => ({ variant_id: Number(it.variant_id), quantity: Number(it.quantity), unit_cost: Number(it.unit_cost) })),
-            });
+            };
+            if (editingPO) {
+              await inventoryService.updatePurchaseOrder(editingPO.id, payload);
+            } else {
+              await inventoryService.createPurchaseOrder(payload);
+            }
             setPoForm(false);
+            setEditingPO(null);
             await load();
           }}
         />
@@ -1898,14 +1910,18 @@ function SupplierFormModal({ t, lang, editing, onClose, onSave }: any) {
 }
 
 // ── Purchase Order Form Modal ──────────────────────────────────────────────
-function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, onClose, onSave }: any) {
+function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, editing, onClose, onSave }: any) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [supplierId, setSupplierId] = useState("");
-  const [warehouseId, setWarehouseId] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [notes, setNotes] = useState("");
-  const [items, setItems] = useState([{ variant_id: "", quantity: "", unit_cost: "" }]);
+  const [supplierId, setSupplierId] = useState(editing ? String(editing.supplier_id) : "");
+  const [warehouseId, setWarehouseId] = useState(editing ? String(editing.warehouse_id) : "");
+  const [dueDate, setDueDate] = useState(editing?.due_date ? String(editing.due_date).slice(0, 10) : "");
+  const [notes, setNotes] = useState(editing?.notes || "");
+  const [items, setItems] = useState(
+    editing?.items?.length
+      ? editing.items.map((it: any) => ({ variant_id: String(it.variant_id), quantity: String(it.quantity), unit_cost: String(it.unit_cost) }))
+      : [{ variant_id: "", quantity: "", unit_cost: "" }]
+  );
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const allVariants = products.flatMap((p: Product) => p.variants.map((v: Variant) => ({ ...v, product_name: p.name })));
@@ -1930,7 +1946,7 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, onCl
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 8, padding: 8, display: "flex" }}><ClipboardList size={18} /></div>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{lang === "es" ? "Nueva orden de compra" : "New purchase order"}</h2>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{editing ? (lang === "es" ? "Editar orden de compra" : "Edit purchase order") : (lang === "es" ? "Nueva orden de compra" : "New purchase order")}</h2>
           </div>
           <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
         </div>
@@ -1993,7 +2009,7 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, onCl
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
             <button onClick={handleSave} disabled={saving || !valid} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !valid ? 0.5 : 1 }}>
-              {saving ? "…" : (lang === "es" ? "Crear orden" : "Create order")}
+              {saving ? "…" : editing ? (lang === "es" ? "Guardar cambios" : "Save changes") : (lang === "es" ? "Crear orden" : "Create order")}
             </button>
           </div>
         </div>

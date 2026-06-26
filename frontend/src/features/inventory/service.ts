@@ -226,6 +226,7 @@ export const inventoryService = {
     // Purchase orders
     getPurchaseOrders: async () => (await api.get<PurchaseOrder[]>('/inventory/purchase-orders')).data,
     createPurchaseOrder: async (data: any) => (await api.post('/inventory/purchase-orders', data)).data,
+    updatePurchaseOrder: async (id: number, data: any) => (await api.put(`/inventory/purchase-orders/${id}`, data)).data,
     receivePurchaseOrder: async (id: number) => (await api.post(`/inventory/purchase-orders/${id}/receive`)).data,
     cancelPurchaseOrder: async (id: number) => (await api.post(`/inventory/purchase-orders/${id}/cancel`)).data,
 

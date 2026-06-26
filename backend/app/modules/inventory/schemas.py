@@ -243,6 +243,13 @@ class PurchaseOrderItemInDB(PurchaseOrderItemCreate):
     class Config:
         from_attributes = True
 
+class PurchaseOrderUpdate(BaseModel):
+    supplier_id: Optional[int] = None
+    warehouse_id: Optional[int] = None
+    notes: Optional[str] = None
+    due_date: Optional[datetime] = None
+    items: Optional[List[PurchaseOrderItemCreate]] = None
+
 class SupplierPaymentCreate(BaseModel):
     amount: float
     method: Optional[str] = None

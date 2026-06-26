@@ -192,6 +192,16 @@ async def create_purchase_order(po_in: schemas.PurchaseOrderCreate, db: DB, curr
 async def read_purchase_orders(db: DB, current_user: CurrentUser):
     return await service.get_purchase_orders(db)
 
+@router.put("/purchase-orders/{po_id}", response_model=schemas.PurchaseOrderInDB)
+async def update_purchase_order(po_id: int, po_in: schemas.PurchaseOrderUpdate, db: DB, current_user: CurrentUser):
+    try:
+        po = await service.update_purchase_order(db, po_id, po_in)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    return po
+
 @router.post("/purchase-orders/{po_id}/receive", response_model=schemas.PurchaseOrderInDB)
 async def receive_purchase_order(po_id: int, db: DB, current_user: CurrentUser):
     po = await service.receive_purchase_order(db, po_id, user_id=current_user.id)

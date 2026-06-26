@@ -394,6 +394,39 @@ async def create_purchase_order(db: AsyncSession, po_in: schemas.PurchaseOrderCr
     result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po.id).options(selectinload(PurchaseOrder.items)))
     return result.scalars().first()
 
+async def update_purchase_order(db: AsyncSession, po_id: int, po_in: schemas.PurchaseOrderUpdate) -> Optional[PurchaseOrder]:
+    """Edit a PO's supplier/warehouse/notes/due_date/items. Only allowed while
+    the order hasn't been received yet — receiving is what mutates stock, so
+    any edit afterwards would desync the stock ledger from the PO."""
+    result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po_id).options(selectinload(PurchaseOrder.items)))
+    po = result.scalars().first()
+    if not po:
+        return None
+    if po.status not in (PurchaseOrderStatus.DRAFT.value, PurchaseOrderStatus.ORDERED.value):
+        raise ValueError("Solo se pueden editar órdenes en borrador o pendientes de recibir")
+
+    if po_in.supplier_id is not None:
+        po.supplier_id = po_in.supplier_id
+    if po_in.warehouse_id is not None:
+        po.warehouse_id = po_in.warehouse_id
+    if po_in.notes is not None:
+        po.notes = po_in.notes
+    if po_in.due_date is not None:
+        po.due_date = po_in.due_date
+    if po_in.items is not None:
+        for item in list(po.items):
+            await db.delete(item)
+        await db.flush()
+        for item in po_in.items:
+            db.add(PurchaseOrderItem(purchase_order_id=po.id, variant_id=item.variant_id, quantity=item.quantity, unit_cost=item.unit_cost))
+        await db.flush()
+        await db.refresh(po, attribute_names=["items"])
+        po.total_amount = round(sum(it.quantity * it.unit_cost for it in po.items), 2)
+
+    await db.commit()
+    result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po.id).options(selectinload(PurchaseOrder.items)))
+    return result.scalars().first()
+
 async def get_purchase_orders(db: AsyncSession) -> List[PurchaseOrder]:
     result = await db.execute(select(PurchaseOrder).options(selectinload(PurchaseOrder.items)).order_by(PurchaseOrder.created_at.desc()))
     return result.scalars().all()
