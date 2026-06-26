@@ -23,6 +23,14 @@ export const hrApi = {
     api.get(`/hr/payroll/periods/${periodId}/bank-layout`, { params: bank ? { bank } : {}, responseType: "blob" }),
   downloadHeadcountReport: () => api.get("/hr/reports/headcount", { responseType: "blob" }),
   downloadVacationReport: () => api.get("/hr/reports/vacations", { responseType: "blob" }),
+  downloadOvertimeReport: (startDate: string, endDate: string) =>
+    api.get("/hr/reports/overtime", { params: { start_date: startDate, end_date: endDate }, responseType: "blob" }),
+  downloadAnnualAccumulatedReport: (year: number) =>
+    api.get("/hr/reports/annual-accumulated", { params: { year }, responseType: "blob" }),
+  downloadPTUReport: (year: number, totalUtilidad: number) =>
+    api.post("/hr/reports/ptu", { year, total_utilidad: totalUtilidad }, { responseType: "blob" }),
+  downloadInfonavitReport: () => api.get("/hr/reports/infonavit", { responseType: "blob" }),
+  downloadSUAReport: (periodId: number) => api.get(`/hr/reports/sua/${periodId}`, { responseType: "blob" }),
 };
 
 export function downloadBlob(blob: Blob, filename: string) {

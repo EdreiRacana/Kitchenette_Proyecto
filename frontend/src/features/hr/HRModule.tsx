@@ -48,7 +48,10 @@ interface Employee {
   pay_frequency: PayFrequency;
   tax_regime: string;
   infonavit_credit?: string;
+  infonavit_discount_type?: string;
+  infonavit_discount_value?: number;
   fonacot_credit?: string;
+  fonacot_discount_value?: number;
   vacation_days: number;
   vacation_used: number;
   is_active: boolean;
@@ -61,6 +64,7 @@ interface Attendance {
   date: string;
   type: AttendanceType;
   time?: string;
+  hours?: number;
   notes?: string;
   approved: boolean;
   channel?: "biometric" | "qr" | "app" | "whatsapp" | "kiosk" | "manual";
@@ -935,6 +939,29 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
             {[
               { icon: Users, title: "Plantilla STPS", desc: "Reporte de personal activo para registro STPS. Incluye tipos de contrato y jornada.", color: t.bad, tag: "STPS", action: async () => { const res = await hrApi.downloadHeadcountReport(); downloadBlob(res.data, "plantilla_stps.csv"); } },
               { icon: Calendar, title: "Control de vacaciones", desc: "Días generados, tomados y pendientes por empleado y período.", color: t.nova, tag: "RH", action: async () => { const res = await hrApi.downloadVacationReport(); downloadBlob(res.data, "control_vacaciones.csv"); } },
+              { icon: Clock, title: "Horas extra LFT 2026", desc: "Clasifica horas extra dobles (hasta 9/semana) y triples (excedente) por empleado, en un rango de fechas.", color: t.warn, tag: "LFT", action: async () => {
+                const start = window.prompt("Fecha inicial (YYYY-MM-DD):"); if (!start) return;
+                const end = window.prompt("Fecha final (YYYY-MM-DD):"); if (!end) return;
+                const res = await hrApi.downloadOvertimeReport(start, end); downloadBlob(res.data, `horas_extra_${start}_a_${end}.csv`);
+              } },
+              { icon: BarChart3, title: "Acumulado anual", desc: "Suma de percepciones y deducciones por empleado a lo largo del año, de períodos ya calculados.", color: t.good, tag: "ISR", action: async () => {
+                const year = window.prompt("Año a consultar:", String(new Date().getFullYear())); if (!year) return;
+                const res = await hrApi.downloadAnnualAccumulatedReport(Number(year)); downloadBlob(res.data, `acumulado_anual_${year}.csv`);
+              } },
+              { icon: DollarSign, title: "PTU — Participación de utilidades", desc: "Reparte la utilidad declarada 50% por días trabajados y 50% por salario percibido en el año.", color: t.nova, tag: "LFT", action: async () => {
+                const year = window.prompt("Año del ejercicio:", String(new Date().getFullYear())); if (!year) return;
+                const total = window.prompt("Monto total de utilidad repartible (MXN):"); if (!total) return;
+                const res = await hrApi.downloadPTUReport(Number(year), Number(total)); downloadBlob(res.data, `ptu_${year}.csv`);
+              } },
+              { icon: TrendingDown, title: "Reporte INFONAVIT / FONACOT", desc: "Créditos vigentes, tipo de descuento configurado y monto estimado por período de cada empleado.", color: t.bad, tag: "INFONAVIT", action: async () => {
+                const res = await hrApi.downloadInfonavitReport(); downloadBlob(res.data, "infonavit_fonacot.csv");
+              } },
+              { icon: FileText, title: "SUA — IMSS (apoyo)", desc: "Cuotas obrero-patronales por empleado de un período calculado, como apoyo para captura/validación en el programa oficial del IMSS.", color: t.textMid, tag: "IMSS", action: async () => {
+                if (!periods.length) { alert("No hay períodos de nómina calculados todavía."); return; }
+                const list = periods.map(p => `${p.id}: ${p.name} (${p.status})`).join("\n");
+                const id = window.prompt(`Captura el ID del período:\n${list}`); if (!id) return;
+                const res = await hrApi.downloadSUAReport(Number(id)); downloadBlob(res.data, `sua_apoyo_${id}.csv`);
+              } },
             ].map(r => (
               <button key={r.title} style={{ ...glass(t), borderRadius: 12, padding: 20, textAlign: "left", cursor: "pointer" }}
                 onMouseEnter={e => { (e.currentTarget as any).style.transform = "translateY(-2px)"; (e.currentTarget as any).style.boxShadow = `0 8px 20px rgba(0,0,0,0.15)`; }}
@@ -952,12 +979,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
               </button>
             ))}
             {[
-              { icon: FileText, title: "SUA — IMSS", tag: "IMSS" },
-              { icon: Receipt, title: "Confronta SAT", tag: "SAT" },
-              { icon: BarChart3, title: "Acumulado anual", tag: "ISR" },
-              { icon: DollarSign, title: "PTU — Participación de utilidades", tag: "LFT" },
-              { icon: TrendingDown, title: "Reporte INFONAVIT", tag: "INFONAVIT" },
-              { icon: Clock, title: "Horas extra LFT 2026", tag: "LFT" },
+              { icon: Receipt, title: "Confronta SAT", tag: "SAT", reason: "Requiere integración con un Proveedor Autorizado de Certificación (PAC) para timbrar y consultar CFDI 4.0 de nómina — no implementada en este sistema." },
             ].map(r => (
               <div key={r.title} style={{ ...glass(t), borderRadius: 12, padding: 20, opacity: 0.55 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
@@ -965,7 +987,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                   <span style={{ fontSize: 10, fontWeight: 700, color: t.textLo, background: t.textLo + "18", padding: "2px 7px", borderRadius: 6 }}>{r.tag}</span>
                 </div>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>{r.title}</div>
-                <div style={{ fontSize: 12.5, color: t.textLo, lineHeight: 1.5 }}>Próximamente — no disponible aún.</div>
+                <div style={{ fontSize: 12.5, color: t.textLo, lineHeight: 1.5 }}>No disponible. {r.reason}</div>
               </div>
             ))}
           </div>
@@ -1062,7 +1084,12 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
 
       {/* ── MODAL: Employee Form ── */}
       {employeeForm && <EmployeeFormModal t={t} editing={editingEmployee} onClose={() => { setEmployeeForm(false); setEditingEmployee(null); }} onSave={async (form: any) => {
-        const payload = { ...form, base_salary: Number(form.base_salary) || 0, sbc: Number(form.sbc) || 0 };
+        const payload = {
+          ...form, base_salary: Number(form.base_salary) || 0, sbc: Number(form.sbc) || 0,
+          infonavit_discount_type: form.infonavit_credit ? (form.infonavit_discount_type || null) : null,
+          infonavit_discount_value: form.infonavit_discount_value !== "" ? Number(form.infonavit_discount_value) : null,
+          fonacot_discount_value: form.fonacot_discount_value !== "" ? Number(form.fonacot_discount_value) : null,
+        };
         if (editingEmployee) await hrApi.updateEmployee(editingEmployee.id, payload);
         else await hrApi.createEmployee(payload);
         setEmployeeForm(false); setEditingEmployee(null); await load();
@@ -1103,7 +1130,10 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
     pay_frequency: editing?.pay_frequency || "quincenal",
     tax_regime: editing?.tax_regime || "605",
     infonavit_credit: editing?.infonavit_credit || "",
+    infonavit_discount_type: editing?.infonavit_discount_type || "",
+    infonavit_discount_value: editing?.infonavit_discount_value ?? "",
     fonacot_credit: editing?.fonacot_credit || "",
+    fonacot_discount_value: editing?.fonacot_discount_value ?? "",
   });
 
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
@@ -1248,7 +1278,23 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
                 </div>
                 <div><label style={lbl}>Crédito INFONAVIT</label><input value={form.infonavit_credit} onChange={e => setForm(f => ({ ...f, infonavit_credit: e.target.value }))} placeholder="Número de crédito" style={inp} /></div>
               </div>
-              <div><label style={lbl}>Crédito FONACOT</label><input value={form.fonacot_credit} onChange={e => setForm(f => ({ ...f, fonacot_credit: e.target.value }))} placeholder="Número de crédito" style={inp} /></div>
+              {form.infonavit_credit && (
+                <div style={g2}>
+                  <div><label style={lbl}>Tipo de descuento INFONAVIT</label>
+                    <select value={form.infonavit_discount_type} onChange={e => setForm(f => ({ ...f, infonavit_discount_type: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+                      <option value="">Seleccionar…</option>
+                      <option value="cuota_fija">Cuota fija</option>
+                      <option value="porcentaje">Porcentaje del salario</option>
+                      <option value="factor_veces_salario">Factor de veces el salario (VSM/UMA)</option>
+                    </select>
+                  </div>
+                  <div><label style={lbl}>Valor del descuento</label><input type="number" value={form.infonavit_discount_value} onChange={e => setForm(f => ({ ...f, infonavit_discount_value: e.target.value }))} placeholder="Monto o %" style={inp} /></div>
+                </div>
+              )}
+              <div style={g2}>
+                <div><label style={lbl}>Crédito FONACOT</label><input value={form.fonacot_credit} onChange={e => setForm(f => ({ ...f, fonacot_credit: e.target.value }))} placeholder="Número de crédito" style={inp} /></div>
+                {form.fonacot_credit && <div><label style={lbl}>Descuento FONACOT por período</label><input type="number" value={form.fonacot_discount_value} onChange={e => setForm(f => ({ ...f, fonacot_discount_value: e.target.value }))} placeholder="Monto fijo" style={inp} /></div>}
+              </div>
 
               {/* ISR Preview */}
               {form.base_salary && (
@@ -1311,6 +1357,7 @@ function AttendanceFormModal({ t, employees, onClose, onSave }: any) {
     date: new Date().toISOString().slice(0, 10),
     type: "entrada" as AttendanceType,
     time: "",
+    hours: "",
     channel: "manual",
     notes: "",
   });
@@ -1321,7 +1368,7 @@ function AttendanceFormModal({ t, employees, onClose, onSave }: any) {
   const handleSave = async () => {
     if (!form.employee_id) return;
     setSaving(true);
-    try { await onSave({ ...form, employee_id: Number(form.employee_id) }); } finally { setSaving(false); }
+    try { await onSave({ ...form, employee_id: Number(form.employee_id), hours: form.hours !== "" ? Number(form.hours) : null }); } finally { setSaving(false); }
   };
 
   return (
@@ -1353,6 +1400,12 @@ function AttendanceFormModal({ t, employees, onClose, onSave }: any) {
             <label style={lbl}>Hora</label>
             <input type="time" value={form.time} onChange={e => setForm(f => ({ ...f, time: e.target.value }))} style={inp} />
           </div>
+          {form.type === "extra" && (
+            <div>
+              <label style={lbl}>Horas extra trabajadas *</label>
+              <input type="number" step="0.5" min="0" value={form.hours} onChange={e => setForm(f => ({ ...f, hours: e.target.value }))} placeholder="Ej. 3.5" style={inp} />
+            </div>
+          )}
           <div>
             <label style={lbl}>Notas</label>
             <input value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} style={inp} />

@@ -268,6 +268,13 @@ _FINANCE_STATEMENTS = [
     "ALTER TABLE scheduled_payments ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ",
 ]
 
+_HR_STATEMENTS = [
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS infonavit_discount_type  VARCHAR",
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS infonavit_discount_value DOUBLE PRECISION",
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS fonacot_discount_value   DOUBLE PRECISION",
+    "ALTER TABLE hr_attendance ADD COLUMN IF NOT EXISTS hours DOUBLE PRECISION",
+]
+
 
 def _apply(sync_conn: Connection) -> None:
     if sync_conn.dialect.name != "postgresql":
@@ -279,6 +286,7 @@ def _apply(sync_conn: Connection) -> None:
         ("ingesta",    _INGESTA_STATEMENTS),
         ("inventory",  _INVENTORY_STATEMENTS),
         ("finance",    _FINANCE_STATEMENTS),
+        ("hr",         _HR_STATEMENTS),
     ]
 
     for label, statements in all_statements:

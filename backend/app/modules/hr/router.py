@@ -147,3 +147,37 @@ async def report_headcount(db: DB, current_user: CurrentUser):
 async def report_vacations(db: DB, current_user: CurrentUser):
     csv_text = await service.generate_vacation_csv(db)
     return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="control_vacaciones.csv"'})
+
+
+@router.get("/reports/overtime")
+async def report_overtime(db: DB, current_user: CurrentUser, start_date: str, end_date: str):
+    csv_text = await service.generate_overtime_csv(db, start_date, end_date)
+    return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="horas_extra_{start_date}_a_{end_date}.csv"'})
+
+
+@router.get("/reports/annual-accumulated")
+async def report_annual_accumulated(db: DB, current_user: CurrentUser, year: int):
+    csv_text = await service.generate_annual_accumulated_csv(db, year)
+    return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="acumulado_anual_{year}.csv"'})
+
+
+@router.post("/reports/ptu")
+async def report_ptu(data: schemas.PTURequest, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    csv_text = await service.generate_ptu_csv(db, data.year, data.total_utilidad)
+    return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="ptu_{data.year}.csv"'})
+
+
+@router.get("/reports/infonavit")
+async def report_infonavit(db: DB, current_user: CurrentUser):
+    csv_text = await service.generate_infonavit_csv(db)
+    return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="infonavit_fonacot.csv"'})
+
+
+@router.get("/reports/sua/{period_id}")
+async def report_sua(period_id: int, db: DB, current_user: CurrentUser):
+    try:
+        csv_text = await service.generate_sua_csv(db, period_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="sua_apoyo_{period_id}.csv"'})

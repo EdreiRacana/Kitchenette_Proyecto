@@ -32,7 +32,10 @@ class Employee(Base):
     pay_frequency = Column(String, nullable=False, default="quincenal")
     tax_regime = Column(String, nullable=False, default="605")
     infonavit_credit = Column(String, nullable=True)
+    infonavit_discount_type = Column(String, nullable=True)  # cuota_fija, porcentaje, factor_veces_salario
+    infonavit_discount_value = Column(Float, nullable=True)
     fonacot_credit = Column(String, nullable=True)
+    fonacot_discount_value = Column(Float, nullable=True)
     vacation_days = Column(Integer, nullable=False, default=0)
     vacation_used = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, default=True, nullable=False)
@@ -50,6 +53,7 @@ class Attendance(Base):
     date = Column(String, nullable=False, index=True)  # ISO date
     type = Column(String, nullable=False)  # entrada, salida, retardo, falta, vacacion, incapacidad, permiso, extra
     time = Column(String, nullable=True)
+    hours = Column(Float, nullable=True)  # horas extra trabajadas (solo type == "extra")
     notes = Column(Text, nullable=True)
     approved = Column(Boolean, default=False, nullable=False)
     channel = Column(String, nullable=True)  # biometric, qr, app, whatsapp, kiosk, manual

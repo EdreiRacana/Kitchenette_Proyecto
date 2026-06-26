@@ -27,7 +27,10 @@ class EmployeeBase(BaseModel):
     pay_frequency: str = "quincenal"
     tax_regime: str = "605"
     infonavit_credit: Optional[str] = None
+    infonavit_discount_type: Optional[str] = None
+    infonavit_discount_value: Optional[float] = None
     fonacot_credit: Optional[str] = None
+    fonacot_discount_value: Optional[float] = None
     vacation_days: int = 0
     vacation_used: int = 0
     is_active: bool = True
@@ -60,7 +63,10 @@ class EmployeeUpdate(BaseModel):
     pay_frequency: Optional[str] = None
     tax_regime: Optional[str] = None
     infonavit_credit: Optional[str] = None
+    infonavit_discount_type: Optional[str] = None
+    infonavit_discount_value: Optional[float] = None
     fonacot_credit: Optional[str] = None
+    fonacot_discount_value: Optional[float] = None
     vacation_days: Optional[int] = None
     vacation_used: Optional[int] = None
     is_active: Optional[bool] = None
@@ -80,6 +86,7 @@ class AttendanceBase(BaseModel):
     date: str
     type: str
     time: Optional[str] = None
+    hours: Optional[float] = None
     notes: Optional[str] = None
     approved: bool = False
     channel: Optional[str] = None
@@ -163,6 +170,11 @@ class AlertOut(BaseModel):
     message: str
     date: str
     action: str
+
+
+class PTURequest(BaseModel):
+    year: int
+    total_utilidad: float
 
 
 class HRDashboard(BaseModel):

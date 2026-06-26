@@ -271,14 +271,16 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
     for e in eligible:
         salary_earned = round((e.base_salary / 30) * period_days, 2)
         imss = calc_imss(e.sbc, period.frequency)
+        infonavit = calc_infonavit(e, salary_earned)
+        fonacot = calc_fonacot(e)
         isr = calc_isr(salary_earned - imss)
         total_gross = salary_earned
-        total_deductions = round(imss + isr, 2)
+        total_deductions = round(imss + isr + infonavit + fonacot, 2)
         total_net = round(total_gross - total_deductions, 2)
         detail = models.PayrollDetail(
             period_id=period.id, employee_id=e.id, department=e.department,
             base_salary=e.base_salary, days_worked=period_days, salary_earned=salary_earned,
-            imss_employee=imss, isr=isr, total_gross=total_gross,
+            imss_employee=imss, isr=isr, infonavit=infonavit, fonacot=fonacot, total_gross=total_gross,
             total_deductions=total_deductions, total_net=total_net, dispersion_status="pendiente",
         )
         db.add(detail)
@@ -357,4 +359,237 @@ async def generate_vacation_csv(db: AsyncSession) -> str:
     writer.writerow(["No. empleado", "Nombre", "Días generados", "Días tomados", "Días disponibles"])
     for e in employees:
         writer.writerow([e.employee_number, _full_name(e), e.vacation_days, e.vacation_used, e.vacation_days - e.vacation_used])
+    return buf.getvalue()
+
+
+# ── Horas extra (LFT 2026, Art. 66-68) ──────────────────────────────────
+# Primeras 9 horas extra por semana: dobles. Excedente: triples.
+async def _overtime_by_employee(db: AsyncSession, start_date: str, end_date: str) -> List[dict]:
+    res = await db.execute(
+        select(models.Attendance, models.Employee)
+        .join(models.Employee, models.Attendance.employee_id == models.Employee.id)
+        .where(
+            models.Attendance.type == "extra",
+            models.Attendance.date >= start_date,
+            models.Attendance.date <= end_date,
+        )
+    )
+    rows = res.all()
+    # Agrupa por empleado + semana ISO
+    by_emp_week: dict = {}
+    emp_lookup: dict = {}
+    for att, emp in rows:
+        emp_lookup[emp.id] = emp
+        d = date.fromisoformat(att.date)
+        iso_year, iso_week, _ = d.isocalendar()
+        key = (emp.id, iso_year, iso_week)
+        by_emp_week[key] = by_emp_week.get(key, 0.0) + (att.hours or 0.0)
+
+    per_employee: dict = {}
+    for (emp_id, iso_year, iso_week), hours in by_emp_week.items():
+        emp = emp_lookup[emp_id]
+        hourly_rate = (emp.base_salary / 30 / 8) if emp.base_salary else 0.0
+        double_hours = min(hours, 9)
+        triple_hours = max(hours - 9, 0)
+        double_pay = round(double_hours * hourly_rate * 2, 2)
+        triple_pay = round(triple_hours * hourly_rate * 3, 2)
+        acc = per_employee.setdefault(emp_id, {
+            "employee_id": emp_id, "employee_name": _full_name(emp), "department": emp.department,
+            "total_hours": 0.0, "double_hours": 0.0, "triple_hours": 0.0, "double_pay": 0.0, "triple_pay": 0.0,
+        })
+        acc["total_hours"] += hours
+        acc["double_hours"] += double_hours
+        acc["triple_hours"] += triple_hours
+        acc["double_pay"] += double_pay
+        acc["triple_pay"] += triple_pay
+
+    out = list(per_employee.values())
+    for r in out:
+        r["total_pay"] = round(r["double_pay"] + r["triple_pay"], 2)
+    return sorted(out, key=lambda r: r["employee_name"])
+
+
+async def generate_overtime_csv(db: AsyncSession, start_date: str, end_date: str) -> str:
+    rows = await _overtime_by_employee(db, start_date, end_date)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "No. empleado", "Nombre", "Departamento", "Horas extra totales",
+        "Horas dobles (hasta 9/sem)", "Horas triples (excedente)",
+        "Pago horas dobles", "Pago horas triples", "Pago total",
+    ])
+    for r in rows:
+        emp = await get_employee(db, r["employee_id"])
+        writer.writerow([
+            emp.employee_number if emp else "", r["employee_name"], r["department"],
+            round(r["total_hours"], 2), round(r["double_hours"], 2), round(r["triple_hours"], 2),
+            f"{r['double_pay']:.2f}", f"{r['triple_pay']:.2f}", f"{r['total_pay']:.2f}",
+        ])
+    return buf.getvalue()
+
+
+# ── Acumulado anual ──────────────────────────────────────────────────────
+async def get_annual_accumulated(db: AsyncSession, year: int) -> List[dict]:
+    res = await db.execute(
+        select(models.PayrollDetail, models.PayrollPeriod, models.Employee)
+        .join(models.PayrollPeriod, models.PayrollDetail.period_id == models.PayrollPeriod.id)
+        .join(models.Employee, models.PayrollDetail.employee_id == models.Employee.id)
+        .where(
+            models.PayrollPeriod.start_date >= f"{year}-01-01",
+            models.PayrollPeriod.start_date <= f"{year}-12-31",
+            models.PayrollPeriod.status.in_(["calculated", "approved", "dispersed"]),
+        )
+    )
+    rows = res.all()
+    per_employee: dict = {}
+    for d, p, emp in rows:
+        acc = per_employee.setdefault(emp.id, {
+            "employee_id": emp.id, "employee_name": _full_name(emp), "department": emp.department,
+            "days_worked": 0.0, "salary_earned": 0.0, "overtime_double": 0.0, "overtime_triple": 0.0,
+            "bonus": 0.0, "vacation_premium": 0.0, "food_vouchers": 0.0, "savings_fund": 0.0,
+            "imss_employee": 0.0, "isr": 0.0, "infonavit": 0.0, "fonacot": 0.0, "loan_deduction": 0.0,
+            "total_gross": 0.0, "total_deductions": 0.0, "total_net": 0.0, "periods_count": 0,
+        })
+        for field in (
+            "days_worked", "salary_earned", "overtime_double", "overtime_triple", "bonus", "vacation_premium",
+            "food_vouchers", "savings_fund", "imss_employee", "isr", "infonavit", "fonacot", "loan_deduction",
+            "total_gross", "total_deductions", "total_net",
+        ):
+            acc[field] += getattr(d, field) or 0.0
+        acc["periods_count"] += 1
+    out = list(per_employee.values())
+    for r in out:
+        for k, v in list(r.items()):
+            if isinstance(v, float):
+                r[k] = round(v, 2)
+    return sorted(out, key=lambda r: r["employee_name"])
+
+
+async def generate_annual_accumulated_csv(db: AsyncSession, year: int) -> str:
+    rows = await get_annual_accumulated(db, year)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "No. empleado", "Nombre", "Departamento", "Períodos pagados", "Días trabajados",
+        "Salario percibido", "Extra dobles", "Extra triples", "Bonos", "Prima vacacional",
+        "Vales de despensa", "Fondo de ahorro", "IMSS", "ISR", "INFONAVIT", "FONACOT",
+        "Préstamos", "Total percepciones", "Total deducciones", "Total neto anual",
+    ])
+    for r in rows:
+        emp = await get_employee(db, r["employee_id"])
+        writer.writerow([
+            emp.employee_number if emp else "", r["employee_name"], r["department"], r["periods_count"],
+            r["days_worked"], r["salary_earned"], r["overtime_double"], r["overtime_triple"], r["bonus"],
+            r["vacation_premium"], r["food_vouchers"], r["savings_fund"], r["imss_employee"], r["isr"],
+            r["infonavit"], r["fonacot"], r["loan_deduction"], r["total_gross"], r["total_deductions"], r["total_net"],
+        ])
+    return buf.getvalue()
+
+
+# ── PTU (Participación de los Trabajadores en las Utilidades) ──────────
+# Reparto legal: 50% proporcional a días trabajados en el año, 50% proporcional al salario percibido.
+async def calculate_ptu(db: AsyncSession, year: int, total_utilidad: float) -> List[dict]:
+    accumulated = await get_annual_accumulated(db, year)
+    total_days = sum(r["days_worked"] for r in accumulated)
+    total_salary = sum(r["salary_earned"] for r in accumulated)
+    monto_dias = total_utilidad * 0.5
+    monto_salario = total_utilidad * 0.5
+    out = []
+    for r in accumulated:
+        part_dias = round((r["days_worked"] / total_days) * monto_dias, 2) if total_days else 0.0
+        part_salario = round((r["salary_earned"] / total_salary) * monto_salario, 2) if total_salary else 0.0
+        out.append({
+            "employee_id": r["employee_id"], "employee_name": r["employee_name"], "department": r["department"],
+            "days_worked": r["days_worked"], "salary_earned": r["salary_earned"],
+            "ptu_by_days": part_dias, "ptu_by_salary": part_salario, "ptu_total": round(part_dias + part_salario, 2),
+        })
+    return out
+
+
+async def generate_ptu_csv(db: AsyncSession, year: int, total_utilidad: float) -> str:
+    rows = await calculate_ptu(db, year, total_utilidad)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "No. empleado", "Nombre", "Departamento", "Días trabajados (año)", "Salario percibido (año)",
+        "PTU por días (50%)", "PTU por salario (50%)", "PTU total",
+    ])
+    for r in rows:
+        emp = await get_employee(db, r["employee_id"])
+        writer.writerow([
+            emp.employee_number if emp else "", r["employee_name"], r["department"],
+            r["days_worked"], r["salary_earned"], f"{r['ptu_by_days']:.2f}", f"{r['ptu_by_salary']:.2f}", f"{r['ptu_total']:.2f}",
+        ])
+    return buf.getvalue()
+
+
+# ── INFONAVIT / FONACOT ──────────────────────────────────────────────────
+def calc_infonavit(employee: models.Employee, salary_earned: float) -> float:
+    if not employee.infonavit_credit or not employee.infonavit_discount_type:
+        return 0.0
+    value = employee.infonavit_discount_value or 0.0
+    if employee.infonavit_discount_type == "cuota_fija":
+        return round(value, 2)
+    if employee.infonavit_discount_type == "porcentaje":
+        return round(salary_earned * (value / 100), 2)
+    if employee.infonavit_discount_type == "factor_veces_salario":
+        # Factor de descuento aplicado sobre el salario mínimo diario vigente (UMA como referencia)
+        return round(value * UMA_2026, 2)
+    return 0.0
+
+
+def calc_fonacot(employee: models.Employee) -> float:
+    if not employee.fonacot_credit:
+        return 0.0
+    return round(employee.fonacot_discount_value or 0.0, 2)
+
+
+async def generate_infonavit_csv(db: AsyncSession) -> str:
+    employees = await get_employees(db)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "No. empleado", "Nombre", "Número de crédito INFONAVIT", "Tipo de descuento",
+        "Valor configurado", "Descuento estimado por periodo", "Número de crédito FONACOT", "Descuento FONACOT",
+    ])
+    for e in employees:
+        if not e.infonavit_credit and not e.fonacot_credit:
+            continue
+        salary_period = (e.base_salary / 30) * _FREQ_DAYS.get(e.pay_frequency, 30)
+        infonavit_amount = calc_infonavit(e, salary_period)
+        fonacot_amount = calc_fonacot(e)
+        writer.writerow([
+            e.employee_number, _full_name(e), e.infonavit_credit or "", e.infonavit_discount_type or "",
+            e.infonavit_discount_value if e.infonavit_discount_value is not None else "",
+            f"{infonavit_amount:.2f}", e.fonacot_credit or "", f"{fonacot_amount:.2f}",
+        ])
+    return buf.getvalue()
+
+
+# ── SUA — IMSS ────────────────────────────────────────────────────────────
+# Nota: este reporte es un archivo de apoyo con las cuotas obrero-patronales calculadas
+# por el sistema (mismo motor que calc_imss). No sustituye al archivo de importación con
+# el layout binario propietario del SUA (Sistema Único de Autodeterminación) del IMSS,
+# el cual debe generarse o validarse directamente en el programa oficial del IMSS.
+async def generate_sua_csv(db: AsyncSession, period_id: int) -> str:
+    detail = await get_period_detail(db, period_id)
+    if not detail:
+        raise ValueError("Período no encontrado")
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "No. empleado", "Nombre", "NSS", "SBC", "Días cotizados",
+        "Cuota obrero IMSS", "Salario base período", "Observación",
+    ])
+    res = await db.execute(
+        select(models.PayrollDetail, models.Employee)
+        .join(models.Employee, models.PayrollDetail.employee_id == models.Employee.id)
+        .where(models.PayrollDetail.period_id == period_id)
+    )
+    for d, emp in res.all():
+        writer.writerow([
+            emp.employee_number, _full_name(emp), emp.nss or "", emp.sbc, d.days_worked,
+            f"{d.imss_employee:.2f}", f"{d.base_salary:.2f}",
+            "Archivo de apoyo - capturar/validar en programa SUA oficial del IMSS",
+        ])
     return buf.getvalue()
