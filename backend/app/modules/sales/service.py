@@ -678,7 +678,7 @@ async def sales_by_channel(db: AsyncSession, start: Optional[datetime] = None, e
             func.count(O.id).label("orders"),
         )
         .where(*conds)
-        .group_by(func.coalesce(O.channel, "Sin canal"))
+        .group_by(O.channel)
         .order_by(func.sum(O.total_amount).desc())
     )
     return [
