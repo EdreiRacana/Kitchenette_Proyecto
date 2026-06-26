@@ -9,7 +9,7 @@ import {
   SlidersHorizontal, Search, Plus, Download, Upload, ChevronRight,
   AlertTriangle, BoxSelect, RefreshCw,
   BarChart3, X, Check, Info, FileSpreadsheet, Truck,
-  RotateCcw, ArrowLeftRight, Eye, Edit2, Trash2,
+  RotateCcw, ArrowLeftRight, Eye, Edit2, Trash2, Trash,
   DollarSign,
   Users, ClipboardList, Factory, FlaskConical,
 } from "lucide-react";
@@ -662,6 +662,13 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                         }} title={sup.is_active ? (lang === "es" ? "Desactivar proveedor" : "Deactivate supplier") : (lang === "es" ? "Reactivar proveedor" : "Reactivate supplier")} style={{ background: "transparent", border: "none", cursor: "pointer", color: sup.is_active ? t.bad : t.good, display: "flex" }}>
                           <Trash2 size={14} />
                         </button>
+                        <button onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!confirm(lang === "es" ? `Eliminar permanentemente a ${sup.name}. Esta acción no se puede deshacer y solo la puede hacer el encargado de inventarios o el administrador general. ¿Continuar?` : `Permanently delete ${sup.name}. This cannot be undone and is restricted to inventory managers / admins. Continue?`)) return;
+                          try { await inventoryService.deleteSupplier(sup.id); await load(); } catch (err: any) { console.error(err); alert(err?.response?.data?.detail || (lang === "es" ? "No tienes permiso para eliminar proveedores, o el proveedor tiene órdenes de compra asociadas." : "You don't have permission to delete suppliers, or the supplier has associated purchase orders.")); }
+                        }} title={lang === "es" ? "Eliminar proveedor (solo Inventario/Admin)" : "Delete supplier (Inventory/Admin only)"} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.bad, display: "flex" }}>
+                          <Trash size={14} />
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -1175,7 +1182,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
           onSave={async (data: any) => {
             if (demo) { alert(lang === "es" ? "Modo demo: guardado simulado ✓" : "Demo mode: simulated save ✓"); setProductForm(false); setEditingProduct(null); return; }
             const { form, variants, stockInit } = data;
-            const productPayload = { name: form.name, description: form.description, category: form.category, image_url: form.image_url, is_active: form.is_active };
+            const productPayload = { name: form.name, description: form.description, category: form.category, image_url: form.image_url, is_active: form.is_active, item_type: form.item_type };
             const product = editingProduct
               ? await inventoryService.updateProduct(editingProduct.id, productPayload)
               : await inventoryService.createProduct(productPayload);
@@ -1440,7 +1447,9 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
     name: editing?.name || "", description: editing?.description || "",
     category: editing?.category || "", image_url: editing?.image_url || "",
     is_active: editing?.is_active ?? true,
+    item_type: editing?.item_type || "finished_good",
   });
+  const [uploadingImg, setUploadingImg] = useState(false);
   const [variants, setVariants] = useState(editing?.variants?.map((v: any) => ({
     sku: v.sku, price: v.price, cost_price: v.cost_price || "", size: v.size || "", color: v.color || "", material: v.material || "",
     reorder_point: v.reorder_point ?? "", safety_stock: v.safety_stock ?? "", lead_time_days: v.lead_time_days ?? "", preferred_supplier_id: v.preferred_supplier_id ?? "",
@@ -1464,8 +1473,8 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
   const STEPS = [lang === "es" ? "Información" : "Info", lang === "es" ? "Variantes" : "Variants", lang === "es" ? "Stock inicial" : "Initial stock"];
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ width: "100%", maxWidth: 600, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", maxHeight: "90vh", overflow: "hidden" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
+      <div style={{ width: "100%", maxWidth: 600, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", maxHeight: "90vh" }}>
         {/* Header */}
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
@@ -1498,7 +1507,33 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
                     {(categories || []).map((c: string) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
-                <div><label style={label}>{lang === "es" ? "URL imagen" : "Image URL"}</label><input value={form.image_url} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} placeholder="https://…" style={inp} /></div>
+                <div><label style={label}>{lang === "es" ? "Tipo de ítem *" : "Item type *"}</label>
+                  <select value={form.item_type} onChange={e => setForm(f => ({ ...f, item_type: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+                    <option value="finished_good">{lang === "es" ? "Producto terminado" : "Finished good"}</option>
+                    <option value="raw_material">{lang === "es" ? "Insumo" : "Raw material"}</option>
+                    <option value="consumable">{lang === "es" ? "Consumible" : "Consumable"}</option>
+                    <option value="other">{lang === "es" ? "Otro" : "Other"}</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label style={label}>{lang === "es" ? "Imagen del producto" : "Product image"}</label>
+                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  {form.image_url && <img src={form.image_url} alt="" style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover", border: `1px solid ${t.border}` }} />}
+                  <input value={form.image_url} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} placeholder="https://…" style={{ ...inp, flex: 1 }} />
+                  <label style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, fontSize: 12.5, cursor: "pointer", whiteSpace: "nowrap" }}>
+                    {uploadingImg ? "…" : (lang === "es" ? "Subir" : "Upload")}
+                    <input type="file" accept="image/*" style={{ display: "none" }} onChange={async e => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setUploadingImg(true);
+                      try { const { url } = await inventoryService.uploadProductImage(file); setForm(f => ({ ...f, image_url: url })); }
+                      catch (err) { console.error(err); alert(lang === "es" ? "Error al subir la imagen" : "Error uploading image"); }
+                      finally { setUploadingImg(false); }
+                    }} />
+                  </label>
+                </div>
+                <div style={{ fontSize: 11, color: t.textLo, marginTop: 4 }}>{lang === "es" ? "Las imágenes subidas se comprimen automáticamente a WebP." : "Uploaded images are automatically compressed to WebP."}</div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <input type="checkbox" id="active" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} />
@@ -1979,6 +2014,7 @@ function RecipeFormModal({ t, lang, products, editing, onClose, onSave }: any) {
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const allVariants = products.flatMap((p: Product) => p.variants.map((v: Variant) => ({ ...v, product_name: p.name })));
+  const insumoVariants = products.filter((p: Product) => p.item_type === "raw_material").flatMap((p: Product) => p.variants.map((v: Variant) => ({ ...v, product_name: p.name })));
 
   const addItem = () => setItems((i: any[]) => [...i, { input_variant_id: "", quantity: "" }]);
   const removeItem = (idx: number) => setItems((i: any[]) => i.filter((_, k) => k !== idx));
@@ -2026,8 +2062,9 @@ function RecipeFormModal({ t, lang, products, editing, onClose, onSave }: any) {
                     {i === 0 && <label style={label}>{lang === "es" ? "Insumo" : "Input"}</label>}
                     <select value={it.input_variant_id} onChange={e => updateItem(i, "input_variant_id", e.target.value)} style={{ ...inp, cursor: "pointer" }}>
                       <option value="">{lang === "es" ? "Seleccionar…" : "Select…"}</option>
-                      {allVariants.map((v: any) => <option key={v.id} value={v.id}>{v.product_name} — {v.sku}</option>)}
+                      {insumoVariants.map((v: any) => <option key={v.id} value={v.id}>{v.product_name} — {v.sku}</option>)}
                     </select>
+                    {insumoVariants.length === 0 && <div style={{ fontSize: 11, color: t.warn, marginTop: 4 }}>{lang === "es" ? "No hay productos clasificados como insumo. Edítalos en Productos." : "No products classified as raw material. Edit them in Products."}</div>}
                   </div>
                   <div>
                     {i === 0 && <label style={label}>{lang === "es" ? "Cantidad" : "Quantity"}</label>}

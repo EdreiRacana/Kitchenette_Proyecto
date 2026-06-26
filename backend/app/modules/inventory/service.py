@@ -4,10 +4,12 @@ from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import datetime, timezone
 from io import BytesIO
+import os
+import uuid
 import pandas as pd
 from app.modules.inventory.models import (
     Product, ProductVariant, Warehouse, StockLevel, StockMovement, StockMovementType,
-    Supplier, StockLot, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus,
+    Supplier, SupplierDocument, StockLot, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus,
     Recipe, RecipeItem, ProductionOrder, ProductionOrderStatus,
 )
 from app.modules.inventory import schemas
@@ -20,14 +22,27 @@ async def create_product(db: AsyncSession, product_in: schemas.ProductCreate) ->
     await db.refresh(db_product)
     return db_product
 
-async def get_products(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Product]:
-    result = await db.execute(
-        select(Product).offset(skip).limit(limit).options(
-            selectinload(Product.variants).selectinload(ProductVariant.stock_levels).selectinload(StockLevel.warehouse),
-            selectinload(Product.media),
-        )
+async def get_products(db: AsyncSession, skip: int = 0, limit: int = 100, item_type: Optional[str] = None) -> List[Product]:
+    query = select(Product).offset(skip).limit(limit).options(
+        selectinload(Product.variants).selectinload(ProductVariant.stock_levels).selectinload(StockLevel.warehouse),
+        selectinload(Product.media),
     )
+    if item_type:
+        query = query.where(Product.item_type == item_type)
+    result = await db.execute(query)
     return result.scalars().all()
+
+
+def save_compressed_image(content: bytes, filename: str, upload_dir: str, url_prefix: str) -> str:
+    """Comprime/convierte la imagen a WebP para no saturar el almacenamiento."""
+    from PIL import Image
+    img = Image.open(BytesIO(content))
+    img = img.convert("RGB")
+    img.thumbnail((1200, 1200))
+    unique_name = f"{uuid.uuid4()}.webp"
+    path = os.path.join(upload_dir, unique_name)
+    img.save(path, "WEBP", quality=80)
+    return f"/static/{url_prefix}/{unique_name}"
 
 async def get_product(db: AsyncSession, product_id: int) -> Optional[Product]:
     result = await db.execute(
@@ -75,7 +90,9 @@ async def create_supplier(db: AsyncSession, supplier_in: schemas.SupplierCreate)
     return db_supplier
 
 async def get_suppliers(db: AsyncSession) -> List[Supplier]:
-    result = await db.execute(select(Supplier).order_by(Supplier.name))
+    result = await db.execute(
+        select(Supplier).order_by(Supplier.name).options(selectinload(Supplier.documents))
+    )
     return result.scalars().all()
 
 async def update_supplier(db: AsyncSession, supplier_id: int, supplier_in: schemas.SupplierUpdate) -> Optional[Supplier]:
@@ -87,6 +104,37 @@ async def update_supplier(db: AsyncSession, supplier_id: int, supplier_in: schem
     await db.commit()
     await db.refresh(supplier)
     return supplier
+
+async def delete_supplier(db: AsyncSession, supplier_id: int) -> bool:
+    supplier = await db.get(Supplier, supplier_id)
+    if not supplier:
+        return False
+    existing_po = await db.execute(
+        select(PurchaseOrder).where(PurchaseOrder.supplier_id == supplier_id).limit(1)
+    )
+    if existing_po.scalars().first():
+        raise ValueError("No se puede eliminar: el proveedor tiene órdenes de compra asociadas. Desactívalo en su lugar.")
+    await db.delete(supplier)
+    await db.commit()
+    return True
+
+async def add_supplier_document(db: AsyncSession, supplier_id: int, doc_type: str, file_url: str, file_name: Optional[str]) -> Optional[SupplierDocument]:
+    supplier = await db.get(Supplier, supplier_id)
+    if not supplier:
+        return None
+    doc = SupplierDocument(supplier_id=supplier_id, doc_type=doc_type, file_url=file_url, file_name=file_name)
+    db.add(doc)
+    await db.commit()
+    await db.refresh(doc)
+    return doc
+
+async def delete_supplier_document(db: AsyncSession, supplier_id: int, document_id: int) -> bool:
+    doc = await db.get(SupplierDocument, document_id)
+    if not doc or doc.supplier_id != supplier_id:
+        return False
+    await db.delete(doc)
+    await db.commit()
+    return True
 
 # --- Warehouse Services ---
 async def create_warehouse(db: AsyncSession, warehouse_in: schemas.WarehouseCreate) -> Warehouse:

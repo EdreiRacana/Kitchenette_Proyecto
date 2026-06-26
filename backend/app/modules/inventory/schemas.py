@@ -29,6 +29,8 @@ class SupplierBase(BaseModel):
     address: Optional[str] = None
     lead_time_days: Optional[int] = 7
     payment_terms: Optional[str] = None
+    commercial_terms: Optional[str] = None
+    extra_contacts: Optional[List[dict]] = None
     notes: Optional[str] = None
     is_active: Optional[bool] = True
 
@@ -38,9 +40,26 @@ class SupplierCreate(SupplierBase):
 class SupplierUpdate(SupplierBase):
     pass
 
+class SupplierDocumentBase(BaseModel):
+    doc_type: str
+    file_url: str
+    file_name: Optional[str] = None
+
+class SupplierDocumentCreate(SupplierDocumentBase):
+    pass
+
+class SupplierDocumentInDB(SupplierDocumentBase):
+    id: int
+    supplier_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class SupplierInDB(SupplierBase):
     id: int
     created_at: datetime
+    documents: List[SupplierDocumentInDB] = []
 
     class Config:
         from_attributes = True
@@ -54,6 +73,7 @@ class ProductBase(BaseModel):
     video_url: Optional[str] = None
     is_active: Optional[bool] = True
     is_manufactured: Optional[bool] = False
+    item_type: Optional[str] = "finished_good"
 
 class ProductCreate(ProductBase):
     pass

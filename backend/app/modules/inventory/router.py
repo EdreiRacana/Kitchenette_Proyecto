@@ -1,3 +1,6 @@
+import os
+import shutil
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.responses import StreamingResponse
 from typing import List, Annotated
@@ -11,14 +14,23 @@ router = APIRouter()
 DB = Annotated[AsyncSession, Depends(deps.get_db)]
 CurrentUser = Annotated[User, Depends(deps.get_current_active_user)]
 
+UPLOAD_DIR = "uploads/inventory"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 # --- Products ---
 @router.post("/products", response_model=schemas.ProductInDB)
 async def create_product(product_in: schemas.ProductCreate, db: DB, current_user: CurrentUser):
     return await service.create_product(db, product_in)
 
 @router.get("/products", response_model=List[schemas.ProductWithVariants])
-async def read_products(db: DB, skip: int = 0, limit: int = 200):
-    return await service.get_products(db, skip, limit)
+async def read_products(db: DB, skip: int = 0, limit: int = 200, item_type: str | None = None):
+    return await service.get_products(db, skip, limit, item_type=item_type)
+
+@router.post("/products/upload-image")
+async def upload_product_image(db: DB, current_user: CurrentUser, file: UploadFile = File(...)):
+    content = await file.read()
+    url = service.save_compressed_image(content, file.filename, UPLOAD_DIR, "inventory")
+    return {"url": url}
 
 # --- Carga masiva (Excel/CSV) ---
 XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -96,6 +108,41 @@ async def update_supplier(supplier_id: int, supplier_in: schemas.SupplierUpdate,
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
     return supplier
+
+def _require_inventory_manager(current_user: User) -> None:
+    role = (current_user.role or "").lower()
+    role_name = (current_user.role_obj.name.lower() if current_user.role_obj else "")
+    allowed = current_user.is_superuser or role in ("admin", "administrador", "inventario") or role_name in ("administrador", "inventario")
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Solo el encargado de inventarios o el administrador general pueden eliminar proveedores")
+
+@router.delete("/suppliers/{supplier_id}", status_code=204)
+async def delete_supplier(supplier_id: int, db: DB, current_user: CurrentUser):
+    _require_inventory_manager(current_user)
+    try:
+        deleted = await service.delete_supplier(db, supplier_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+
+@router.post("/suppliers/{supplier_id}/documents", response_model=schemas.SupplierDocumentInDB)
+async def upload_supplier_document(supplier_id: int, db: DB, current_user: CurrentUser, doc_type: str, file: UploadFile = File(...)):
+    ext = os.path.splitext(file.filename or "")[1]
+    safe = f"sup{supplier_id}_{doc_type}_{int(datetime.now().timestamp())}{ext}"
+    path = os.path.join(UPLOAD_DIR, safe)
+    with open(path, "wb") as buf:
+        shutil.copyfileobj(file.file, buf)
+    doc = await service.add_supplier_document(db, supplier_id, doc_type, f"inventory/{safe}", file.filename)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    return doc
+
+@router.delete("/suppliers/{supplier_id}/documents/{document_id}", status_code=204)
+async def delete_supplier_document(supplier_id: int, document_id: int, db: DB, current_user: CurrentUser):
+    ok = await service.delete_supplier_document(db, supplier_id, document_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Document not found")
 
 # --- Warehouses ---
 @router.post("/warehouses", response_model=schemas.WarehouseInDB)
