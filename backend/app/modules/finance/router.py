@@ -307,17 +307,17 @@ async def cancel_scheduled_payment(sp_id: int, db: DB, current_user: CurrentUser
 # --- Reportes P&L y comparativo ---
 @router.get("/reports/pnl", response_model=schemas.PnLReport)
 async def read_pnl(db: DB, current_user: CurrentUser, start: datetime, end: datetime):
-    return await service.get_pnl_report(db, start, end)
+    return await service.get_pnl_report(db, start, end, branch_id=_finance_branch(current_user))
 
 
 @router.get("/reports/comparison", response_model=schemas.PeriodComparison)
 async def read_period_comparison(db: DB, current_user: CurrentUser, start: datetime, end: datetime):
-    return await service.get_period_comparison(db, start, end)
+    return await service.get_period_comparison(db, start, end, branch_id=_finance_branch(current_user))
 
 
 @router.get("/reports/pnl/export")
 async def export_pnl_pdf(db: DB, current_user: CurrentUser, start: datetime, end: datetime):
-    report = await service.get_pnl_report(db, start, end)
+    report = await service.get_pnl_report(db, start, end, branch_id=_finance_branch(current_user))
     pdf_bytes = service.generate_pnl_pdf(report)
     return Response(content=pdf_bytes, media_type="application/pdf", headers={
         "Content-Disposition": f"attachment; filename=pnl_{start.date()}_{end.date()}.pdf"

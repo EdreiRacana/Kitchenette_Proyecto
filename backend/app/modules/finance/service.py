@@ -890,13 +890,17 @@ async def send_scheduled_payment_reminders(db: AsyncSession, lead_days: int = 2)
 
 # --- Reportes P&L y comparativo de periodos -------------------------------------
 
-async def get_pnl_report(db: AsyncSession, period_start: datetime, period_end: datetime) -> schemas.PnLReport:
+async def get_pnl_report(db: AsyncSession, period_start: datetime, period_end: datetime,
+                         branch_id: Optional[int] = None) -> schemas.PnLReport:
     end_bound = period_end
     if end_bound.time() == datetime.min.time():
         end_bound = end_bound + timedelta(days=1)
+    conds = [models.Transaction.created_at >= period_start, models.Transaction.created_at < end_bound]
+    if branch_id is not None:
+        conds.append(_branch_filter(models.Transaction.branch_id, branch_id))
     res = await db.execute(
         select(models.Transaction.category, models.Transaction.type, func.coalesce(func.sum(models.Transaction.amount), 0.0))
-        .where(models.Transaction.created_at >= period_start, models.Transaction.created_at < end_bound)
+        .where(*conds)
         .group_by(models.Transaction.category, models.Transaction.type)
     )
     income_by_cat = []
@@ -926,14 +930,15 @@ def _pct_change(curr: float, prev: float) -> Optional[float]:
     return _r((curr - prev) / abs(prev) * 100)
 
 
-async def get_period_comparison(db: AsyncSession, period_start: datetime, period_end: datetime) -> schemas.PeriodComparison:
+async def get_period_comparison(db: AsyncSession, period_start: datetime, period_end: datetime,
+                                branch_id: Optional[int] = None) -> schemas.PeriodComparison:
     from datetime import timedelta
     duration = period_end - period_start
     prev_end = period_start - timedelta(seconds=1)
     prev_start = prev_end - duration
 
-    current = await get_pnl_report(db, period_start, period_end)
-    previous = await get_pnl_report(db, prev_start, prev_end)
+    current = await get_pnl_report(db, period_start, period_end, branch_id=branch_id)
+    previous = await get_pnl_report(db, prev_start, prev_end, branch_id=branch_id)
 
     return schemas.PeriodComparison(
         current=current, previous=previous,
