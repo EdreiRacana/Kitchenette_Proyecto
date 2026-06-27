@@ -4,8 +4,7 @@
 // Contrato { t, s } igual que App.tsx
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import api from "../../services/api";
-import configService, { type SystemIntegration, type CompanyProfile } from "./service";
+import configService, { type SystemIntegration, type CompanyProfile, type ApiUser, type ApiRole, type PermissionDef } from "./service";
 import {
   Building2, Users, Shield, Receipt, Plug, Workflow, Lock, Settings,
   Plus, Search, Edit2, Trash2, Check, X, Mail, Globe,
@@ -19,35 +18,28 @@ import {
 interface User {
   id: number; name: string; email: string; role: string; department: string;
   status: "active" | "inactive" | "pending"; last_login?: string; avatar_color: string;
+  role_id?: number | null; is_superuser?: boolean; is_active?: boolean; branch_id?: number | null;
 }
 interface Role {
   id: number; name: string; description: string; users_count: number; is_system: boolean;
   color: string; permissions: Record<string, { view: boolean; create: boolean; edit: boolean; delete: boolean; approve: boolean }>;
 }
+
+// Módulos del sistema: [clave_estable, etiqueta]. La clave debe coincidir con
+// el backend (rbac.py); la etiqueta es lo que ve el usuario en la matriz.
+const MODULES: [string, string][] = [
+  ["dashboard", "Tablero"], ["sales", "Ventas / CRM"], ["customers", "Clientes"],
+  ["inventory", "Inventario"], ["finance", "Finanzas"], ["hr", "RH / Nómina"],
+  ["reports", "Reportes / BI"], ["config", "Configuración"],
+];
+const MODULE_LABEL: Record<string, string> = Object.fromEntries(MODULES);
+const PERM_ACTIONS = ["view", "create", "edit", "delete", "approve"] as const;
+const emptyGrant = () => ({ view: false, create: false, edit: false, delete: false, approve: false });
 interface Integration {
   id: string; name: string; category: string; icon: any; color: string;
   connected: boolean; last_sync?: string; description: string;
 }
 
-const DEMO_USERS: User[] = [
-  { id: 1, name: "Edrei Racana", email: "edrei@empresa.mx", role: "Administrador", department: "Dirección", status: "active", last_login: "Hace 5 min", avatar_color: "#33B2F5" },
-  { id: 2, name: "Ana Torres", email: "a.torres@empresa.mx", role: "Contador", department: "Contabilidad", status: "active", last_login: "Hace 2 horas", avatar_color: "#34D399" },
-  { id: 3, name: "Carlos Mendoza", email: "c.mendoza@empresa.mx", role: "Gerente Ventas", department: "Ventas", status: "active", last_login: "Hace 1 día", avatar_color: "#FBBF24" },
-  { id: 4, name: "Miguel Sánchez", email: "m.sanchez@empresa.mx", role: "Almacén", department: "Almacén", status: "active", last_login: "Hace 3 horas", avatar_color: "#A78BFA" },
-  { id: 5, name: "Laura Jiménez", email: "l.jimenez@empresa.mx", role: "Ventas", department: "Ventas", status: "pending", avatar_color: "#F472B6" },
-  { id: 6, name: "Roberto Flores", email: "r.flores@empresa.mx", role: "Solo lectura", department: "Operaciones", status: "inactive", last_login: "Hace 2 semanas", avatar_color: "#94A3B8" },
-];
-
-const MODULES_LIST = ["Tablero", "Ventas / CRM", "Clientes", "Inventario", "Finanzas", "RH / Nómina", "Reportes / BI", "Configuración"];
-
-const DEMO_ROLES: Role[] = [
-  { id: 1, name: "Administrador", description: "Acceso total al sistema", users_count: 1, is_system: true, color: "#33B2F5", permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: true, create: true, edit: true, delete: true, approve: true } }), {}) },
-  { id: 2, name: "Gerente Ventas", description: "Gestión completa de ventas y clientes", users_count: 1, is_system: false, color: "#FBBF24", permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: true, create: ["Ventas / CRM", "Clientes", "Tablero", "Reportes / BI"].includes(m), edit: ["Ventas / CRM", "Clientes"].includes(m), delete: false, approve: m === "Ventas / CRM" } }), {}) },
-  { id: 3, name: "Contador", description: "Finanzas, nómina y reportes", users_count: 1, is_system: false, color: "#34D399", permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: true, create: ["Finanzas", "RH / Nómina"].includes(m), edit: ["Finanzas", "RH / Nómina"].includes(m), delete: false, approve: ["Finanzas", "RH / Nómina"].includes(m) } }), {}) },
-  { id: 4, name: "Almacén", description: "Control de inventario y movimientos", users_count: 1, is_system: false, color: "#A78BFA", permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: ["Inventario", "Tablero", "Ventas / CRM"].includes(m), create: m === "Inventario", edit: m === "Inventario", delete: false, approve: false } }), {}) },
-  { id: 5, name: "Ventas", description: "Crear pedidos y cotizaciones", users_count: 1, is_system: false, color: "#F472B6", permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: ["Ventas / CRM", "Clientes", "Tablero", "Inventario"].includes(m), create: ["Ventas / CRM", "Clientes"].includes(m), edit: m === "Ventas / CRM", delete: false, approve: false } }), {}) },
-  { id: 6, name: "Solo lectura", description: "Solo visualización de información", users_count: 1, is_system: true, color: "#94A3B8", permissions: MODULES_LIST.reduce((acc, m) => ({ ...acc, [m]: { view: true, create: false, edit: false, delete: false, approve: false } }), {}) },
-];
 
 const DEMO_INTEGRATIONS: Integration[] = [
   { id: "mercadolibre", name: "MercadoLibre", category: "Marketplace", icon: ShoppingBag, color: "#FFE600", connected: true, last_sync: "Hace 5 min", description: "Sincroniza stock y órdenes con tu tienda de MercadoLibre" },
@@ -75,11 +67,91 @@ const PERM_COLORS = { view: "#60A5FA", create: "#34D399", edit: "#FBBF24", delet
 
 export default function ConfigModule({ t, s, company }: { t: any; s: any; company?: any }) {
   const [tab, setTab] = useState<"company" | "users" | "roles" | "fiscal" | "integrations" | "automation" | "security" | "preferences">("company");
-  const [users, setUsers] = useState<User[]>(DEMO_USERS);
-  const [roles, setRoles] = useState<Role[]>(DEMO_ROLES);
+  const [users, setUsers] = useState<User[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [permList, setPermList] = useState<PermissionDef[]>([]);
+  const [rbacLoading, setRbacLoading] = useState(false);
+  const [rbacError, setRbacError] = useState("");
   const [integrations, setIntegrations] = useState<Integration[]>(DEMO_INTEGRATIONS);
   const [userForm, setUserForm] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [roleForm, setRoleForm] = useState(false);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
+  const [savingPerm, setSavingPerm] = useState(false);
+
+  // Índice (módulo:acción) -> id de permiso, para mandar permission_ids al backend.
+  const permIndex: Record<string, number> = {};
+  for (const p of permList) permIndex[`${p.module}:${p.action}`] = p.id;
+
+  const apiRoleToView = useCallback((r: ApiRole, allUsers: ApiUser[]): Role => {
+    const grid: Role["permissions"] = {};
+    for (const [key] of MODULES) grid[key] = emptyGrant();
+    for (const p of r.permissions) {
+      if (grid[p.module] && p.action in grid[p.module]) (grid[p.module] as any)[p.action] = true;
+    }
+    return {
+      id: r.id, name: r.name, description: r.description || "", color: r.color || "#94A3B8",
+      is_system: r.is_system, users_count: allUsers.filter(u => u.role_id === r.id).length,
+      permissions: grid,
+    };
+  }, []);
+
+  const loadRBAC = useCallback(async () => {
+    setRbacLoading(true); setRbacError("");
+    try {
+      const [us, rs, perms] = await Promise.all([
+        configService.getUsers(), configService.getRoles(), configService.getPermissions(),
+      ]);
+      setPermList(perms);
+      setRoles(rs.map(r => apiRoleToView(r, us)));
+      setUsers(us.map(u => ({
+        id: u.id, name: u.full_name || u.email, email: u.email,
+        role: u.role_obj?.name || (u.is_superuser ? "Administrador" : "—"),
+        department: "—",
+        status: (u.is_active ? "active" : "inactive") as User["status"],
+        avatar_color: u.role_obj?.color || "#94A3B8",
+        role_id: u.role_id ?? null, is_superuser: u.is_superuser, is_active: u.is_active, branch_id: (u as any).branch_id ?? null,
+      })));
+    } catch (err: any) {
+      setRbacError(errorMessage(err, "No se pudieron cargar usuarios y roles. Verifica que tu cuenta tenga permisos de Configuración."));
+      setUsers([]); setRoles([]);
+    } finally { setRbacLoading(false); }
+  }, [apiRoleToView]);
+
+  useEffect(() => { if (tab === "users" || tab === "roles") loadRBAC(); }, [tab, loadRBAC]);
+
+  // Alterna un permiso de un rol y lo persiste de inmediato (autosave).
+  const togglePerm = async (role: Role, moduleKey: string, action: string) => {
+    if (role.is_system) return;
+    const current = new Set<string>();
+    for (const [key] of MODULES) for (const a of PERM_ACTIONS) if ((role.permissions[key] as any)?.[a]) current.add(`${key}:${a}`);
+    const pair = `${moduleKey}:${action}`;
+    if (current.has(pair)) current.delete(pair); else current.add(pair);
+    const permission_ids = [...current].map(k => permIndex[k]).filter((x): x is number => typeof x === "number");
+    setSavingPerm(true);
+    try {
+      await configService.updateRole(role.id, { permission_ids });
+      await loadRBAC();
+      setSelectedRole(prev => prev && prev.id === role.id
+        ? { ...prev, permissions: { ...prev.permissions, [moduleKey]: { ...prev.permissions[moduleKey], [action]: !(prev.permissions[moduleKey] as any)[action] } } }
+        : prev);
+    } catch (err: any) {
+      alert(errorMessage(err, "No se pudo actualizar el permiso."));
+    } finally { setSavingPerm(false); }
+  };
+
+  const deleteRole = async (role: Role) => {
+    if (role.is_system) return;
+    if (!confirm(`¿Eliminar el rol "${role.name}"? Los usuarios con este rol quedarán sin rol asignado.`)) return;
+    try { await configService.deleteRole(role.id); if (selectedRole?.id === role.id) setSelectedRole(null); await loadRBAC(); }
+    catch (err: any) { alert(errorMessage(err, "No se pudo eliminar el rol.")); }
+  };
+
+  const deleteUser = async (u: User) => {
+    if (!confirm(`¿Eliminar al usuario "${u.name}"? Esta acción no se puede deshacer.`)) return;
+    try { await configService.deleteUser(u.id); await loadRBAC(); }
+    catch (err: any) { alert(errorMessage(err, "No se pudo eliminar el usuario.")); }
+  };
   const [q, setQ] = useState("");
   const [emailIntegration, setEmailIntegration] = useState<SystemIntegration | null>(null);
   const [emailForm, setEmailForm] = useState({ host: "", port: "587", username: "", password: "", from_email: "", from_name: "", use_tls: true, is_active: false });
@@ -95,6 +167,19 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const [companyMsg, setCompanyMsg] = useState("");
   const [logoUploading, setLogoUploading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
+
+  const [branches, setBranches] = useState<import("./service").Branch[]>([]);
+  const [branchForm, setBranchForm] = useState(false);
+  const [editingBranch, setEditingBranch] = useState<import("./service").Branch | null>(null);
+  const loadBranches = useCallback(async () => {
+    try { setBranches(await configService.getBranches()); } catch { setBranches([]); }
+  }, []);
+  useEffect(() => { if (tab === "company") loadBranches(); }, [tab, loadBranches]);
+  const removeBranch = async (b: import("./service").Branch) => {
+    if (!confirm(`¿Eliminar la sucursal "${b.name}"? Sus almacenes y usuarios quedarán sin sucursal.`)) return;
+    try { await configService.deleteBranch(b.id); await loadBranches(); }
+    catch (err: any) { alert(errorMessage(err, "No se pudo eliminar la sucursal.")); }
+  };
 
   const lang = "es";
 
@@ -128,9 +213,42 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
     }
   };
 
+  // Comprime el logo a un data-URI base64 (máx 256px) y lo guarda EN LA BASE DE
+  // DATOS (columna logo_url). Antes se subía a /media/upload, que escribe en el
+  // disco efímero del contenedor (se borra en cada redeploy/reinicio en Render),
+  // por eso el logo "desaparecía" al recargar. Un data-URI persiste siempre.
+  const fileToCompressedDataUri = (file: File, max = 256): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("read"));
+      reader.onload = () => {
+        // SVG: no se rasteriza, se guarda tal cual (vectorial, ligero).
+        if (file.type === "image/svg+xml") { resolve(String(reader.result)); return; }
+        const img = new Image();
+        img.onerror = () => reject(new Error("img"));
+        img.onload = () => {
+          const scale = Math.min(1, max / Math.max(img.width, img.height));
+          const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+          const canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) { reject(new Error("ctx")); return; }
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL("image/png"));
+        };
+        img.src = String(reader.result);
+      };
+      reader.readAsDataURL(file);
+    });
+
   const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setCompanyMsg("El logo no debe pesar más de 2MB.");
+      if (logoInputRef.current) logoInputRef.current.value = "";
+      return;
+    }
     if (!companyExists && !companyForm.legal_name) {
       setCompanyMsg("Primero escribe el nombre de la empresa y guarda, luego sube el logo.");
       if (logoInputRef.current) logoInputRef.current.value = "";
@@ -138,14 +256,11 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
     }
     setLogoUploading(true); setCompanyMsg("");
     try {
-      const fd = new FormData();
-      fd.append("files", file);
-      const { data } = await api.post<string[]>("/media/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
-      const url = data[0];
-      const nextForm = { ...companyForm, logo_url: url };
+      const dataUri = await fileToCompressedDataUri(file);
+      const nextForm = { ...companyForm, logo_url: dataUri };
       setCompanyForm(nextForm);
       const safeNextForm = { ...nextForm, contact_email: nextForm.contact_email?.trim() || undefined };
-      if (companyExists) await configService.updateCompanyProfile({ logo_url: url });
+      if (companyExists) await configService.updateCompanyProfile({ logo_url: dataUri });
       else await configService.createCompanyProfile(safeNextForm);
       setCompanyExists(true);
       setCompanyMsg("Logo actualizado ✓");
@@ -258,7 +373,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               {sectionTitle(Building2, "Identidad de la empresa", t.nova)}
               <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
                 {companyForm.logo_url
-                  ? <img src={companyForm.logo_url.startsWith("http") ? companyForm.logo_url : `${(import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1").replace(/\/api\/v1\/?$/, "")}${companyForm.logo_url}`} alt="Logo" style={{ width: 64, height: 64, borderRadius: 16, objectFit: "cover", border: `1px solid ${t.border}` }} />
+                  ? <img src={(companyForm.logo_url.startsWith("http") || companyForm.logo_url.startsWith("data:")) ? companyForm.logo_url : `${(import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1").replace(/\/api\/v1\/?$/, "")}${companyForm.logo_url}`} alt="Logo" style={{ width: 64, height: 64, borderRadius: 16, objectFit: "cover", border: `1px solid ${t.border}` }} />
                   : <div style={{ width: 64, height: 64, borderRadius: 16, background: comp.color + "26", color: comp.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 800 }}>{comp.initials}</div>}
                 <div>
                   <input ref={logoInputRef} type="file" accept="image/png,image/svg+xml,image/jpeg" style={{ display: "none" }} onChange={handleLogoChange} />
@@ -304,15 +419,27 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
             <div style={card}>
               {sectionTitle(Building2, "Empresas / Sucursales", t.warn)}
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {[{ name: "Comercializadora del Valle", initials: "CV", color: "#33B2F5", main: true }, { name: "Insumos del Norte", initials: "IN", color: "#34D399" }, { name: "Grupo Azteca Retail", initials: "GA", color: "#FBBF24" }].map(c => (
-                  <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 8, background: t.panel2 }}>
-                    <div style={{ width: 32, height: 32, borderRadius: 8, background: c.color + "26", color: c.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 }}>{c.initials}</div>
-                    <span style={{ flex: 1, fontSize: 13, color: t.textHi, fontWeight: 500 }}>{c.name}</span>
-                    {c.main && <span style={{ fontSize: 10, fontWeight: 700, color: t.good, background: t.good + "18", padding: "2px 7px", borderRadius: 6 }}>Principal</span>}
-                  </div>
-                ))}
-                <button style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px", borderRadius: 8, border: `2px dashed ${t.border}`, background: "transparent", color: t.textLo, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
-                  <Plus size={14} /> Agregar empresa
+                {branches.length === 0 && (
+                  <div style={{ fontSize: 12.5, color: t.textLo, padding: "8px 2px" }}>Aún no hay sucursales. Agrega la matriz para empezar.</div>
+                )}
+                {branches.map(b => {
+                  const color = b.is_primary ? t.good : t.nova;
+                  const initials = (b.code || b.name).slice(0, 2).toUpperCase();
+                  return (
+                    <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 8, background: t.panel2 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 8, background: color + "26", color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 }}>{initials}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, color: t.textHi, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}{!b.is_active && <span style={{ fontSize: 10, color: t.textLo }}> · inactiva</span>}</div>
+                        {(b.legal_name || b.tax_id) && <div style={{ fontSize: 11, color: t.textLo }}>{[b.legal_name, b.tax_id].filter(Boolean).join(" · ")}</div>}
+                      </div>
+                      {b.is_primary && <span style={{ fontSize: 10, fontWeight: 700, color: t.good, background: t.good + "18", padding: "2px 7px", borderRadius: 6 }}>Matriz</span>}
+                      <button onClick={() => { setEditingBranch(b); setBranchForm(true); }} title="Editar" style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo, display: "flex" }}><Edit2 size={14} /></button>
+                      <button onClick={() => removeBranch(b)} title="Eliminar" style={{ background: "transparent", border: "none", cursor: "pointer", color: t.bad, display: "flex" }}><Trash2 size={14} /></button>
+                    </div>
+                  );
+                })}
+                <button onClick={() => { setEditingBranch(null); setBranchForm(true); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px", borderRadius: 8, border: `2px dashed ${t.border}`, background: "transparent", color: t.textLo, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+                  <Plus size={14} /> Agregar sucursal
                 </button>
               </div>
             </div>
@@ -335,8 +462,8 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.textLo }} />
               <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar usuario por nombre o email…" style={{ ...inp, paddingLeft: 34 }} />
             </div>
-            <button onClick={() => setUserForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-              <UserPlus size={15} /> Invitar usuario
+            <button onClick={() => { setEditingUser(null); setUserForm(true); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              <UserPlus size={15} /> Nuevo usuario
             </button>
           </div>
           {/* Tabla sólida */}
@@ -376,8 +503,8 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                         </td>
                         <td style={{ padding: "12px 16px" }}>
                           <div style={{ display: "flex", gap: 4 }}>
-                            <button style={{ padding: 6, borderRadius: 6, border: "none", background: "transparent", color: t.textLo, cursor: "pointer" }}><Edit2 size={15} /></button>
-                            <button style={{ padding: 6, borderRadius: 6, border: "none", background: "transparent", color: t.bad, cursor: "pointer" }}><Trash2 size={15} /></button>
+                            <button onClick={() => { setEditingUser(u); setUserForm(true); }} title="Editar" style={{ padding: 6, borderRadius: 6, border: "none", background: "transparent", color: t.textLo, cursor: "pointer" }}><Edit2 size={15} /></button>
+                            <button onClick={() => deleteUser(u)} title="Eliminar" style={{ padding: 6, borderRadius: 6, border: "none", background: "transparent", color: t.bad, cursor: "pointer" }}><Trash2 size={15} /></button>
                           </div>
                         </td>
                       </tr>
@@ -394,11 +521,12 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
       {tab === "roles" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-            <p style={{ margin: 0, fontSize: 13, color: t.textLo }}>Define qué puede ver y hacer cada rol en cada módulo del sistema.</p>
-            <button style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            <p style={{ margin: 0, fontSize: 13, color: t.textLo }}>Define qué puede ver y hacer cada rol en cada módulo del sistema. Los cambios en la matriz se guardan al instante.</p>
+            <button onClick={() => setRoleForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               <Plus size={15} /> Crear rol
             </button>
           </div>
+          {rbacError && <div style={{ fontSize: 12.5, color: t.bad, background: t.bad + "12", border: `1px solid ${t.bad}33`, borderRadius: 8, padding: "10px 14px" }}>{rbacError}</div>}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
             {roles.map(r => (
               <div key={r.id} onClick={() => setSelectedRole(r)} style={{ ...glass(t), border: `1px solid ${selectedRole?.id === r.id ? r.color : t.border}`, borderRadius: 12, padding: 18, cursor: "pointer", transition: "all .15s" }}>
@@ -425,7 +553,13 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                     <div style={{ fontSize: 12, color: t.textLo }}>{selectedRole.description}</div>
                   </div>
                 </div>
-                <button onClick={() => setSelectedRole(null)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={18} /></button>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {savingPerm && <span style={{ fontSize: 11.5, color: t.textLo }}>Guardando…</span>}
+                  {!selectedRole.is_system && (
+                    <button onClick={() => deleteRole(selectedRole)} title="Eliminar rol" style={{ background: "transparent", border: `1px solid ${t.bad}55`, color: t.bad, cursor: "pointer", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><Trash2 size={13} /> Eliminar rol</button>
+                  )}
+                  <button onClick={() => setSelectedRole(null)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={18} /></button>
+                </div>
               </div>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
@@ -438,15 +572,17 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                     </tr>
                   </thead>
                   <tbody>
-                    {MODULES_LIST.map((mod, i) => {
-                      const perms = selectedRole.permissions[mod];
+                    {MODULES.map(([modKey, modLabel], i) => {
+                      const perms = selectedRole.permissions[modKey] || emptyGrant();
                       return (
-                        <tr key={mod} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
-                          <td style={{ padding: "11px 16px", fontSize: 13, color: t.textHi, fontWeight: 500 }}>{mod}</td>
+                        <tr key={modKey} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
+                          <td style={{ padding: "11px 16px", fontSize: 13, color: t.textHi, fontWeight: 500 }}>{modLabel}</td>
                           {(Object.keys(PERM_LABELS) as (keyof typeof PERM_LABELS)[]).map(perm => (
                             <td key={perm} style={{ padding: "11px 16px", textAlign: "center" }}>
-                              <button disabled={selectedRole.is_system} style={{ background: "transparent", border: "none", cursor: selectedRole.is_system ? "default" : "pointer", display: "inline-flex" }}>
-                                {perms[perm] ? <CheckCircle size={18} color={PERM_COLORS[perm]} /> : <div style={{ width: 18, height: 18, borderRadius: 5, border: `1.5px solid ${t.border}` }} />}
+                              <button disabled={selectedRole.is_system || savingPerm}
+                                onClick={() => togglePerm(selectedRole, modKey, perm)}
+                                style={{ background: "transparent", border: "none", cursor: selectedRole.is_system ? "default" : "pointer", display: "inline-flex" }}>
+                                {(perms as any)[perm] ? <CheckCircle size={18} color={PERM_COLORS[perm]} /> : <div style={{ width: 18, height: 18, borderRadius: 5, border: `1.5px solid ${t.border}` }} />}
                               </button>
                             </td>
                           ))}
@@ -458,7 +594,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               </div>
               {selectedRole.is_system && (
                 <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "center", fontSize: 12.5, color: t.textLo, background: t.panel2, padding: "10px 14px", borderRadius: 8 }}>
-                  <Info size={15} /> Los roles de sistema no se pueden modificar. Duplica este rol para crear uno personalizado.
+                  <Info size={15} /> Los roles de sistema (Administrador, Solo lectura) no se pueden modificar ni eliminar. Crea un rol personalizado para ajustar permisos.
                 </div>
               )}
             </div>
@@ -766,38 +902,220 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
         </div>
       )}
 
-      {/* ── MODAL: Invite User ── */}
+      {/* ── MODAL: Crear / Editar usuario ── */}
       {userForm && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div style={{ width: "100%", maxWidth: 460, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
-            <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 8, padding: 8, display: "flex" }}><UserPlus size={18} /></div>
-                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>Invitar usuario</h2>
-              </div>
-              <button onClick={() => setUserForm(false)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        <UserFormModal t={t} lbl={lbl} inp={inp} roles={roles} branches={branches} editing={editingUser}
+          onClose={() => { setUserForm(false); setEditingUser(null); }}
+          onSaved={async () => { setUserForm(false); setEditingUser(null); await loadRBAC(); }} />
+      )}
+
+      {/* ── MODAL: Crear rol ── */}
+      {roleForm && (
+        <RoleFormModal t={t} lbl={lbl} inp={inp}
+          onClose={() => setRoleForm(false)}
+          onSaved={async () => { setRoleForm(false); await loadRBAC(); }} />
+      )}
+
+      {/* ── MODAL: Crear / editar sucursal ── */}
+      {branchForm && (
+        <BranchFormModal t={t} lbl={lbl} inp={inp} editing={editingBranch}
+          onClose={() => { setBranchForm(false); setEditingBranch(null); }}
+          onSaved={async () => { setBranchForm(false); setEditingBranch(null); await loadBranches(); }} />
+      )}
+    </div>
+  );
+}
+
+// ── Modal: crear / editar sucursal ─────────────────────────────────────────
+function BranchFormModal({ t, lbl, inp, editing, onClose, onSaved }: any) {
+  const [f, setF] = useState({
+    name: editing?.name || "", code: editing?.code || "", legal_name: editing?.legal_name || "",
+    tax_id: editing?.tax_id || "", address: editing?.address || "", phone: editing?.phone || "",
+    email: editing?.email || "", is_primary: editing?.is_primary || false, is_active: editing?.is_active ?? true,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const set = (patch: any) => setF(prev => ({ ...prev, ...patch }));
+
+  const save = async () => {
+    setSaving(true); setError("");
+    try {
+      const payload = { ...f, code: f.code || null, legal_name: f.legal_name || null, tax_id: f.tax_id || null, address: f.address || null, phone: f.phone || null, email: f.email || null };
+      if (editing) await configService.updateBranch(editing.id, payload);
+      else await configService.createBranch(payload);
+      await onSaved();
+    } catch (err: any) { setError(errorMessage(err, "No se pudo guardar la sucursal.")); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
+      <div style={{ width: "100%", maxWidth: 480, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ background: t.warn + "22", color: t.warn, borderRadius: 8, padding: 8, display: "flex" }}><Building2 size={18} /></div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{editing ? "Editar sucursal" : "Nueva sucursal"}</h2>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+            <div><label style={lbl}>Nombre *</label><input value={f.name} onChange={e => set({ name: e.target.value })} placeholder="Sucursal Centro" style={inp} /></div>
+            <div><label style={lbl}>Clave</label><input value={f.code} onChange={e => set({ code: e.target.value })} placeholder="CDMX" style={inp} /></div>
+          </div>
+          <div><label style={lbl}>Razón social</label><input value={f.legal_name} onChange={e => set({ legal_name: e.target.value })} placeholder="Empresa S.A. de C.V." style={inp} /></div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div><label style={lbl}>RFC</label><input value={f.tax_id} onChange={e => set({ tax_id: e.target.value })} placeholder="XAXX010101000" style={inp} /></div>
+            <div><label style={lbl}>Teléfono</label><input value={f.phone} onChange={e => set({ phone: e.target.value })} style={inp} /></div>
+          </div>
+          <div><label style={lbl}>Dirección</label><input value={f.address} onChange={e => set({ address: e.target.value })} style={inp} /></div>
+          <div><label style={lbl}>Email</label><input value={f.email} onChange={e => set({ email: e.target.value })} style={inp} /></div>
+          <div style={{ display: "flex", gap: 18 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: t.textMid, cursor: "pointer" }}>
+              <input type="checkbox" checked={f.is_primary} onChange={e => set({ is_primary: e.target.checked })} /> Sucursal matriz
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: t.textMid, cursor: "pointer" }}>
+              <input type="checkbox" checked={f.is_active} onChange={e => set({ is_active: e.target.checked })} /> Activa
+            </label>
+          </div>
+          {error && <div style={{ fontSize: 12.5, color: t.bad }}>{error}</div>}
+        </div>
+        <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+          <button onClick={save} disabled={saving || !f.name.trim()} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !f.name.trim() ? 0.5 : 1 }}>
+            {saving ? "…" : editing ? "Guardar cambios" : "Crear sucursal"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal: crear / editar usuario (RBAC real) ──────────────────────────────
+function UserFormModal({ t, lbl, inp, roles, branches, editing, onClose, onSaved }: any) {
+  const [full_name, setFullName] = useState(editing?.name && editing?.name !== editing?.email ? editing.name : "");
+  const [email, setEmail] = useState(editing?.email || "");
+  const [roleId, setRoleId] = useState<string>(editing?.role_id ? String(editing.role_id) : "");
+  const [branchId, setBranchId] = useState<string>(editing?.branch_id ? String(editing.branch_id) : "");
+  const [active, setActive] = useState<boolean>(editing ? editing.is_active !== false : true);
+  const [password, setPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const isEdit = !!editing;
+
+  const valid = email.trim() && (isEdit || password.length >= 6) && roleId;
+
+  const save = async () => {
+    setSaving(true); setError("");
+    try {
+      const base: any = { email: email.trim(), full_name: full_name.trim() || null, role_id: Number(roleId), branch_id: branchId ? Number(branchId) : null, is_active: active };
+      if (isEdit) {
+        if (password) base.password = password;
+        await configService.updateUser(editing.id, base);
+      } else {
+        await configService.createUser({ ...base, password });
+      }
+      await onSaved();
+    } catch (err: any) { setError(errorMessage(err, "No se pudo guardar el usuario.")); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
+      <div style={{ width: "100%", maxWidth: 460, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 8, padding: 8, display: "flex" }}><UserPlus size={18} /></div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{isEdit ? "Editar usuario" : "Nuevo usuario"}</h2>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div><label style={lbl}>Nombre completo</label><input value={full_name} onChange={e => setFullName(e.target.value)} placeholder="Nombre del usuario" style={inp} /></div>
+          <div><label style={lbl}>Email *</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="correo@empresa.mx" style={inp} /></div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div><label style={lbl}>Rol *</label>
+              <select value={roleId} onChange={e => setRoleId(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="">Seleccionar…</option>
+                {roles.map((r: Role) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
             </div>
-            <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
-              <div><label style={lbl}>Nombre completo *</label><input placeholder="Nombre del usuario" style={inp} /></div>
-              <div><label style={lbl}>Email *</label><input type="email" placeholder="correo@empresa.mx" style={inp} /></div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div><label style={lbl}>Rol *</label><select style={{ ...inp, cursor: "pointer" }}>{roles.map(r => <option key={r.id}>{r.name}</option>)}</select></div>
-                <div><label style={lbl}>Departamento</label><select style={{ ...inp, cursor: "pointer" }}><option>Ventas</option><option>Contabilidad</option><option>Almacén</option><option>Dirección</option></select></div>
-              </div>
-              <div style={{ background: t.nova + "12", border: `1px solid ${t.nova}33`, borderRadius: 8, padding: "12px 14px", display: "flex", gap: 10 }}>
-                <Mail size={16} color={t.nova} style={{ flexShrink: 0, marginTop: 1 }} />
-                <span style={{ fontSize: 12.5, color: t.textMid }}>Se enviará una invitación por email. El usuario configurará su contraseña al aceptar.</span>
-              </div>
-            </div>
-            <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button onClick={() => setUserForm(false)} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
-              <button onClick={() => setUserForm(false)} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-                Enviar invitación
-              </button>
+            <div><label style={lbl}>Estado</label>
+              <select value={active ? "1" : "0"} onChange={e => setActive(e.target.value === "1")} style={{ ...inp, cursor: "pointer" }}>
+                <option value="1">Activo</option><option value="0">Inactivo</option>
+              </select>
             </div>
           </div>
+          <div><label style={lbl}>Sucursal</label>
+            <select value={branchId} onChange={e => setBranchId(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+              <option value="">Sin asignar (todas)</option>
+              {(branches || []).map((b: any) => <option key={b.id} value={b.id}>{b.name}{b.is_primary ? " (Matriz)" : ""}</option>)}
+            </select>
+          </div>
+          <div><label style={lbl}>{isEdit ? "Nueva contraseña (opcional)" : "Contraseña inicial *"}</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder={isEdit ? "Dejar vacío para no cambiarla" : "Mínimo 6 caracteres"} style={inp} />
+          </div>
+          {error && <div style={{ fontSize: 12.5, color: t.bad }}>{error}</div>}
         </div>
-      )}
+        <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+          <button onClick={save} disabled={saving || !valid} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !valid ? 0.5 : 1 }}>
+            {saving ? "…" : isEdit ? "Guardar cambios" : "Crear usuario"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal: crear rol ───────────────────────────────────────────────────────
+const ROLE_COLORS = ["#33B2F5", "#34D399", "#FBBF24", "#A78BFA", "#F472B6", "#60A5FA", "#F87171", "#2DD4BF"];
+function RoleFormModal({ t, lbl, inp, onClose, onSaved }: any) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [color, setColor] = useState(ROLE_COLORS[0]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    setSaving(true); setError("");
+    try {
+      await configService.createRole({ name: name.trim(), description: description.trim() || null, color, permission_ids: [] });
+      await onSaved();
+    } catch (err: any) { setError(errorMessage(err, "No se pudo crear el rol.")); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
+      <div style={{ width: "100%", maxWidth: 440, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ background: color + "22", color, borderRadius: 8, padding: 8, display: "flex" }}><Shield size={18} /></div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>Crear rol</h2>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div><label style={lbl}>Nombre del rol *</label><input value={name} onChange={e => setName(e.target.value)} placeholder="Ej. Supervisor de almacén" style={inp} /></div>
+          <div><label style={lbl}>Descripción</label><input value={description} onChange={e => setDescription(e.target.value)} placeholder="Qué hace este rol" style={inp} /></div>
+          <div><label style={lbl}>Color</label>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {ROLE_COLORS.map(c => (
+                <button key={c} onClick={() => setColor(c)} style={{ width: 26, height: 26, borderRadius: 8, background: c, border: color === c ? `2px solid ${t.textHi}` : "2px solid transparent", cursor: "pointer" }} />
+              ))}
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: t.textLo }}>Después de crearlo, abre el rol para configurar su matriz de permisos.</div>
+          {error && <div style={{ fontSize: 12.5, color: t.bad }}>{error}</div>}
+        </div>
+        <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+          <button onClick={save} disabled={saving || !name.trim()} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !name.trim() ? 0.5 : 1 }}>
+            {saving ? "…" : "Crear rol"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

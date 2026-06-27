@@ -8,7 +8,13 @@ from app.core.security import get_password_hash, verify_password
 
 
 async def get_user_by_email(db: AsyncSession, email: str):
-    result = await db.execute(select(User).where(User.email == email))
+    # Carga ansiosa del rol y sus permisos: necesario para la verificación RBAC
+    # en cada request (require_permission) y para devolver permisos en /me.
+    result = await db.execute(
+        select(User).where(User.email == email).options(
+            selectinload(User.role_obj).selectinload(Role.permissions)
+        )
+    )
     return result.scalars().first()
 
 
@@ -20,17 +26,22 @@ async def create_user(db: AsyncSession, user_in: UserCreate):
         full_name=user_in.full_name,
         role=user_in.role,
         role_id=user_in.role_id,
+        branch_id=user_in.branch_id,
         is_active=user_in.is_active,
     )
     db.add(db_user)
     await db.commit()
     await db.refresh(db_user)
-    return db_user
+    return await get_user(db, db_user.id)
 
 
 async def get_users(db: AsyncSession, skip: int = 0, limit: int = 100):
+    # Carga el rol Y sus permisos: el schema de respuesta User incluye
+    # role_obj.permissions; sin esta carga ansiosa, la serialización dispara un
+    # lazy-load sobre la sesión async y revienta (ResponseValidationError).
     result = await db.execute(
-        select(User).options(selectinload(User.role_obj)).offset(skip).limit(limit)
+        select(User).options(selectinload(User.role_obj).selectinload(Role.permissions))
+        .offset(skip).limit(limit)
     )
     return result.scalars().all()
 
@@ -67,10 +78,20 @@ async def create_role(db: AsyncSession, role_in: RoleCreate):
     return db_obj
 
 
+async def get_role(db: AsyncSession, role_id: int):
+    result = await db.execute(
+        select(Role).where(Role.id == role_id).options(selectinload(Role.permissions))
+    )
+    return result.scalars().first()
+
+
 async def update_role(db: AsyncSession, db_obj: Role, role_in: RoleUpdate):
     update_data = role_in.model_dump(exclude_unset=True)
+    # Roles de sistema: no se renombran (sí se pueden ajustar sus permisos).
+    if db_obj.is_system:
+        update_data.pop("name", None)
     if "permission_ids" in update_data:
-        perm_ids = update_data.pop("permission_ids")
+        perm_ids = update_data.pop("permission_ids") or []
         perms = await db.execute(
             select(Permission).where(Permission.id.in_(perm_ids))
         )
@@ -79,7 +100,45 @@ async def update_role(db: AsyncSession, db_obj: Role, role_in: RoleUpdate):
         setattr(db_obj, field, value)
     db.add(db_obj)
     await db.commit()
-    await db.refresh(db_obj)
-    return db_obj
+    return await get_role(db, db_obj.id)
+
+
+async def delete_role(db: AsyncSession, db_obj: Role) -> bool:
+    """Elimina un rol no-sistema. Reasigna a NULL los usuarios que lo tuvieran."""
+    if db_obj.is_system:
+        raise ValueError("Los roles de sistema no se pueden eliminar")
+    users = (await db.execute(select(User).where(User.role_id == db_obj.id))).scalars().all()
+    for u in users:
+        u.role_id = None
+    await db.delete(db_obj)
+    await db.commit()
+    return True
+
+
+async def get_user(db: AsyncSession, user_id: int):
+    result = await db.execute(
+        select(User).where(User.id == user_id).options(
+            selectinload(User.role_obj).selectinload(Role.permissions)
+        )
+    )
+    return result.scalars().first()
+
+
+async def update_user(db: AsyncSession, db_obj: User, user_in: UserUpdate):
+    update_data = user_in.model_dump(exclude_unset=True)
+    password = update_data.pop("password", None)
+    if password:
+        db_obj.hashed_password = get_password_hash(password)
+    for field, value in update_data.items():
+        setattr(db_obj, field, value)
+    db.add(db_obj)
+    await db.commit()
+    return await get_user(db, db_obj.id)
+
+
+async def delete_user(db: AsyncSession, db_obj: User) -> bool:
+    await db.delete(db_obj)
+    await db.commit()
+    return True
 
 

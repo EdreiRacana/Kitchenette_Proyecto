@@ -11,7 +11,7 @@ import {
   X, DollarSign, CreditCard, BarChart3,
   Clock, CheckCircle, XCircle, AlertCircle, ArrowLeftRight,
   PiggyBank, Receipt, Edit2, Trash2, ArrowRightLeft, Upload,
-  Wallet, FileText, History, Paperclip, CalendarClock, Ban,
+  Wallet, FileText, History, Paperclip, CalendarClock, Ban, Mail,
 } from "lucide-react";
 import { financeService, downloadCSV } from "./service";
 
@@ -485,7 +485,15 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
                 </div>
               ))}
             </div>
-            <button onClick={exportCXP} style={ghostBtn}><Download size={14} /> Descargar</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={async () => {
+                try {
+                  const r = await financeService.sendPaymentReminders();
+                  alert(r.sent > 0 ? `Se enviaron ${r.sent} recordatorio(s) de pago al correo de la empresa.` : "No hay recordatorios pendientes por enviar, o no hay correo configurado (Configuración > Integraciones).");
+                } catch { alert("No se pudieron enviar los recordatorios."); }
+              }} style={ghostBtn}><Mail size={14} /> Enviar recordatorios de pago</button>
+              <button onClick={exportCXP} style={ghostBtn}><Download size={14} /> Descargar</button>
+            </div>
           </div>
 
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -821,7 +829,7 @@ function TransactionFormModal({ t, tx, onClose, onSave }: any) {
   const handleSave = async () => { setSaving(true); try { await onSave({ ...form, amount: parseFloat(form.amount) }); } finally { setSaving(false); } };
   const isIncome = form.type === "income";
   return createPortal(
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 460, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -889,7 +897,7 @@ function PayDebtModal({ t, item, kind, onClose, onSave }: any) {
     finally { setSaving(false); }
   };
   return createPortal(
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{kind === "cxc" ? "Registrar pago de cliente" : "Pagar a proveedor"}</h2>
@@ -944,7 +952,7 @@ function BankFormModal({ t, onClose, onSave }: any) {
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const handleSave = async () => { if (!form.name) return; setSaving(true); try { await onSave({ ...form, balance: parseFloat(form.balance) || 0 }); } finally { setSaving(false); } };
   return createPortal(
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>Agregar cuenta bancaria</h2>
@@ -1048,7 +1056,7 @@ function BankMovementsModal({ t, bank, demo, onClose, onChanged }: any) {
   };
 
   return createPortal(
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 560, maxHeight: "85vh", display: "flex", flexDirection: "column", background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
@@ -1413,7 +1421,7 @@ function TransferModal({ t, from, banks, onClose, onSave }: any) {
     try { await onSave(toId, amt, description); } finally { setSaving(false); }
   };
   return createPortal(
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}><ArrowRightLeft size={18} /> Transferir</h2>

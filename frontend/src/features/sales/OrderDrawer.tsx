@@ -9,8 +9,16 @@ import type { Tokens, Translator } from "./theme";
 import { money, dateTime, paymentLabel, statusColors, statusMeta } from "./theme";
 import type { Order } from "./types";
 import { Badge, Button, IconButton } from "./ui";
+import configService from "../config/service";
 
-function printTicket(order: Order) {
+async function printTicket(order: Order) {
+  const w = window.open("", "_blank", "width=480,height=720");
+  let company: { legal_name?: string; logo_url?: string } = {};
+  try { company = await configService.getCompanyProfile(); } catch { /* sin perfil configurado */ }
+  const businessName = company.legal_name || "Kitchenette";
+  const logoHtml = company.logo_url
+    ? `<img src="${company.logo_url}" alt="logo" style="max-height:48px;max-width:160px;object-fit:contain;margin-bottom:6px" />`
+    : "";
   const rows = order.items.map((it) =>
     `<tr><td>${it.product_name ?? ""}${it.sku ? ` <span class="sku">${it.sku}</span>` : ""}</td>
       <td class="r">${it.quantity}</td><td class="r">${money(it.unit_price)}</td>
@@ -27,7 +35,7 @@ function printTicket(order: Order) {
       .grand{font-size:18px;font-weight:800;border-top:2px solid #111;padding-top:8px;margin-top:8px}
       .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:10px}
     </style></head><body>
-    <div class="head"><div><h1>Kitchenette</h1><div class="muted">${order.kind === "quote" ? "Cotización" : "Pedido"} ${order.folio ?? ""}</div></div>
+    <div class="head"><div>${logoHtml}<h1>${businessName}</h1><div class="muted">${order.kind === "quote" ? "Cotización" : "Pedido"} ${order.folio ?? ""}</div></div>
     <div class="muted r">${dateTime(order.created_at)}</div></div>
     <div class="muted" style="margin-top:10px">Cliente: ${order.customer?.name ?? "Mostrador"}<br>
     Pago: ${paymentLabel(order.payment_method)} · Estado: ${statusMeta(order.status).label}</div>
@@ -44,7 +52,6 @@ function printTicket(order: Order) {
     </div>
     <p class="muted" style="text-align:center;margin-top:24px">¡Gracias por su compra!</p>
     <script>window.onload=()=>{window.print()}</script></body></html>`;
-  const w = window.open("", "_blank", "width=480,height=720");
   if (w) { w.document.write(html); w.document.close(); }
 }
 
@@ -201,7 +208,7 @@ export function OrderDrawer({
               <>
                 <Button tk={tk} variant="primary" icon={<ArrowRightLeft size={16} />} onClick={() => onConvert(order)}>{tr("sales_convert", "Convertir a pedido")}</Button>
                 <Button tk={tk} variant="ghost" icon={<Pencil size={16} />} onClick={() => onEdit(order)}>{tr("sales_edit", "Editar")}</Button>
-                <Button tk={tk} variant="danger" icon={<XCircle size={16} />} onClick={() => onCancel(order)}>{tr("sales_btn_cancel", "Cancelar")}</Button>
+                <Button tk={tk} variant="danger" icon={<XCircle size={16} />} onClick={() => onCancel(order)}>{tr("sales_btn_cancel_quote", "Cancelar cotización")}</Button>
               </>
             )
           ) : (
@@ -212,10 +219,11 @@ export function OrderDrawer({
               {order.balance > 0 && order.status !== "cancelled" && (
                 <Button tk={tk} variant="ghost" icon={<CheckCircle size={16} />} onClick={() => onMarkPaid(order)}>{tr("sales_btn_mark_paid", "Marcar pagado")}</Button>
               )}
-              <Button tk={tk} variant="ghost" icon={<Printer size={16} />} onClick={() => printTicket(order)}>{tr("sales_print", "Ticket")}</Button>
+              <Button tk={tk} variant="ghost" icon={<Printer size={16} />} onClick={() => printTicket(order)}>{tr("sales_print", "Imprimir ticket")}</Button>
               <Button tk={tk} variant="ghost" icon={<FileText size={16} />} onClick={() => onInvoice(order)}>{tr("sales_invoice", "CFDI")}</Button>
               {!closed && order.status !== "paid" && <Button tk={tk} variant="ghost" icon={<Pencil size={16} />} onClick={() => onEdit(order)}>{tr("sales_edit", "Editar")}</Button>}
-              {order.status !== "cancelled" && <Button tk={tk} variant="danger" icon={<XCircle size={16} />} onClick={() => onCancel(order)}>{tr("sales_btn_cancel", "Cancelar")}</Button>}
+              <div style={{ flex: 1 }} />
+              {order.status !== "cancelled" && <Button tk={tk} variant="danger" icon={<XCircle size={16} />} onClick={() => onCancel(order)}>{tr("sales_btn_cancel", "Cancelar venta")}</Button>}
             </>
           )}
         </div>

@@ -12,7 +12,7 @@ import api from "../../services/api";
 import IngestaConfigurador from "./IngestaConfigurador";
 import { resolveTheme, makeTr, money, dateShort, statusColors, statusMeta, paymentLabel, ORDER_PIPELINE, PAYMENT_METHODS } from "./theme";
 import type { Tokens } from "./theme";
-import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite } from "./types";
+import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns, CustomerForecast } from "./types";
 import { salesApi } from "./api";
 import type { VariantOption } from "./api";
 import { Spinner, Badge, Button, EmptyState, Spinkeyframes } from "./ui";
@@ -472,6 +472,9 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const [topCustomers, setTopCustomers] = useState<TopCustomer[]>([]);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
+  const [analyticsCustomer, setAnalyticsCustomer] = useState<number | null>(null);
+  const [avgReturns, setAvgReturns] = useState<AverageReturns | null>(null);
+  const [forecast, setForecast] = useState<CustomerForecast | null>(null);
   const [variants, setVariants] = useState<VariantOption[]>([]);
 
   const [ordersLoading, setOrdersLoading] = useState(true);
@@ -523,15 +526,26 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
     return r;
   }, [kind, status, payment, q, sortBy, sortDir]);
 
-  const refreshDemoAnalytics = useCallback((all: Order[]) => {
+  const refreshDemoAnalytics = useCallback((all: Order[], customerId: number | null = null) => {
     setStats(computeStats(all));
-    const byDay = new Map<string, { total: number; count: number }>();
-    all.filter((o) => o.kind === "order" && o.status !== "cancelled").forEach((o) => {
+    const scoped = customerId ? all.filter((o) => o.customer_id === customerId) : all;
+    const byDay = new Map<string, { total: number; count: number; returns: number }>();
+    scoped.filter((o) => o.kind === "order").forEach((o) => {
       const k = o.created_at.slice(0, 10);
-      const e = byDay.get(k) ?? { total: 0, count: 0 };
-      e.total += o.total_amount; e.count += 1; byDay.set(k, e);
+      const e = byDay.get(k) ?? { total: 0, count: 0, returns: 0 };
+      if (o.status === "cancelled") e.returns += o.total_amount;
+      else { e.total += o.total_amount; e.count += 1; }
+      byDay.set(k, e);
     });
-    setTrend([...byDay.entries()].sort().map(([period, v]) => ({ period, total: Math.round(v.total), count: v.count })));
+    setTrend([...byDay.entries()].sort().map(([period, v]) => ({
+      period, total: Math.round(v.total), count: v.count, returns_total: Math.round(v.returns), goal: null,
+    })));
+    const cancelled = scoped.filter((o) => o.kind === "order" && o.status === "cancelled");
+    setAvgReturns({
+      customer_id: customerId,
+      average_amount: cancelled.length ? Math.round(cancelled.reduce((s, o) => s + o.total_amount, 0) / cancelled.length) : 0,
+      count: cancelled.length,
+    });
     const byCust = new Map<string, { total: number; orders: number; id: number | null }>();
     all.filter((o) => o.kind === "order" && o.status !== "cancelled").forEach((o) => {
       const name = o.customer?.name ?? "Sin cliente";
@@ -556,9 +570,9 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
       setDemo(true); setCustomers(DEMO_CUSTOMERS); setVariants(DEMO_VARIANTS);
       const filtered = applyDemoFilters(DEMO_ORDERS);
       setOrders(filtered.slice(page * PAGE, page * PAGE + PAGE)); setTotal(filtered.length);
-      refreshDemoAnalytics(DEMO_ORDERS); setStatsLoading(false); setAnalyticsLoaded(true);
+      refreshDemoAnalytics(DEMO_ORDERS, analyticsCustomer); setStatsLoading(false); setAnalyticsLoaded(true);
     } finally { setOrdersLoading(false); }
-  }, [filters, applyDemoFilters, refreshDemoAnalytics, page]);
+  }, [filters, applyDemoFilters, refreshDemoAnalytics, page, analyticsCustomer]);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -568,10 +582,18 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const loadAnalytics = useCallback(async () => {
     setAnalyticsLoading(true);
     try {
-      const [tr1, tc, tp] = await Promise.all([salesApi.trend("day", 30), salesApi.topCustomers(5), salesApi.topProducts(5)]);
-      setTrend(tr1); setTopCustomers(tc); setTopProducts(tp); setAnalyticsLoaded(true);
+      const [tr1, tc, tp, ar] = await Promise.all([
+        salesApi.trend("day", 30, undefined, analyticsCustomer),
+        salesApi.topCustomers(5), salesApi.topProducts(5), salesApi.returnsAvg(analyticsCustomer),
+      ]);
+      setTrend(tr1); setTopCustomers(tc); setTopProducts(tp); setAvgReturns(ar); setAnalyticsLoaded(true);
     } catch { } finally { setAnalyticsLoading(false); }
-  }, []);
+  }, [analyticsCustomer]);
+
+  useEffect(() => {
+    if (demo || analyticsCustomer == null) { setForecast(null); return; }
+    salesApi.customerForecast(analyticsCustomer).then(setForecast).catch(() => setForecast(null));
+  }, [analyticsCustomer, demo]);
 
   const loadCatalogs = useCallback(async () => {
     salesApi.customers().then(setCustomers).catch(() => {});
@@ -582,17 +604,20 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
     await loadOrders(); loadStats(); setAnalyticsLoaded(false);
   }, [loadOrders, loadStats]);
 
+  const demoStore = useMemo(() => ({ list: [...DEMO_ORDERS] }), []);
+
   useEffect(() => { loadOrders(); }, [loadOrders]);
   useEffect(() => { loadStats(); loadCatalogs(); }, [loadStats, loadCatalogs]);
   useEffect(() => { if (view === "analytics" && !demo && !analyticsLoaded) loadAnalytics(); }, [view, demo, analyticsLoaded, loadAnalytics]);
+  useEffect(() => { if (view === "analytics" && !demo) loadAnalytics(); }, [analyticsCustomer]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (view === "analytics" && demo) refreshDemoAnalytics(demoStore.list, analyticsCustomer); }, [analyticsCustomer, view, demo]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setPage(0); }, [q, kind, status, payment, from, to]);
 
-  const demoStore = useMemo(() => ({ list: [...DEMO_ORDERS] }), []);
   const commitDemo = useCallback(() => {
     const filtered = applyDemoFilters(demoStore.list);
     setOrders(filtered.slice(page * PAGE, page * PAGE + PAGE)); setTotal(filtered.length);
-    refreshDemoAnalytics(demoStore.list);
-  }, [applyDemoFilters, demoStore, page, refreshDemoAnalytics]);
+    refreshDemoAnalytics(demoStore.list, analyticsCustomer);
+  }, [applyDemoFilters, demoStore, page, refreshDemoAnalytics, analyticsCustomer]);
 
   const openDetail = useCallback(async (o: Order) => {
     if (demo) { setSelected(o); return; }
@@ -651,7 +676,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   }, [demo, demoStore, commitDemo, refreshData]);
 
   const cancel = useCallback(async (o: Order) => {
-    if (!window.confirm(tr("sales_confirm_cancel", "¿Cancelar este documento?"))) return;
+    if (!window.confirm(tr("sales_confirm_cancel", `¿Cancelar la venta completa ${o.folio ?? ""}? Esto NO cancela un ticket o recibo individual: anula todo el pedido del cliente y no se puede revertir.`))) return;
     if (demo) { const idx = demoStore.list.findIndex((x) => x.id === o.id); if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: "cancelled", balance: 0 }; commitDemo(); setSelected(null); return; }
     try { await salesApi.cancel(o.id); await refreshData(); setSelected(null); } catch (e) { alert(extractErr(e)); }
   }, [demo, demoStore, commitDemo, refreshData, tr]);
@@ -812,7 +837,9 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
         analyticsLoading && !analyticsLoaded ? (
           <div style={{ display: "flex", justifyContent: "center", padding: 64 }}><Spinner tk={tk} size={28} /></div>
         ) : (
-          <Analytics tk={tk} tr={tr} trend={trend} topCustomers={topCustomers} topProducts={topProducts} />
+          <Analytics tk={tk} tr={tr} trend={trend} topCustomers={topCustomers} topProducts={topProducts}
+            customers={customers} selectedCustomer={analyticsCustomer} onSelectCustomer={setAnalyticsCustomer}
+            avgReturns={avgReturns} forecast={forecast} />
         )
       ) : view === "pipeline" ? (
         <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 8 }}>

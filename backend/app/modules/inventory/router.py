@@ -1,6 +1,9 @@
+import os
+import shutil
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from fastapi.responses import StreamingResponse
-from typing import List, Annotated
+from fastapi.responses import StreamingResponse, Response
+from typing import List, Annotated, Optional
 from io import BytesIO
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
@@ -11,14 +14,23 @@ router = APIRouter()
 DB = Annotated[AsyncSession, Depends(deps.get_db)]
 CurrentUser = Annotated[User, Depends(deps.get_current_active_user)]
 
+UPLOAD_DIR = "uploads/inventory"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 # --- Products ---
 @router.post("/products", response_model=schemas.ProductInDB)
 async def create_product(product_in: schemas.ProductCreate, db: DB, current_user: CurrentUser):
     return await service.create_product(db, product_in)
 
 @router.get("/products", response_model=List[schemas.ProductWithVariants])
-async def read_products(db: DB, skip: int = 0, limit: int = 200):
-    return await service.get_products(db, skip, limit)
+async def read_products(db: DB, skip: int = 0, limit: int = 200, item_type: str | None = None):
+    return await service.get_products(db, skip, limit, item_type=item_type)
+
+@router.post("/products/upload-image")
+async def upload_product_image(db: DB, current_user: CurrentUser, file: UploadFile = File(...)):
+    content = await file.read()
+    url = service.save_compressed_image(content, file.filename, UPLOAD_DIR, "inventory")
+    return {"url": url}
 
 # --- Carga masiva (Excel/CSV) ---
 XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -97,6 +109,41 @@ async def update_supplier(supplier_id: int, supplier_in: schemas.SupplierUpdate,
         raise HTTPException(status_code=404, detail="Supplier not found")
     return supplier
 
+def _require_inventory_manager(current_user: User) -> None:
+    role = (current_user.role or "").lower()
+    role_name = (current_user.role_obj.name.lower() if current_user.role_obj else "")
+    allowed = current_user.is_superuser or role in ("admin", "administrador", "inventario") or role_name in ("administrador", "inventario")
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Solo el encargado de inventarios o el administrador general pueden eliminar proveedores")
+
+@router.delete("/suppliers/{supplier_id}", status_code=204)
+async def delete_supplier(supplier_id: int, db: DB, current_user: CurrentUser):
+    _require_inventory_manager(current_user)
+    try:
+        deleted = await service.delete_supplier(db, supplier_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+
+@router.post("/suppliers/{supplier_id}/documents", response_model=schemas.SupplierDocumentInDB)
+async def upload_supplier_document(supplier_id: int, db: DB, current_user: CurrentUser, doc_type: str, file: UploadFile = File(...)):
+    ext = os.path.splitext(file.filename or "")[1]
+    safe = f"sup{supplier_id}_{doc_type}_{int(datetime.now().timestamp())}{ext}"
+    path = os.path.join(UPLOAD_DIR, safe)
+    with open(path, "wb") as buf:
+        shutil.copyfileobj(file.file, buf)
+    doc = await service.add_supplier_document(db, supplier_id, doc_type, f"inventory/{safe}", file.filename)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    return doc
+
+@router.delete("/suppliers/{supplier_id}/documents/{document_id}", status_code=204)
+async def delete_supplier_document(supplier_id: int, document_id: int, db: DB, current_user: CurrentUser):
+    ok = await service.delete_supplier_document(db, supplier_id, document_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Document not found")
+
 # --- Warehouses ---
 @router.post("/warehouses", response_model=schemas.WarehouseInDB)
 async def create_warehouse(warehouse_in: schemas.WarehouseCreate, db: DB, current_user: CurrentUser):
@@ -104,7 +151,9 @@ async def create_warehouse(warehouse_in: schemas.WarehouseCreate, db: DB, curren
 
 @router.get("/warehouses", response_model=List[schemas.WarehouseInDB])
 async def read_warehouses(db: DB, current_user: CurrentUser):
-    return await service.get_warehouses(db)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_warehouses(db, warehouse_ids=ids)
 
 @router.put("/warehouses/{warehouse_id}", response_model=schemas.WarehouseInDB)
 async def update_warehouse(warehouse_id: int, warehouse_in: schemas.WarehouseUpdate, db: DB, current_user: CurrentUser):
@@ -124,17 +173,23 @@ async def read_stock_levels(variant_id: int, db: DB, current_user: CurrentUser):
 
 @router.get("/movements", response_model=List[schemas.StockMovementOut])
 async def read_movements(db: DB, current_user: CurrentUser, skip: int = 0, limit: int = 200):
-    return await service.get_movements(db, skip, limit)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_movements(db, skip, limit, warehouse_ids=ids)
 
 # --- Stats ---
 @router.get("/stats", response_model=schemas.InventoryStats)
 async def read_inventory_stats(db: DB, current_user: CurrentUser):
-    return await service.get_inventory_stats(db)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_inventory_stats(db, warehouse_ids=ids)
 
 # --- Reorder alerts ---
 @router.get("/reorder-alerts", response_model=List[schemas.ReorderAlert])
 async def read_reorder_alerts(db: DB, current_user: CurrentUser):
-    return await service.get_reorder_alerts(db)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_reorder_alerts(db, warehouse_ids=ids)
 
 # --- Purchase Orders ---
 @router.post("/purchase-orders", response_model=schemas.PurchaseOrderInDB)
@@ -143,7 +198,19 @@ async def create_purchase_order(po_in: schemas.PurchaseOrderCreate, db: DB, curr
 
 @router.get("/purchase-orders", response_model=List[schemas.PurchaseOrderInDB])
 async def read_purchase_orders(db: DB, current_user: CurrentUser):
-    return await service.get_purchase_orders(db)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_purchase_orders(db, warehouse_ids=ids)
+
+@router.put("/purchase-orders/{po_id}", response_model=schemas.PurchaseOrderInDB)
+async def update_purchase_order(po_id: int, po_in: schemas.PurchaseOrderUpdate, db: DB, current_user: CurrentUser):
+    try:
+        po = await service.update_purchase_order(db, po_id, po_in)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    return po
 
 @router.post("/purchase-orders/{po_id}/receive", response_model=schemas.PurchaseOrderInDB)
 async def receive_purchase_order(po_id: int, db: DB, current_user: CurrentUser):
@@ -171,6 +238,23 @@ async def pay_purchase_order(po_id: int, pay_in: schemas.SupplierPaymentCreate, 
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
     return po
+
+@router.get("/purchase-orders/{po_id}/pdf")
+async def purchase_order_pdf(po_id: int, db: DB, current_user: CurrentUser):
+    pdf = await service.generate_purchase_order_pdf(db, po_id)
+    if pdf is None:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="OC-{po_id}.pdf"'})
+
+@router.post("/purchase-orders/{po_id}/email")
+async def email_purchase_order(po_id: int, db: DB, current_user: CurrentUser, to: Optional[str] = None):
+    result = await service.email_purchase_order(db, po_id, to=to)
+    if result.get("error") == "not_found":
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    if result.get("error") == "no_recipient":
+        raise HTTPException(status_code=400, detail="El proveedor no tiene correo y no se indicó un destinatario")
+    return result
 
 # --- BOM / Recipes ---
 @router.post("/recipes", response_model=schemas.RecipeInDB)
@@ -213,3 +297,11 @@ async def complete_production_order(prod_id: int, db: DB, current_user: CurrentU
         return await service.complete_production_order(db, prod_id, user_id=current_user.id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/production-orders/{prod_id}/pdf")
+async def production_order_pdf(prod_id: int, db: DB, current_user: CurrentUser):
+    pdf = await service.generate_production_order_pdf(db, prod_id)
+    if pdf is None:
+        raise HTTPException(status_code=404, detail="Production order not found")
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="OP-{prod_id}.pdf"'})

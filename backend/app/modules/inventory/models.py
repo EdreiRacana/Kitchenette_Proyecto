@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Float, Enum, Text
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Float, Enum, Text, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
@@ -15,6 +15,12 @@ class WarehouseType(str, enum.Enum):
     CONSIGNMENT = "consignment"   # stock en poder de un tercero
     TRANSIT = "transit"           # en tránsito entre almacenes
 
+class ProductItemType(str, enum.Enum):
+    FINISHED_GOOD = "finished_good"   # producto terminado, listo para venta
+    RAW_MATERIAL = "raw_material"     # insumo, usado en recetas/producción
+    CONSUMABLE = "consumable"         # consumible (limpieza, empaque, etc.)
+    OTHER = "other"
+
 class Supplier(Base):
     __tablename__ = "suppliers"
 
@@ -27,11 +33,27 @@ class Supplier(Base):
     address = Column(Text, nullable=True)
     lead_time_days = Column(Integer, default=7)
     payment_terms = Column(String, nullable=True)  # ej. "Contado", "30 días"
+    commercial_terms = Column(Text, nullable=True)  # condiciones comerciales
+    extra_contacts = Column(JSON, nullable=True)    # [{name, role, phone, email}, ...]
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     purchase_orders = relationship("PurchaseOrder", back_populates="supplier")
+    documents = relationship("SupplierDocument", back_populates="supplier", cascade="all, delete-orphan")
+
+
+class SupplierDocument(Base):
+    __tablename__ = "supplier_documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False)
+    doc_type = Column(String, nullable=False)  # rfc, acta_constitutiva, caratula_edo_cuenta, otro
+    file_url = Column(String, nullable=False)
+    file_name = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    supplier = relationship("Supplier", back_populates="documents")
 
 
 class Product(Base):
@@ -45,6 +67,9 @@ class Product(Base):
 
     # is_manufactured=True -> el producto se fabrica internamente vía receta (BOM)
     is_manufactured = Column(Boolean, default=False)
+
+    # Clasificación de inventario: producto terminado, insumo, consumible u otro
+    item_type = Column(String, default=ProductItemType.FINISHED_GOOD.value, nullable=False)
 
     # Simple media support for now (URLs)
     image_url = Column(String, nullable=True)
@@ -74,6 +99,7 @@ class ProductVariant(Base):
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
     sku = Column(String, unique=True, index=True, nullable=False)
+    barcode = Column(String, index=True, nullable=True)  # EAN/UPC para búsqueda por código
 
     # Attributes
     size = Column(String, nullable=True)
@@ -104,6 +130,7 @@ class Warehouse(Base):
     name = Column(String, unique=True, index=True, nullable=False)
     location = Column(String, nullable=True)
     type = Column(String, default=WarehouseType.OWN.value, nullable=False)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)  # sucursal asignada
     is_active = Column(Boolean, default=True)
 
 class StockLevel(Base):

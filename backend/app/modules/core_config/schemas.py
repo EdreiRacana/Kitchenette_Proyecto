@@ -27,6 +27,40 @@ class CompanyProfileResponse(CompanyProfileBase):
     class Config:
         from_attributes = True
 
+# -- Branch (Sucursal) Schemas --
+
+class BranchBase(BaseModel):
+    name: str
+    code: Optional[str] = None
+    legal_name: Optional[str] = None
+    tax_id: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    is_primary: Optional[bool] = False
+    is_active: Optional[bool] = True
+
+class BranchCreate(BranchBase):
+    pass
+
+class BranchUpdate(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+    legal_name: Optional[str] = None
+    tax_id: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    is_primary: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+class BranchResponse(BranchBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 # -- System Integration Schemas --
 
 class SystemIntegrationBase(BaseModel):

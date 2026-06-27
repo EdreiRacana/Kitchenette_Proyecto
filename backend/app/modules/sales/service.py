@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import io
+from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
@@ -234,6 +235,7 @@ async def get_orders(
     date_to: Optional[datetime] = None,
     sort_by: str = "created_at",
     sort_dir: str = "desc",
+    branch_warehouse_ids: Optional[List[int]] = None,
 ) -> Tuple[List[models.Order], int]:
     from app.modules.customers import models as cust
 
@@ -241,6 +243,13 @@ async def get_orders(
     count_q = select(func.count(models.Order.id))
 
     conds = []
+    # Aislamiento por sucursal: el pedido se ancla en su almacén (location).
+    # Pedidos sin almacén se consideran globales/compartidos.
+    if branch_warehouse_ids is not None:
+        conds.append(or_(
+            models.Order.warehouse_id.in_(branch_warehouse_ids),
+            models.Order.warehouse_id.is_(None),
+        ))
     if kind:
         conds.append(models.Order.kind == kind)
     if status:
@@ -502,7 +511,8 @@ async def cancel_order(db: AsyncSession, order_id: int, user_id: Optional[int] =
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
-async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None) -> schemas.SalesStats:
+async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None,
+                    branch_warehouse_ids: Optional[List[int]] = None) -> schemas.SalesStats:
     """All KPIs in a SINGLE aggregated query (no rows pulled into Python).
 
     Uses portable conditional aggregation (CASE inside COUNT/SUM) so it runs the
@@ -517,6 +527,8 @@ async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Opt
         date_filters.append(O.created_at >= start)
     if end is not None:
         date_filters.append(O.created_at < end)
+    if branch_warehouse_ids is not None:
+        date_filters.append(or_(O.warehouse_id.in_(branch_warehouse_ids), O.warehouse_id.is_(None)))
 
     stmt = select(
         func.count(case((active, 1))).label("orders_count"),
@@ -539,17 +551,38 @@ async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Opt
     )
 
 
-async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30, end: Optional[datetime] = None) -> List[schemas.TrendPoint]:
+def _branch_cond(O, branch_warehouse_ids):
+    """Condición de aislamiento por sucursal (pedido anclado en su almacén;
+    pedidos sin almacén son globales)."""
+    return or_(O.warehouse_id.in_(branch_warehouse_ids), O.warehouse_id.is_(None))
+
+
+async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30, end: Optional[datetime] = None,
+                       customer_id: Optional[int] = None, branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.TrendPoint]:
     """Aggregate revenue by day in SQL, bounded to the relevant date window so we
     never scan the whole history; then roll days up to week/month in Python.
 
     `end` lets the caller anchor the window somewhere other than "now" (e.g. to
-    build a comparable previous-period series for BI charts).
+    build a comparable previous-period series for BI charts). `customer_id`
+    restricts both the sales and returns series to a single customer.
+
+    "Returns" has no dedicated ledger in this app today; cancelled orders are
+    the closest existing concept (see Order.status), so they're used as the
+    returns series.
     """
     O = models.Order
     mult = {"day": 1, "week": 7, "month": 31}.get(granularity, 1)
     end_bound = end or _now()
     cutoff = end_bound - timedelta(days=days * mult + 1)
+
+    sales_conds = [O.kind == "order", O.status != "cancelled", O.created_at >= cutoff, O.created_at < end_bound]
+    returns_conds = [O.kind == "order", O.status == "cancelled", O.created_at >= cutoff, O.created_at < end_bound]
+    if customer_id is not None:
+        sales_conds.append(O.customer_id == customer_id)
+        returns_conds.append(O.customer_id == customer_id)
+    if branch_warehouse_ids is not None:
+        sales_conds.append(_branch_cond(O, branch_warehouse_ids))
+        returns_conds.append(_branch_cond(O, branch_warehouse_ids))
 
     stmt = (
         select(
@@ -557,12 +590,25 @@ async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30
             func.coalesce(func.sum(O.total_amount), 0.0).label("total"),
             func.count(O.id).label("count"),
         )
-        .where(O.kind == "order", O.status != "cancelled", O.created_at >= cutoff, O.created_at < end_bound)
+        .where(*sales_conds)
         .group_by(func.date(O.created_at))
         .order_by(func.date(O.created_at))
     )
     daily = [(str(row.d)[:10], float(row.total or 0.0), int(row.count or 0))
              for row in (await db.execute(stmt)).all()]
+
+    returns_stmt = (
+        select(
+            func.date(O.created_at).label("d"),
+            func.coalesce(func.sum(O.total_amount), 0.0).label("returns_total"),
+        )
+        .where(*returns_conds)
+        .group_by(func.date(O.created_at))
+    )
+    returns_daily = {str(row.d)[:10]: float(row.returns_total or 0.0)
+                     for row in (await db.execute(returns_stmt)).all()}
+
+    goal_by_month = await _sales_goal_by_month(db, cutoff, end_bound)
 
     def bucket_key(dstr: str) -> str:
         dt = datetime.strptime(dstr, "%Y-%m-%d")
@@ -574,15 +620,154 @@ async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30
 
     buckets: dict[str, list] = {}
     for dstr, total, count in daily:
-        e = buckets.setdefault(bucket_key(dstr), [0.0, 0])
+        e = buckets.setdefault(bucket_key(dstr), [0.0, 0, 0.0, 0.0])
         e[0] += total
         e[1] += count
-    points = [schemas.TrendPoint(period=k, total=_r(v[0]), count=v[1])
-              for k, v in sorted(buckets.items())]
+    for dstr, rtotal in returns_daily.items():
+        e = buckets.setdefault(bucket_key(dstr), [0.0, 0, 0.0, 0.0])
+        e[2] += rtotal
+    for dstr in {d for d, *_ in daily} | set(returns_daily.keys()):
+        dt = datetime.strptime(dstr, "%Y-%m-%d")
+        month_key = dt.strftime("%Y-%m")
+        monthly_goal = goal_by_month.get(month_key)
+        if monthly_goal is not None:
+            days_in_month = monthrange(dt.year, dt.month)[1]
+            per_day_goal = monthly_goal / days_in_month
+            e = buckets.setdefault(bucket_key(dstr), [0.0, 0, 0.0, 0.0])
+            e[3] += per_day_goal
+
+    points = [
+        schemas.TrendPoint(period=k, total=_r(v[0]), count=v[1], returns_total=_r(v[2]),
+                            goal=_r(v[3]) if v[3] else None)
+        for k, v in sorted(buckets.items())
+    ]
     return points[-days:]
 
 
-async def top_customers(db: AsyncSession, limit: int = 5, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.TopCustomer]:
+async def _sales_goal_by_month(db: AsyncSession, start: datetime, end: datetime) -> dict[str, float]:
+    """Pull the income budget tagged as a sales goal (category containing
+    "venta"/"sales") for each "YYYY-MM" period overlapping the window."""
+    from app.modules.finance import models as fin
+
+    periods = set()
+    cur = start.replace(day=1)
+    while cur <= end:
+        periods.add(cur.strftime("%Y-%m"))
+        cur = (cur.replace(day=28) + timedelta(days=4)).replace(day=1)
+
+    if not periods:
+        return {}
+    stmt = select(fin.Budget).where(
+        fin.Budget.type == "income",
+        fin.Budget.period.in_(periods),
+        or_(fin.Budget.category.ilike("%venta%"), fin.Budget.category.ilike("%sales%")),
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    out: dict[str, float] = {}
+    for b in rows:
+        out[b.period] = out.get(b.period, 0.0) + b.amount
+    return out
+
+
+async def get_average_returns(db: AsyncSession, customer_id: Optional[int] = None,
+                              branch_warehouse_ids: Optional[List[int]] = None) -> schemas.AverageReturns:
+    """Average size of cancelled ("returned") orders, optionally scoped to one
+    customer. Cancellations are the closest existing concept to a return."""
+    O = models.Order
+    conds = [O.kind == "order", O.status == "cancelled"]
+    if customer_id is not None:
+        conds.append(O.customer_id == customer_id)
+    if branch_warehouse_ids is not None:
+        conds.append(_branch_cond(O, branch_warehouse_ids))
+    stmt = select(
+        func.coalesce(func.avg(O.total_amount), 0.0).label("avg_amount"),
+        func.count(O.id).label("count"),
+    ).where(*conds)
+    row = (await db.execute(stmt)).one()
+    return schemas.AverageReturns(customer_id=customer_id, average_amount=_r(row.avg_amount or 0.0), count=row.count or 0)
+
+
+async def get_customer_forecast(db: AsyncSession, customer_id: int, months: int = 6) -> schemas.CustomerForecast:
+    """Simple per-customer sales forecast: average of the last `months` of
+    actual sales (cancelled orders excluded), used to project next month, and
+    weighed against the customer's historical share of the company-wide
+    monthly sales goal (Finance `Budget`, type=income, category~venta/sales).
+
+    This is a moving-average forecast, not a statistical model — there isn't
+    enough order volume in this app to justify anything more sophisticated,
+    and a transparent average is easier to audit than a black-box estimate.
+    """
+    from app.modules.customers import models as cust
+
+    O = models.Order
+    now = _now()
+    start = (now.replace(day=1) - timedelta(days=1)).replace(day=1)
+    for _ in range(months - 1):
+        start = (start - timedelta(days=1)).replace(day=1)
+
+    cust_row = (await db.execute(select(cust.Customer).where(cust.Customer.id == customer_id))).scalars().first()
+    customer_name = cust_row.name if cust_row else "Cliente"
+
+    # Group by day in SQL (portable across SQLite/Postgres) and roll up to
+    # months in Python, same approach as sales_trend() above.
+    month_stmt = (
+        select(
+            func.date(O.created_at).label("d"),
+            func.coalesce(func.sum(O.total_amount), 0.0).label("total"),
+        )
+        .where(O.kind == "order", O.status != "cancelled", O.customer_id == customer_id, O.created_at >= start)
+        .group_by(func.date(O.created_at))
+        .order_by(func.date(O.created_at))
+    )
+    rows = (await db.execute(month_stmt)).all()
+    monthly: dict[str, float] = {}
+    for r in rows:
+        month_key = str(r.d)[:7]
+        monthly[month_key] = monthly.get(month_key, 0.0) + float(r.total or 0.0)
+    history_months = sorted(monthly.keys())
+    history_totals = [_r(monthly[m]) for m in history_months]
+
+    avg_monthly = _r(sum(history_totals) / len(history_totals)) if history_totals else 0.0
+    if len(history_totals) >= 3:
+        forecast_next_month = _r(sum(history_totals[-3:]) / 3)
+    elif history_totals:
+        forecast_next_month = avg_monthly
+    else:
+        forecast_next_month = 0.0
+
+    trend_pct = None
+    if len(history_totals) >= 2:
+        prev = history_totals[:-1]
+        prev_avg = sum(prev) / len(prev)
+        if prev_avg:
+            trend_pct = _r((history_totals[-1] - prev_avg) / prev_avg * 100)
+
+    total_stmt = (
+        select(func.coalesce(func.sum(O.total_amount), 0.0))
+        .where(O.kind == "order", O.status != "cancelled", O.created_at >= start)
+    )
+    total_all_customers = float((await db.execute(total_stmt)).scalar() or 0.0)
+    goal_share_pct = _r(sum(history_totals) / total_all_customers) if total_all_customers else None
+
+    next_month_dt = (now.replace(day=1) + timedelta(days=32)).replace(day=1)
+    goal_month = next_month_dt.strftime("%Y-%m")
+    goal_by_month = await _sales_goal_by_month(db, next_month_dt, next_month_dt)
+    goal_amount = goal_by_month.get(goal_month)
+
+    goal_allocated = _r(goal_amount * goal_share_pct) if (goal_amount is not None and goal_share_pct is not None) else None
+    variance_vs_goal = _r(forecast_next_month - goal_allocated) if goal_allocated is not None else None
+
+    return schemas.CustomerForecast(
+        customer_id=customer_id, customer_name=customer_name,
+        history_months=history_months, history_totals=history_totals,
+        avg_monthly=avg_monthly, forecast_next_month=forecast_next_month, trend_pct=trend_pct,
+        goal_month=goal_month, goal_amount=_r(goal_amount) if goal_amount is not None else None,
+        goal_share_pct=goal_share_pct, goal_allocated=goal_allocated, variance_vs_goal=variance_vs_goal,
+    )
+
+
+async def top_customers(db: AsyncSession, limit: int = 5, start: Optional[datetime] = None, end: Optional[datetime] = None,
+                        branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.TopCustomer]:
     from app.modules.customers import models as cust
     O = models.Order
     conds = [O.kind == "order", O.status != "cancelled"]
@@ -590,6 +775,8 @@ async def top_customers(db: AsyncSession, limit: int = 5, start: Optional[dateti
         conds.append(O.created_at >= start)
     if end is not None:
         conds.append(O.created_at < end)
+    if branch_warehouse_ids is not None:
+        conds.append(_branch_cond(O, branch_warehouse_ids))
     stmt = (
         select(
             O.customer_id,
@@ -610,7 +797,8 @@ async def top_customers(db: AsyncSession, limit: int = 5, start: Optional[dateti
     ]
 
 
-async def top_products(db: AsyncSession, limit: int = 5, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.TopProduct]:
+async def top_products(db: AsyncSession, limit: int = 5, start: Optional[datetime] = None, end: Optional[datetime] = None,
+                       branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.TopProduct]:
     O = models.Order
     OI = models.OrderItem
     conds = [O.kind == "order", O.status != "cancelled"]
@@ -618,6 +806,8 @@ async def top_products(db: AsyncSession, limit: int = 5, start: Optional[datetim
         conds.append(O.created_at >= start)
     if end is not None:
         conds.append(O.created_at < end)
+    if branch_warehouse_ids is not None:
+        conds.append(_branch_cond(O, branch_warehouse_ids))
     stmt = (
         select(
             OI.variant_id,
@@ -638,7 +828,8 @@ async def top_products(db: AsyncSession, limit: int = 5, start: Optional[datetim
     ]
 
 
-async def sales_by_seller(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.SalesBySeller]:
+async def sales_by_seller(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None,
+                          branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.SalesBySeller]:
     from app.modules.auth import models as auth_models
     O = models.Order
     conds = [O.kind == "order", O.status != "cancelled"]
@@ -646,6 +837,8 @@ async def sales_by_seller(db: AsyncSession, start: Optional[datetime] = None, en
         conds.append(O.created_at >= start)
     if end is not None:
         conds.append(O.created_at < end)
+    if branch_warehouse_ids is not None:
+        conds.append(_branch_cond(O, branch_warehouse_ids))
     stmt = (
         select(
             O.user_id,
@@ -664,13 +857,16 @@ async def sales_by_seller(db: AsyncSession, start: Optional[datetime] = None, en
     ]
 
 
-async def sales_by_channel(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.SalesByChannel]:
+async def sales_by_channel(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None,
+                           branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.SalesByChannel]:
     O = models.Order
     conds = [O.kind == "order", O.status != "cancelled"]
     if start is not None:
         conds.append(O.created_at >= start)
     if end is not None:
         conds.append(O.created_at < end)
+    if branch_warehouse_ids is not None:
+        conds.append(_branch_cond(O, branch_warehouse_ids))
     stmt = (
         select(
             func.coalesce(O.channel, "Sin canal").label("channel"),

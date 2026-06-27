@@ -4,10 +4,12 @@ from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import datetime, timezone
 from io import BytesIO
+import os
+import uuid
 import pandas as pd
 from app.modules.inventory.models import (
     Product, ProductVariant, Warehouse, StockLevel, StockMovement, StockMovementType,
-    Supplier, StockLot, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus,
+    Supplier, SupplierDocument, StockLot, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus,
     Recipe, RecipeItem, ProductionOrder, ProductionOrderStatus,
 )
 from app.modules.inventory import schemas
@@ -20,14 +22,27 @@ async def create_product(db: AsyncSession, product_in: schemas.ProductCreate) ->
     await db.refresh(db_product)
     return db_product
 
-async def get_products(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[Product]:
-    result = await db.execute(
-        select(Product).offset(skip).limit(limit).options(
-            selectinload(Product.variants).selectinload(ProductVariant.stock_levels).selectinload(StockLevel.warehouse),
-            selectinload(Product.media),
-        )
+async def get_products(db: AsyncSession, skip: int = 0, limit: int = 100, item_type: Optional[str] = None) -> List[Product]:
+    query = select(Product).offset(skip).limit(limit).options(
+        selectinload(Product.variants).selectinload(ProductVariant.stock_levels).selectinload(StockLevel.warehouse),
+        selectinload(Product.media),
     )
+    if item_type:
+        query = query.where(Product.item_type == item_type)
+    result = await db.execute(query)
     return result.scalars().all()
+
+
+def save_compressed_image(content: bytes, filename: str, upload_dir: str, url_prefix: str) -> str:
+    """Comprime/convierte la imagen a WebP para no saturar el almacenamiento."""
+    from PIL import Image
+    img = Image.open(BytesIO(content))
+    img = img.convert("RGB")
+    img.thumbnail((1200, 1200))
+    unique_name = f"{uuid.uuid4()}.webp"
+    path = os.path.join(upload_dir, unique_name)
+    img.save(path, "WEBP", quality=80)
+    return f"/static/{url_prefix}/{unique_name}"
 
 async def get_product(db: AsyncSession, product_id: int) -> Optional[Product]:
     result = await db.execute(
@@ -75,7 +90,9 @@ async def create_supplier(db: AsyncSession, supplier_in: schemas.SupplierCreate)
     return db_supplier
 
 async def get_suppliers(db: AsyncSession) -> List[Supplier]:
-    result = await db.execute(select(Supplier).order_by(Supplier.name))
+    result = await db.execute(
+        select(Supplier).order_by(Supplier.name).options(selectinload(Supplier.documents))
+    )
     return result.scalars().all()
 
 async def update_supplier(db: AsyncSession, supplier_id: int, supplier_in: schemas.SupplierUpdate) -> Optional[Supplier]:
@@ -88,6 +105,37 @@ async def update_supplier(db: AsyncSession, supplier_id: int, supplier_in: schem
     await db.refresh(supplier)
     return supplier
 
+async def delete_supplier(db: AsyncSession, supplier_id: int) -> bool:
+    supplier = await db.get(Supplier, supplier_id)
+    if not supplier:
+        return False
+    existing_po = await db.execute(
+        select(PurchaseOrder).where(PurchaseOrder.supplier_id == supplier_id).limit(1)
+    )
+    if existing_po.scalars().first():
+        raise ValueError("No se puede eliminar: el proveedor tiene órdenes de compra asociadas. Desactívalo en su lugar.")
+    await db.delete(supplier)
+    await db.commit()
+    return True
+
+async def add_supplier_document(db: AsyncSession, supplier_id: int, doc_type: str, file_url: str, file_name: Optional[str]) -> Optional[SupplierDocument]:
+    supplier = await db.get(Supplier, supplier_id)
+    if not supplier:
+        return None
+    doc = SupplierDocument(supplier_id=supplier_id, doc_type=doc_type, file_url=file_url, file_name=file_name)
+    db.add(doc)
+    await db.commit()
+    await db.refresh(doc)
+    return doc
+
+async def delete_supplier_document(db: AsyncSession, supplier_id: int, document_id: int) -> bool:
+    doc = await db.get(SupplierDocument, document_id)
+    if not doc or doc.supplier_id != supplier_id:
+        return False
+    await db.delete(doc)
+    await db.commit()
+    return True
+
 # --- Warehouse Services ---
 async def create_warehouse(db: AsyncSession, warehouse_in: schemas.WarehouseCreate) -> Warehouse:
     db_warehouse = Warehouse(**warehouse_in.model_dump())
@@ -96,8 +144,11 @@ async def create_warehouse(db: AsyncSession, warehouse_in: schemas.WarehouseCrea
     await db.refresh(db_warehouse)
     return db_warehouse
 
-async def get_warehouses(db: AsyncSession) -> List[Warehouse]:
-    result = await db.execute(select(Warehouse))
+async def get_warehouses(db: AsyncSession, warehouse_ids: Optional[List[int]] = None) -> List[Warehouse]:
+    query = select(Warehouse)
+    if warehouse_ids is not None:
+        query = query.where(Warehouse.id.in_(warehouse_ids))
+    result = await db.execute(query)
     return result.scalars().all()
 
 async def update_warehouse(db: AsyncSession, warehouse_id: int, warehouse_in: schemas.WarehouseUpdate) -> Optional[Warehouse]:
@@ -221,13 +272,15 @@ async def get_stock_levels(db: AsyncSession, variant_id: Optional[int] = None) -
     result = await db.execute(query)
     return result.scalars().all()
 
-async def get_movements(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[dict]:
-    result = await db.execute(
+async def get_movements(db: AsyncSession, skip: int = 0, limit: int = 100, warehouse_ids: Optional[List[int]] = None) -> List[dict]:
+    query = (
         select(StockMovement)
         .options(selectinload(StockMovement.variant).selectinload(ProductVariant.product), selectinload(StockMovement.warehouse))
         .order_by(StockMovement.created_at.desc())
-        .offset(skip).limit(limit)
     )
+    if warehouse_ids is not None:
+        query = query.where(StockMovement.warehouse_id.in_(warehouse_ids))
+    result = await db.execute(query.offset(skip).limit(limit))
     movements = result.scalars().all()
     out = []
     for m in movements:
@@ -243,8 +296,8 @@ async def get_movements(db: AsyncSession, skip: int = 0, limit: int = 100) -> Li
 
 
 # --- Reorder alerts -----------------------------------------------------------
-async def get_reorder_alerts(db: AsyncSession) -> List[schemas.ReorderAlert]:
-    result = await db.execute(
+async def get_reorder_alerts(db: AsyncSession, warehouse_ids: Optional[List[int]] = None) -> List[schemas.ReorderAlert]:
+    query = (
         select(StockLevel)
         .options(
             selectinload(StockLevel.variant).selectinload(ProductVariant.product),
@@ -252,6 +305,9 @@ async def get_reorder_alerts(db: AsyncSession) -> List[schemas.ReorderAlert]:
             selectinload(StockLevel.warehouse),
         )
     )
+    if warehouse_ids is not None:
+        query = query.where(StockLevel.warehouse_id.in_(warehouse_ids))
+    result = await db.execute(query)
     levels = result.scalars().all()
     alerts: List[schemas.ReorderAlert] = []
     for lvl in levels:
@@ -276,13 +332,17 @@ async def get_reorder_alerts(db: AsyncSession) -> List[schemas.ReorderAlert]:
     return alerts
 
 
-async def get_inventory_stats(db: AsyncSession) -> schemas.InventoryStats:
+async def get_inventory_stats(db: AsyncSession, warehouse_ids: Optional[List[int]] = None) -> schemas.InventoryStats:
+    # Se parte de TODAS las variantes activas (no solo las que ya tienen un
+    # registro de StockLevel) para que una variante nunca surtida también
+    # cuente como agotada, igual que el cálculo a nivel producto del frontend.
     result = await db.execute(
-        select(StockLevel).options(
-            selectinload(StockLevel.variant).selectinload(ProductVariant.product),
+        select(ProductVariant).where(ProductVariant.is_active == True).options(
+            selectinload(ProductVariant.product),
+            selectinload(ProductVariant.stock_levels),
         )
     )
-    levels = result.scalars().all()
+    all_variants = result.scalars().all()
 
     by_category: dict[str, float] = {}
     total_value = 0.0
@@ -290,11 +350,9 @@ async def get_inventory_stats(db: AsyncSession) -> schemas.InventoryStats:
     out_of_stock = 0
     low_stock = 0
 
-    for lvl in levels:
-        v = lvl.variant
-        if not v:
-            continue
-        available = lvl.quantity - lvl.reserved_quantity
+    for v in all_variants:
+        levels = [lvl for lvl in (v.stock_levels or []) if warehouse_ids is None or lvl.warehouse_id in warehouse_ids]
+        available = sum((lvl.quantity - lvl.reserved_quantity) for lvl in levels)
         unit_cost = v.cost_price if v.cost_price is not None else v.price
         value = available * unit_cost
         category = (v.product.category if v.product and v.product.category else "Sin categoría")
@@ -345,8 +403,44 @@ async def create_purchase_order(db: AsyncSession, po_in: schemas.PurchaseOrderCr
     result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po.id).options(selectinload(PurchaseOrder.items)))
     return result.scalars().first()
 
-async def get_purchase_orders(db: AsyncSession) -> List[PurchaseOrder]:
-    result = await db.execute(select(PurchaseOrder).options(selectinload(PurchaseOrder.items)).order_by(PurchaseOrder.created_at.desc()))
+async def update_purchase_order(db: AsyncSession, po_id: int, po_in: schemas.PurchaseOrderUpdate) -> Optional[PurchaseOrder]:
+    """Edit a PO's supplier/warehouse/notes/due_date/items. Only allowed while
+    the order hasn't been received yet — receiving is what mutates stock, so
+    any edit afterwards would desync the stock ledger from the PO."""
+    result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po_id).options(selectinload(PurchaseOrder.items)))
+    po = result.scalars().first()
+    if not po:
+        return None
+    if po.status not in (PurchaseOrderStatus.DRAFT.value, PurchaseOrderStatus.ORDERED.value):
+        raise ValueError("Solo se pueden editar órdenes en borrador o pendientes de recibir")
+
+    if po_in.supplier_id is not None:
+        po.supplier_id = po_in.supplier_id
+    if po_in.warehouse_id is not None:
+        po.warehouse_id = po_in.warehouse_id
+    if po_in.notes is not None:
+        po.notes = po_in.notes
+    if po_in.due_date is not None:
+        po.due_date = po_in.due_date
+    if po_in.items is not None:
+        for item in list(po.items):
+            await db.delete(item)
+        await db.flush()
+        for item in po_in.items:
+            db.add(PurchaseOrderItem(purchase_order_id=po.id, variant_id=item.variant_id, quantity=item.quantity, unit_cost=item.unit_cost))
+        await db.flush()
+        await db.refresh(po, attribute_names=["items"])
+        po.total_amount = round(sum(it.quantity * it.unit_cost for it in po.items), 2)
+
+    await db.commit()
+    result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po.id).options(selectinload(PurchaseOrder.items)))
+    return result.scalars().first()
+
+async def get_purchase_orders(db: AsyncSession, warehouse_ids: Optional[List[int]] = None) -> List[PurchaseOrder]:
+    query = select(PurchaseOrder).options(selectinload(PurchaseOrder.items)).order_by(PurchaseOrder.created_at.desc())
+    if warehouse_ids is not None:
+        query = query.where(PurchaseOrder.warehouse_id.in_(warehouse_ids))
+    result = await db.execute(query)
     return result.scalars().all()
 
 async def receive_purchase_order(db: AsyncSession, po_id: int, user_id: Optional[int] = None) -> Optional[PurchaseOrder]:
@@ -378,6 +472,106 @@ async def cancel_purchase_order(db: AsyncSession, po_id: int) -> Optional[Purcha
     await db.commit()
     await db.refresh(po)
     return po
+
+
+async def _po_pdf_context(db: AsyncSession, po_id: int):
+    """Gather a PO + its supplier, warehouse, resolved item names and the
+    company profile, ready to feed the PDF builder. Returns None if the PO
+    doesn't exist."""
+    from app.modules.core_config import service as config_service
+
+    result = await db.execute(
+        select(PurchaseOrder).where(PurchaseOrder.id == po_id).options(selectinload(PurchaseOrder.items))
+    )
+    po = result.scalars().first()
+    if not po:
+        return None
+
+    supplier = await db.get(Supplier, po.supplier_id)
+    warehouse = await db.get(Warehouse, po.warehouse_id)
+    company = await config_service.get_company_profile(db)
+
+    item_rows = []
+    for it in po.items:
+        variant = await db.get(ProductVariant, it.variant_id)
+        product = await db.get(Product, variant.product_id) if variant else None
+        item_rows.append({
+            "name": product.name if product else (variant.sku if variant else "—"),
+            "sku": variant.sku if variant else "—",
+            "quantity": it.quantity,
+            "unit_cost": it.unit_cost,
+            "subtotal": round(it.quantity * it.unit_cost, 2),
+        })
+    return po, supplier, (warehouse.name if warehouse else "—"), company, item_rows
+
+
+async def generate_purchase_order_pdf(db: AsyncSession, po_id: int) -> Optional[bytes]:
+    from app.modules.inventory import documents
+    ctx = await _po_pdf_context(db, po_id)
+    if not ctx:
+        return None
+    po, supplier, warehouse_name, company, item_rows = ctx
+    return documents.build_purchase_order_pdf(company, supplier, warehouse_name, po, item_rows)
+
+
+async def email_purchase_order(db: AsyncSession, po_id: int, to: Optional[str] = None) -> dict:
+    """Render the PO as PDF and email it to the supplier (or an override
+    address). Returns {sent: bool, to: str} so the UI can report the outcome
+    honestly even when no SMTP integration is configured."""
+    from app.core.email import send_email
+
+    ctx = await _po_pdf_context(db, po_id)
+    if not ctx:
+        return {"sent": False, "to": "", "error": "not_found"}
+    po, supplier, warehouse_name, company, item_rows = ctx
+    recipient = to or (supplier.email if supplier else None)
+    if not recipient:
+        return {"sent": False, "to": "", "error": "no_recipient"}
+
+    from app.modules.inventory import documents
+    pdf = documents.build_purchase_order_pdf(company, supplier, warehouse_name, po, item_rows)
+    folio = po.folio or f"OC-{po.id}"
+    company_name = getattr(company, "legal_name", None) or "Kitchenette"
+    body = (
+        f"<p>Estimado proveedor,</p>"
+        f"<p>Adjunto encontrará la orden de compra <b>{folio}</b> emitida por {company_name}.</p>"
+        f"<p>Total: <b>${(po.total_amount or 0):,.2f}</b></p>"
+        f"<p>Quedamos atentos. Saludos.</p>"
+    )
+    sent = await send_email(db, to=recipient, subject=f"Orden de compra {folio}", body_html=body,
+                            attachments=[(f"{folio}.pdf", pdf, "pdf")])
+    return {"sent": sent, "to": recipient}
+
+
+async def generate_production_order_pdf(db: AsyncSession, prod_id: int) -> Optional[bytes]:
+    from app.modules.inventory import documents
+    from app.modules.core_config import service as config_service
+
+    prod = await db.get(ProductionOrder, prod_id)
+    if not prod:
+        return None
+    recipe = await get_recipe(db, prod.recipe_id)
+    warehouse = await db.get(Warehouse, prod.warehouse_id)
+    company = await config_service.get_company_profile(db)
+
+    recipe_name = "—"
+    item_rows = []
+    if recipe:
+        if getattr(recipe, "name", None):
+            recipe_name = recipe.name
+        else:
+            out_variant = await db.get(ProductVariant, recipe.output_variant_id)
+            out_product = await db.get(Product, out_variant.product_id) if out_variant else None
+            recipe_name = out_product.name if out_product else (out_variant.sku if out_variant else "—")
+        for it in recipe.items:
+            variant = await db.get(ProductVariant, it.input_variant_id)
+            product = await db.get(Product, variant.product_id) if variant else None
+            item_rows.append({
+                "name": product.name if product else (variant.sku if variant else "—"),
+                "sku": variant.sku if variant else "—",
+                "quantity": it.quantity * prod.runs,
+            })
+    return documents.build_production_order_pdf(company, prod, recipe_name, warehouse.name if warehouse else "—", item_rows)
 
 
 async def pay_purchase_order(db: AsyncSession, po_id: int, pay_in: "schemas.SupplierPaymentCreate", user_id: Optional[int] = None) -> Optional[PurchaseOrder]:
@@ -533,7 +727,7 @@ async def complete_production_order(db: AsyncSession, prod_id: int, user_id: Opt
 
 # --- Carga masiva (Excel/CSV) ---------------------------------------------------
 PRODUCTS_TEMPLATE_COLUMNS = [
-    "sku", "producto", "categoria", "fabricado_interno", "talla", "color", "material",
+    "sku", "codigo_barras", "producto", "categoria", "imagen_url", "fabricado_interno", "talla", "color", "material",
     "precio", "costo", "almacen", "stock_inicial", "punto_reorden", "stock_seguridad",
     "dias_entrega_proveedor",
 ]
@@ -623,10 +817,14 @@ async def bulk_import_products(db: AsyncSession, file_bytes: bytes, filename: st
                         name=product_name,
                         category=str(row.get("categoria", "")).strip() or None,
                         is_manufactured=_to_bool_si_no(row.get("fabricado_interno", "no")),
+                        image_url=str(row.get("imagen_url", "")).strip() or None,
                     )
                     db.add(product)
                     await db.flush()
                 products_by_name[product_name.lower()] = product
+            img_url = str(row.get("imagen_url", "")).strip()
+            if img_url and not product.image_url:
+                product.image_url = img_url
 
             result = await db.execute(select(ProductVariant).where(ProductVariant.sku == sku))
             variant = result.scalars().first()
@@ -635,6 +833,7 @@ async def bulk_import_products(db: AsyncSession, file_bytes: bytes, filename: st
                 variant.price = price
                 if cost_price is not None:
                     variant.cost_price = cost_price
+                variant.barcode = str(row.get("codigo_barras", "")).strip() or None
                 variant.size = str(row.get("talla", "")).strip() or None
                 variant.color = str(row.get("color", "")).strip() or None
                 variant.material = str(row.get("material", "")).strip() or None
@@ -645,6 +844,7 @@ async def bulk_import_products(db: AsyncSession, file_bytes: bytes, filename: st
             else:
                 variant = ProductVariant(
                     product_id=product.id, sku=sku, price=price, cost_price=cost_price,
+                    barcode=str(row.get("codigo_barras", "")).strip() or None,
                     size=str(row.get("talla", "")).strip() or None,
                     color=str(row.get("color", "")).strip() or None,
                     material=str(row.get("material", "")).strip() or None,

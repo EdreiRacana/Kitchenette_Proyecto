@@ -21,12 +21,26 @@ def _require_manager(current_user: User):
         raise HTTPException(status_code=403, detail="Se requiere rol admin o manager para esta acción")
 
 
+def _finance_branch(current_user: User) -> Optional[int]:
+    """Sucursal a la que se restringe Finanzas. None = ve todo (superusuario o
+    usuario sin sucursal). Aplica a transacciones, bancos y presupuestos."""
+    if getattr(current_user, "is_superuser", False):
+        return None
+    return getattr(current_user, "branch_id", None)
+
+
+async def _finance_warehouse_ids(db, current_user: User):
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    return await visible_warehouse_ids(db, current_user)
+
+
 @router.get("/dashboard", response_model=schemas.FinanceDashboard)
 async def read_dashboard(
     db: Annotated[AsyncSession, Depends(deps.get_db)],
     current_user: Annotated[User, Depends(deps.get_current_active_user)],
 ):
-    return await service.get_dashboard(db)
+    wh = await _finance_warehouse_ids(db, current_user)
+    return await service.get_dashboard(db, branch_id=_finance_branch(current_user), branch_warehouse_ids=wh)
 
 
 @router.post("/transactions", response_model=schemas.TransactionInDB)
@@ -35,7 +49,7 @@ async def create_transaction(
     db: Annotated[AsyncSession, Depends(deps.get_db)],
     current_user: Annotated[User, Depends(deps.get_current_active_user)],
 ):
-    return await service.create_transaction(db, tx_in, user_id=current_user.id)
+    return await service.create_transaction(db, tx_in, user_id=current_user.id, branch_id=_finance_branch(current_user))
 
 
 @router.get("/transactions", response_model=List[schemas.TransactionInDB])
@@ -46,7 +60,7 @@ async def read_transactions(
     limit: int = 100,
     type: Optional[str] = None,
 ):
-    return await service.get_transactions(db, skip=skip, limit=limit, type=type)
+    return await service.get_transactions(db, skip=skip, limit=limit, type=type, branch_id=_finance_branch(current_user))
 
 
 @router.put("/transactions/{tx_id}", response_model=schemas.TransactionInDB)
@@ -82,7 +96,9 @@ async def upload_transaction_attachment(tx_id: int, db: DB, current_user: Curren
 # --- CXC ---
 @router.get("/cxc", response_model=List[schemas.AgingItem])
 async def read_cxc(db: DB, current_user: CurrentUser):
-    return await service.get_cxc(db)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_cxc(db, branch_warehouse_ids=ids)
 
 
 LARGE_PAYMENT_THRESHOLD = 10000.0
@@ -104,7 +120,9 @@ async def pay_cxc(order_id: int, pay_in: schemas.PayDebtRequest, db: DB, current
 # --- CXP ---
 @router.get("/cxp", response_model=List[schemas.AgingItem])
 async def read_cxp(db: DB, current_user: CurrentUser):
-    return await service.get_cxp(db)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_cxp(db, branch_warehouse_ids=ids)
 
 
 @router.post("/cxp/{po_id}/pay")
@@ -123,12 +141,12 @@ async def pay_cxp(po_id: int, pay_in: schemas.PayDebtRequest, db: DB, current_us
 # --- Bancos ---
 @router.get("/banks", response_model=List[schemas.BankAccountInDB])
 async def read_banks(db: DB, current_user: CurrentUser):
-    return await service.get_banks(db)
+    return await service.get_banks(db, branch_id=_finance_branch(current_user))
 
 
 @router.post("/banks", response_model=schemas.BankAccountInDB)
 async def create_bank(bank_in: schemas.BankAccountCreate, db: DB, current_user: CurrentUser):
-    return await service.create_bank(db, bank_in)
+    return await service.create_bank(db, bank_in, branch_id=_finance_branch(current_user))
 
 
 @router.delete("/banks/{bank_id}", response_model=schemas.BankAccountInDB)
@@ -201,12 +219,12 @@ async def reconcile_movement(movement_id: int, data: schemas.ReconcileRequest, d
 # --- Presupuestos ---
 @router.get("/budgets", response_model=List[schemas.BudgetInDB])
 async def read_budgets(db: DB, current_user: CurrentUser, period: Optional[str] = None):
-    return await service.get_budgets(db, period=period)
+    return await service.get_budgets(db, period=period, branch_id=_finance_branch(current_user))
 
 
 @router.post("/budgets", response_model=schemas.BudgetInDB)
 async def create_budget(data: schemas.BudgetCreate, db: DB, current_user: CurrentUser):
-    return await service.create_budget(db, data)
+    return await service.create_budget(db, data, branch_id=_finance_branch(current_user))
 
 
 @router.delete("/budgets/{budget_id}")
@@ -261,6 +279,18 @@ async def read_scheduled_payments(db: DB, current_user: CurrentUser, status: Opt
     return await service.get_scheduled_payments(db, status=status)
 
 
+@router.post("/scheduled-payments/send-reminders")
+async def send_payment_reminders(db: DB, current_user: CurrentUser, lead_days: int = 7):
+    """Envía ahora, manualmente, los recordatorios de pagos próximos/vencidos
+    al correo de contacto de la empresa. Devuelve cuántos se enviaron (0 si no
+    hay correo configurado en Configuración > Integraciones)."""
+    try:
+        sent = await service.send_scheduled_payment_reminders(db, lead_days=lead_days)
+        return {"sent": sent}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/scheduled-payments", response_model=schemas.ScheduledPaymentInDB)
 async def create_scheduled_payment(data: schemas.ScheduledPaymentCreate, db: DB, current_user: CurrentUser):
     return await service.create_scheduled_payment(db, data, user_id=current_user.id)
@@ -277,17 +307,17 @@ async def cancel_scheduled_payment(sp_id: int, db: DB, current_user: CurrentUser
 # --- Reportes P&L y comparativo ---
 @router.get("/reports/pnl", response_model=schemas.PnLReport)
 async def read_pnl(db: DB, current_user: CurrentUser, start: datetime, end: datetime):
-    return await service.get_pnl_report(db, start, end)
+    return await service.get_pnl_report(db, start, end, branch_id=_finance_branch(current_user))
 
 
 @router.get("/reports/comparison", response_model=schemas.PeriodComparison)
 async def read_period_comparison(db: DB, current_user: CurrentUser, start: datetime, end: datetime):
-    return await service.get_period_comparison(db, start, end)
+    return await service.get_period_comparison(db, start, end, branch_id=_finance_branch(current_user))
 
 
 @router.get("/reports/pnl/export")
 async def export_pnl_pdf(db: DB, current_user: CurrentUser, start: datetime, end: datetime):
-    report = await service.get_pnl_report(db, start, end)
+    report = await service.get_pnl_report(db, start, end, branch_id=_finance_branch(current_user))
     pdf_bytes = service.generate_pnl_pdf(report)
     return Response(content=pdf_bytes, media_type="application/pdf", headers={
         "Content-Disposition": f"attachment; filename=pnl_{start.date()}_{end.date()}.pdf"

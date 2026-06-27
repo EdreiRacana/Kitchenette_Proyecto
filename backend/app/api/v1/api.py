@@ -10,6 +10,8 @@ from app.modules.finance.router import router as finance_router
 from app.modules.core_config.router import router as config_router
 from app.modules.ingesta.router import router as ingesta_router
 from app.modules.hr.router import router as hr_router
+from app.modules.search.router import router as search_router
+from app.modules.notifications.router import router as notifications_router
 
 api_router.include_router(auth_router,      prefix="/auth",       tags=["auth"])
 api_router.include_router(inventory_router, prefix="/inventory",  tags=["inventory"])
@@ -19,6 +21,8 @@ api_router.include_router(finance_router,   prefix="/finance",    tags=["finance
 api_router.include_router(config_router,    prefix="/config",     tags=["configuration"])
 api_router.include_router(ingesta_router,   prefix="/ingesta",    tags=["ingesta"])
 api_router.include_router(hr_router,        prefix="/hr",         tags=["hr"])
+api_router.include_router(search_router,    prefix="/search",     tags=["search"])
+api_router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
 
 @api_router.get("/")
 async def root():

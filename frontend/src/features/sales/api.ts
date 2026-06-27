@@ -3,13 +3,14 @@
 import api from "../../services/api";
 import type {
   Order, Paginated, SalesStats, TrendPoint, TopCustomer, TopProduct,
-  SalesBySeller, SalesByChannel, OrderFilters, OrderDraft, CustomerLite,
+  SalesBySeller, SalesByChannel, OrderFilters, OrderDraft, CustomerLite, AverageReturns, CustomerForecast,
 } from "./types";
 
 export interface VariantOption {
   variant_id: number;
   label: string;
   sku: string;
+  barcode?: string | null;
   price: number;
 }
 
@@ -90,8 +91,20 @@ export const salesApi = {
     const { data } = await api.get<SalesStats>(`/sales/stats`, { params: { start, end } });
     return data;
   },
-  async trend(granularity = "day", days = 30, end?: string): Promise<TrendPoint[]> {
-    const { data } = await api.get<TrendPoint[]>(`/sales/analytics/trend`, { params: { granularity, days, end } });
+  async trend(granularity = "day", days = 30, end?: string, customerId?: number | null): Promise<TrendPoint[]> {
+    const { data } = await api.get<TrendPoint[]>(`/sales/analytics/trend`, {
+      params: { granularity, days, end, customer_id: customerId ?? undefined },
+    });
+    return data;
+  },
+  async returnsAvg(customerId?: number | null): Promise<AverageReturns> {
+    const { data } = await api.get<AverageReturns>(`/sales/analytics/returns-avg`, {
+      params: { customer_id: customerId ?? undefined },
+    });
+    return data;
+  },
+  async customerForecast(customerId: number, months = 6): Promise<CustomerForecast> {
+    const { data } = await api.get<CustomerForecast>(`/sales/analytics/forecast/${customerId}`, { params: { months } });
     return data;
   },
   async topCustomers(limit = 5, start?: string, end?: string): Promise<TopCustomer[]> {
@@ -122,7 +135,7 @@ export const salesApi = {
     return data;
   },
   async variantOptions(): Promise<VariantOption[]> {
-    type Variant = { id: number; sku: string; price: number; size?: string | null; color?: string | null };
+    type Variant = { id: number; sku: string; barcode?: string | null; price: number; size?: string | null; color?: string | null };
     type Product = { name: string; variants: Variant[] };
     const { data } = await api.get<Product[]>(`/inventory/products`);
     const opts: VariantOption[] = [];
@@ -133,6 +146,7 @@ export const salesApi = {
           variant_id: v.id,
           label: attrs ? `${p.name} · ${attrs}` : p.name,
           sku: v.sku,
+          barcode: v.barcode ?? null,
           price: v.price,
         });
       }

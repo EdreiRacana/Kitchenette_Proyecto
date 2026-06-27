@@ -110,8 +110,23 @@ export interface SalesStats {
   quotes_count: number;
 }
 
-export interface TrendPoint { period: string; total: number; count: number; }
+export interface TrendPoint { period: string; total: number; count: number; returns_total: number; goal: number | null; }
 export interface TopCustomer { customer_id: number | null; name: string; total: number; orders: number; }
+export interface AverageReturns { customer_id: number | null; average_amount: number; count: number; }
+export interface CustomerForecast {
+  customer_id: number | null;
+  customer_name: string;
+  history_months: string[];
+  history_totals: number[];
+  avg_monthly: number;
+  forecast_next_month: number;
+  trend_pct: number | null;
+  goal_month: string | null;
+  goal_amount: number | null;
+  goal_share_pct: number | null;
+  goal_allocated: number | null;
+  variance_vs_goal: number | null;
+}
 export interface TopProduct { variant_id: number | null; name: string; quantity: number; total: number; }
 export interface SalesBySeller { user_id: number | null; name: string; total: number; orders: number; }
 export interface SalesByChannel { channel: string; total: number; orders: number; }

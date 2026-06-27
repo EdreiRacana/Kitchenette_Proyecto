@@ -1,8 +1,68 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from .models import CompanyProfile, SystemIntegration, AuditLog
-from .schemas import CompanyProfileCreate, CompanyProfileUpdate, SystemIntegrationCreate, SystemIntegrationUpdate, AuditLogBase
+from .models import CompanyProfile, SystemIntegration, AuditLog, Branch
+from .schemas import CompanyProfileCreate, CompanyProfileUpdate, SystemIntegrationCreate, SystemIntegrationUpdate, AuditLogBase, BranchCreate, BranchUpdate
 import uuid
+
+
+# -- Branches (Sucursales) --
+
+async def get_branches(db: AsyncSession):
+    result = await db.execute(select(Branch).order_by(Branch.is_primary.desc(), Branch.name))
+    return result.scalars().all()
+
+
+async def get_branch(db: AsyncSession, branch_id: int):
+    result = await db.execute(select(Branch).where(Branch.id == branch_id))
+    return result.scalars().first()
+
+
+async def _clear_primary(db: AsyncSession, except_id: int | None = None):
+    rows = (await db.execute(select(Branch).where(Branch.is_primary == True))).scalars().all()  # noqa: E712
+    for b in rows:
+        if except_id is None or b.id != except_id:
+            b.is_primary = False
+
+
+async def create_branch(db: AsyncSession, obj_in: BranchCreate):
+    data = obj_in.model_dump()
+    # La primera sucursal es matriz por defecto; si se marca matriz, se desmarca el resto.
+    existing = (await db.execute(select(Branch))).scalars().first()
+    if existing is None:
+        data["is_primary"] = True
+    if data.get("is_primary"):
+        await _clear_primary(db)
+    db_obj = Branch(**data)
+    db.add(db_obj)
+    await db.commit()
+    await db.refresh(db_obj)
+    return db_obj
+
+
+async def update_branch(db: AsyncSession, db_obj: Branch, obj_in: BranchUpdate):
+    data = obj_in.model_dump(exclude_unset=True)
+    if data.get("is_primary"):
+        await _clear_primary(db, except_id=db_obj.id)
+    for field, value in data.items():
+        setattr(db_obj, field, value)
+    db.add(db_obj)
+    await db.commit()
+    await db.refresh(db_obj)
+    return db_obj
+
+
+async def delete_branch(db: AsyncSession, db_obj: Branch) -> bool:
+    if db_obj.is_primary:
+        raise ValueError("No se puede eliminar la sucursal matriz. Marca otra como matriz primero.")
+    from app.modules.inventory.models import Warehouse
+    from app.modules.auth.models import User
+    for w in (await db.execute(select(Warehouse).where(Warehouse.branch_id == db_obj.id))).scalars().all():
+        w.branch_id = None
+    for u in (await db.execute(select(User).where(User.branch_id == db_obj.id))).scalars().all():
+        u.branch_id = None
+    await db.delete(db_obj)
+    await db.commit()
+    return True
 
 # -- Company Profile --
 

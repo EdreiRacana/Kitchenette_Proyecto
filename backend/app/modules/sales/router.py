@@ -24,38 +24,62 @@ CurrentUser = Annotated[User, Depends(deps.get_current_active_user)]
 # ── Analytics (declared before /{order_id} so paths don't collide) ────────────
 
 @router.get("/stats", response_model=schemas.SalesStats)
-async def stats(db: DB, _: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
-    return await service.get_stats(db, start=start, end=end)
+async def stats(db: DB, current_user: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_stats(db, start=start, end=end, branch_warehouse_ids=ids)
+
+
+async def _branch_ids(db, user):
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    return await visible_warehouse_ids(db, user)
 
 
 @router.get("/analytics/trend", response_model=List[schemas.TrendPoint])
-async def trend(db: DB, _: CurrentUser,
+async def trend(db: DB, current_user: CurrentUser,
                 granularity: str = Query("day", pattern="^(day|week|month)$"),
                 days: int = Query(30, ge=1, le=365),
-                end: Optional[datetime] = None):
-    return await service.sales_trend(db, granularity=granularity, days=days, end=end)
+                end: Optional[datetime] = None,
+                customer_id: Optional[int] = None):
+    ids = await _branch_ids(db, current_user)
+    return await service.sales_trend(db, granularity=granularity, days=days, end=end, customer_id=customer_id, branch_warehouse_ids=ids)
+
+
+@router.get("/analytics/returns-avg", response_model=schemas.AverageReturns)
+async def returns_avg(db: DB, current_user: CurrentUser, customer_id: Optional[int] = None):
+    ids = await _branch_ids(db, current_user)
+    return await service.get_average_returns(db, customer_id=customer_id, branch_warehouse_ids=ids)
+
+
+@router.get("/analytics/forecast/{customer_id}", response_model=schemas.CustomerForecast)
+async def customer_forecast(customer_id: int, db: DB, _: CurrentUser, months: int = Query(6, ge=2, le=24)):
+    return await service.get_customer_forecast(db, customer_id, months=months)
 
 
 @router.get("/analytics/top-customers", response_model=List[schemas.TopCustomer])
-async def top_customers(db: DB, _: CurrentUser, limit: int = Query(5, ge=1, le=50),
+async def top_customers(db: DB, current_user: CurrentUser, limit: int = Query(5, ge=1, le=50),
                          start: Optional[datetime] = None, end: Optional[datetime] = None):
-    return await service.top_customers(db, limit=limit, start=start, end=end)
+    ids = await _branch_ids(db, current_user)
+    return await service.top_customers(db, limit=limit, start=start, end=end, branch_warehouse_ids=ids)
 
 
 @router.get("/analytics/top-products", response_model=List[schemas.TopProduct])
-async def top_products(db: DB, _: CurrentUser, limit: int = Query(5, ge=1, le=50),
+async def top_products(db: DB, current_user: CurrentUser, limit: int = Query(5, ge=1, le=50),
                         start: Optional[datetime] = None, end: Optional[datetime] = None):
-    return await service.top_products(db, limit=limit, start=start, end=end)
+    ids = await _branch_ids(db, current_user)
+    return await service.top_products(db, limit=limit, start=start, end=end, branch_warehouse_ids=ids)
 
 
 @router.get("/analytics/by-seller", response_model=List[schemas.SalesBySeller])
-async def by_seller(db: DB, _: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
-    return await service.sales_by_seller(db, start=start, end=end)
+async def by_seller(db: DB, current_user: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
+    ids = await _branch_ids(db, current_user)
+    return await service.sales_by_seller(db, start=start, end=end, branch_warehouse_ids=ids)
 
 
 @router.get("/analytics/by-channel", response_model=List[schemas.SalesByChannel])
-async def by_channel(db: DB, _: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
-    return await service.sales_by_channel(db, start=start, end=end)
+async def by_channel(db: DB, current_user: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
+    ids = await _branch_ids(db, current_user)
+    return await service.sales_by_channel(db, start=start, end=end, branch_warehouse_ids=ids)
 
 
 @router.get("/customers/{customer_id}/360", response_model=schemas.Customer360)
@@ -105,7 +129,7 @@ async def create_order(order_in: schemas.OrderCreate, db: DB, user: CurrentUser)
 
 @router.get("/", response_model=schemas.PaginatedOrders)
 async def read_orders(
-    db: DB, _: CurrentUser,
+    db: DB, current_user: CurrentUser,
     skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=500),
     kind: Optional[str] = None, status: Optional[str] = None,
     customer_id: Optional[int] = None, seller_id: Optional[int] = None,
@@ -114,10 +138,13 @@ async def read_orders(
     date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
     sort_by: str = Query("created_at"), sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
 ):
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
     items, total = await service.get_orders(
         db, skip=skip, limit=limit, kind=kind, status=status, customer_id=customer_id,
         seller_id=seller_id, payment_method=payment_method, channel=channel, q=q,
         date_from=date_from, date_to=date_to, sort_by=sort_by, sort_dir=sort_dir,
+        branch_warehouse_ids=ids,
     )
     return schemas.PaginatedOrders(items=items, total=total, skip=skip, limit=limit)
 

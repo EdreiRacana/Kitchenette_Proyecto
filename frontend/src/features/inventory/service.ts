@@ -3,6 +3,7 @@ import api from '../../services/api';
 export interface Variant {
     id: number;
     sku: string;
+    barcode?: string;
     size?: string;
     color?: string;
     material?: string;
@@ -16,6 +17,8 @@ export interface Variant {
     stock_levels?: StockLevel[];
 }
 
+export type ProductItemType = 'finished_good' | 'raw_material' | 'consumable' | 'other';
+
 export interface Product {
     id: number;
     name: string;
@@ -24,6 +27,7 @@ export interface Product {
     image_url?: string;
     is_active: boolean;
     is_manufactured?: boolean;
+    item_type?: ProductItemType;
     created_at: string;
     variants: Variant[];
 }
@@ -41,7 +45,18 @@ export interface Warehouse {
     name: string;
     location?: string;
     type: 'own' | 'marketplace' | 'consignment' | 'transit';
+    branch_id?: number | null;
     is_active: boolean;
+}
+
+export interface SupplierContact { name: string; role?: string; phone?: string; email?: string; }
+export interface SupplierDocument {
+    id: number;
+    supplier_id: number;
+    doc_type: string;
+    file_url: string;
+    file_name?: string;
+    created_at: string;
 }
 
 export interface Supplier {
@@ -54,9 +69,12 @@ export interface Supplier {
     address?: string;
     lead_time_days?: number;
     payment_terms?: string;
+    commercial_terms?: string;
+    extra_contacts?: SupplierContact[];
     notes?: string;
     is_active: boolean;
     created_at: string;
+    documents?: SupplierDocument[];
 }
 
 export interface Movement {
@@ -167,10 +185,15 @@ function downloadBlob(blob: Blob, filename: string) {
 
 export const inventoryService = {
     // Products
-    getProducts: async () => (await api.get<Product[]>('/inventory/products')).data,
+    getProducts: async (itemType?: ProductItemType) => (await api.get<Product[]>('/inventory/products', { params: itemType ? { item_type: itemType } : {} })).data,
     getProduct: async (id: number) => (await api.get<Product>(`/inventory/products/${id}`)).data,
     createProduct: async (data: any) => (await api.post('/inventory/products', data)).data,
     updateProduct: async (id: number, data: any) => (await api.put(`/inventory/products/${id}`, data)).data,
+    uploadProductImage: async (file: File) => {
+        const fd = new FormData();
+        fd.append('file', file);
+        return (await api.post<{ url: string }>('/inventory/products/upload-image', fd, { headers: { 'Content-Type': 'multipart/form-data' } })).data;
+    },
 
     // Variants
     createVariant: async (data: any) => (await api.post('/inventory/variants', data)).data,
@@ -180,6 +203,16 @@ export const inventoryService = {
     getSuppliers: async () => (await api.get<Supplier[]>('/inventory/suppliers')).data,
     createSupplier: async (data: any) => (await api.post('/inventory/suppliers', data)).data,
     updateSupplier: async (id: number, data: any) => (await api.put(`/inventory/suppliers/${id}`, data)).data,
+    deleteSupplier: async (id: number) => (await api.delete(`/inventory/suppliers/${id}`)).data,
+    uploadSupplierDocument: async (id: number, docType: string, file: File) => {
+        const fd = new FormData();
+        fd.append('file', file);
+        return (await api.post<SupplierDocument>(`/inventory/suppliers/${id}/documents`, fd, { params: { doc_type: docType }, headers: { 'Content-Type': 'multipart/form-data' } })).data;
+    },
+    deleteSupplierDocument: async (supplierId: number, docId: number) => (await api.delete(`/inventory/suppliers/${supplierId}/documents/${docId}`)).data,
+
+    // Branches (sucursales) — para asignar almacenes a una sucursal
+    getBranches: async () => (await api.get<{ id: number; name: string; is_primary: boolean }[]>('/config/branches')).data,
 
     // Warehouses
     getWarehouses: async () => (await api.get<Warehouse[]>('/inventory/warehouses')).data,
@@ -198,8 +231,15 @@ export const inventoryService = {
     // Purchase orders
     getPurchaseOrders: async () => (await api.get<PurchaseOrder[]>('/inventory/purchase-orders')).data,
     createPurchaseOrder: async (data: any) => (await api.post('/inventory/purchase-orders', data)).data,
+    updatePurchaseOrder: async (id: number, data: any) => (await api.put(`/inventory/purchase-orders/${id}`, data)).data,
     receivePurchaseOrder: async (id: number) => (await api.post(`/inventory/purchase-orders/${id}/receive`)).data,
     cancelPurchaseOrder: async (id: number) => (await api.post(`/inventory/purchase-orders/${id}/cancel`)).data,
+    downloadPurchaseOrderPdf: async (id: number, folio?: string) => {
+        const res = await api.get(`/inventory/purchase-orders/${id}/pdf`, { responseType: 'blob' });
+        downloadBlob(res.data, `${folio || `OC-${id}`}.pdf`);
+    },
+    emailPurchaseOrder: async (id: number, to?: string) =>
+        (await api.post<{ sent: boolean; to: string }>(`/inventory/purchase-orders/${id}/email`, null, { params: to ? { to } : {} })).data,
 
     // Recipes (BOM)
     getRecipes: async () => (await api.get<Recipe[]>('/inventory/recipes')).data,
@@ -211,6 +251,10 @@ export const inventoryService = {
     getProductionOrders: async () => (await api.get<ProductionOrder[]>('/inventory/production-orders')).data,
     createProductionOrder: async (data: any) => (await api.post('/inventory/production-orders', data)).data,
     completeProductionOrder: async (id: number) => (await api.post(`/inventory/production-orders/${id}/complete`)).data,
+    downloadProductionOrderPdf: async (id: number, folio?: string) => {
+        const res = await api.get(`/inventory/production-orders/${id}/pdf`, { responseType: 'blob' });
+        downloadBlob(res.data, `${folio || `OP-${id}`}.pdf`);
+    },
 
     // Carga masiva (Excel/CSV)
     downloadProductsTemplate: async () => {

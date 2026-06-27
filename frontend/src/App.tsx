@@ -8,6 +8,7 @@ import {
   FileText, FileWarning, Mail, Bell, Maximize2, X, TrendingDown, Activity,
   Zap, Award, Eye, Check, IdCard, Settings, Plus, Search, Globe, Sun, Moon,
   Lock, LogOut, User as UserIcon, Menu, UserCircle2, ShoppingBag, Box,
+  Truck, ClipboardList,
 } from "lucide-react";
 import SalesCRM from "./features/sales/SalesCRM";
 import CustomersModule from "./features/customers/CustomersModule";
@@ -18,7 +19,13 @@ import HRModule from "./features/hr/HRModule";
 import BIModule from "./features/bi/BIModule";
 import ConfigModule from "./features/config/ConfigModule";
 import api from "./services/api";
-import { customersApi } from "./features/customers/api";
+import configService from "./features/config/service";
+
+// Mapa de id de módulo del menú → clave de permiso del backend (rbac.py).
+const NAV_PERM = {
+  dashboard: "dashboard", ventas: "sales", clientes: "customers", inventario: "inventory",
+  finanzas: "finance", rh: "hr", reportes: "reports", config: "config",
+};
 import { salesApi } from "./features/sales/api";
 import { inventoryService } from "./features/inventory/service";
 
@@ -65,7 +72,7 @@ const STRINGS = {
     monShort: MON_ES,
     cal: { months: ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"], dows: ["L", "M", "X", "J", "V", "S", "D"] },
     nav: { dashboard: "Tablero", ventas: "Ventas / CRM", clientes: "Clientes", inventario: "Inventario", finanzas: "Finanzas", rh: "RH / Nómina", reportes: "Reportes / BI", config: "Configuración" },
-    modules: "MÓDULOS", search: "Buscar productos, clientes, folios…", role: "Administrador",
+    modules: "MÓDULOS", search: "Nexus — buscar en todo el sistema…", role: "Administrador",
     api: "API", soonTag: "pronto",
     secure: "Sistema Seguro",
     login: { user: "Usuario", pass: "Contraseña", enter: "Entrar al sistema", demo: "Demo · cualquier credencial entra", platform: "Plataforma Sthenova · el logo de cada empresa cliente se configura por separado" },
@@ -99,7 +106,7 @@ const STRINGS = {
     monShort: MON_EN,
     cal: { months: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"], dows: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] },
     nav: { dashboard: "Dashboard", ventas: "Sales / CRM", clientes: "Customers", inventario: "Inventory", finanzas: "Finance", rh: "HR / Payroll", reportes: "Reports / BI", config: "Settings" },
-    modules: "MODULES", search: "Search products, customers, orders…", role: "Administrator",
+    modules: "MODULES", search: "Nexus — search the whole system…", role: "Administrator",
     api: "API", soonTag: "soon",
     secure: "Secure System",
     login: { user: "User", pass: "Password", enter: "Sign in", demo: "Demo · any credentials work", platform: "Sthenova platform · each client company's logo is configured separately" },
@@ -285,7 +292,7 @@ const MODULES = [
   { id: "reportes", icon: BarChart3 }, { id: "config", icon: Settings },
 ];
 
-const mxn = (n) => "$" + n.toLocaleString("es-MX");
+const mxn = (n) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const mxnShort = (n) => n >= 1000000 ? "$" + (n / 1000000).toFixed(1) + "M" : n >= 1000 ? "$" + Math.round(n / 1000) + "k" : "$" + n;
 const statusColor = (t, d) => (d >= 3 ? t.good : d >= 0 ? t.warn : t.bad);
 const pillColor = (t) => ({ Pagado: t.good, Pendiente: t.warn, Parcial: t.nova, Agotado: t.bad, Mayoreo: t.nova, Frecuente: t.good, "Crédito": t.warn });
@@ -787,10 +794,11 @@ function Login({ t, s, lang, onEnter }) {
 }
 
 /* ============================ Sidebar ============================ */
-function Sidebar({ t, s, page, setPage, collapsed, setCollapsed, mobile, mobileOpen, setMobileOpen }) {
+function Sidebar({ t, s, page, setPage, collapsed, setCollapsed, mobile, mobileOpen, setMobileOpen, allowedIds }) {
   const w = mobile ? 248 : (collapsed ? 72 : 248);
   const showLabels = mobile || !collapsed;
   const goTo = (id) => { setPage(id); if (mobile) setMobileOpen(false); };
+  const modules = allowedIds ? MODULES.filter((m) => allowedIds.includes(m.id)) : MODULES;
   return (
     <>
       {mobile && mobileOpen && (
@@ -809,7 +817,7 @@ function Sidebar({ t, s, page, setPage, collapsed, setCollapsed, mobile, mobileO
         </div>
         <nav style={{ flex: 1, padding: "12px 10px", overflowY: "auto" }}>
           {showLabels && <div style={{ fontSize: 10.5, letterSpacing: 1.5, color: t.textLo, fontWeight: 600, padding: "6px 10px 8px" }}>{s.modules}</div>}
-          {MODULES.map((m) => {
+          {modules.map((m) => {
             const active = page === m.id; const Icon = m.icon;
             return (
               <button key={m.id} onClick={() => goTo(m.id)} title={s.nav[m.id]} style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, cursor: "pointer", padding: !showLabels ? "11px 0" : "10px 12px", justifyContent: !showLabels ? "center" : "flex-start", marginBottom: 3, borderRadius: 10, border: "none", textAlign: "left", background: active ? `linear-gradient(90deg, ${t.nova}24, transparent)` : "transparent", color: active ? t.textHi : t.textMid, position: "relative" }}>
@@ -857,17 +865,28 @@ function Sidebar({ t, s, page, setPage, collapsed, setCollapsed, mobile, mobileO
   );
 }
 
-/* ============================ Universal search ============================ */
+/* ============================ Nexus: universal search ============================
+   "Nexus" is this app's internal codename for the cross-module search bar — it
+   queries every module (clientes, ventas, inventario, proveedores, compras, RH)
+   through a single backend endpoint (GET /search) instead of fanning out N
+   per-module requests from the client. */
+const NEXUS_ICONS = {
+  customers: UserCircle2, orders: ShoppingBag, products: Box,
+  suppliers: Truck, purchase_orders: ClipboardList, employees: Users,
+};
+
 function GlobalSearch({ t, s, lang, onNavigate }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState({ customers: [], orders: [], products: [] });
+  const [results, setResults] = useState({ customers: [], orders: [], products: [], suppliers: [], purchase_orders: [], employees: [] });
   const debounceRef = useRef(null);
+
+  const EMPTY = { customers: [], orders: [], products: [], suppliers: [], purchase_orders: [], employees: [] };
 
   useEffect(() => {
     if (!query.trim()) {
-      setResults({ customers: [], orders: [], products: [] });
+      setResults(EMPTY);
       setOpen(false);
       return;
     }
@@ -875,23 +894,11 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const [custRes, orderRes, prodRes] = await Promise.allSettled([
-          customersApi.search({ q: query, limit: 5 }),
-          salesApi.list({ q: query, limit: 5 }),
-          inventoryService.getProducts(),
-        ]);
-        const customers = custRes.status === "fulfilled" ? custRes.value.items : [];
-        const orders = orderRes.status === "fulfilled" ? orderRes.value.items : [];
-        const qLower = query.toLowerCase();
-        const products = prodRes.status === "fulfilled"
-          ? prodRes.value
-              .filter((p) => p.name?.toLowerCase().includes(qLower) || p.variants?.some((v) => v.sku?.toLowerCase().includes(qLower)))
-              .slice(0, 5)
-          : [];
-        setResults({ customers, orders, products });
+        const { data } = await api.get("/search/", { params: { q: query, limit: 5 } });
+        setResults({ ...EMPTY, ...data });
         setOpen(true);
       } catch {
-        setResults({ customers: [], orders: [], products: [] });
+        setResults(EMPTY);
       } finally {
         setLoading(false);
       }
@@ -899,24 +906,30 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [query]);
 
-  const hasResults = results.customers.length > 0 || results.orders.length > 0 || results.products.length > 0;
+  const sections = ["customers", "orders", "products", "suppliers", "purchase_orders", "employees"];
+  const hasResults = sections.some((k) => (results[k] || []).length > 0);
   const select = (page, q) => { onNavigate(page, q); setQuery(""); setOpen(false); };
   const noResultsLabel = lang === "es" ? "Sin resultados" : "No results";
   const sectionLabels = {
     customers: lang === "es" ? "Clientes" : "Customers",
     orders: lang === "es" ? "Pedidos" : "Orders",
     products: lang === "es" ? "Productos" : "Products",
+    suppliers: lang === "es" ? "Proveedores" : "Suppliers",
+    purchase_orders: lang === "es" ? "Órdenes de compra" : "Purchase orders",
+    employees: lang === "es" ? "Empleados" : "Employees",
   };
 
   return (
     <div style={{ position: "relative", flex: 1, maxWidth: 460, minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "9px 12px" }}>
         <Search size={16} color={t.textLo} />
+        <span style={{ flex: "0 0 auto", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.5, color: t.nova ?? t.accent, background: (t.nova ?? "#33B2F5") + "1A", padding: "2px 7px", borderRadius: 6 }}>NEXUS</span>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => { if (hasResults) setOpen(true); }}
           placeholder={s.search}
+          title="Nexus"
           style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 13.5 }}
         />
         {loading && <RefreshCw size={14} className="spin" color={t.textLo} />}
@@ -929,48 +942,25 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
           <div style={{ position: "absolute", top: 48, left: 0, width: "min(420px, 90vw)", maxHeight: 440, overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 6, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
             {!hasResults && <div style={{ padding: 16, fontSize: 13, color: t.textLo, textAlign: "center" }}>{noResultsLabel}</div>}
-            {results.customers.length > 0 && (
-              <div style={{ marginBottom: 4 }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 4px" }}>{sectionLabels.customers}</div>
-                {results.customers.map((c) => (
-                  <button key={c.id} onClick={() => select("clientes", c.name)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
-                    <UserCircle2 size={16} color={t.textLo} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
-                      {c.rfc && <div style={{ fontSize: 11, color: t.textLo }}>{c.rfc}</div>}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-            {results.orders.length > 0 && (
-              <div style={{ marginBottom: 4 }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 4px" }}>{sectionLabels.orders}</div>
-                {results.orders.map((o) => (
-                  <button key={o.id} onClick={() => select("ventas", o.folio || String(o.id))} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
-                    <ShoppingBag size={16} color={t.textLo} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.folio || `#${o.id}`} · {o.customer?.name || ""}</div>
-                      <div style={{ fontSize: 11, color: t.textLo }}>{mxn(o.total || 0)}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-            {results.products.length > 0 && (
-              <div>
-                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 4px" }}>{sectionLabels.products}</div>
-                {results.products.map((p) => (
-                  <button key={p.id} onClick={() => select("inventario", p.name)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
-                    <Box size={16} color={t.textLo} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
-                      {p.category && <div style={{ fontSize: 11, color: t.textLo }}>{p.category}</div>}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
+            {sections.map((key) => {
+              const items = results[key] || [];
+              if (items.length === 0) return null;
+              const Icon = NEXUS_ICONS[key];
+              return (
+                <div key={key} style={{ marginBottom: 4 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 4px" }}>{sectionLabels[key]}</div>
+                  {items.map((r) => (
+                    <button key={`${key}-${r.id}`} onClick={() => select(r.page, r.query)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
+                      <Icon size={16} color={t.textLo} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.title}</div>
+                        {r.subtitle && <div style={{ fontSize: 11, color: t.textLo }}>{r.subtitle}</div>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </>
       )}
@@ -1067,6 +1057,20 @@ function NotificationBell({ t, lang, onNavigate }) {
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
           <div style={{ position: "absolute", top: 44, right: 0, width: "min(360px, 90vw)", maxHeight: 420, overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 6, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
+            {count > 0 && (
+              <div style={{ display: "flex", justifyContent: "flex-end", padding: "4px 6px 2px" }}>
+                <button onClick={async () => {
+                  try {
+                    const { data } = await api.post("/notifications/email-digest");
+                    alert(data.sent
+                      ? (lang === "es" ? `Resumen enviado a ${data.to}` : `Digest sent to ${data.to}`)
+                      : (lang === "es" ? "No se pudo enviar: configura el correo en Configuración > Integraciones." : "Could not send: set up email in Settings > Integrations."));
+                  } catch { alert(lang === "es" ? "Error al enviar el resumen" : "Error sending digest"); }
+                }} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 9px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 11.5, fontWeight: 600 }}>
+                  <Mail size={13} /> {lang === "es" ? "Enviar resumen por correo" : "Email digest"}
+                </button>
+              </div>
+            )}
             {count === 0 && (
               <div style={{ padding: 16, fontSize: 13, color: t.textLo, textAlign: "center" }}>
                 {lang === "es" ? "Sin avisos pendientes" : "No pending alerts"}
@@ -1085,7 +1089,7 @@ function NotificationBell({ t, lang, onNavigate }) {
                         {o.folio || `#${o.id}`}{o.customer?.full_name ? ` · ${o.customer.full_name}` : ""}
                       </div>
                       <div style={{ fontSize: 11, color: t.textLo }}>
-                        {lang === "es" ? `Nuevo pedido: $${o.total_amount.toLocaleString()}` : `New order: $${o.total_amount.toLocaleString()}`}
+                        {lang === "es" ? `Nuevo pedido: ${mxn(o.total_amount)}` : `New order: ${mxn(o.total_amount)}`}
                       </div>
                     </div>
                   </button>
@@ -1126,11 +1130,11 @@ function NotificationBell({ t, lang, onNavigate }) {
                       <div style={{ fontSize: 11, color: t.textLo }}>
                         {a.kind === "cxc"
                           ? (overdue
-                              ? (lang === "es" ? `Por cobrar vencido: $${a.balance.toLocaleString()}` : `Overdue receivable: $${a.balance.toLocaleString()}`)
-                              : (lang === "es" ? `Por cobrar próximo: $${a.balance.toLocaleString()}` : `Receivable due soon: $${a.balance.toLocaleString()}`))
+                              ? (lang === "es" ? `Por cobrar vencido: ${mxn(a.balance)}` : `Overdue receivable: ${mxn(a.balance)}`)
+                              : (lang === "es" ? `Por cobrar próximo: ${mxn(a.balance)}` : `Receivable due soon: ${mxn(a.balance)}`))
                           : (overdue
-                              ? (lang === "es" ? `Por pagar vencido: $${a.balance.toLocaleString()}` : `Overdue payable: $${a.balance.toLocaleString()}`)
-                              : (lang === "es" ? `Por pagar próximo: $${a.balance.toLocaleString()}` : `Payable due soon: $${a.balance.toLocaleString()}`))}
+                              ? (lang === "es" ? `Por pagar vencido: ${mxn(a.balance)}` : `Overdue payable: ${mxn(a.balance)}`)
+                              : (lang === "es" ? `Por pagar próximo: ${mxn(a.balance)}` : `Payable due soon: ${mxn(a.balance)}`))}
                         {" · "}{a.reference}{a.due_date ? ` · ${scheduledDueLabel(a.due_date, lang)}` : ""}
                       </div>
                     </div>
@@ -1153,8 +1157,8 @@ function NotificationBell({ t, lang, onNavigate }) {
                       <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sp.target_name || `#${sp.target_id}`}</div>
                       <div style={{ fontSize: 11, color: t.textLo }}>
                         {sp.kind === "cxc"
-                          ? (lang === "es" ? `Cobro programado: $${sp.amount.toLocaleString()}` : `Scheduled collection: $${sp.amount.toLocaleString()}`)
-                          : (lang === "es" ? `Pago programado: $${sp.amount.toLocaleString()}` : `Scheduled payment: $${sp.amount.toLocaleString()}`)}
+                          ? (lang === "es" ? `Cobro programado: ${mxn(sp.amount)}` : `Scheduled collection: ${mxn(sp.amount)}`)
+                          : (lang === "es" ? `Pago programado: ${mxn(sp.amount)}` : `Scheduled payment: ${mxn(sp.amount)}`)}
                         {" · "}{scheduledDueLabel(sp.scheduled_date, lang)}
                       </div>
                     </div>
@@ -1333,8 +1337,32 @@ export default function App() {
   const isMobile = useIsMobile();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [searchNav, setSearchNav] = useState(null);
+  const [perms, setPerms] = useState(null);
   const t = THEMES[theme];
   const s = STRINGS[lang];
+
+  // Carga los permisos efectivos del usuario tras autenticarse, para adaptar el
+  // menú (RBAC). Si el backend no responde, perms queda null y NO se oculta nada
+  // (degradación segura: no dejar al usuario sin navegación por un fallo de red).
+  useEffect(() => {
+    if (!authed) { setPerms(null); return; }
+    configService.getMyPermissions().then(setPerms).catch(() => setPerms(null));
+  }, [authed]);
+
+  const canView = (id) => {
+    if (!perms) return true;            // sin datos de permisos → mostrar todo
+    if (perms.is_superuser) return true;
+    const k = NAV_PERM[id];
+    return !!perms.permissions?.[k]?.view;
+  };
+  const allowedModuleIds = MODULES.map((m) => m.id).filter(canView);
+
+  // Si el usuario está en un módulo que su rol no puede ver, lo mandamos al
+  // primero permitido (o al dashboard).
+  useEffect(() => {
+    if (perms && !canView(page)) setPage(allowedModuleIds[0] || "dashboard");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perms, page]);
 
   const goToPage = (id) => { setPage(id); if (isMobile) setMobileNavOpen(false); };
   const handleSearchNavigate = (targetPage, query) => {
@@ -1389,7 +1417,7 @@ export default function App() {
         .spin{animation:spin360 .9s linear infinite}
         @keyframes spin360{to{transform:rotate(360deg)}}
       `}</style>
-      <Sidebar t={t} s={s} page={page} setPage={goToPage} collapsed={collapsed} setCollapsed={setCollapsed} mobile={isMobile} mobileOpen={mobileNavOpen} setMobileOpen={setMobileNavOpen} />
+      <Sidebar t={t} s={s} page={page} setPage={goToPage} collapsed={collapsed} setCollapsed={setCollapsed} mobile={isMobile} mobileOpen={mobileNavOpen} setMobileOpen={setMobileNavOpen} allowedIds={allowedModuleIds} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
         <Topbar t={t} s={s} lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} onLogout={() => { localStorage.removeItem("token"); setAuthed(false); }} isMobile={isMobile} onMenuClick={() => setMobileNavOpen(true)} onNavigate={handleSearchNavigate} />
         <main style={{ flex: 1, padding: isMobile ? 12 : 24, overflowX: "hidden", position: "relative" }}>
@@ -1400,7 +1428,7 @@ export default function App() {
               <span className="bg-orb" style={{ width: 360, height: 360, top: "30%", left: "45%", background: "radial-gradient(circle, rgba(167,139,250,0.12), transparent 70%)", animationDelay: "-12s" }} />
             </div>
           )}
-          <div style={{ position: "relative", zIndex: 1 }}>{PAGES[page]}</div>
+          <div style={{ position: "relative", zIndex: 1 }}>{canView(page) ? PAGES[page] : null}</div>
         </main>
       </div>
     </div>

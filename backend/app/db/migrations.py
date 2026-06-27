@@ -246,6 +246,14 @@ _INVENTORY_STATEMENTS = [
     "ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS type VARCHAR DEFAULT 'own'",
     "UPDATE warehouses SET type = 'own' WHERE type IS NULL",
     "ALTER TABLE products ADD COLUMN IF NOT EXISTS is_manufactured BOOLEAN DEFAULT false",
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS item_type VARCHAR DEFAULT 'finished_good'",
+    "UPDATE products SET item_type = 'finished_good' WHERE item_type IS NULL",
+    "CREATE INDEX IF NOT EXISTS ix_products_item_type ON products (item_type)",
+    "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS commercial_terms TEXT",
+    "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS extra_contacts JSONB",
+    "CREATE INDEX IF NOT EXISTS ix_supplier_documents_supplier ON supplier_documents (supplier_id)",
+    "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS barcode VARCHAR",
+    "CREATE INDEX IF NOT EXISTS ix_product_variants_barcode ON product_variants (barcode)",
     "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS reorder_point INTEGER",
     "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS safety_stock INTEGER",
     "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS lead_time_days INTEGER",
@@ -275,6 +283,20 @@ _HR_STATEMENTS = [
     "ALTER TABLE hr_attendance ADD COLUMN IF NOT EXISTS hours DOUBLE PRECISION",
 ]
 
+_AUTH_STATEMENTS = [
+    "ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_system BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE roles ADD COLUMN IF NOT EXISTS color VARCHAR",
+    "UPDATE roles SET is_system = FALSE WHERE is_system IS NULL",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_id INTEGER",
+]
+
+_BRANCH_STATEMENTS = [
+    "ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS branch_id INTEGER",
+    "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS branch_id INTEGER",
+    "ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS branch_id INTEGER",
+    "ALTER TABLE budgets ADD COLUMN IF NOT EXISTS branch_id INTEGER",
+]
+
 
 def _apply(sync_conn: Connection) -> None:
     if sync_conn.dialect.name != "postgresql":
@@ -287,6 +309,8 @@ def _apply(sync_conn: Connection) -> None:
         ("inventory",  _INVENTORY_STATEMENTS),
         ("finance",    _FINANCE_STATEMENTS),
         ("hr",         _HR_STATEMENTS),
+        ("auth",       _AUTH_STATEMENTS),
+        ("branches",   _BRANCH_STATEMENTS),
     ]
 
     for label, statements in all_statements:

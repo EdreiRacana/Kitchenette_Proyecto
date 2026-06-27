@@ -25,7 +25,11 @@ class Role(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True, nullable=False)
     description = Column(String, nullable=True)
-    
+    # Roles de sistema (Administrador, Solo lectura): no se eliminan ni renombran
+    # — patrón estándar en ERPs de nivel mundial (SAP, NetSuite, Odoo).
+    is_system = Column(Boolean, default=False, nullable=False)
+    color = Column(String, nullable=True)  # color para la matriz de permisos en la UI
+
     permissions = relationship("Permission", secondary=role_permissions, backref="roles")
 
 class User(Base):
@@ -40,6 +44,9 @@ class User(Base):
     
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=True)
     role_obj = relationship("Role", backref="users")
+
+    # Sucursal asignada (cimiento multi-empresa; el aislamiento se construye encima).
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
     
     # Keep the legacy role string for compatibility if needed, but phase it out
     role = Column(String, default="user") # admin, manager, user
