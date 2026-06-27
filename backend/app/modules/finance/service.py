@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from collections import OrderedDict
@@ -170,13 +170,15 @@ def _status_for(paid: float, balance: float, due_date, today=None) -> str:
 
 # --- CXC (cuentas por cobrar) ------------------------------------------------
 
-async def get_cxc(db: AsyncSession) -> List[schemas.AgingItem]:
+async def get_cxc(db: AsyncSession, branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.AgingItem]:
     from app.modules.sales import models as sales_models
 
+    O = sales_models.Order
+    conds = [O.kind == "order", O.status.notin_(["cancelled", "draft"])]
+    if branch_warehouse_ids is not None:
+        conds.append(or_(O.warehouse_id.in_(branch_warehouse_ids), O.warehouse_id.is_(None)))
     res = await db.execute(
-        select(sales_models.Order)
-        .where(sales_models.Order.kind == "order", sales_models.Order.status.notin_(["cancelled", "draft"]))
-        .options(selectinload(sales_models.Order.customer))
+        select(O).where(*conds).options(selectinload(O.customer))
     )
     orders = res.scalars().unique().all()
     today = datetime.now(timezone.utc)
@@ -213,13 +215,15 @@ async def pay_cxc(db: AsyncSession, order_id: int, pay_in: schemas.PayDebtReques
 
 # --- CXP (cuentas por pagar) --------------------------------------------------
 
-async def get_cxp(db: AsyncSession) -> List[schemas.AgingItem]:
+async def get_cxp(db: AsyncSession, branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.AgingItem]:
     from app.modules.inventory import models as inv_models
 
+    PO = inv_models.PurchaseOrder
+    conds = [PO.status.notin_(["cancelled", "draft"])]
+    if branch_warehouse_ids is not None:
+        conds.append(or_(PO.warehouse_id.in_(branch_warehouse_ids), PO.warehouse_id.is_(None)))
     res = await db.execute(
-        select(inv_models.PurchaseOrder)
-        .where(inv_models.PurchaseOrder.status.notin_(["cancelled", "draft"]))
-        .options(selectinload(inv_models.PurchaseOrder.supplier))
+        select(PO).where(*conds).options(selectinload(PO.supplier))
     )
     pos = res.scalars().unique().all()
     today = datetime.now(timezone.utc)

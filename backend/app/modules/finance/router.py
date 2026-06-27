@@ -82,7 +82,9 @@ async def upload_transaction_attachment(tx_id: int, db: DB, current_user: Curren
 # --- CXC ---
 @router.get("/cxc", response_model=List[schemas.AgingItem])
 async def read_cxc(db: DB, current_user: CurrentUser):
-    return await service.get_cxc(db)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_cxc(db, branch_warehouse_ids=ids)
 
 
 LARGE_PAYMENT_THRESHOLD = 10000.0
@@ -104,7 +106,9 @@ async def pay_cxc(order_id: int, pay_in: schemas.PayDebtRequest, db: DB, current
 # --- CXP ---
 @router.get("/cxp", response_model=List[schemas.AgingItem])
 async def read_cxp(db: DB, current_user: CurrentUser):
-    return await service.get_cxp(db)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_cxp(db, branch_warehouse_ids=ids)
 
 
 @router.post("/cxp/{po_id}/pay")
