@@ -19,6 +19,13 @@ import HRModule from "./features/hr/HRModule";
 import BIModule from "./features/bi/BIModule";
 import ConfigModule from "./features/config/ConfigModule";
 import api from "./services/api";
+import configService from "./features/config/service";
+
+// Mapa de id de módulo del menú → clave de permiso del backend (rbac.py).
+const NAV_PERM = {
+  dashboard: "dashboard", ventas: "sales", clientes: "customers", inventario: "inventory",
+  finanzas: "finance", rh: "hr", reportes: "reports", config: "config",
+};
 import { salesApi } from "./features/sales/api";
 import { inventoryService } from "./features/inventory/service";
 
@@ -787,10 +794,11 @@ function Login({ t, s, lang, onEnter }) {
 }
 
 /* ============================ Sidebar ============================ */
-function Sidebar({ t, s, page, setPage, collapsed, setCollapsed, mobile, mobileOpen, setMobileOpen }) {
+function Sidebar({ t, s, page, setPage, collapsed, setCollapsed, mobile, mobileOpen, setMobileOpen, allowedIds }) {
   const w = mobile ? 248 : (collapsed ? 72 : 248);
   const showLabels = mobile || !collapsed;
   const goTo = (id) => { setPage(id); if (mobile) setMobileOpen(false); };
+  const modules = allowedIds ? MODULES.filter((m) => allowedIds.includes(m.id)) : MODULES;
   return (
     <>
       {mobile && mobileOpen && (
@@ -809,7 +817,7 @@ function Sidebar({ t, s, page, setPage, collapsed, setCollapsed, mobile, mobileO
         </div>
         <nav style={{ flex: 1, padding: "12px 10px", overflowY: "auto" }}>
           {showLabels && <div style={{ fontSize: 10.5, letterSpacing: 1.5, color: t.textLo, fontWeight: 600, padding: "6px 10px 8px" }}>{s.modules}</div>}
-          {MODULES.map((m) => {
+          {modules.map((m) => {
             const active = page === m.id; const Icon = m.icon;
             return (
               <button key={m.id} onClick={() => goTo(m.id)} title={s.nav[m.id]} style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, cursor: "pointer", padding: !showLabels ? "11px 0" : "10px 12px", justifyContent: !showLabels ? "center" : "flex-start", marginBottom: 3, borderRadius: 10, border: "none", textAlign: "left", background: active ? `linear-gradient(90deg, ${t.nova}24, transparent)` : "transparent", color: active ? t.textHi : t.textMid, position: "relative" }}>
@@ -1329,8 +1337,32 @@ export default function App() {
   const isMobile = useIsMobile();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [searchNav, setSearchNav] = useState(null);
+  const [perms, setPerms] = useState(null);
   const t = THEMES[theme];
   const s = STRINGS[lang];
+
+  // Carga los permisos efectivos del usuario tras autenticarse, para adaptar el
+  // menú (RBAC). Si el backend no responde, perms queda null y NO se oculta nada
+  // (degradación segura: no dejar al usuario sin navegación por un fallo de red).
+  useEffect(() => {
+    if (!authed) { setPerms(null); return; }
+    configService.getMyPermissions().then(setPerms).catch(() => setPerms(null));
+  }, [authed]);
+
+  const canView = (id) => {
+    if (!perms) return true;            // sin datos de permisos → mostrar todo
+    if (perms.is_superuser) return true;
+    const k = NAV_PERM[id];
+    return !!perms.permissions?.[k]?.view;
+  };
+  const allowedModuleIds = MODULES.map((m) => m.id).filter(canView);
+
+  // Si el usuario está en un módulo que su rol no puede ver, lo mandamos al
+  // primero permitido (o al dashboard).
+  useEffect(() => {
+    if (perms && !canView(page)) setPage(allowedModuleIds[0] || "dashboard");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perms, page]);
 
   const goToPage = (id) => { setPage(id); if (isMobile) setMobileNavOpen(false); };
   const handleSearchNavigate = (targetPage, query) => {
@@ -1385,7 +1417,7 @@ export default function App() {
         .spin{animation:spin360 .9s linear infinite}
         @keyframes spin360{to{transform:rotate(360deg)}}
       `}</style>
-      <Sidebar t={t} s={s} page={page} setPage={goToPage} collapsed={collapsed} setCollapsed={setCollapsed} mobile={isMobile} mobileOpen={mobileNavOpen} setMobileOpen={setMobileNavOpen} />
+      <Sidebar t={t} s={s} page={page} setPage={goToPage} collapsed={collapsed} setCollapsed={setCollapsed} mobile={isMobile} mobileOpen={mobileNavOpen} setMobileOpen={setMobileNavOpen} allowedIds={allowedModuleIds} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
         <Topbar t={t} s={s} lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} onLogout={() => { localStorage.removeItem("token"); setAuthed(false); }} isMobile={isMobile} onMenuClick={() => setMobileNavOpen(true)} onNavigate={handleSearchNavigate} />
         <main style={{ flex: 1, padding: isMobile ? 12 : 24, overflowX: "hidden", position: "relative" }}>
@@ -1396,7 +1428,7 @@ export default function App() {
               <span className="bg-orb" style={{ width: 360, height: 360, top: "30%", left: "45%", background: "radial-gradient(circle, rgba(167,139,250,0.12), transparent 70%)", animationDelay: "-12s" }} />
             </div>
           )}
-          <div style={{ position: "relative", zIndex: 1 }}>{PAGES[page]}</div>
+          <div style={{ position: "relative", zIndex: 1 }}>{canView(page) ? PAGES[page] : null}</div>
         </main>
       </div>
     </div>
