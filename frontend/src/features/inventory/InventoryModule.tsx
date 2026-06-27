@@ -103,6 +103,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
   const [demo, setDemo] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse_[]>([]);
+  const [branches, setBranches] = useState<{ id: number; name: string; is_primary: boolean }[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [reorderAlerts, setReorderAlerts] = useState<ReorderAlert[]>([]);
@@ -167,6 +168,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       ]);
       setProducts(pr); setWarehouses(wh); setMovements(mv); setSuppliers(sup);
       setReorderAlerts(alerts); setPurchaseOrders(pos); setRecipes(recs); setProductionOrders(prods);
+      inventoryService.getBranches().then(setBranches).catch(() => setBranches([]));
       setDemo(false);
     } catch (err) {
       if (isNetworkError(err)) {
@@ -1287,7 +1289,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       {/* ── MODAL: Warehouse Form ── */}
       {warehouseForm && (
         <WarehouseFormModal
-          t={t} lang={lang} editing={editingWarehouse}
+          t={t} lang={lang} editing={editingWarehouse} branches={branches}
           onClose={() => { setWarehouseForm(false); setEditingWarehouse(null); }}
           onSave={async (form: any) => {
             if (demo) { alert(lang === "es" ? "Modo demo: almacén simulado ✓" : "Demo mode: simulated warehouse ✓"); setWarehouseForm(false); setEditingWarehouse(null); return; }
@@ -1809,12 +1811,12 @@ function AdjustmentFormModal({ t, lang, products, warehouses, onClose, onSave }:
 }
 
 // ── Warehouse Form Modal ───────────────────────────────────────────────────
-function WarehouseFormModal({ t, lang, editing, onClose, onSave }: any) {
+function WarehouseFormModal({ t, lang, editing, branches, onClose, onSave }: any) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState({
     name: editing?.name || "", location: editing?.location || "",
-    type: editing?.type || "own", is_active: editing?.is_active ?? true,
+    type: editing?.type || "own", branch_id: editing?.branch_id ?? null, is_active: editing?.is_active ?? true,
   });
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
@@ -1842,6 +1844,14 @@ function WarehouseFormModal({ t, lang, editing, onClose, onSave }: any) {
               {Object.entries(WAREHOUSE_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </select>
           </div>
+          {(branches?.length > 0) && (
+            <div><label style={label}>{lang === "es" ? "Sucursal" : "Branch"}</label>
+              <select value={form.branch_id ?? ""} onChange={e => setForm(f => ({ ...f, branch_id: e.target.value ? Number(e.target.value) : null }))} style={{ ...inp, cursor: "pointer" }}>
+                <option value="">{lang === "es" ? "Sin asignar" : "Unassigned"}</option>
+                {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}{b.is_primary ? (lang === "es" ? " (Matriz)" : " (HQ)") : ""}</option>)}
+              </select>
+            </div>
+          )}
           {editing && (
             <div>
               <label style={label}>{lang === "es" ? "Estado" : "Status"}</label>

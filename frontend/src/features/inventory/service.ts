@@ -45,6 +45,7 @@ export interface Warehouse {
     name: string;
     location?: string;
     type: 'own' | 'marketplace' | 'consignment' | 'transit';
+    branch_id?: number | null;
     is_active: boolean;
 }
 
@@ -209,6 +210,9 @@ export const inventoryService = {
         return (await api.post<SupplierDocument>(`/inventory/suppliers/${id}/documents`, fd, { params: { doc_type: docType }, headers: { 'Content-Type': 'multipart/form-data' } })).data;
     },
     deleteSupplierDocument: async (supplierId: number, docId: number) => (await api.delete(`/inventory/suppliers/${supplierId}/documents/${docId}`)).data,
+
+    // Branches (sucursales) — para asignar almacenes a una sucursal
+    getBranches: async () => (await api.get<{ id: number; name: string; is_primary: boolean }[]>('/config/branches')).data,
 
     // Warehouses
     getWarehouses: async () => (await api.get<Warehouse[]>('/inventory/warehouses')).data,
