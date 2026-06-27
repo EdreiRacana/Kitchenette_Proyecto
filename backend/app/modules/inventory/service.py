@@ -144,8 +144,11 @@ async def create_warehouse(db: AsyncSession, warehouse_in: schemas.WarehouseCrea
     await db.refresh(db_warehouse)
     return db_warehouse
 
-async def get_warehouses(db: AsyncSession) -> List[Warehouse]:
-    result = await db.execute(select(Warehouse))
+async def get_warehouses(db: AsyncSession, warehouse_ids: Optional[List[int]] = None) -> List[Warehouse]:
+    query = select(Warehouse)
+    if warehouse_ids is not None:
+        query = query.where(Warehouse.id.in_(warehouse_ids))
+    result = await db.execute(query)
     return result.scalars().all()
 
 async def update_warehouse(db: AsyncSession, warehouse_id: int, warehouse_in: schemas.WarehouseUpdate) -> Optional[Warehouse]:
@@ -269,13 +272,15 @@ async def get_stock_levels(db: AsyncSession, variant_id: Optional[int] = None) -
     result = await db.execute(query)
     return result.scalars().all()
 
-async def get_movements(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[dict]:
-    result = await db.execute(
+async def get_movements(db: AsyncSession, skip: int = 0, limit: int = 100, warehouse_ids: Optional[List[int]] = None) -> List[dict]:
+    query = (
         select(StockMovement)
         .options(selectinload(StockMovement.variant).selectinload(ProductVariant.product), selectinload(StockMovement.warehouse))
         .order_by(StockMovement.created_at.desc())
-        .offset(skip).limit(limit)
     )
+    if warehouse_ids is not None:
+        query = query.where(StockMovement.warehouse_id.in_(warehouse_ids))
+    result = await db.execute(query.offset(skip).limit(limit))
     movements = result.scalars().all()
     out = []
     for m in movements:
@@ -291,8 +296,8 @@ async def get_movements(db: AsyncSession, skip: int = 0, limit: int = 100) -> Li
 
 
 # --- Reorder alerts -----------------------------------------------------------
-async def get_reorder_alerts(db: AsyncSession) -> List[schemas.ReorderAlert]:
-    result = await db.execute(
+async def get_reorder_alerts(db: AsyncSession, warehouse_ids: Optional[List[int]] = None) -> List[schemas.ReorderAlert]:
+    query = (
         select(StockLevel)
         .options(
             selectinload(StockLevel.variant).selectinload(ProductVariant.product),
@@ -300,6 +305,9 @@ async def get_reorder_alerts(db: AsyncSession) -> List[schemas.ReorderAlert]:
             selectinload(StockLevel.warehouse),
         )
     )
+    if warehouse_ids is not None:
+        query = query.where(StockLevel.warehouse_id.in_(warehouse_ids))
+    result = await db.execute(query)
     levels = result.scalars().all()
     alerts: List[schemas.ReorderAlert] = []
     for lvl in levels:
@@ -324,7 +332,7 @@ async def get_reorder_alerts(db: AsyncSession) -> List[schemas.ReorderAlert]:
     return alerts
 
 
-async def get_inventory_stats(db: AsyncSession) -> schemas.InventoryStats:
+async def get_inventory_stats(db: AsyncSession, warehouse_ids: Optional[List[int]] = None) -> schemas.InventoryStats:
     # Se parte de TODAS las variantes activas (no solo las que ya tienen un
     # registro de StockLevel) para que una variante nunca surtida también
     # cuente como agotada, igual que el cálculo a nivel producto del frontend.
@@ -343,7 +351,8 @@ async def get_inventory_stats(db: AsyncSession) -> schemas.InventoryStats:
     low_stock = 0
 
     for v in all_variants:
-        available = sum((lvl.quantity - lvl.reserved_quantity) for lvl in (v.stock_levels or []))
+        levels = [lvl for lvl in (v.stock_levels or []) if warehouse_ids is None or lvl.warehouse_id in warehouse_ids]
+        available = sum((lvl.quantity - lvl.reserved_quantity) for lvl in levels)
         unit_cost = v.cost_price if v.cost_price is not None else v.price
         value = available * unit_cost
         category = (v.product.category if v.product and v.product.category else "Sin categoría")
@@ -427,8 +436,11 @@ async def update_purchase_order(db: AsyncSession, po_id: int, po_in: schemas.Pur
     result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po.id).options(selectinload(PurchaseOrder.items)))
     return result.scalars().first()
 
-async def get_purchase_orders(db: AsyncSession) -> List[PurchaseOrder]:
-    result = await db.execute(select(PurchaseOrder).options(selectinload(PurchaseOrder.items)).order_by(PurchaseOrder.created_at.desc()))
+async def get_purchase_orders(db: AsyncSession, warehouse_ids: Optional[List[int]] = None) -> List[PurchaseOrder]:
+    query = select(PurchaseOrder).options(selectinload(PurchaseOrder.items)).order_by(PurchaseOrder.created_at.desc())
+    if warehouse_ids is not None:
+        query = query.where(PurchaseOrder.warehouse_id.in_(warehouse_ids))
+    result = await db.execute(query)
     return result.scalars().all()
 
 async def receive_purchase_order(db: AsyncSession, po_id: int, user_id: Optional[int] = None) -> Optional[PurchaseOrder]:

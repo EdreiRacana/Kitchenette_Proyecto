@@ -151,7 +151,9 @@ async def create_warehouse(warehouse_in: schemas.WarehouseCreate, db: DB, curren
 
 @router.get("/warehouses", response_model=List[schemas.WarehouseInDB])
 async def read_warehouses(db: DB, current_user: CurrentUser):
-    return await service.get_warehouses(db)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_warehouses(db, warehouse_ids=ids)
 
 @router.put("/warehouses/{warehouse_id}", response_model=schemas.WarehouseInDB)
 async def update_warehouse(warehouse_id: int, warehouse_in: schemas.WarehouseUpdate, db: DB, current_user: CurrentUser):
@@ -171,17 +173,23 @@ async def read_stock_levels(variant_id: int, db: DB, current_user: CurrentUser):
 
 @router.get("/movements", response_model=List[schemas.StockMovementOut])
 async def read_movements(db: DB, current_user: CurrentUser, skip: int = 0, limit: int = 200):
-    return await service.get_movements(db, skip, limit)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_movements(db, skip, limit, warehouse_ids=ids)
 
 # --- Stats ---
 @router.get("/stats", response_model=schemas.InventoryStats)
 async def read_inventory_stats(db: DB, current_user: CurrentUser):
-    return await service.get_inventory_stats(db)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_inventory_stats(db, warehouse_ids=ids)
 
 # --- Reorder alerts ---
 @router.get("/reorder-alerts", response_model=List[schemas.ReorderAlert])
 async def read_reorder_alerts(db: DB, current_user: CurrentUser):
-    return await service.get_reorder_alerts(db)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_reorder_alerts(db, warehouse_ids=ids)
 
 # --- Purchase Orders ---
 @router.post("/purchase-orders", response_model=schemas.PurchaseOrderInDB)
@@ -190,7 +198,9 @@ async def create_purchase_order(po_in: schemas.PurchaseOrderCreate, db: DB, curr
 
 @router.get("/purchase-orders", response_model=List[schemas.PurchaseOrderInDB])
 async def read_purchase_orders(db: DB, current_user: CurrentUser):
-    return await service.get_purchase_orders(db)
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_purchase_orders(db, warehouse_ids=ids)
 
 @router.put("/purchase-orders/{po_id}", response_model=schemas.PurchaseOrderInDB)
 async def update_purchase_order(po_id: int, po_in: schemas.PurchaseOrderUpdate, db: DB, current_user: CurrentUser):
