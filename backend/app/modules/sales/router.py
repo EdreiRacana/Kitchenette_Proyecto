@@ -24,8 +24,10 @@ CurrentUser = Annotated[User, Depends(deps.get_current_active_user)]
 # ── Analytics (declared before /{order_id} so paths don't collide) ────────────
 
 @router.get("/stats", response_model=schemas.SalesStats)
-async def stats(db: DB, _: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
-    return await service.get_stats(db, start=start, end=end)
+async def stats(db: DB, current_user: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_stats(db, start=start, end=end, branch_warehouse_ids=ids)
 
 
 @router.get("/analytics/trend", response_model=List[schemas.TrendPoint])
@@ -116,7 +118,7 @@ async def create_order(order_in: schemas.OrderCreate, db: DB, user: CurrentUser)
 
 @router.get("/", response_model=schemas.PaginatedOrders)
 async def read_orders(
-    db: DB, _: CurrentUser,
+    db: DB, current_user: CurrentUser,
     skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=500),
     kind: Optional[str] = None, status: Optional[str] = None,
     customer_id: Optional[int] = None, seller_id: Optional[int] = None,
@@ -125,10 +127,13 @@ async def read_orders(
     date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
     sort_by: str = Query("created_at"), sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
 ):
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
     items, total = await service.get_orders(
         db, skip=skip, limit=limit, kind=kind, status=status, customer_id=customer_id,
         seller_id=seller_id, payment_method=payment_method, channel=channel, q=q,
         date_from=date_from, date_to=date_to, sort_by=sort_by, sort_dir=sort_dir,
+        branch_warehouse_ids=ids,
     )
     return schemas.PaginatedOrders(items=items, total=total, skip=skip, limit=limit)
 

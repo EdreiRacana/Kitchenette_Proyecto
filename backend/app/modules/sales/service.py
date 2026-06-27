@@ -235,6 +235,7 @@ async def get_orders(
     date_to: Optional[datetime] = None,
     sort_by: str = "created_at",
     sort_dir: str = "desc",
+    branch_warehouse_ids: Optional[List[int]] = None,
 ) -> Tuple[List[models.Order], int]:
     from app.modules.customers import models as cust
 
@@ -242,6 +243,13 @@ async def get_orders(
     count_q = select(func.count(models.Order.id))
 
     conds = []
+    # Aislamiento por sucursal: el pedido se ancla en su almacén (location).
+    # Pedidos sin almacén se consideran globales/compartidos.
+    if branch_warehouse_ids is not None:
+        conds.append(or_(
+            models.Order.warehouse_id.in_(branch_warehouse_ids),
+            models.Order.warehouse_id.is_(None),
+        ))
     if kind:
         conds.append(models.Order.kind == kind)
     if status:
@@ -503,7 +511,8 @@ async def cancel_order(db: AsyncSession, order_id: int, user_id: Optional[int] =
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
-async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None) -> schemas.SalesStats:
+async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None,
+                    branch_warehouse_ids: Optional[List[int]] = None) -> schemas.SalesStats:
     """All KPIs in a SINGLE aggregated query (no rows pulled into Python).
 
     Uses portable conditional aggregation (CASE inside COUNT/SUM) so it runs the
@@ -518,6 +527,8 @@ async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Opt
         date_filters.append(O.created_at >= start)
     if end is not None:
         date_filters.append(O.created_at < end)
+    if branch_warehouse_ids is not None:
+        date_filters.append(or_(O.warehouse_id.in_(branch_warehouse_ids), O.warehouse_id.is_(None)))
 
     stmt = select(
         func.count(case((active, 1))).label("orders_count"),
