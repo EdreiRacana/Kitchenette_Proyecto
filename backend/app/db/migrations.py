@@ -292,6 +292,9 @@ _AUTH_STATEMENTS = [
 
 _BRANCH_STATEMENTS = [
     "ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS branch_id INTEGER",
+    "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS branch_id INTEGER",
+    "ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS branch_id INTEGER",
+    "ALTER TABLE budgets ADD COLUMN IF NOT EXISTS branch_id INTEGER",
 ]
 
 

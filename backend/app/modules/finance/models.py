@@ -15,6 +15,7 @@ class Transaction(Base):
     reference = Column(String, nullable=True)  # e.g. order:12, invoice:A-100
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     attachment_url = Column(Text, nullable=True)  # comprobante adjunto (factura/recibo)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)  # sucursal (aislamiento)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -29,6 +30,7 @@ class BankAccount(Base):
     balance = Column(Float, default=0.0, nullable=False)
     currency = Column(String, default="MXN", nullable=False)
     is_active = Column(Boolean, default=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)  # sucursal (aislamiento)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     movements = relationship("BankTransaction", back_populates="bank_account", cascade="all, delete-orphan")
@@ -57,6 +59,7 @@ class Budget(Base):
     type = Column(String, nullable=False, default="expense")  # income, expense
     period = Column(String, nullable=False, index=True)  # "YYYY-MM"
     amount = Column(Float, nullable=False)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)  # sucursal (aislamiento)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

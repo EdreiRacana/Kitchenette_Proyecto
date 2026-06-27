@@ -17,9 +17,10 @@ async def _log_audit(db: AsyncSession, user_id: Optional[int], action: str, desc
 
 
 async def create_transaction(
-    db: AsyncSession, tx_in: schemas.TransactionCreate, user_id: Optional[int] = None
+    db: AsyncSession, tx_in: schemas.TransactionCreate, user_id: Optional[int] = None,
+    branch_id: Optional[int] = None
 ) -> models.Transaction:
-    db_tx = models.Transaction(**tx_in.model_dump(), created_by_id=user_id)
+    db_tx = models.Transaction(**tx_in.model_dump(), created_by_id=user_id, branch_id=branch_id)
     db.add(db_tx)
     await db.commit()
     await db.refresh(db_tx)
@@ -63,42 +64,54 @@ async def set_transaction_attachment(db: AsyncSession, tx_id: int, attachment_ur
     return tx
 
 
+def _branch_filter(col, branch_id: Optional[int]):
+    """Aislamiento por sucursal en Finanzas: registros de la sucursal del usuario
+    + los sin sucursal (compartidos/históricos)."""
+    return or_(col == branch_id, col.is_(None))
+
+
 async def get_transactions(
     db: AsyncSession,
     skip: int = 0,
     limit: int = 100,
     type: Optional[str] = None,
+    branch_id: Optional[int] = None,
 ) -> List[models.Transaction]:
     stmt = select(models.Transaction).order_by(models.Transaction.id.desc())
     if type:
         stmt = stmt.where(models.Transaction.type == type)
+    if branch_id is not None:
+        stmt = stmt.where(_branch_filter(models.Transaction.branch_id, branch_id))
     result = await db.execute(stmt.offset(skip).limit(limit))
     return result.scalars().all()
 
 
-async def get_dashboard(db: AsyncSession) -> schemas.FinanceDashboard:
+async def get_dashboard(db: AsyncSession, branch_id: Optional[int] = None,
+                        branch_warehouse_ids: Optional[List[int]] = None) -> schemas.FinanceDashboard:
+    T = models.Transaction
+    tx_branch = [_branch_filter(T.branch_id, branch_id)] if branch_id is not None else []
+
     income_result = await db.execute(
-        select(func.coalesce(func.sum(models.Transaction.amount), 0.0)).where(
-            models.Transaction.type == "income"
-        )
+        select(func.coalesce(func.sum(T.amount), 0.0)).where(T.type == "income", *tx_branch)
     )
     expense_result = await db.execute(
-        select(func.coalesce(func.sum(models.Transaction.amount), 0.0)).where(
-            models.Transaction.type == "expense"
-        )
+        select(func.coalesce(func.sum(T.amount), 0.0)).where(T.type == "expense", *tx_branch)
     )
-    count_result = await db.execute(select(func.count(models.Transaction.id)))
+    count_result = await db.execute(select(func.count(T.id)).where(*tx_branch))
 
     total_income = float(income_result.scalar() or 0.0)
     total_expenses = float(expense_result.scalar() or 0.0)
 
+    bank_conds = [models.BankAccount.is_active == True]  # noqa: E712
+    if branch_id is not None:
+        bank_conds.append(_branch_filter(models.BankAccount.branch_id, branch_id))
     bank_result = await db.execute(
-        select(func.coalesce(func.sum(models.BankAccount.balance), 0.0)).where(models.BankAccount.is_active == True)  # noqa: E712
+        select(func.coalesce(func.sum(models.BankAccount.balance), 0.0)).where(*bank_conds)
     )
     bank_balance = float(bank_result.scalar() or 0.0)
 
-    cxc = await get_cxc(db)
-    cxp = await get_cxp(db)
+    cxc = await get_cxc(db, branch_warehouse_ids=branch_warehouse_ids)
+    cxp = await get_cxp(db, branch_warehouse_ids=branch_warehouse_ids)
     cxc_balance = _r(sum(i.balance for i in cxc))
     cxp_balance = _r(sum(i.balance for i in cxp))
     projected_balance = _r(bank_balance + cxc_balance - cxp_balance)
@@ -260,13 +273,16 @@ async def pay_cxp(db: AsyncSession, po_id: int, pay_in: schemas.PayDebtRequest, 
 
 # --- Bank accounts -------------------------------------------------------------
 
-async def get_banks(db: AsyncSession) -> List[models.BankAccount]:
-    res = await db.execute(select(models.BankAccount).where(models.BankAccount.is_active == True).order_by(models.BankAccount.id))  # noqa: E712
+async def get_banks(db: AsyncSession, branch_id: Optional[int] = None) -> List[models.BankAccount]:
+    conds = [models.BankAccount.is_active == True]  # noqa: E712
+    if branch_id is not None:
+        conds.append(_branch_filter(models.BankAccount.branch_id, branch_id))
+    res = await db.execute(select(models.BankAccount).where(*conds).order_by(models.BankAccount.id))
     return res.scalars().all()
 
 
-async def create_bank(db: AsyncSession, data: schemas.BankAccountCreate) -> models.BankAccount:
-    bank = models.BankAccount(**data.model_dump())
+async def create_bank(db: AsyncSession, data: schemas.BankAccountCreate, branch_id: Optional[int] = None) -> models.BankAccount:
+    bank = models.BankAccount(**data.model_dump(), branch_id=branch_id)
     db.add(bank)
     await db.commit()
     await db.refresh(bank)
@@ -649,16 +665,18 @@ async def import_bank_statement(
 
 # --- Presupuestos (Budget vs. real) ---------------------------------------------
 
-async def get_budgets(db: AsyncSession, period: Optional[str] = None) -> List[models.Budget]:
+async def get_budgets(db: AsyncSession, period: Optional[str] = None, branch_id: Optional[int] = None) -> List[models.Budget]:
     stmt = select(models.Budget).order_by(models.Budget.period.desc(), models.Budget.category)
     if period:
         stmt = stmt.where(models.Budget.period == period)
+    if branch_id is not None:
+        stmt = stmt.where(_branch_filter(models.Budget.branch_id, branch_id))
     res = await db.execute(stmt)
     return res.scalars().all()
 
 
-async def create_budget(db: AsyncSession, data: schemas.BudgetCreate) -> models.Budget:
-    budget = models.Budget(**data.model_dump())
+async def create_budget(db: AsyncSession, data: schemas.BudgetCreate, branch_id: Optional[int] = None) -> models.Budget:
+    budget = models.Budget(**data.model_dump(), branch_id=branch_id)
     db.add(budget)
     await db.commit()
     await db.refresh(budget)
