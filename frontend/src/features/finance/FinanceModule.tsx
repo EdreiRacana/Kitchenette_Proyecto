@@ -11,7 +11,7 @@ import {
   X, DollarSign, CreditCard, BarChart3,
   Clock, CheckCircle, XCircle, AlertCircle, ArrowLeftRight,
   PiggyBank, Receipt, Edit2, Trash2, ArrowRightLeft, Upload,
-  Wallet, FileText, History, Paperclip, CalendarClock, Ban,
+  Wallet, FileText, History, Paperclip, CalendarClock, Ban, Mail,
 } from "lucide-react";
 import { financeService, downloadCSV } from "./service";
 
@@ -485,7 +485,15 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
                 </div>
               ))}
             </div>
-            <button onClick={exportCXP} style={ghostBtn}><Download size={14} /> Descargar</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={async () => {
+                try {
+                  const r = await financeService.sendPaymentReminders();
+                  alert(r.sent > 0 ? `Se enviaron ${r.sent} recordatorio(s) de pago al correo de la empresa.` : "No hay recordatorios pendientes por enviar, o no hay correo configurado (Configuración > Integraciones).");
+                } catch { alert("No se pudieron enviar los recordatorios."); }
+              }} style={ghostBtn}><Mail size={14} /> Enviar recordatorios de pago</button>
+              <button onClick={exportCXP} style={ghostBtn}><Download size={14} /> Descargar</button>
+            </div>
           </div>
 
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>

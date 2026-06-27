@@ -261,6 +261,18 @@ async def read_scheduled_payments(db: DB, current_user: CurrentUser, status: Opt
     return await service.get_scheduled_payments(db, status=status)
 
 
+@router.post("/scheduled-payments/send-reminders")
+async def send_payment_reminders(db: DB, current_user: CurrentUser, lead_days: int = 7):
+    """Envía ahora, manualmente, los recordatorios de pagos próximos/vencidos
+    al correo de contacto de la empresa. Devuelve cuántos se enviaron (0 si no
+    hay correo configurado en Configuración > Integraciones)."""
+    try:
+        sent = await service.send_scheduled_payment_reminders(db, lead_days=lead_days)
+        return {"sent": sent}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/scheduled-payments", response_model=schemas.ScheduledPaymentInDB)
 async def create_scheduled_payment(data: schemas.ScheduledPaymentCreate, db: DB, current_user: CurrentUser):
     return await service.create_scheduled_payment(db, data, user_id=current_user.id)

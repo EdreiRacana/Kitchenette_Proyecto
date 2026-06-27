@@ -177,6 +177,8 @@ export const financeService = {
         (await api.post<ScheduledPayment>('/finance/scheduled-payments', data)).data,
     cancelScheduledPayment: async (id: number) =>
         (await api.delete<ScheduledPayment>(`/finance/scheduled-payments/${id}`)).data,
+    sendPaymentReminders: async () =>
+        (await api.post<{ sent: number }>('/finance/scheduled-payments/send-reminders')).data,
 
     getBanks: async () => (await api.get<BankAccount[]>('/finance/banks')).data,
     createBank: async (data: any) => (await api.post<BankAccount>('/finance/banks', data)).data,
