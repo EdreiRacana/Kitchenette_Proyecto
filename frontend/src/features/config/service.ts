@@ -52,8 +52,28 @@ export interface MyPermissions {
     permissions: Record<string, Record<string, boolean>>;
 }
 
+export interface Branch {
+    id: number;
+    name: string;
+    code?: string;
+    legal_name?: string;
+    tax_id?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+    is_primary: boolean;
+    is_active: boolean;
+    created_at: string;
+}
+
 const configService = {
     getCompanyProfile: async () => (await api.get<CompanyProfile>('/config/company')).data,
+
+    // ── Sucursales (multi-empresa) ──
+    getBranches: async () => (await api.get<Branch[]>('/config/branches')).data,
+    createBranch: async (data: any) => (await api.post<Branch>('/config/branches', data)).data,
+    updateBranch: async (id: number, data: any) => (await api.put<Branch>(`/config/branches/${id}`, data)).data,
+    deleteBranch: async (id: number) => { await api.delete(`/config/branches/${id}`); },
     createCompanyProfile: async (data: CompanyProfile) => (await api.post<CompanyProfile>('/config/company', data)).data,
     updateCompanyProfile: async (data: Partial<CompanyProfile>) => (await api.put<CompanyProfile>('/config/company', data)).data,
 

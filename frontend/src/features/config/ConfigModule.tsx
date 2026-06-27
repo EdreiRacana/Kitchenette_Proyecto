@@ -18,7 +18,7 @@ import {
 interface User {
   id: number; name: string; email: string; role: string; department: string;
   status: "active" | "inactive" | "pending"; last_login?: string; avatar_color: string;
-  role_id?: number | null; is_superuser?: boolean; is_active?: boolean;
+  role_id?: number | null; is_superuser?: boolean; is_active?: boolean; branch_id?: number | null;
 }
 interface Role {
   id: number; name: string; description: string; users_count: number; is_system: boolean;
@@ -110,7 +110,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
         department: "—",
         status: (u.is_active ? "active" : "inactive") as User["status"],
         avatar_color: u.role_obj?.color || "#94A3B8",
-        role_id: u.role_id ?? null, is_superuser: u.is_superuser, is_active: u.is_active,
+        role_id: u.role_id ?? null, is_superuser: u.is_superuser, is_active: u.is_active, branch_id: (u as any).branch_id ?? null,
       })));
     } catch (err: any) {
       setRbacError(errorMessage(err, "No se pudieron cargar usuarios y roles. Verifica que tu cuenta tenga permisos de Configuración."));
@@ -167,6 +167,19 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const [companyMsg, setCompanyMsg] = useState("");
   const [logoUploading, setLogoUploading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
+
+  const [branches, setBranches] = useState<import("./service").Branch[]>([]);
+  const [branchForm, setBranchForm] = useState(false);
+  const [editingBranch, setEditingBranch] = useState<import("./service").Branch | null>(null);
+  const loadBranches = useCallback(async () => {
+    try { setBranches(await configService.getBranches()); } catch { setBranches([]); }
+  }, []);
+  useEffect(() => { if (tab === "company") loadBranches(); }, [tab, loadBranches]);
+  const removeBranch = async (b: import("./service").Branch) => {
+    if (!confirm(`¿Eliminar la sucursal "${b.name}"? Sus almacenes y usuarios quedarán sin sucursal.`)) return;
+    try { await configService.deleteBranch(b.id); await loadBranches(); }
+    catch (err: any) { alert(errorMessage(err, "No se pudo eliminar la sucursal.")); }
+  };
 
   const lang = "es";
 
@@ -406,15 +419,27 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
             <div style={card}>
               {sectionTitle(Building2, "Empresas / Sucursales", t.warn)}
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {[{ name: "Comercializadora del Valle", initials: "CV", color: "#33B2F5", main: true }, { name: "Insumos del Norte", initials: "IN", color: "#34D399" }, { name: "Grupo Azteca Retail", initials: "GA", color: "#FBBF24" }].map(c => (
-                  <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 8, background: t.panel2 }}>
-                    <div style={{ width: 32, height: 32, borderRadius: 8, background: c.color + "26", color: c.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 }}>{c.initials}</div>
-                    <span style={{ flex: 1, fontSize: 13, color: t.textHi, fontWeight: 500 }}>{c.name}</span>
-                    {c.main && <span style={{ fontSize: 10, fontWeight: 700, color: t.good, background: t.good + "18", padding: "2px 7px", borderRadius: 6 }}>Principal</span>}
-                  </div>
-                ))}
-                <button style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px", borderRadius: 8, border: `2px dashed ${t.border}`, background: "transparent", color: t.textLo, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
-                  <Plus size={14} /> Agregar empresa
+                {branches.length === 0 && (
+                  <div style={{ fontSize: 12.5, color: t.textLo, padding: "8px 2px" }}>Aún no hay sucursales. Agrega la matriz para empezar.</div>
+                )}
+                {branches.map(b => {
+                  const color = b.is_primary ? t.good : t.nova;
+                  const initials = (b.code || b.name).slice(0, 2).toUpperCase();
+                  return (
+                    <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 8, background: t.panel2 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 8, background: color + "26", color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 }}>{initials}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, color: t.textHi, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}{!b.is_active && <span style={{ fontSize: 10, color: t.textLo }}> · inactiva</span>}</div>
+                        {(b.legal_name || b.tax_id) && <div style={{ fontSize: 11, color: t.textLo }}>{[b.legal_name, b.tax_id].filter(Boolean).join(" · ")}</div>}
+                      </div>
+                      {b.is_primary && <span style={{ fontSize: 10, fontWeight: 700, color: t.good, background: t.good + "18", padding: "2px 7px", borderRadius: 6 }}>Matriz</span>}
+                      <button onClick={() => { setEditingBranch(b); setBranchForm(true); }} title="Editar" style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo, display: "flex" }}><Edit2 size={14} /></button>
+                      <button onClick={() => removeBranch(b)} title="Eliminar" style={{ background: "transparent", border: "none", cursor: "pointer", color: t.bad, display: "flex" }}><Trash2 size={14} /></button>
+                    </div>
+                  );
+                })}
+                <button onClick={() => { setEditingBranch(null); setBranchForm(true); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px", borderRadius: 8, border: `2px dashed ${t.border}`, background: "transparent", color: t.textLo, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+                  <Plus size={14} /> Agregar sucursal
                 </button>
               </div>
             </div>
@@ -879,7 +904,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
 
       {/* ── MODAL: Crear / Editar usuario ── */}
       {userForm && (
-        <UserFormModal t={t} lbl={lbl} inp={inp} roles={roles} editing={editingUser}
+        <UserFormModal t={t} lbl={lbl} inp={inp} roles={roles} branches={branches} editing={editingUser}
           onClose={() => { setUserForm(false); setEditingUser(null); }}
           onSaved={async () => { setUserForm(false); setEditingUser(null); await loadRBAC(); }} />
       )}
@@ -890,15 +915,88 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
           onClose={() => setRoleForm(false)}
           onSaved={async () => { setRoleForm(false); await loadRBAC(); }} />
       )}
+
+      {/* ── MODAL: Crear / editar sucursal ── */}
+      {branchForm && (
+        <BranchFormModal t={t} lbl={lbl} inp={inp} editing={editingBranch}
+          onClose={() => { setBranchForm(false); setEditingBranch(null); }}
+          onSaved={async () => { setBranchForm(false); setEditingBranch(null); await loadBranches(); }} />
+      )}
+    </div>
+  );
+}
+
+// ── Modal: crear / editar sucursal ─────────────────────────────────────────
+function BranchFormModal({ t, lbl, inp, editing, onClose, onSaved }: any) {
+  const [f, setF] = useState({
+    name: editing?.name || "", code: editing?.code || "", legal_name: editing?.legal_name || "",
+    tax_id: editing?.tax_id || "", address: editing?.address || "", phone: editing?.phone || "",
+    email: editing?.email || "", is_primary: editing?.is_primary || false, is_active: editing?.is_active ?? true,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const set = (patch: any) => setF(prev => ({ ...prev, ...patch }));
+
+  const save = async () => {
+    setSaving(true); setError("");
+    try {
+      const payload = { ...f, code: f.code || null, legal_name: f.legal_name || null, tax_id: f.tax_id || null, address: f.address || null, phone: f.phone || null, email: f.email || null };
+      if (editing) await configService.updateBranch(editing.id, payload);
+      else await configService.createBranch(payload);
+      await onSaved();
+    } catch (err: any) { setError(errorMessage(err, "No se pudo guardar la sucursal.")); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
+      <div style={{ width: "100%", maxWidth: 480, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ background: t.warn + "22", color: t.warn, borderRadius: 8, padding: 8, display: "flex" }}><Building2 size={18} /></div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{editing ? "Editar sucursal" : "Nueva sucursal"}</h2>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+            <div><label style={lbl}>Nombre *</label><input value={f.name} onChange={e => set({ name: e.target.value })} placeholder="Sucursal Centro" style={inp} /></div>
+            <div><label style={lbl}>Clave</label><input value={f.code} onChange={e => set({ code: e.target.value })} placeholder="CDMX" style={inp} /></div>
+          </div>
+          <div><label style={lbl}>Razón social</label><input value={f.legal_name} onChange={e => set({ legal_name: e.target.value })} placeholder="Empresa S.A. de C.V." style={inp} /></div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div><label style={lbl}>RFC</label><input value={f.tax_id} onChange={e => set({ tax_id: e.target.value })} placeholder="XAXX010101000" style={inp} /></div>
+            <div><label style={lbl}>Teléfono</label><input value={f.phone} onChange={e => set({ phone: e.target.value })} style={inp} /></div>
+          </div>
+          <div><label style={lbl}>Dirección</label><input value={f.address} onChange={e => set({ address: e.target.value })} style={inp} /></div>
+          <div><label style={lbl}>Email</label><input value={f.email} onChange={e => set({ email: e.target.value })} style={inp} /></div>
+          <div style={{ display: "flex", gap: 18 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: t.textMid, cursor: "pointer" }}>
+              <input type="checkbox" checked={f.is_primary} onChange={e => set({ is_primary: e.target.checked })} /> Sucursal matriz
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: t.textMid, cursor: "pointer" }}>
+              <input type="checkbox" checked={f.is_active} onChange={e => set({ is_active: e.target.checked })} /> Activa
+            </label>
+          </div>
+          {error && <div style={{ fontSize: 12.5, color: t.bad }}>{error}</div>}
+        </div>
+        <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+          <button onClick={save} disabled={saving || !f.name.trim()} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !f.name.trim() ? 0.5 : 1 }}>
+            {saving ? "…" : editing ? "Guardar cambios" : "Crear sucursal"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 // ── Modal: crear / editar usuario (RBAC real) ──────────────────────────────
-function UserFormModal({ t, lbl, inp, roles, editing, onClose, onSaved }: any) {
+function UserFormModal({ t, lbl, inp, roles, branches, editing, onClose, onSaved }: any) {
   const [full_name, setFullName] = useState(editing?.name && editing?.name !== editing?.email ? editing.name : "");
   const [email, setEmail] = useState(editing?.email || "");
   const [roleId, setRoleId] = useState<string>(editing?.role_id ? String(editing.role_id) : "");
+  const [branchId, setBranchId] = useState<string>(editing?.branch_id ? String(editing.branch_id) : "");
   const [active, setActive] = useState<boolean>(editing ? editing.is_active !== false : true);
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
@@ -910,7 +1008,7 @@ function UserFormModal({ t, lbl, inp, roles, editing, onClose, onSaved }: any) {
   const save = async () => {
     setSaving(true); setError("");
     try {
-      const base: any = { email: email.trim(), full_name: full_name.trim() || null, role_id: Number(roleId), is_active: active };
+      const base: any = { email: email.trim(), full_name: full_name.trim() || null, role_id: Number(roleId), branch_id: branchId ? Number(branchId) : null, is_active: active };
       if (isEdit) {
         if (password) base.password = password;
         await configService.updateUser(editing.id, base);
@@ -947,6 +1045,12 @@ function UserFormModal({ t, lbl, inp, roles, editing, onClose, onSaved }: any) {
                 <option value="1">Activo</option><option value="0">Inactivo</option>
               </select>
             </div>
+          </div>
+          <div><label style={lbl}>Sucursal</label>
+            <select value={branchId} onChange={e => setBranchId(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+              <option value="">Sin asignar (todas)</option>
+              {(branches || []).map((b: any) => <option key={b.id} value={b.id}>{b.name}{b.is_primary ? " (Matriz)" : ""}</option>)}
+            </select>
           </div>
           <div><label style={lbl}>{isEdit ? "Nueva contraseña (opcional)" : "Contraseña inicial *"}</label>
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder={isEdit ? "Dejar vacío para no cambiarla" : "Mínimo 6 caracteres"} style={inp} />
