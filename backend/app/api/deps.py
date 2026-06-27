@@ -40,3 +40,22 @@ async def get_current_superuser(current_user: Annotated[User, Depends(get_curren
     if not current_user.is_superuser:
         raise HTTPException(status_code=400, detail="The user doesn't have enough privileges")
     return current_user
+
+
+def require_permission(module: str, action: str):
+    """Fábrica de dependencias para verificar RBAC en un endpoint.
+
+    Uso:  @router.post(...)  async def x(_: Annotated[User, Depends(require_permission("inventory", "create"))]): ...
+
+    Los superusuarios pasan siempre. El resto debe tener el permiso (módulo, acción)
+    vía su rol; si no, 403. Es la verificación real del lado del servidor.
+    """
+    async def checker(current_user: Annotated[User, Depends(get_current_active_user)]) -> User:
+        from app.modules.auth.rbac import user_can
+        if not user_can(current_user, module, action):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"No tienes permiso para '{action}' en el módulo '{module}'.",
+            )
+        return current_user
+    return checker

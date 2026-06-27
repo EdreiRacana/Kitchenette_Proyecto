@@ -79,6 +79,15 @@ async def startup():
     # Migrations run isolated (own connection) and can never crash startup.
     await run_startup_migrations(engine)
 
+    # Seed RBAC (permisos + roles de sistema). Idempotente, nunca pisa datos.
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.modules.auth.rbac import seed_rbac
+        async with AsyncSessionLocal() as session:
+            await seed_rbac(session)
+    except Exception as e:
+        print(f"[startup] RBAC seed skipped: {e}")
+
     from app.core.scheduler import start_scheduler
     start_scheduler()
 

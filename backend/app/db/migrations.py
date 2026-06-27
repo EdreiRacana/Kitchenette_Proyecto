@@ -283,6 +283,12 @@ _HR_STATEMENTS = [
     "ALTER TABLE hr_attendance ADD COLUMN IF NOT EXISTS hours DOUBLE PRECISION",
 ]
 
+_AUTH_STATEMENTS = [
+    "ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_system BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE roles ADD COLUMN IF NOT EXISTS color VARCHAR",
+    "UPDATE roles SET is_system = FALSE WHERE is_system IS NULL",
+]
+
 
 def _apply(sync_conn: Connection) -> None:
     if sync_conn.dialect.name != "postgresql":
@@ -295,6 +301,7 @@ def _apply(sync_conn: Connection) -> None:
         ("inventory",  _INVENTORY_STATEMENTS),
         ("finance",    _FINANCE_STATEMENTS),
         ("hr",         _HR_STATEMENTS),
+        ("auth",       _AUTH_STATEMENTS),
     ]
 
     for label, statements in all_statements:

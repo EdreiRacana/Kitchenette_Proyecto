@@ -15,6 +15,7 @@ class Permission(PermissionBase):
 class RoleBase(BaseModel):
     name: str
     description: Optional[str] = None
+    color: Optional[str] = None
 
 class RoleCreate(RoleBase):
     permission_ids: Optional[List[int]] = []
@@ -22,10 +23,12 @@ class RoleCreate(RoleBase):
 class RoleUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    color: Optional[str] = None
     permission_ids: Optional[List[int]] = None
 
 class Role(RoleBase):
     id: int
+    is_system: bool = False
     permissions: List[Permission] = []
     class Config:
         from_attributes = True
@@ -50,6 +53,7 @@ class UserUpdate(BaseModel):
 
 class UserInDBBase(UserBase):
     id: int
+    is_superuser: bool = False
     created_at: datetime
     updated_at: Optional[datetime] = None
 
