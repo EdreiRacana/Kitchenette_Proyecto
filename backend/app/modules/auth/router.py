@@ -94,6 +94,23 @@ async def read_users_me(
     return current_user
 
 
+@router.post("/me/password")
+async def change_my_password(
+    body: schemas.PasswordChange,
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+    current_user: Annotated[User, Depends(deps.get_current_active_user)],
+):
+    """Cambiar la propia contraseña: exige la contraseña actual correcta."""
+    if not security.verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="La contraseña actual es incorrecta.")
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe tener al menos 6 caracteres.")
+    current_user.hashed_password = security.get_password_hash(body.new_password)
+    db.add(current_user)
+    await db.commit()
+    return {"ok": True}
+
+
 @router.get("/me/permissions")
 async def read_my_permissions(
     current_user: Annotated[User, Depends(deps.get_current_active_user)]

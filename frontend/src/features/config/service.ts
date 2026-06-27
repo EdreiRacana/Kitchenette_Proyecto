@@ -88,6 +88,8 @@ const configService = {
     deleteRole: async (id: number) => { await api.delete(`/auth/roles/${id}`); },
     getPermissions: async () => (await api.get<PermissionDef[]>('/auth/permissions')).data,
     getMyPermissions: async () => (await api.get<MyPermissions>('/auth/me/permissions')).data,
+    changeMyPassword: async (current_password: string, new_password: string) =>
+        (await api.post('/auth/me/password', { current_password, new_password })).data,
 
     getIntegrations: async () => (await api.get<SystemIntegration[]>('/config/integrations')).data,
     createIntegration: async (data: Omit<SystemIntegration, 'id'>) => (await api.post<SystemIntegration>('/config/integrations', data)).data,

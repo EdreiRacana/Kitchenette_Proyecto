@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.api.deps import module_write_guard
 
 api_router = APIRouter()
 
@@ -13,14 +15,18 @@ from app.modules.hr.router import router as hr_router
 from app.modules.search.router import router as search_router
 from app.modules.notifications.router import router as notifications_router
 
+# Defensa en profundidad: las escrituras (POST/PUT/PATCH/DELETE) a cada módulo
+# operativo exigen el permiso del rol (las lecturas quedan abiertas; el menú ya
+# las oculta por rol). auth (login/setup) y config (con guards propios) no se
+# envuelven aquí.
 api_router.include_router(auth_router,      prefix="/auth",       tags=["auth"])
-api_router.include_router(inventory_router, prefix="/inventory",  tags=["inventory"])
-api_router.include_router(customers_router, prefix="/customers",  tags=["customers"])
-api_router.include_router(sales_router,     prefix="/sales",      tags=["sales"])
-api_router.include_router(finance_router,   prefix="/finance",    tags=["finance"])
+api_router.include_router(inventory_router, prefix="/inventory",  tags=["inventory"], dependencies=[Depends(module_write_guard("inventory"))])
+api_router.include_router(customers_router, prefix="/customers",  tags=["customers"], dependencies=[Depends(module_write_guard("customers"))])
+api_router.include_router(sales_router,     prefix="/sales",      tags=["sales"], dependencies=[Depends(module_write_guard("sales"))])
+api_router.include_router(finance_router,   prefix="/finance",    tags=["finance"], dependencies=[Depends(module_write_guard("finance"))])
 api_router.include_router(config_router,    prefix="/config",     tags=["configuration"])
 api_router.include_router(ingesta_router,   prefix="/ingesta",    tags=["ingesta"])
-api_router.include_router(hr_router,        prefix="/hr",         tags=["hr"])
+api_router.include_router(hr_router,        prefix="/hr",         tags=["hr"], dependencies=[Depends(module_write_guard("hr"))])
 api_router.include_router(search_router,    prefix="/search",     tags=["search"])
 api_router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
 

@@ -787,6 +787,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
       {/* ── TAB: Security ── */}
       {tab === "security" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <ChangePasswordCard t={t} card={card} lbl={lbl} inp={inp} sectionTitle={sectionTitle} />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
             <div style={card}>
               {sectionTitle(Lock, "Política de contraseñas", t.nova)}
@@ -991,6 +992,45 @@ function BranchFormModal({ t, lbl, inp, editing, onClose, onSaved }: any) {
   );
 }
 
+// ── Tarjeta: cambiar mi propia contraseña (real, exige contraseña actual) ───
+function ChangePasswordCard({ t, card, lbl, inp, sectionTitle }: any) {
+  const [cur, setCur] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const valid = cur && next.length >= 6 && next === confirm;
+
+  const save = async () => {
+    setSaving(true); setMsg("");
+    try {
+      await configService.changeMyPassword(cur, next);
+      setMsg("Contraseña actualizada ✓");
+      setCur(""); setNext(""); setConfirm("");
+    } catch (err: any) { setMsg(errorMessage(err, "No se pudo cambiar la contraseña.")); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ ...card, maxWidth: 520 }}>
+      {sectionTitle(Lock, "Cambiar mi contraseña", t.nova)}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div><label style={lbl}>Contraseña actual *</label><input type="password" value={cur} onChange={e => setCur(e.target.value)} style={inp} /></div>
+        <div><label style={lbl}>Nueva contraseña *</label><input type="password" value={next} onChange={e => setNext(e.target.value)} placeholder="Mínimo 6 caracteres" style={inp} /></div>
+        <div><label style={lbl}>Confirmar nueva contraseña *</label><input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} style={inp} /></div>
+        {next.length > 0 && next.length < 6 && <div style={{ fontSize: 11.5, color: t.warn }}>La nueva contraseña debe tener al menos 6 caracteres.</div>}
+        {confirm.length > 0 && next !== confirm && <div style={{ fontSize: 11.5, color: t.bad }}>Las contraseñas no coinciden.</div>}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={save} disabled={saving || !valid} style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !valid ? 0.5 : 1 }}>
+            {saving ? "…" : "Actualizar contraseña"}
+          </button>
+          {msg && <span style={{ fontSize: 12.5, color: msg.includes("✓") ? t.good : t.bad }}>{msg}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Modal: crear / editar usuario (RBAC real) ──────────────────────────────
 function UserFormModal({ t, lbl, inp, roles, branches, editing, onClose, onSaved }: any) {
   const [full_name, setFullName] = useState(editing?.name && editing?.name !== editing?.email ? editing.name : "");
@@ -1054,14 +1094,28 @@ function UserFormModal({ t, lbl, inp, roles, branches, editing, onClose, onSaved
           </div>
           <div><label style={lbl}>{isEdit ? "Nueva contraseña (opcional)" : "Contraseña inicial *"}</label>
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder={isEdit ? "Dejar vacío para no cambiarla" : "Mínimo 6 caracteres"} style={inp} />
+            {!isEdit && password.length > 0 && password.length < 6 && (
+              <div style={{ fontSize: 11.5, color: t.warn, marginTop: 5 }}>La contraseña debe tener al menos 6 caracteres (llevas {password.length}).</div>
+            )}
           </div>
           {error && <div style={{ fontSize: 12.5, color: t.bad }}>{error}</div>}
         </div>
-        <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
-          <button onClick={save} disabled={saving || !valid} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !valid ? 0.5 : 1 }}>
-            {saving ? "…" : isEdit ? "Guardar cambios" : "Crear usuario"}
-          </button>
+        <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", flexDirection: "column", gap: 8 }}>
+          {!valid && !saving && (
+            <div style={{ fontSize: 11.5, color: t.textLo }}>
+              Para crear el usuario falta: {[
+                !email.trim() && "correo",
+                !roleId && "rol",
+                !isEdit && password.length < 6 && "contraseña de 6+ caracteres",
+              ].filter(Boolean).join(", ")}.
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+            <button onClick={save} disabled={saving || !valid} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !valid ? 0.5 : 1 }}>
+              {saving ? "…" : isEdit ? "Guardar cambios" : "Crear usuario"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
