@@ -1048,6 +1048,20 @@ function NotificationBell({ t, lang, onNavigate }) {
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
           <div style={{ position: "absolute", top: 44, right: 0, width: "min(360px, 90vw)", maxHeight: 420, overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 6, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
+            {count > 0 && (
+              <div style={{ display: "flex", justifyContent: "flex-end", padding: "4px 6px 2px" }}>
+                <button onClick={async () => {
+                  try {
+                    const { data } = await api.post("/notifications/email-digest");
+                    alert(data.sent
+                      ? (lang === "es" ? `Resumen enviado a ${data.to}` : `Digest sent to ${data.to}`)
+                      : (lang === "es" ? "No se pudo enviar: configura el correo en Configuración > Integraciones." : "Could not send: set up email in Settings > Integrations."));
+                  } catch { alert(lang === "es" ? "Error al enviar el resumen" : "Error sending digest"); }
+                }} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 9px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 11.5, fontWeight: 600 }}>
+                  <Mail size={13} /> {lang === "es" ? "Enviar resumen por correo" : "Email digest"}
+                </button>
+              </div>
+            )}
             {count === 0 && (
               <div style={{ padding: 16, fontSize: 13, color: t.textLo, textAlign: "center" }}>
                 {lang === "es" ? "Sin avisos pendientes" : "No pending alerts"}
