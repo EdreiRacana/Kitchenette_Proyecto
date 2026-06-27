@@ -1054,14 +1054,28 @@ function UserFormModal({ t, lbl, inp, roles, branches, editing, onClose, onSaved
           </div>
           <div><label style={lbl}>{isEdit ? "Nueva contraseña (opcional)" : "Contraseña inicial *"}</label>
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder={isEdit ? "Dejar vacío para no cambiarla" : "Mínimo 6 caracteres"} style={inp} />
+            {!isEdit && password.length > 0 && password.length < 6 && (
+              <div style={{ fontSize: 11.5, color: t.warn, marginTop: 5 }}>La contraseña debe tener al menos 6 caracteres (llevas {password.length}).</div>
+            )}
           </div>
           {error && <div style={{ fontSize: 12.5, color: t.bad }}>{error}</div>}
         </div>
-        <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
-          <button onClick={save} disabled={saving || !valid} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !valid ? 0.5 : 1 }}>
-            {saving ? "…" : isEdit ? "Guardar cambios" : "Crear usuario"}
-          </button>
+        <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", flexDirection: "column", gap: 8 }}>
+          {!valid && !saving && (
+            <div style={{ fontSize: 11.5, color: t.textLo }}>
+              Para crear el usuario falta: {[
+                !email.trim() && "correo",
+                !roleId && "rol",
+                !isEdit && password.length < 6 && "contraseña de 6+ caracteres",
+              ].filter(Boolean).join(", ")}.
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+            <button onClick={save} disabled={saving || !valid} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !valid ? 0.5 : 1 }}>
+              {saving ? "…" : isEdit ? "Guardar cambios" : "Crear usuario"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
