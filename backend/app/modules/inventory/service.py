@@ -745,10 +745,16 @@ def _build_xlsx(columns: List[str], example_rows: List[list], sheet_name: str) -
     return buffer.getvalue()
 
 def generate_products_template() -> bytes:
+    # Una columna por cada entrada de PRODUCTS_TEMPLATE_COLUMNS (16). Orden:
+    # sku, codigo_barras, producto, categoria, imagen_url, fabricado_interno, talla,
+    # color, material, precio, costo, almacen, stock_inicial, punto_reorden,
+    # stock_seguridad, dias_entrega_proveedor
     example = [
-        ["CAM-001-AZ-CH", "Camisa de algodón", "Ropa", "no", "CH", "Azul", "Algodón",
+        ["CAM-001-AZ-CH", "7501234567890", "Camisa de algodón", "Ropa",
+         "https://misitio.com/imagenes/camisa-azul.jpg", "no", "CH", "Azul", "Algodón",
          350.0, 180.0, "Almacén Principal", 50, 10, 5, 7],
-        ["TEL-ALG-001", "Tela de algodón (insumo)", "Materia prima", "no", "", "", "Algodón",
+        ["TEL-ALG-001", "", "Tela de algodón (insumo)", "Materia prima",
+         "", "no", "", "", "Algodón",
          0, 45.0, "Almacén Principal", 500, 100, 50, 15],
     ]
     return _build_xlsx(PRODUCTS_TEMPLATE_COLUMNS, example, "productos")
