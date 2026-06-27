@@ -26,6 +26,7 @@ async def create_user(db: AsyncSession, user_in: UserCreate):
         full_name=user_in.full_name,
         role=user_in.role,
         role_id=user_in.role_id,
+        branch_id=user_in.branch_id,
         is_active=user_in.is_active,
     )
     db.add(db_user)
@@ -35,8 +36,12 @@ async def create_user(db: AsyncSession, user_in: UserCreate):
 
 
 async def get_users(db: AsyncSession, skip: int = 0, limit: int = 100):
+    # Carga el rol Y sus permisos: el schema de respuesta User incluye
+    # role_obj.permissions; sin esta carga ansiosa, la serialización dispara un
+    # lazy-load sobre la sesión async y revienta (ResponseValidationError).
     result = await db.execute(
-        select(User).options(selectinload(User.role_obj)).offset(skip).limit(limit)
+        select(User).options(selectinload(User.role_obj).selectinload(Role.permissions))
+        .offset(skip).limit(limit)
     )
     return result.scalars().all()
 
