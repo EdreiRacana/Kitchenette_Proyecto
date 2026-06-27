@@ -33,6 +33,21 @@ export function onServerWaking(fn) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Origen del backend (sin el sufijo /api/v1). El frontend vive en otro dominio
+// en Render, así que las rutas relativas que devuelven las subidas (p. ej.
+// "/static/inventory/x.webp") hay que anteponerles este origen para que el
+// navegador las pida al backend y no al propio frontend.
+export const BACKEND_ORIGIN = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1').replace(/\/api\/v1\/?$/, '');
+
+// Resuelve una URL de medios: deja intactas las absolutas (http/https/data/blob)
+// y a las rutas relativas del backend les antepone BACKEND_ORIGIN.
+export function resolveMediaUrl(url?: string): string {
+    if (!url) return '';
+    if (/^(https?:|data:|blob:)/i.test(url)) return url;
+    if (url.startsWith('/')) return BACKEND_ORIGIN + url;
+    return url;
+}
+
 function isRetryable(error) {
     // timeout (ECONNABORTED) o red caída/sin respuesta
     if (error.code === 'ECONNABORTED' || !error.response) return true;
