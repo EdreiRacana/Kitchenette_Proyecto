@@ -24,10 +24,50 @@ export interface CompanyProfile {
     logo_url?: string;
 }
 
+export interface PermissionDef { id: number; module: string; action: string; description?: string; }
+export interface ApiRole {
+    id: number;
+    name: string;
+    description?: string;
+    color?: string;
+    is_system: boolean;
+    permissions: PermissionDef[];
+}
+export interface ApiUser {
+    id: number;
+    email: string;
+    full_name?: string;
+    is_active: boolean;
+    is_superuser: boolean;
+    role?: string;
+    role_id?: number | null;
+    role_obj?: ApiRole | null;
+    created_at: string;
+}
+export interface ModuleDef { key: string; label: string; }
+export interface MyPermissions {
+    is_superuser: boolean;
+    role: string | null;
+    modules: ModuleDef[];
+    permissions: Record<string, Record<string, boolean>>;
+}
+
 const configService = {
     getCompanyProfile: async () => (await api.get<CompanyProfile>('/config/company')).data,
     createCompanyProfile: async (data: CompanyProfile) => (await api.post<CompanyProfile>('/config/company', data)).data,
     updateCompanyProfile: async (data: Partial<CompanyProfile>) => (await api.put<CompanyProfile>('/config/company', data)).data,
+
+    // ── Usuarios, roles y permisos (RBAC) ──
+    getUsers: async () => (await api.get<ApiUser[]>('/auth/users')).data,
+    createUser: async (data: any) => (await api.post<ApiUser>('/auth/users', data)).data,
+    updateUser: async (id: number, data: any) => (await api.put<ApiUser>(`/auth/users/${id}`, data)).data,
+    deleteUser: async (id: number) => { await api.delete(`/auth/users/${id}`); },
+    getRoles: async () => (await api.get<ApiRole[]>('/auth/roles')).data,
+    createRole: async (data: any) => (await api.post<ApiRole>('/auth/roles', data)).data,
+    updateRole: async (id: number, data: any) => (await api.put<ApiRole>(`/auth/roles/${id}`, data)).data,
+    deleteRole: async (id: number) => { await api.delete(`/auth/roles/${id}`); },
+    getPermissions: async () => (await api.get<PermissionDef[]>('/auth/permissions')).data,
+    getMyPermissions: async () => (await api.get<MyPermissions>('/auth/me/permissions')).data,
 
     getIntegrations: async () => (await api.get<SystemIntegration[]>('/config/integrations')).data,
     createIntegration: async (data: Omit<SystemIntegration, 'id'>) => (await api.post<SystemIntegration>('/config/integrations', data)).data,
