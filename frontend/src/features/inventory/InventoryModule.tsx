@@ -536,8 +536,10 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                         onClick={() => setSelectedProduct(p)}>
                         <td style={{ padding: "10px 16px" }}>
                           {p.image_url
-                            ? <img src={p.image_url} alt="" style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover", border: `1px solid ${t.border}`, display: "block" }} />
-                            : <div style={{ width: 40, height: 40, borderRadius: 8, background: t.panel3, border: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: t.textLo }}><Package size={16} /></div>}
+                            ? <img src={p.image_url} alt="" style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover", border: `1px solid ${t.border}`, display: "block" }}
+                                onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; const sib = e.currentTarget.nextElementSibling as HTMLElement; if (sib) sib.style.display = "flex"; }} />
+                            : null}
+                          <div style={{ width: 40, height: 40, borderRadius: 8, background: t.panel3, border: `1px solid ${t.border}`, display: p.image_url ? "none" : "flex", alignItems: "center", justifyContent: "center", color: t.textLo }}><Package size={16} /></div>
                         </td>
                         <td style={{ padding: "14px 16px" }}>
                           <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>{p.name}</div>
@@ -1221,7 +1223,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
           onSave={async (data: any) => {
             if (demo) { alert(lang === "es" ? "Modo demo: guardado simulado ✓" : "Demo mode: simulated save ✓"); setProductForm(false); setEditingProduct(null); return; }
             const { form, variants, stockInit } = data;
-            const productPayload = { name: form.name, description: form.description, category: form.category, image_url: form.image_url, is_active: form.is_active, item_type: form.item_type };
+            const productPayload = { name: form.name, description: form.description, category: form.category, image_url: form.image_url?.trim() || undefined, is_active: form.is_active, item_type: form.item_type };
             const product = editingProduct
               ? await inventoryService.updateProduct(editingProduct.id, productPayload)
               : await inventoryService.createProduct(productPayload);
@@ -1564,7 +1566,8 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
               <div>
                 <label style={label}>{lang === "es" ? "Imagen del producto" : "Product image"}</label>
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  {form.image_url && <img src={form.image_url} alt="" style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover", border: `1px solid ${t.border}` }} />}
+                  {form.image_url && <img src={form.image_url} alt="" style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover", border: `1px solid ${t.border}` }}
+                    onError={e => { (e.currentTarget as HTMLImageElement).style.outline = `2px solid ${t.bad}`; }} />}
                   <input value={form.image_url} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} placeholder="https://…" style={{ ...inp, flex: 1 }} />
                   <label style={{ padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, fontSize: 12.5, cursor: "pointer", whiteSpace: "nowrap" }}>
                     {uploadingImg ? "…" : (lang === "es" ? "Subir" : "Upload")}
