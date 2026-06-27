@@ -3,6 +3,7 @@ import api from '../../services/api';
 export interface Variant {
     id: number;
     sku: string;
+    barcode?: string;
     size?: string;
     color?: string;
     material?: string;

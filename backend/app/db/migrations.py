@@ -252,6 +252,8 @@ _INVENTORY_STATEMENTS = [
     "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS commercial_terms TEXT",
     "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS extra_contacts JSONB",
     "CREATE INDEX IF NOT EXISTS ix_supplier_documents_supplier ON supplier_documents (supplier_id)",
+    "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS barcode VARCHAR",
+    "CREATE INDEX IF NOT EXISTS ix_product_variants_barcode ON product_variants (barcode)",
     "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS reorder_point INTEGER",
     "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS safety_stock INTEGER",
     "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS lead_time_days INTEGER",

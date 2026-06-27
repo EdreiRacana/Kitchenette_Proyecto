@@ -56,7 +56,7 @@ async def global_search(db: AsyncSession, q: str, limit: int = 5) -> schemas.Glo
         variant_stmt = (
             select(inv_models.ProductVariant)
             .options(selectinload(inv_models.ProductVariant.product))
-            .where(inv_models.ProductVariant.sku.ilike(like))
+            .where(or_(inv_models.ProductVariant.sku.ilike(like), inv_models.ProductVariant.barcode.ilike(like)))
             .limit(limit - len(result.products))
         )
         seen = {r.id for r in result.products}

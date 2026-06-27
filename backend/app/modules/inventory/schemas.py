@@ -92,6 +92,7 @@ class ProductInDB(ProductBase):
 # --- Variant Schemas ---
 class VariantBase(BaseModel):
     sku: str
+    barcode: Optional[str] = None
     size: Optional[str] = None
     color: Optional[str] = None
     material: Optional[str] = None

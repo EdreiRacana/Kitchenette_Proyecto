@@ -715,7 +715,7 @@ async def complete_production_order(db: AsyncSession, prod_id: int, user_id: Opt
 
 # --- Carga masiva (Excel/CSV) ---------------------------------------------------
 PRODUCTS_TEMPLATE_COLUMNS = [
-    "sku", "producto", "categoria", "fabricado_interno", "talla", "color", "material",
+    "sku", "codigo_barras", "producto", "categoria", "fabricado_interno", "talla", "color", "material",
     "precio", "costo", "almacen", "stock_inicial", "punto_reorden", "stock_seguridad",
     "dias_entrega_proveedor",
 ]
@@ -817,6 +817,7 @@ async def bulk_import_products(db: AsyncSession, file_bytes: bytes, filename: st
                 variant.price = price
                 if cost_price is not None:
                     variant.cost_price = cost_price
+                variant.barcode = str(row.get("codigo_barras", "")).strip() or None
                 variant.size = str(row.get("talla", "")).strip() or None
                 variant.color = str(row.get("color", "")).strip() or None
                 variant.material = str(row.get("material", "")).strip() or None
@@ -827,6 +828,7 @@ async def bulk_import_products(db: AsyncSession, file_bytes: bytes, filename: st
             else:
                 variant = ProductVariant(
                     product_id=product.id, sku=sku, price=price, cost_price=cost_price,
+                    barcode=str(row.get("codigo_barras", "")).strip() or None,
                     size=str(row.get("talla", "")).strip() or None,
                     color=str(row.get("color", "")).strip() or None,
                     material=str(row.get("material", "")).strip() or None,

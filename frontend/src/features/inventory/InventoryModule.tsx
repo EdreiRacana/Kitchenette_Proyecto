@@ -1221,7 +1221,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
             for (let i = 0; i < variants.length; i++) {
               const v = variants[i];
               const variantPayload = {
-                product_id: product.id, sku: v.sku, price: Number(v.price) || 0, cost_price: v.cost_price ? Number(v.cost_price) : undefined,
+                product_id: product.id, sku: v.sku, barcode: v.barcode || undefined, price: Number(v.price) || 0, cost_price: v.cost_price ? Number(v.cost_price) : undefined,
                 size: v.size || undefined, color: v.color || undefined, material: v.material || undefined,
                 reorder_point: v.reorder_point ? Number(v.reorder_point) : undefined, safety_stock: v.safety_stock ? Number(v.safety_stock) : undefined,
                 lead_time_days: v.lead_time_days ? Number(v.lead_time_days) : undefined, preferred_supplier_id: v.preferred_supplier_id ? Number(v.preferred_supplier_id) : undefined,
@@ -1489,15 +1489,15 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
   });
   const [uploadingImg, setUploadingImg] = useState(false);
   const [variants, setVariants] = useState(editing?.variants?.map((v: any) => ({
-    sku: v.sku, price: v.price, cost_price: v.cost_price || "", size: v.size || "", color: v.color || "", material: v.material || "",
+    sku: v.sku, barcode: v.barcode || "", price: v.price, cost_price: v.cost_price || "", size: v.size || "", color: v.color || "", material: v.material || "",
     reorder_point: v.reorder_point ?? "", safety_stock: v.safety_stock ?? "", lead_time_days: v.lead_time_days ?? "", preferred_supplier_id: v.preferred_supplier_id ?? "",
-  })) || [{ sku: "", price: "", cost_price: "", size: "", color: "", material: "", reorder_point: "", safety_stock: "", lead_time_days: "", preferred_supplier_id: "" }]);
+  })) || [{ sku: "", barcode: "", price: "", cost_price: "", size: "", color: "", material: "", reorder_point: "", safety_stock: "", lead_time_days: "", preferred_supplier_id: "" }]);
   const [stockInit, setStockInit] = useState<Record<string, Record<number, number>>>({});
 
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
 
-  const addVariant = () => setVariants((v: any[]) => [...v, { sku: "", price: "", cost_price: "", size: "", color: "", material: "", reorder_point: "", safety_stock: "", lead_time_days: "", preferred_supplier_id: "" }]);
+  const addVariant = () => setVariants((v: any[]) => [...v, { sku: "", barcode: "", price: "", cost_price: "", size: "", color: "", material: "", reorder_point: "", safety_stock: "", lead_time_days: "", preferred_supplier_id: "" }]);
   const removeVariant = (i: number) => setVariants((v: any[]) => v.filter((_: any, idx: number) => idx !== i));
   const updateVariant = (i: number, field: string, val: any) => setVariants((v: any[]) => v.map((vv: any, idx: number) => idx === i ? { ...vv, [field]: val } : vv));
 
@@ -1590,6 +1590,7 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <div><label style={label}>SKU *</label><input value={v.sku} onChange={e => updateVariant(i, "sku", e.target.value)} placeholder="CEM-GR-50" style={inp} /></div>
+                    <div><label style={label}>{lang === "es" ? "Código de barras (EAN/UPC)" : "Barcode (EAN/UPC)"}</label><input value={v.barcode || ""} onChange={e => updateVariant(i, "barcode", e.target.value)} placeholder="7501234567890" style={inp} /></div>
                     <div><label style={label}>{lang === "es" ? "Precio venta *" : "Sale price *"}</label><input type="number" value={v.price} onChange={e => updateVariant(i, "price", e.target.value)} style={inp} /></div>
                     <div><label style={label}>{lang === "es" ? "Costo" : "Cost"}</label><input type="number" value={v.cost_price} onChange={e => updateVariant(i, "cost_price", e.target.value)} style={inp} /></div>
                     <div><label style={label}>{lang === "es" ? "Talla/Tamaño" : "Size"}</label><input value={v.size} onChange={e => updateVariant(i, "size", e.target.value)} placeholder="50kg, M, XL…" style={inp} /></div>

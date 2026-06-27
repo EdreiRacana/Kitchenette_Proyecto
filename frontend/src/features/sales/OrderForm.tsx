@@ -55,6 +55,53 @@ function computeTotals(d: OrderDraft) {
   return { subtotal, discount, tax, total };
 }
 
+// Buscador de producto por nombre, SKU o código de barras (EAN/UPC). Reemplaza
+// al <select> plano para poder ubicar el artículo escribiendo cualquier
+// identificador — clave para captura rápida con lector de códigos.
+function ProductCombo({ tk, tr, variants, value, onPick }: {
+  tk: Tokens; tr: Translator; variants: VariantOption[];
+  value: number | null; onPick: (v: VariantOption | null) => void;
+}) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const selected = value != null ? variants.find((v) => v.variant_id === value) : null;
+  const query = q.trim().toLowerCase();
+  const matches = !query ? variants.slice(0, 50) : variants.filter((v) =>
+    v.label.toLowerCase().includes(query) ||
+    v.sku.toLowerCase().includes(query) ||
+    (v.barcode ?? "").toLowerCase().includes(query)
+  ).slice(0, 50);
+  const inputStyle: React.CSSProperties = {
+    width: "100%", padding: "9px 11px", borderRadius: 8, border: `1px solid ${tk.border}`,
+    background: tk.inputBg ?? tk.panel, color: tk.textHi, fontSize: 13.5, outline: "none",
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        value={open ? q : (selected ? `${selected.label} · ${selected.sku}` : q)}
+        onChange={(e) => { setQ(e.target.value); setOpen(true); if (value != null) onPick(null); }}
+        onFocus={() => { setQ(""); setOpen(true); }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder={tr("sales_search_product", "Buscar por nombre, SKU o código…")}
+        style={inputStyle}
+      />
+      {open && matches.length > 0 && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, maxHeight: 240, overflowY: "auto", background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 8, zIndex: 30, boxShadow: "0 12px 28px rgba(0,0,0,0.3)" }}>
+          {matches.map((v) => (
+            <button key={v.variant_id} type="button"
+              onMouseDown={(e) => { e.preventDefault(); onPick(v); setQ(""); setOpen(false); }}
+              style={{ width: "100%", textAlign: "left", padding: "8px 11px", border: "none", background: "transparent", color: tk.textHi, cursor: "pointer", fontSize: 13, display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.label}</span>
+              <span style={{ fontSize: 11, color: tk.textLo }}>SKU {v.sku}{v.barcode ? ` · EAN ${v.barcode}` : ""} · {money(v.price)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function OrderForm({
   tk, tr, open, onClose, onSubmit, editing, customers, variants, saving,
 }: {
@@ -78,12 +125,6 @@ export function OrderForm({
   const setItem = (idx: number, patch: Partial<OrderItemDraft>) =>
     setDraft((d) => ({ ...d, items: d.items.map((it, i) => (i === idx ? { ...it, ...patch } : it)) }));
 
-  const pickVariant = (idx: number, variantId: string) => {
-    if (!variantId) { setItem(idx, { variant_id: null }); return; }
-    const v = variants.find((x) => String(x.variant_id) === variantId);
-    if (v) setItem(idx, { variant_id: v.variant_id, product_name: v.label, sku: v.sku, unit_price: v.price });
-  };
-
   const addItem = () => setDraft((d) => ({ ...d, items: [...d.items, emptyItem()] }));
   const removeItem = (idx: number) =>
     setDraft((d) => ({ ...d, items: d.items.length > 1 ? d.items.filter((_, i) => i !== idx) : d.items }));
@@ -96,7 +137,6 @@ export function OrderForm({
     ? `${tr("sales_edit", "Editar")} ${editing.folio ?? ""}`
     : isQuote ? tr("sales_new_quote", "Nueva cotización") : tr("sales_new_order", "Nuevo pedido");
 
-  const variantOpts = variants.map((v) => ({ value: String(v.variant_id), label: `${v.label} — ${money(v.price)}` }));
   const customerOpts = customers.map((c) => ({ value: String(c.id), label: c.name }));
 
   return (
@@ -161,9 +201,10 @@ export function OrderForm({
               <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
                 <div style={{ flex: "2 1 220px" }}>
                   <Field tk={tk} label={tr("sales_product", "Producto")}>
-                    <Select tk={tk} value={it.variant_id ? String(it.variant_id) : ""}
-                      onChange={(v) => pickVariant(idx, v)} options={variantOpts}
-                      placeholder={tr("sales_manual_product", "Manual / otro")} />
+                    <ProductCombo tk={tk} tr={tr} variants={variants} value={it.variant_id}
+                      onPick={(v) => v
+                        ? setItem(idx, { variant_id: v.variant_id, product_name: v.label, sku: v.sku, unit_price: v.price })
+                        : setItem(idx, { variant_id: null })} />
                   </Field>
                 </div>
                 {it.variant_id === null && (

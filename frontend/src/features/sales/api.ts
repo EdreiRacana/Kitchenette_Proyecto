@@ -10,6 +10,7 @@ export interface VariantOption {
   variant_id: number;
   label: string;
   sku: string;
+  barcode?: string | null;
   price: number;
 }
 
@@ -134,7 +135,7 @@ export const salesApi = {
     return data;
   },
   async variantOptions(): Promise<VariantOption[]> {
-    type Variant = { id: number; sku: string; price: number; size?: string | null; color?: string | null };
+    type Variant = { id: number; sku: string; barcode?: string | null; price: number; size?: string | null; color?: string | null };
     type Product = { name: string; variants: Variant[] };
     const { data } = await api.get<Product[]>(`/inventory/products`);
     const opts: VariantOption[] = [];
@@ -145,6 +146,7 @@ export const salesApi = {
           variant_id: v.id,
           label: attrs ? `${p.name} · ${attrs}` : p.name,
           sku: v.sku,
+          barcode: v.barcode ?? null,
           price: v.price,
         });
       }

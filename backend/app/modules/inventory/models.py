@@ -99,6 +99,7 @@ class ProductVariant(Base):
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
     sku = Column(String, unique=True, index=True, nullable=False)
+    barcode = Column(String, index=True, nullable=True)  # EAN/UPC para búsqueda por código
 
     # Attributes
     size = Column(String, nullable=True)
