@@ -65,7 +65,7 @@ const STRINGS = {
     monShort: MON_ES,
     cal: { months: ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"], dows: ["L", "M", "X", "J", "V", "S", "D"] },
     nav: { dashboard: "Tablero", ventas: "Ventas / CRM", clientes: "Clientes", inventario: "Inventario", finanzas: "Finanzas", rh: "RH / Nómina", reportes: "Reportes / BI", config: "Configuración" },
-    modules: "MÓDULOS", search: "Buscar productos, clientes, folios…", role: "Administrador",
+    modules: "MÓDULOS", search: "Nexus — buscar en todo el sistema…", role: "Administrador",
     api: "API", soonTag: "pronto",
     secure: "Sistema Seguro",
     login: { user: "Usuario", pass: "Contraseña", enter: "Entrar al sistema", demo: "Demo · cualquier credencial entra", platform: "Plataforma Sthenova · el logo de cada empresa cliente se configura por separado" },
@@ -99,7 +99,7 @@ const STRINGS = {
     monShort: MON_EN,
     cal: { months: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"], dows: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] },
     nav: { dashboard: "Dashboard", ventas: "Sales / CRM", clientes: "Customers", inventario: "Inventory", finanzas: "Finance", rh: "HR / Payroll", reportes: "Reports / BI", config: "Settings" },
-    modules: "MODULES", search: "Search products, customers, orders…", role: "Administrator",
+    modules: "MODULES", search: "Nexus — search the whole system…", role: "Administrator",
     api: "API", soonTag: "soon",
     secure: "Secure System",
     login: { user: "User", pass: "Password", enter: "Sign in", demo: "Demo · any credentials work", platform: "Sthenova platform · each client company's logo is configured separately" },
@@ -285,7 +285,7 @@ const MODULES = [
   { id: "reportes", icon: BarChart3 }, { id: "config", icon: Settings },
 ];
 
-const mxn = (n) => "$" + n.toLocaleString("es-MX");
+const mxn = (n) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const mxnShort = (n) => n >= 1000000 ? "$" + (n / 1000000).toFixed(1) + "M" : n >= 1000 ? "$" + Math.round(n / 1000) + "k" : "$" + n;
 const statusColor = (t, d) => (d >= 3 ? t.good : d >= 0 ? t.warn : t.bad);
 const pillColor = (t) => ({ Pagado: t.good, Pendiente: t.warn, Parcial: t.nova, Agotado: t.bad, Mayoreo: t.nova, Frecuente: t.good, "Crédito": t.warn });
@@ -915,6 +915,7 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
     <div style={{ position: "relative", flex: 1, maxWidth: 460, minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "9px 12px" }}>
         <Search size={16} color={t.textLo} />
+        <span style={{ flex: "0 0 auto", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.5, color: t.nova ?? t.accent, background: (t.nova ?? "#33B2F5") + "1A", padding: "2px 7px", borderRadius: 6 }}>NEXUS</span>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -1080,7 +1081,7 @@ function NotificationBell({ t, lang, onNavigate }) {
                         {o.folio || `#${o.id}`}{o.customer?.full_name ? ` · ${o.customer.full_name}` : ""}
                       </div>
                       <div style={{ fontSize: 11, color: t.textLo }}>
-                        {lang === "es" ? `Nuevo pedido: $${o.total_amount.toLocaleString()}` : `New order: $${o.total_amount.toLocaleString()}`}
+                        {lang === "es" ? `Nuevo pedido: ${mxn(o.total_amount)}` : `New order: ${mxn(o.total_amount)}`}
                       </div>
                     </div>
                   </button>
@@ -1121,11 +1122,11 @@ function NotificationBell({ t, lang, onNavigate }) {
                       <div style={{ fontSize: 11, color: t.textLo }}>
                         {a.kind === "cxc"
                           ? (overdue
-                              ? (lang === "es" ? `Por cobrar vencido: $${a.balance.toLocaleString()}` : `Overdue receivable: $${a.balance.toLocaleString()}`)
-                              : (lang === "es" ? `Por cobrar próximo: $${a.balance.toLocaleString()}` : `Receivable due soon: $${a.balance.toLocaleString()}`))
+                              ? (lang === "es" ? `Por cobrar vencido: ${mxn(a.balance)}` : `Overdue receivable: ${mxn(a.balance)}`)
+                              : (lang === "es" ? `Por cobrar próximo: ${mxn(a.balance)}` : `Receivable due soon: ${mxn(a.balance)}`))
                           : (overdue
-                              ? (lang === "es" ? `Por pagar vencido: $${a.balance.toLocaleString()}` : `Overdue payable: $${a.balance.toLocaleString()}`)
-                              : (lang === "es" ? `Por pagar próximo: $${a.balance.toLocaleString()}` : `Payable due soon: $${a.balance.toLocaleString()}`))}
+                              ? (lang === "es" ? `Por pagar vencido: ${mxn(a.balance)}` : `Overdue payable: ${mxn(a.balance)}`)
+                              : (lang === "es" ? `Por pagar próximo: ${mxn(a.balance)}` : `Payable due soon: ${mxn(a.balance)}`))}
                         {" · "}{a.reference}{a.due_date ? ` · ${scheduledDueLabel(a.due_date, lang)}` : ""}
                       </div>
                     </div>
@@ -1148,8 +1149,8 @@ function NotificationBell({ t, lang, onNavigate }) {
                       <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sp.target_name || `#${sp.target_id}`}</div>
                       <div style={{ fontSize: 11, color: t.textLo }}>
                         {sp.kind === "cxc"
-                          ? (lang === "es" ? `Cobro programado: $${sp.amount.toLocaleString()}` : `Scheduled collection: $${sp.amount.toLocaleString()}`)
-                          : (lang === "es" ? `Pago programado: $${sp.amount.toLocaleString()}` : `Scheduled payment: $${sp.amount.toLocaleString()}`)}
+                          ? (lang === "es" ? `Cobro programado: ${mxn(sp.amount)}` : `Scheduled collection: ${mxn(sp.amount)}`)
+                          : (lang === "es" ? `Pago programado: ${mxn(sp.amount)}` : `Scheduled payment: ${mxn(sp.amount)}`)}
                         {" · "}{scheduledDueLabel(sp.scheduled_date, lang)}
                       </div>
                     </div>

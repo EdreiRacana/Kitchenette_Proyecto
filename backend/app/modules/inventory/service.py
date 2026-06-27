@@ -715,7 +715,7 @@ async def complete_production_order(db: AsyncSession, prod_id: int, user_id: Opt
 
 # --- Carga masiva (Excel/CSV) ---------------------------------------------------
 PRODUCTS_TEMPLATE_COLUMNS = [
-    "sku", "codigo_barras", "producto", "categoria", "fabricado_interno", "talla", "color", "material",
+    "sku", "codigo_barras", "producto", "categoria", "imagen_url", "fabricado_interno", "talla", "color", "material",
     "precio", "costo", "almacen", "stock_inicial", "punto_reorden", "stock_seguridad",
     "dias_entrega_proveedor",
 ]
@@ -805,10 +805,14 @@ async def bulk_import_products(db: AsyncSession, file_bytes: bytes, filename: st
                         name=product_name,
                         category=str(row.get("categoria", "")).strip() or None,
                         is_manufactured=_to_bool_si_no(row.get("fabricado_interno", "no")),
+                        image_url=str(row.get("imagen_url", "")).strip() or None,
                     )
                     db.add(product)
                     await db.flush()
                 products_by_name[product_name.lower()] = product
+            img_url = str(row.get("imagen_url", "")).strip()
+            if img_url and not product.image_url:
+                product.image_url = img_url
 
             result = await db.execute(select(ProductVariant).where(ProductVariant.sku == sku))
             variant = result.scalars().first()

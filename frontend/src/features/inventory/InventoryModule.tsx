@@ -500,7 +500,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
                 <thead>
                   <tr style={{ background: t.panel2 }}>
-                    {[lang === "es" ? "Producto" : "Product", "SKU", lang === "es" ? "Categoría" : "Category", lang === "es" ? "Stock total" : "Total stock", lang === "es" ? "Valor inventario" : "Inv. value", lang === "es" ? "Precio venta" : "Sale price", lang === "es" ? "Margen" : "Margin", lang === "es" ? "Estado" : "Status", ""].map((h, i) => (
+                    {[lang === "es" ? "Imagen" : "Image", lang === "es" ? "Producto" : "Product", "SKU", lang === "es" ? "Categoría" : "Category", lang === "es" ? "Stock total" : "Total stock", lang === "es" ? "Valor inventario" : "Inv. value", lang === "es" ? "Precio venta" : "Sale price", lang === "es" ? "Margen" : "Margin", lang === "es" ? "Estado" : "Status", ""].map((h, i) => (
                       <th key={i} style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -509,7 +509,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                   {loading ? (
                     Array.from({ length: 6 }).map((_, i) => (
                       <tr key={i}>
-                        {Array.from({ length: 8 }).map((__, c) => (
+                        {Array.from({ length: 9 }).map((__, c) => (
                           <td key={c} style={{ padding: "14px 16px" }}>
                             <div style={{ height: 12, borderRadius: 6, background: t.panel3, width: c === 0 ? "70%" : "50%", animation: "shimmer 1.4s ease infinite" }} />
                           </td>
@@ -518,7 +518,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                       </tr>
                     ))
                   ) : filteredProducts.length === 0 ? (
-                    <tr><td colSpan={9} style={{ textAlign: "center", padding: 48, color: t.textLo, fontSize: 14 }}>
+                    <tr><td colSpan={10} style={{ textAlign: "center", padding: 48, color: t.textLo, fontSize: 14 }}>
                       {lang === "es" ? "Sin productos. Ajusta los filtros o agrega uno nuevo." : "No products. Adjust filters or add a new one."}
                     </td></tr>
                   ) : filteredProducts.map((p, i) => {
@@ -532,6 +532,11 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                         onMouseEnter={e => (e.currentTarget.style.background = t.panel3)}
                         onMouseLeave={e => (e.currentTarget.style.background = i % 2 === 0 ? t.panel : t.panel2)}
                         onClick={() => setSelectedProduct(p)}>
+                        <td style={{ padding: "10px 16px" }}>
+                          {p.image_url
+                            ? <img src={p.image_url} alt="" style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover", border: `1px solid ${t.border}`, display: "block" }} />
+                            : <div style={{ width: 40, height: 40, borderRadius: 8, background: t.panel3, border: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: t.textLo }}><Package size={16} /></div>}
+                        </td>
                         <td style={{ padding: "14px 16px" }}>
                           <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>{p.name}</div>
                           {p.description && <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 2 }}>{p.description}</div>}

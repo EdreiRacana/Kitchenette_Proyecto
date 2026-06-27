@@ -4,7 +4,6 @@
 // Contrato { t, s } igual que App.tsx
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import api from "../../services/api";
 import configService, { type SystemIntegration, type CompanyProfile } from "./service";
 import {
   Building2, Users, Shield, Receipt, Plug, Workflow, Lock, Settings,
@@ -128,9 +127,42 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
     }
   };
 
+  // Comprime el logo a un data-URI base64 (máx 256px) y lo guarda EN LA BASE DE
+  // DATOS (columna logo_url). Antes se subía a /media/upload, que escribe en el
+  // disco efímero del contenedor (se borra en cada redeploy/reinicio en Render),
+  // por eso el logo "desaparecía" al recargar. Un data-URI persiste siempre.
+  const fileToCompressedDataUri = (file: File, max = 256): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("read"));
+      reader.onload = () => {
+        // SVG: no se rasteriza, se guarda tal cual (vectorial, ligero).
+        if (file.type === "image/svg+xml") { resolve(String(reader.result)); return; }
+        const img = new Image();
+        img.onerror = () => reject(new Error("img"));
+        img.onload = () => {
+          const scale = Math.min(1, max / Math.max(img.width, img.height));
+          const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+          const canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) { reject(new Error("ctx")); return; }
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL("image/png"));
+        };
+        img.src = String(reader.result);
+      };
+      reader.readAsDataURL(file);
+    });
+
   const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setCompanyMsg("El logo no debe pesar más de 2MB.");
+      if (logoInputRef.current) logoInputRef.current.value = "";
+      return;
+    }
     if (!companyExists && !companyForm.legal_name) {
       setCompanyMsg("Primero escribe el nombre de la empresa y guarda, luego sube el logo.");
       if (logoInputRef.current) logoInputRef.current.value = "";
@@ -138,14 +170,11 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
     }
     setLogoUploading(true); setCompanyMsg("");
     try {
-      const fd = new FormData();
-      fd.append("files", file);
-      const { data } = await api.post<string[]>("/media/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
-      const url = data[0];
-      const nextForm = { ...companyForm, logo_url: url };
+      const dataUri = await fileToCompressedDataUri(file);
+      const nextForm = { ...companyForm, logo_url: dataUri };
       setCompanyForm(nextForm);
       const safeNextForm = { ...nextForm, contact_email: nextForm.contact_email?.trim() || undefined };
-      if (companyExists) await configService.updateCompanyProfile({ logo_url: url });
+      if (companyExists) await configService.updateCompanyProfile({ logo_url: dataUri });
       else await configService.createCompanyProfile(safeNextForm);
       setCompanyExists(true);
       setCompanyMsg("Logo actualizado ✓");
@@ -258,7 +287,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               {sectionTitle(Building2, "Identidad de la empresa", t.nova)}
               <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
                 {companyForm.logo_url
-                  ? <img src={companyForm.logo_url.startsWith("http") ? companyForm.logo_url : `${(import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1").replace(/\/api\/v1\/?$/, "")}${companyForm.logo_url}`} alt="Logo" style={{ width: 64, height: 64, borderRadius: 16, objectFit: "cover", border: `1px solid ${t.border}` }} />
+                  ? <img src={(companyForm.logo_url.startsWith("http") || companyForm.logo_url.startsWith("data:")) ? companyForm.logo_url : `${(import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1").replace(/\/api\/v1\/?$/, "")}${companyForm.logo_url}`} alt="Logo" style={{ width: 64, height: 64, borderRadius: 16, objectFit: "cover", border: `1px solid ${t.border}` }} />
                   : <div style={{ width: 64, height: 64, borderRadius: 16, background: comp.color + "26", color: comp.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 800 }}>{comp.initials}</div>}
                 <div>
                   <input ref={logoInputRef} type="file" accept="image/png,image/svg+xml,image/jpeg" style={{ display: "none" }} onChange={handleLogoChange} />
