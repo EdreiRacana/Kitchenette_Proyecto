@@ -2,8 +2,8 @@ import os
 import shutil
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from fastapi.responses import StreamingResponse
-from typing import List, Annotated
+from fastapi.responses import StreamingResponse, Response
+from typing import List, Annotated, Optional
 from io import BytesIO
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
@@ -229,6 +229,23 @@ async def pay_purchase_order(po_id: int, pay_in: schemas.SupplierPaymentCreate, 
         raise HTTPException(status_code=404, detail="Purchase order not found")
     return po
 
+@router.get("/purchase-orders/{po_id}/pdf")
+async def purchase_order_pdf(po_id: int, db: DB, current_user: CurrentUser):
+    pdf = await service.generate_purchase_order_pdf(db, po_id)
+    if pdf is None:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="OC-{po_id}.pdf"'})
+
+@router.post("/purchase-orders/{po_id}/email")
+async def email_purchase_order(po_id: int, db: DB, current_user: CurrentUser, to: Optional[str] = None):
+    result = await service.email_purchase_order(db, po_id, to=to)
+    if result.get("error") == "not_found":
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    if result.get("error") == "no_recipient":
+        raise HTTPException(status_code=400, detail="El proveedor no tiene correo y no se indicó un destinatario")
+    return result
+
 # --- BOM / Recipes ---
 @router.post("/recipes", response_model=schemas.RecipeInDB)
 async def create_recipe(recipe_in: schemas.RecipeCreate, db: DB, current_user: CurrentUser):
@@ -270,3 +287,11 @@ async def complete_production_order(prod_id: int, db: DB, current_user: CurrentU
         return await service.complete_production_order(db, prod_id, user_id=current_user.id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/production-orders/{prod_id}/pdf")
+async def production_order_pdf(prod_id: int, db: DB, current_user: CurrentUser):
+    pdf = await service.generate_production_order_pdf(db, prod_id)
+    if pdf is None:
+        raise HTTPException(status_code=404, detail="Production order not found")
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="OP-{prod_id}.pdf"'})

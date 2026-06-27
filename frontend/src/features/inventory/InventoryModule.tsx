@@ -12,6 +12,7 @@ import {
   RotateCcw, ArrowLeftRight, Eye, Edit2, Trash2, Trash,
   DollarSign,
   Users, ClipboardList, Factory, FlaskConical,
+  FileText, Mail,
 } from "lucide-react";
 import {
   inventoryService,
@@ -868,7 +869,24 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                         </td>
                         <td style={{ padding: "12px 16px", fontSize: 13, color: t.textMid }}>{po.items?.length || 0}</td>
                         <td style={{ padding: "12px 16px", fontSize: 12, color: t.textLo, whiteSpace: "nowrap" }}>{new Date(po.created_at).toLocaleDateString("es-MX")}</td>
-                        <td style={{ padding: "12px 16px", display: "flex", gap: 8 }}>
+                        <td style={{ padding: "12px 16px", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button onClick={async () => {
+                            if (demo) { alert(lang === "es" ? "Modo demo: PDF no disponible" : "Demo mode: PDF unavailable"); return; }
+                            try { await inventoryService.downloadPurchaseOrderPdf(po.id, po.folio); } catch (err) { console.error(err); alert(lang === "es" ? "Error al generar el PDF" : "Error generating PDF"); }
+                          }} title={lang === "es" ? "Descargar PDF" : "Download PDF"} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
+                            <FileText size={14} /> PDF
+                          </button>
+                          <button onClick={async () => {
+                            if (demo) { alert(lang === "es" ? "Modo demo: correo no disponible" : "Demo mode: email unavailable"); return; }
+                            const to = prompt(lang === "es" ? "Correo del destinatario (vacío = usar el del proveedor):" : "Recipient email (empty = use supplier's):", "");
+                            if (to === null) return;
+                            try {
+                              const r = await inventoryService.emailPurchaseOrder(po.id, to || undefined);
+                              alert(r.sent ? (lang === "es" ? `Orden enviada a ${r.to}` : `Order sent to ${r.to}`) : (lang === "es" ? "No se pudo enviar: revisa la configuración de correo (Configuración > Integraciones)." : "Could not send: check email settings (Settings > Integrations)."));
+                            } catch (err: any) { console.error(err); alert(err?.response?.data?.detail || (lang === "es" ? "Error al enviar el correo" : "Error sending email")); }
+                          }} title={lang === "es" ? "Enviar por correo" : "Send by email"} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
+                            <Mail size={14} /> {lang === "es" ? "Correo" : "Email"}
+                          </button>
                           {canReceive && (
                             <button onClick={() => { setEditingPO(po); setPoForm(true); }} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
                               {lang === "es" ? "Editar" : "Edit"}
@@ -996,7 +1014,13 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                         </td>
                         <td style={{ padding: "12px 16px", fontSize: 13, color: t.textMid }}>{po.unit_cost_result != null ? mxn(po.unit_cost_result) : "—"}</td>
                         <td style={{ padding: "12px 16px", fontSize: 12, color: t.textLo, whiteSpace: "nowrap" }}>{new Date(po.completed_at || po.created_at).toLocaleDateString("es-MX")}</td>
-                        <td style={{ padding: "12px 16px" }}>
+                        <td style={{ padding: "12px 16px", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button onClick={async () => {
+                            if (demo) { alert(lang === "es" ? "Modo demo: PDF no disponible" : "Demo mode: PDF unavailable"); return; }
+                            try { await inventoryService.downloadProductionOrderPdf(po.id, po.folio); } catch (err) { console.error(err); alert(lang === "es" ? "Error al generar el PDF" : "Error generating PDF"); }
+                          }} title={lang === "es" ? "Descargar PDF" : "Download PDF"} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
+                            <FileText size={14} /> PDF
+                          </button>
                           {po.status === "draft" && (
                             <button onClick={async () => {
                               if (!confirm(lang === "es" ? "¿Completar esta orden de producción? Esto consumirá los materiales vía FIFO y no se puede revertir." : "Complete this production order? This will consume materials via FIFO and cannot be undone.")) return;

@@ -229,6 +229,12 @@ export const inventoryService = {
     updatePurchaseOrder: async (id: number, data: any) => (await api.put(`/inventory/purchase-orders/${id}`, data)).data,
     receivePurchaseOrder: async (id: number) => (await api.post(`/inventory/purchase-orders/${id}/receive`)).data,
     cancelPurchaseOrder: async (id: number) => (await api.post(`/inventory/purchase-orders/${id}/cancel`)).data,
+    downloadPurchaseOrderPdf: async (id: number, folio?: string) => {
+        const res = await api.get(`/inventory/purchase-orders/${id}/pdf`, { responseType: 'blob' });
+        downloadBlob(res.data, `${folio || `OC-${id}`}.pdf`);
+    },
+    emailPurchaseOrder: async (id: number, to?: string) =>
+        (await api.post<{ sent: boolean; to: string }>(`/inventory/purchase-orders/${id}/email`, null, { params: to ? { to } : {} })).data,
 
     // Recipes (BOM)
     getRecipes: async () => (await api.get<Recipe[]>('/inventory/recipes')).data,
@@ -240,6 +246,10 @@ export const inventoryService = {
     getProductionOrders: async () => (await api.get<ProductionOrder[]>('/inventory/production-orders')).data,
     createProductionOrder: async (data: any) => (await api.post('/inventory/production-orders', data)).data,
     completeProductionOrder: async (id: number) => (await api.post(`/inventory/production-orders/${id}/complete`)).data,
+    downloadProductionOrderPdf: async (id: number, folio?: string) => {
+        const res = await api.get(`/inventory/production-orders/${id}/pdf`, { responseType: 'blob' });
+        downloadBlob(res.data, `${folio || `OP-${id}`}.pdf`);
+    },
 
     // Carga masiva (Excel/CSV)
     downloadProductsTemplate: async () => {

@@ -7,8 +7,10 @@ simplemente no hace nada (no rompe el flujo que lo llama).
 """
 import smtplib
 import ssl
+from typing import Optional, Sequence, Tuple
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,8 +28,13 @@ async def get_active_email_integration(db: AsyncSession) -> SystemIntegration | 
     return res.scalars().first()
 
 
-async def send_email(db: AsyncSession, *, to: str, subject: str, body_html: str) -> bool:
-    """Devuelve True si se envió, False si no hay configuración activa o falló."""
+async def send_email(db: AsyncSession, *, to: str, subject: str, body_html: str,
+                     attachments: Optional[Sequence[Tuple[str, bytes, str]]] = None) -> bool:
+    """Devuelve True si se envió, False si no hay configuración activa o falló.
+
+    `attachments` es una lista de (nombre_archivo, contenido_bytes, subtipo_mime),
+    por ejemplo ("OC-123.pdf", b"...", "pdf"), para adjuntar documentos como PDFs.
+    """
     if not to:
         return False
     integration = await get_active_email_integration(db)
@@ -51,6 +58,11 @@ async def send_email(db: AsyncSession, *, to: str, subject: str, body_html: str)
     msg["From"] = f"{from_name} <{from_email}>"
     msg["To"] = to
     msg.attach(MIMEText(body_html, "html"))
+
+    for filename, content, subtype in (attachments or []):
+        part = MIMEApplication(content, _subtype=subtype)
+        part.add_header("Content-Disposition", "attachment", filename=filename)
+        msg.attach(part)
 
     try:
         if use_tls:

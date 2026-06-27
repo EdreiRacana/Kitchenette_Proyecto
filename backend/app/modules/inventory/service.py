@@ -462,6 +462,106 @@ async def cancel_purchase_order(db: AsyncSession, po_id: int) -> Optional[Purcha
     return po
 
 
+async def _po_pdf_context(db: AsyncSession, po_id: int):
+    """Gather a PO + its supplier, warehouse, resolved item names and the
+    company profile, ready to feed the PDF builder. Returns None if the PO
+    doesn't exist."""
+    from app.modules.core_config import service as config_service
+
+    result = await db.execute(
+        select(PurchaseOrder).where(PurchaseOrder.id == po_id).options(selectinload(PurchaseOrder.items))
+    )
+    po = result.scalars().first()
+    if not po:
+        return None
+
+    supplier = await db.get(Supplier, po.supplier_id)
+    warehouse = await db.get(Warehouse, po.warehouse_id)
+    company = await config_service.get_company_profile(db)
+
+    item_rows = []
+    for it in po.items:
+        variant = await db.get(ProductVariant, it.variant_id)
+        product = await db.get(Product, variant.product_id) if variant else None
+        item_rows.append({
+            "name": product.name if product else (variant.sku if variant else "—"),
+            "sku": variant.sku if variant else "—",
+            "quantity": it.quantity,
+            "unit_cost": it.unit_cost,
+            "subtotal": round(it.quantity * it.unit_cost, 2),
+        })
+    return po, supplier, (warehouse.name if warehouse else "—"), company, item_rows
+
+
+async def generate_purchase_order_pdf(db: AsyncSession, po_id: int) -> Optional[bytes]:
+    from app.modules.inventory import documents
+    ctx = await _po_pdf_context(db, po_id)
+    if not ctx:
+        return None
+    po, supplier, warehouse_name, company, item_rows = ctx
+    return documents.build_purchase_order_pdf(company, supplier, warehouse_name, po, item_rows)
+
+
+async def email_purchase_order(db: AsyncSession, po_id: int, to: Optional[str] = None) -> dict:
+    """Render the PO as PDF and email it to the supplier (or an override
+    address). Returns {sent: bool, to: str} so the UI can report the outcome
+    honestly even when no SMTP integration is configured."""
+    from app.core.email import send_email
+
+    ctx = await _po_pdf_context(db, po_id)
+    if not ctx:
+        return {"sent": False, "to": "", "error": "not_found"}
+    po, supplier, warehouse_name, company, item_rows = ctx
+    recipient = to or (supplier.email if supplier else None)
+    if not recipient:
+        return {"sent": False, "to": "", "error": "no_recipient"}
+
+    from app.modules.inventory import documents
+    pdf = documents.build_purchase_order_pdf(company, supplier, warehouse_name, po, item_rows)
+    folio = po.folio or f"OC-{po.id}"
+    company_name = getattr(company, "legal_name", None) or "Kitchenette"
+    body = (
+        f"<p>Estimado proveedor,</p>"
+        f"<p>Adjunto encontrará la orden de compra <b>{folio}</b> emitida por {company_name}.</p>"
+        f"<p>Total: <b>${(po.total_amount or 0):,.2f}</b></p>"
+        f"<p>Quedamos atentos. Saludos.</p>"
+    )
+    sent = await send_email(db, to=recipient, subject=f"Orden de compra {folio}", body_html=body,
+                            attachments=[(f"{folio}.pdf", pdf, "pdf")])
+    return {"sent": sent, "to": recipient}
+
+
+async def generate_production_order_pdf(db: AsyncSession, prod_id: int) -> Optional[bytes]:
+    from app.modules.inventory import documents
+    from app.modules.core_config import service as config_service
+
+    prod = await db.get(ProductionOrder, prod_id)
+    if not prod:
+        return None
+    recipe = await get_recipe(db, prod.recipe_id)
+    warehouse = await db.get(Warehouse, prod.warehouse_id)
+    company = await config_service.get_company_profile(db)
+
+    recipe_name = "—"
+    item_rows = []
+    if recipe:
+        if getattr(recipe, "name", None):
+            recipe_name = recipe.name
+        else:
+            out_variant = await db.get(ProductVariant, recipe.output_variant_id)
+            out_product = await db.get(Product, out_variant.product_id) if out_variant else None
+            recipe_name = out_product.name if out_product else (out_variant.sku if out_variant else "—")
+        for it in recipe.items:
+            variant = await db.get(ProductVariant, it.input_variant_id)
+            product = await db.get(Product, variant.product_id) if variant else None
+            item_rows.append({
+                "name": product.name if product else (variant.sku if variant else "—"),
+                "sku": variant.sku if variant else "—",
+                "quantity": it.quantity * prod.runs,
+            })
+    return documents.build_production_order_pdf(company, prod, recipe_name, warehouse.name if warehouse else "—", item_rows)
+
+
 async def pay_purchase_order(db: AsyncSession, po_id: int, pay_in: "schemas.SupplierPaymentCreate", user_id: Optional[int] = None) -> Optional[PurchaseOrder]:
     from app.modules.inventory.models import SupplierPayment
     result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po_id).options(selectinload(PurchaseOrder.items)))
