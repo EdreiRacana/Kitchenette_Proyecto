@@ -65,6 +65,10 @@ class UserInDBBase(UserBase):
 class User(UserInDBBase):
     role_obj: Optional[Role] = None
 
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
 class Token(BaseModel):
     access_token: str
     token_type: str

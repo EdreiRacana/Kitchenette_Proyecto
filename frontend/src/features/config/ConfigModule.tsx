@@ -787,6 +787,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
       {/* ── TAB: Security ── */}
       {tab === "security" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <ChangePasswordCard t={t} card={card} lbl={lbl} inp={inp} sectionTitle={sectionTitle} />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
             <div style={card}>
               {sectionTitle(Lock, "Política de contraseñas", t.nova)}
@@ -985,6 +986,45 @@ function BranchFormModal({ t, lbl, inp, editing, onClose, onSaved }: any) {
           <button onClick={save} disabled={saving || !f.name.trim()} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !f.name.trim() ? 0.5 : 1 }}>
             {saving ? "…" : editing ? "Guardar cambios" : "Crear sucursal"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Tarjeta: cambiar mi propia contraseña (real, exige contraseña actual) ───
+function ChangePasswordCard({ t, card, lbl, inp, sectionTitle }: any) {
+  const [cur, setCur] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const valid = cur && next.length >= 6 && next === confirm;
+
+  const save = async () => {
+    setSaving(true); setMsg("");
+    try {
+      await configService.changeMyPassword(cur, next);
+      setMsg("Contraseña actualizada ✓");
+      setCur(""); setNext(""); setConfirm("");
+    } catch (err: any) { setMsg(errorMessage(err, "No se pudo cambiar la contraseña.")); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ ...card, maxWidth: 520 }}>
+      {sectionTitle(Lock, "Cambiar mi contraseña", t.nova)}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div><label style={lbl}>Contraseña actual *</label><input type="password" value={cur} onChange={e => setCur(e.target.value)} style={inp} /></div>
+        <div><label style={lbl}>Nueva contraseña *</label><input type="password" value={next} onChange={e => setNext(e.target.value)} placeholder="Mínimo 6 caracteres" style={inp} /></div>
+        <div><label style={lbl}>Confirmar nueva contraseña *</label><input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} style={inp} /></div>
+        {next.length > 0 && next.length < 6 && <div style={{ fontSize: 11.5, color: t.warn }}>La nueva contraseña debe tener al menos 6 caracteres.</div>}
+        {confirm.length > 0 && next !== confirm && <div style={{ fontSize: 11.5, color: t.bad }}>Las contraseñas no coinciden.</div>}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={save} disabled={saving || !valid} style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !valid ? 0.5 : 1 }}>
+            {saving ? "…" : "Actualizar contraseña"}
+          </button>
+          {msg && <span style={{ fontSize: 12.5, color: msg.includes("✓") ? t.good : t.bad }}>{msg}</span>}
         </div>
       </div>
     </div>
