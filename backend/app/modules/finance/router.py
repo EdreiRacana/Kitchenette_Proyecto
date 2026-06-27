@@ -17,8 +17,16 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 def _require_manager(current_user: User):
-    if not current_user.is_superuser and (current_user.role or "user") not in ("admin", "manager"):
-        raise HTTPException(status_code=403, detail="Se requiere rol admin o manager para esta acción")
+    from app.modules.auth.rbac import user_can
+    # Acepta superusuario, el rol legacy admin/manager, o (RBAC moderno) un rol
+    # con permiso de aprobar/editar en Finanzas (ej. Contador).
+    if current_user.is_superuser:
+        return
+    if (current_user.role or "user") in ("admin", "manager"):
+        return
+    if user_can(current_user, "finance", "approve") or user_can(current_user, "finance", "edit"):
+        return
+    raise HTTPException(status_code=403, detail="Se requiere rol con permisos de Finanzas para esta acción")
 
 
 def _finance_branch(current_user: User) -> Optional[int]:
