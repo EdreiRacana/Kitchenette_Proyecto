@@ -39,6 +39,7 @@ class UserBase(BaseModel):
     is_active: Optional[bool] = True
     role: str = "user"
     role_id: Optional[int] = None
+    branch_id: Optional[int] = None
 
 class UserCreate(UserBase):
     password: str
@@ -49,6 +50,7 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
     role: Optional[str] = None
     role_id: Optional[int] = None
+    branch_id: Optional[int] = None
     password: Optional[str] = None
 
 class UserInDBBase(UserBase):

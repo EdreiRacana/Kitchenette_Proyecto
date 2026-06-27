@@ -8,6 +8,46 @@ from app.modules.auth.models import User
 
 router = APIRouter()
 
+# -- Branches (Sucursales) --
+from typing import Annotated  # noqa: E402
+ConfigViewer = Annotated[User, Depends(deps.require_permission("config", "view"))]
+ConfigManager = Annotated[User, Depends(deps.require_permission("config", "edit"))]
+
+
+@router.get("/branches", response_model=List[schemas.BranchResponse])
+async def read_branches(db: AsyncSession = Depends(deps.get_db),
+                        current_user: User = Depends(deps.get_current_active_user)):
+    return await service.get_branches(db)
+
+
+@router.post("/branches", response_model=schemas.BranchResponse, status_code=status.HTTP_201_CREATED)
+async def create_branch(branch_in: schemas.BranchCreate, db: AsyncSession = Depends(deps.get_db),
+                        current_user: ConfigManager = None):
+    return await service.create_branch(db, branch_in)
+
+
+@router.put("/branches/{branch_id}", response_model=schemas.BranchResponse)
+async def update_branch(branch_id: int, branch_in: schemas.BranchUpdate,
+                        db: AsyncSession = Depends(deps.get_db), current_user: ConfigManager = None):
+    branch = await service.get_branch(db, branch_id)
+    if not branch:
+        raise HTTPException(status_code=404, detail="Sucursal no encontrada")
+    return await service.update_branch(db, branch, branch_in)
+
+
+@router.delete("/branches/{branch_id}")
+async def delete_branch(branch_id: int, db: AsyncSession = Depends(deps.get_db),
+                        current_user: ConfigManager = None):
+    branch = await service.get_branch(db, branch_id)
+    if not branch:
+        raise HTTPException(status_code=404, detail="Sucursal no encontrada")
+    try:
+        await service.delete_branch(db, branch)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
 # -- Company Profile Endpoints --
 
 @router.get("/company", response_model=schemas.CompanyProfileResponse)

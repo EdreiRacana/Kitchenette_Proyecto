@@ -44,6 +44,9 @@ class User(Base):
     
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=True)
     role_obj = relationship("Role", backref="users")
+
+    # Sucursal asignada (cimiento multi-empresa; el aislamiento se construye encima).
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
     
     # Keep the legacy role string for compatibility if needed, but phase it out
     role = Column(String, default="user") # admin, manager, user

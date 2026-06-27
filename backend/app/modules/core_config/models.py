@@ -36,6 +36,27 @@ class CompanyProfile(Base):
     timezone = Column(String, default="America/Mexico_City")
     logo_url = Column(String, nullable=True)
 
+
+class Branch(Base):
+    """Sucursal / empresa operativa. Primer nivel del modelo multi-empresa
+    (estilo company code de SAP / subsidiary de NetSuite). Almacenes y usuarios
+    se asignan a una sucursal; el aislamiento de datos se construye por capas
+    encima de este cimiento."""
+    __tablename__ = "branches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)            # nombre comercial / corto
+    code = Column(String, nullable=True, index=True)  # clave corta (ej. CDMX, MTY)
+    legal_name = Column(String, nullable=True)       # razón social
+    tax_id = Column(String, nullable=True)           # RFC
+    address = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    is_primary = Column(Boolean, default=False, nullable=False)  # matriz
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class SystemIntegration(Base):
     __tablename__ = "system_integrations"
 

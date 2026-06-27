@@ -122,6 +122,7 @@ class WarehouseBase(BaseModel):
     name: str
     location: Optional[str] = None
     type: Optional[str] = "own"
+    branch_id: Optional[int] = None
     is_active: Optional[bool] = True
 
 class WarehouseCreate(WarehouseBase):

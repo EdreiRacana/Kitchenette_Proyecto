@@ -130,6 +130,7 @@ class Warehouse(Base):
     name = Column(String, unique=True, index=True, nullable=False)
     location = Column(String, nullable=True)
     type = Column(String, default=WarehouseType.OWN.value, nullable=False)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)  # sucursal asignada
     is_active = Column(Boolean, default=True)
 
 class StockLevel(Base):

@@ -287,6 +287,11 @@ _AUTH_STATEMENTS = [
     "ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_system BOOLEAN DEFAULT FALSE",
     "ALTER TABLE roles ADD COLUMN IF NOT EXISTS color VARCHAR",
     "UPDATE roles SET is_system = FALSE WHERE is_system IS NULL",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_id INTEGER",
+]
+
+_BRANCH_STATEMENTS = [
+    "ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS branch_id INTEGER",
 ]
 
 
@@ -302,6 +307,7 @@ def _apply(sync_conn: Connection) -> None:
         ("finance",    _FINANCE_STATEMENTS),
         ("hr",         _HR_STATEMENTS),
         ("auth",       _AUTH_STATEMENTS),
+        ("branches",   _BRANCH_STATEMENTS),
     ]
 
     for label, statements in all_statements:
