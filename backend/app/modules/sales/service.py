@@ -551,8 +551,14 @@ async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Opt
     )
 
 
+def _branch_cond(O, branch_warehouse_ids):
+    """Condición de aislamiento por sucursal (pedido anclado en su almacén;
+    pedidos sin almacén son globales)."""
+    return or_(O.warehouse_id.in_(branch_warehouse_ids), O.warehouse_id.is_(None))
+
+
 async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30, end: Optional[datetime] = None,
-                       customer_id: Optional[int] = None) -> List[schemas.TrendPoint]:
+                       customer_id: Optional[int] = None, branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.TrendPoint]:
     """Aggregate revenue by day in SQL, bounded to the relevant date window so we
     never scan the whole history; then roll days up to week/month in Python.
 
@@ -574,6 +580,9 @@ async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30
     if customer_id is not None:
         sales_conds.append(O.customer_id == customer_id)
         returns_conds.append(O.customer_id == customer_id)
+    if branch_warehouse_ids is not None:
+        sales_conds.append(_branch_cond(O, branch_warehouse_ids))
+        returns_conds.append(_branch_cond(O, branch_warehouse_ids))
 
     stmt = (
         select(
@@ -660,13 +669,16 @@ async def _sales_goal_by_month(db: AsyncSession, start: datetime, end: datetime)
     return out
 
 
-async def get_average_returns(db: AsyncSession, customer_id: Optional[int] = None) -> schemas.AverageReturns:
+async def get_average_returns(db: AsyncSession, customer_id: Optional[int] = None,
+                              branch_warehouse_ids: Optional[List[int]] = None) -> schemas.AverageReturns:
     """Average size of cancelled ("returned") orders, optionally scoped to one
     customer. Cancellations are the closest existing concept to a return."""
     O = models.Order
     conds = [O.kind == "order", O.status == "cancelled"]
     if customer_id is not None:
         conds.append(O.customer_id == customer_id)
+    if branch_warehouse_ids is not None:
+        conds.append(_branch_cond(O, branch_warehouse_ids))
     stmt = select(
         func.coalesce(func.avg(O.total_amount), 0.0).label("avg_amount"),
         func.count(O.id).label("count"),
@@ -754,7 +766,8 @@ async def get_customer_forecast(db: AsyncSession, customer_id: int, months: int 
     )
 
 
-async def top_customers(db: AsyncSession, limit: int = 5, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.TopCustomer]:
+async def top_customers(db: AsyncSession, limit: int = 5, start: Optional[datetime] = None, end: Optional[datetime] = None,
+                        branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.TopCustomer]:
     from app.modules.customers import models as cust
     O = models.Order
     conds = [O.kind == "order", O.status != "cancelled"]
@@ -762,6 +775,8 @@ async def top_customers(db: AsyncSession, limit: int = 5, start: Optional[dateti
         conds.append(O.created_at >= start)
     if end is not None:
         conds.append(O.created_at < end)
+    if branch_warehouse_ids is not None:
+        conds.append(_branch_cond(O, branch_warehouse_ids))
     stmt = (
         select(
             O.customer_id,
@@ -782,7 +797,8 @@ async def top_customers(db: AsyncSession, limit: int = 5, start: Optional[dateti
     ]
 
 
-async def top_products(db: AsyncSession, limit: int = 5, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.TopProduct]:
+async def top_products(db: AsyncSession, limit: int = 5, start: Optional[datetime] = None, end: Optional[datetime] = None,
+                       branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.TopProduct]:
     O = models.Order
     OI = models.OrderItem
     conds = [O.kind == "order", O.status != "cancelled"]
@@ -790,6 +806,8 @@ async def top_products(db: AsyncSession, limit: int = 5, start: Optional[datetim
         conds.append(O.created_at >= start)
     if end is not None:
         conds.append(O.created_at < end)
+    if branch_warehouse_ids is not None:
+        conds.append(_branch_cond(O, branch_warehouse_ids))
     stmt = (
         select(
             OI.variant_id,
@@ -810,7 +828,8 @@ async def top_products(db: AsyncSession, limit: int = 5, start: Optional[datetim
     ]
 
 
-async def sales_by_seller(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.SalesBySeller]:
+async def sales_by_seller(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None,
+                          branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.SalesBySeller]:
     from app.modules.auth import models as auth_models
     O = models.Order
     conds = [O.kind == "order", O.status != "cancelled"]
@@ -818,6 +837,8 @@ async def sales_by_seller(db: AsyncSession, start: Optional[datetime] = None, en
         conds.append(O.created_at >= start)
     if end is not None:
         conds.append(O.created_at < end)
+    if branch_warehouse_ids is not None:
+        conds.append(_branch_cond(O, branch_warehouse_ids))
     stmt = (
         select(
             O.user_id,
@@ -836,13 +857,16 @@ async def sales_by_seller(db: AsyncSession, start: Optional[datetime] = None, en
     ]
 
 
-async def sales_by_channel(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[schemas.SalesByChannel]:
+async def sales_by_channel(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None,
+                           branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.SalesByChannel]:
     O = models.Order
     conds = [O.kind == "order", O.status != "cancelled"]
     if start is not None:
         conds.append(O.created_at >= start)
     if end is not None:
         conds.append(O.created_at < end)
+    if branch_warehouse_ids is not None:
+        conds.append(_branch_cond(O, branch_warehouse_ids))
     stmt = (
         select(
             func.coalesce(O.channel, "Sin canal").label("channel"),
