@@ -67,6 +67,7 @@ from app.modules.inventory import models as inventory_models
 from app.modules.customers import models as customer_models
 from app.modules.sales import models as sales_models
 from app.modules.finance import models as finance_models
+from app.modules.accounting import models as accounting_models
 from app.modules.core_config import models as config_models
 from app.modules.hr import models as hr_models
 

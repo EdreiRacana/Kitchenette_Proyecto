@@ -24,6 +24,7 @@ MODULES: list[tuple[str, str]] = [
     ("customers", "Clientes"),
     ("inventory", "Inventario"),
     ("finance", "Finanzas"),
+    ("accounting", "Contabilidad"),
     ("hr", "RH / Nómina"),
     ("reports", "Reportes / BI"),
     ("config", "Configuración"),
@@ -68,6 +69,7 @@ SYSTEM_ROLES = {
         "permissions": {
             "dashboard": _grant(view=True),
             "finance": _grant(view=True, create=True, edit=True, approve=True),
+            "accounting": _grant(view=True, create=True, edit=True, approve=True),
             "hr": _grant(view=True, create=True, edit=True, approve=True),
             "reports": _grant(view=True),
         },

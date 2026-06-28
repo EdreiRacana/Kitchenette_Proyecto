@@ -8,13 +8,14 @@ import {
   FileText, FileWarning, Mail, Bell, Maximize2, X, TrendingDown, Activity,
   Zap, Award, Eye, Check, IdCard, Settings, Plus, Search, Globe, Sun, Moon,
   Lock, LogOut, User as UserIcon, Menu, UserCircle2, ShoppingBag, Box,
-  Truck, ClipboardList,
+  Truck, ClipboardList, BookText,
 } from "lucide-react";
 import SalesCRM from "./features/sales/SalesCRM";
 import CustomersModule from "./features/customers/CustomersModule";
 import InventoryModule from "./features/inventory/InventoryModule";
 import FinanceModule from "./features/finance/FinanceModule";
 import { financeService } from "./features/finance/service";
+import AccountingModule from "./features/accounting/AccountingModule";
 import HRModule from "./features/hr/HRModule";
 import BIModule from "./features/bi/BIModule";
 import ConfigModule from "./features/config/ConfigModule";
@@ -24,7 +25,7 @@ import configService from "./features/config/service";
 // Mapa de id de módulo del menú → clave de permiso del backend (rbac.py).
 const NAV_PERM = {
   dashboard: "dashboard", ventas: "sales", clientes: "customers", inventario: "inventory",
-  finanzas: "finance", rh: "hr", reportes: "reports", config: "config",
+  finanzas: "finance", contabilidad: "accounting", rh: "hr", reportes: "reports", config: "config",
 };
 import { salesApi } from "./features/sales/api";
 import { inventoryService } from "./features/inventory/service";
@@ -71,7 +72,7 @@ const STRINGS = {
   es: {
     monShort: MON_ES,
     cal: { months: ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"], dows: ["L", "M", "X", "J", "V", "S", "D"] },
-    nav: { dashboard: "Tablero", ventas: "Ventas / CRM", clientes: "Clientes", inventario: "Inventario", finanzas: "Finanzas", rh: "RH / Nómina", reportes: "Reportes / BI", config: "Configuración" },
+    nav: { dashboard: "Tablero", ventas: "Ventas / CRM", clientes: "Clientes", inventario: "Inventario", finanzas: "Finanzas", contabilidad: "Contabilidad", rh: "RH / Nómina", reportes: "Reportes / BI", config: "Configuración" },
     modules: "MÓDULOS", search: "Nexus — buscar en todo el sistema…", role: "Administrador",
     api: "API", soonTag: "pronto",
     secure: "Sistema Seguro",
@@ -105,7 +106,7 @@ const STRINGS = {
   en: {
     monShort: MON_EN,
     cal: { months: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"], dows: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] },
-    nav: { dashboard: "Dashboard", ventas: "Sales / CRM", clientes: "Customers", inventario: "Inventory", finanzas: "Finance", rh: "HR / Payroll", reportes: "Reports / BI", config: "Settings" },
+    nav: { dashboard: "Dashboard", ventas: "Sales / CRM", clientes: "Customers", inventario: "Inventory", finanzas: "Finance", contabilidad: "Accounting", rh: "HR / Payroll", reportes: "Reports / BI", config: "Settings" },
     modules: "MODULES", search: "Nexus — search the whole system…", role: "Administrator",
     api: "API", soonTag: "soon",
     secure: "Secure System",
@@ -288,7 +289,8 @@ const CUSTOMERS = [
 const MODULES = [
   { id: "dashboard", icon: LayoutDashboard }, { id: "ventas", icon: ShoppingCart },
   { id: "clientes", icon: Users }, { id: "inventario", icon: Package, live: true },
-  { id: "finanzas", icon: Wallet }, { id: "rh", icon: IdCard },
+  { id: "finanzas", icon: Wallet }, { id: "contabilidad", icon: BookText, live: true },
+  { id: "rh", icon: IdCard },
   { id: "reportes", icon: BarChart3 }, { id: "config", icon: Settings },
 ];
 
@@ -1396,6 +1398,7 @@ export default function App() {
     ventas: <SalesCRM t={t} s={s} initialQuery={qFor("ventas")} />,
     clientes: <CustomersModule t={t} s={s} initialQuery={qFor("clientes")} />,
     finanzas: <FinanceModule t={t} s={s} />,
+    contabilidad: <AccountingModule t={t} s={s} />,
     rh: <HRModule t={t} s={s} />,
     reportes: <BIModule t={t} s={s} />,
     config: <ConfigModule t={t} s={s} />,
