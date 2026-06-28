@@ -727,7 +727,7 @@ async def complete_production_order(db: AsyncSession, prod_id: int, user_id: Opt
 
 # --- Carga masiva (Excel/CSV) ---------------------------------------------------
 PRODUCTS_TEMPLATE_COLUMNS = [
-    "sku", "codigo_barras", "producto", "categoria", "imagen_url", "fabricado_interno", "talla", "color", "material",
+    "sku", "codigo_barras", "producto", "tipo", "categoria", "imagen_url", "fabricado_interno", "talla", "color", "material",
     "precio", "costo", "almacen", "stock_inicial", "punto_reorden", "stock_seguridad",
     "dias_entrega_proveedor",
 ]
@@ -745,15 +745,16 @@ def _build_xlsx(columns: List[str], example_rows: List[list], sheet_name: str) -
     return buffer.getvalue()
 
 def generate_products_template() -> bytes:
-    # Una columna por cada entrada de PRODUCTS_TEMPLATE_COLUMNS (16). Orden:
-    # sku, codigo_barras, producto, categoria, imagen_url, fabricado_interno, talla,
-    # color, material, precio, costo, almacen, stock_inicial, punto_reorden,
+    # Una columna por cada entrada de PRODUCTS_TEMPLATE_COLUMNS (17). Orden:
+    # sku, codigo_barras, producto, tipo, categoria, imagen_url, fabricado_interno,
+    # talla, color, material, precio, costo, almacen, stock_inicial, punto_reorden,
     # stock_seguridad, dias_entrega_proveedor
+    # tipo: "producto terminado" | "insumo" | "consumible" | "otro"
     example = [
-        ["CAM-001-AZ-CH", "7501234567890", "Camisa de algodón", "Ropa",
+        ["CAM-001-AZ-CH", "7501234567890", "Camisa de algodón", "producto terminado", "Ropa",
          "https://misitio.com/imagenes/camisa-azul.jpg", "no", "CH", "Azul", "Algodón",
          350.0, 180.0, "Almacén Principal", 50, 10, 5, 7],
-        ["TEL-ALG-001", "", "Tela de algodón (insumo)", "Materia prima",
+        ["TEL-ALG-001", "", "Tela de algodón (insumo)", "insumo", "Materia prima",
          "", "no", "", "", "Algodón",
          0, 45.0, "Almacén Principal", 500, 100, 50, 15],
     ]
@@ -790,6 +791,20 @@ def _to_int(v, default=None):
 def _to_bool_si_no(v) -> bool:
     return str(v).strip().lower() in ("si", "sí", "true", "1", "yes")
 
+# Mapea el valor de la columna "tipo" a ProductItemType. Acepta español/inglés;
+# si viene vacío o desconocido, asume "producto terminado" (finished_good).
+_ITEM_TYPE_ALIASES = {
+    "producto terminado": "finished_good", "terminado": "finished_good", "producto": "finished_good",
+    "finished_good": "finished_good", "finished good": "finished_good", "pt": "finished_good",
+    "insumo": "raw_material", "materia prima": "raw_material", "raw_material": "raw_material",
+    "raw material": "raw_material", "mp": "raw_material",
+    "consumible": "consumable", "consumable": "consumable",
+    "otro": "other", "other": "other",
+}
+
+def _parse_item_type(v) -> str:
+    return _ITEM_TYPE_ALIASES.get(str(v or "").strip().lower(), "finished_good")
+
 async def bulk_import_products(db: AsyncSession, file_bytes: bytes, filename: str, user_id: Optional[int] = None) -> schemas.BulkImportResult:
     df = _read_table(file_bytes, filename)
     missing_cols = [c for c in ("sku", "producto", "precio") if c not in df.columns]
@@ -822,6 +837,7 @@ async def bulk_import_products(db: AsyncSession, file_bytes: bytes, filename: st
                     product = Product(
                         name=product_name,
                         category=str(row.get("categoria", "")).strip() or None,
+                        item_type=_parse_item_type(row.get("tipo")),
                         is_manufactured=_to_bool_si_no(row.get("fabricado_interno", "no")),
                         image_url=str(row.get("imagen_url", "")).strip() or None,
                     )
