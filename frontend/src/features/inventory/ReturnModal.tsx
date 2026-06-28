@@ -1,7 +1,7 @@
 // ReturnModal.tsx — Devolución de cliente (MVP)
 // Flujo: busca el pedido → elige partidas y cantidades → condición (revendible/
 // dañado) → motivo + liquidación → registra. Reusa el theme { t } de InventoryModule.
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X, Search, RotateCcw, AlertTriangle, Check } from "lucide-react";
 import { inventoryService, type ReturnableOrder, type OrderLite } from "./service";
 
@@ -33,13 +33,19 @@ export default function ReturnModal({ t, lang, onClose, onSaved }: {
     ? ["Producto defectuoso", "Artículo equivocado", "Dañado en transporte", "Cliente se arrepintió", "Otro"]
     : ["Defective product", "Wrong item", "Damaged in transit", "Customer changed mind", "Other"];
 
-  const search = async () => {
-    if (!q.trim()) return;
-    setSearching(true); setError(null);
-    try { setResults(await inventoryService.searchOrders(q.trim())); }
-    catch { setError(lang === "es" ? "Error al buscar pedidos" : "Error searching orders"); }
-    finally { setSearching(false); }
-  };
+  // Autocompletar: busca en vivo conforme se escribe (debounce 300 ms).
+  useEffect(() => {
+    if (order) return;
+    const term = q.trim();
+    if (term.length < 2) { setResults([]); setSearching(false); return; }
+    setSearching(true);
+    const id = setTimeout(async () => {
+      try { setResults(await inventoryService.searchOrders(term)); }
+      catch { setResults([]); }
+      finally { setSearching(false); }
+    }, 300);
+    return () => clearTimeout(id);
+  }, [q, order]);
 
   const pick = async (o: OrderLite) => {
     setError(null);
@@ -99,28 +105,30 @@ export default function ReturnModal({ t, lang, onClose, onSaved }: {
             </div>
           )}
 
-          {/* Paso 1: elegir pedido */}
+          {/* Paso 1: elegir pedido (autocompletar) */}
           {!order && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <label style={label}>{lang === "es" ? "Busca el pedido a devolver (folio o cliente)" : "Find the order to return (folio or customer)"}</label>
-              <div style={{ display: "flex", gap: 8 }}>
-                <div style={{ position: "relative", flex: 1 }}>
-                  <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.textLo }} />
-                  <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && search()} placeholder="ORD-000123…" style={{ ...inp, paddingLeft: 34 }} />
-                </div>
-                <button onClick={search} disabled={searching} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-                  {searching ? "…" : (lang === "es" ? "Buscar" : "Search")}
-                </button>
+              <div style={{ position: "relative" }}>
+                <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.textLo }} />
+                <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={lang === "es" ? "Empieza a escribir: ORD-000123 o nombre del cliente…" : "Start typing: ORD-000123 or customer name…"} style={{ ...inp, paddingLeft: 34, paddingRight: 34 }} />
+                {searching && <div style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: t.textLo }}>…</div>}
               </div>
-              {results.length > 0 && (
-                <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden" }}>
-                  {results.map(o => (
+              {/* Dropdown de resultados en vivo */}
+              {q.trim().length >= 2 && (results.length > 0 || !searching) && (
+                <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden", background: t.panel }}>
+                  {results.length > 0 ? results.map(o => (
                     <div key={o.id} onClick={() => pick(o)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 14px", cursor: "pointer", borderBottom: `1px solid ${t.borderSoft}` }}
                       onMouseEnter={e => (e.currentTarget.style.background = t.panel2)} onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: t.nova, fontFamily: "monospace" }}>{o.folio || `#${o.id}`}</div>
-                      <div style={{ fontSize: 12.5, color: t.textMid }}>{mxn(o.total_amount)} · {new Date(o.created_at).toLocaleDateString("es-MX")}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: t.nova, fontFamily: "monospace" }}>{o.folio || `#${o.id}`}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: t.textLo, background: t.panel3, padding: "2px 7px", borderRadius: 6 }}>{o.status}</span>
+                      </div>
+                      <div style={{ fontSize: 12.5, color: t.textMid, whiteSpace: "nowrap" }}>{mxn(o.total_amount)} · {new Date(o.created_at).toLocaleDateString("es-MX")}</div>
                     </div>
-                  ))}
+                  )) : (
+                    <div style={{ padding: "12px 14px", fontSize: 12.5, color: t.textLo }}>{lang === "es" ? "Sin coincidencias. Prueba con el folio o el nombre del cliente." : "No matches. Try the folio or customer name."}</div>
+                  )}
                 </div>
               )}
             </div>
