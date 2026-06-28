@@ -157,6 +157,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const [emailForm, setEmailForm] = useState({ host: "", port: "587", username: "", password: "", from_email: "", from_name: "", use_tls: true, is_active: false });
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailTesting, setEmailTesting] = useState(false);
+  const [emailTestTo, setEmailTestTo] = useState("");
   const [emailMsg, setEmailMsg] = useState("");
 
   const [companyExists, setCompanyExists] = useState(false);
@@ -316,15 +317,14 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
     }
   };
 
-  // Guarda primero (para que la prueba use lo que ves) y luego envía un correo
-  // de prueba; muestra el resultado real (éxito o el error exacto del servidor).
+  // Envía un correo de prueba con la configuración vigente (proveedor de
+  // plataforma por env, o SMTP guardado) y muestra el resultado REAL.
   const handleTestEmail = async () => {
-    setEmailTesting(true);
+    setEmailTesting(true); setEmailMsg("");
     try {
-      const saved = await handleSaveEmailIntegration();
-      if (!saved) return;
-      const res = await configService.testEmail(emailForm.from_email || emailForm.username);
-      if (res.ok) setEmailMsg(`Correo de prueba enviado a ${res.to} ✓ Revisa la bandeja (y spam).`);
+      const dest = emailTestTo.trim() || emailForm.from_email || undefined;
+      const res = await configService.testEmail(dest);
+      if (res.ok) setEmailMsg(`Correo de prueba enviado a ${dest || "el destinatario"} ✓ Revisa la bandeja (y spam).`);
       else setEmailMsg(`No se pudo enviar: ${res.error}`);
     } catch (err: any) {
       setEmailMsg(errorMessage(err, "No se pudo enviar el correo de prueba."));
@@ -728,15 +728,23 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: t.textMid, cursor: "pointer" }}>
                 <input type="checkbox" checked={emailForm.is_active} onChange={e => setEmailForm(f => ({ ...f, is_active: e.target.checked }))} /> Activar envío de correos
               </label>
-              <button onClick={handleTestEmail} disabled={emailSaving || emailTesting || !emailForm.host || !emailForm.from_email} style={{ marginLeft: "auto", padding: "9px 16px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: (!emailForm.host || !emailForm.from_email) ? 0.5 : 1 }}>
-                {emailTesting ? "Enviando prueba…" : "Probar correo"}
-              </button>
-              <button onClick={handleSaveEmailIntegration} disabled={emailSaving || emailTesting || !emailForm.host || !emailForm.from_email} style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: (!emailForm.host || !emailForm.from_email) ? 0.5 : 1 }}>
-                {emailSaving ? "Guardando…" : "Guardar"}
+              <button onClick={handleSaveEmailIntegration} disabled={emailSaving || emailTesting || !emailForm.host || !emailForm.from_email} style={{ marginLeft: "auto", padding: "9px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: (!emailForm.host || !emailForm.from_email) ? 0.5 : 1 }}>
+                {emailSaving ? "Guardando…" : "Guardar SMTP"}
               </button>
             </div>
+
+            {/* Probar correo — funciona con el proveedor de plataforma (Resend/SendGrid) aunque no llenes SMTP */}
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px dashed ${t.border}` }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textMid, marginBottom: 8 }}>Probar el envío</div>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <input value={emailTestTo} onChange={e => setEmailTestTo(e.target.value)} placeholder="Enviar prueba a: tucorreo@ejemplo.com" style={{ flex: 1, minWidth: 220, padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
+                <button onClick={handleTestEmail} disabled={emailTesting} style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: emailTesting ? 0.6 : 1 }}>
+                  {emailTesting ? "Enviando prueba…" : "Probar correo"}
+                </button>
+              </div>
+            </div>
             {emailMsg && <div style={{ fontSize: 12, color: emailMsg.includes("✓") ? t.good : t.bad, marginTop: 10 }}>{emailMsg}</div>}
-            <div style={{ fontSize: 11, color: t.textLo, marginTop: 10 }}>Los recordatorios se envían al correo de contacto de la empresa (pestaña "Empresa") cuando un pago programado está cerca de su fecha o ya vencido.</div>
+            <div style={{ fontSize: 11, color: t.textLo, marginTop: 10 }}>El correo de STHENOVA puede enviarse por un proveedor a nivel plataforma (Resend/SendGrid) — en ese caso no necesitas llenar los campos SMTP de arriba; solo pica "Probar correo". Los recordatorios se envían al correo de contacto de la empresa (pestaña "Empresa") cuando un pago programado está por vencer o ya venció.</div>
           </div>
 
           {["Marketplace", "Banco", "Paquetería", "Facturación", "Checador"].map(cat => {
