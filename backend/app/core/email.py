@@ -12,8 +12,8 @@ Dos modos, en este orden de preferencia:
 Si no hay ninguno configurado, send_email no hace nada (no rompe el flujo).
 
 Variables de entorno (modo 1):
-  EMAIL_PROVIDER = resend | sendgrid   (opcional; se infiere de la llave)
-  EMAIL_API_KEY  / RESEND_API_KEY / SENDGRID_API_KEY
+  EMAIL_PROVIDER = resend | sendgrid | brevo   (opcional; se infiere de la llave)
+  EMAIL_API_KEY  / RESEND_API_KEY / SENDGRID_API_KEY / BREVO_API_KEY
   MAIL_FROM      = "STHENOVA <notificaciones@tu-dominio.com>"
 """
 import os
@@ -39,14 +39,17 @@ def _platform_provider() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Devuelve (provider, api_key, mail_from) si hay un proveedor HTTP
     configurado por variables de entorno; si no, (None, None, None)."""
     provider = (os.getenv("EMAIL_PROVIDER") or "").lower().strip()
-    api_key = os.getenv("EMAIL_API_KEY") or os.getenv("RESEND_API_KEY") or os.getenv("SENDGRID_API_KEY")
+    api_key = (os.getenv("EMAIL_API_KEY") or os.getenv("RESEND_API_KEY")
+               or os.getenv("SENDGRID_API_KEY") or os.getenv("BREVO_API_KEY"))
     mail_from = os.getenv("MAIL_FROM")
     if not provider:
         if os.getenv("RESEND_API_KEY"):
             provider = "resend"
         elif os.getenv("SENDGRID_API_KEY"):
             provider = "sendgrid"
-    if provider in ("resend", "sendgrid") and api_key and mail_from:
+        elif os.getenv("BREVO_API_KEY"):
+            provider = "brevo"
+    if provider in ("resend", "sendgrid", "brevo") and api_key and mail_from:
         return provider, api_key, mail_from
     return None, None, None
 
@@ -105,6 +108,21 @@ async def _send_http(provider: str, api_key: str, mail_from: str, *, to: str, su
                 r = await client.post("https://api.sendgrid.com/v3/mail/send",
                                       headers={"Authorization": f"Bearer {api_key}"}, json=msg)
             return (True, None) if r.status_code < 300 else (False, f"SendGrid {r.status_code}: {r.text[:300]}")
+
+        if provider == "brevo":
+            payload = {"sender": {"name": display, "email": base_email},
+                       "to": [{"email": to}],
+                       "subject": subject,
+                       "htmlContent": body_html}
+            if reply_to:
+                payload["replyTo"] = {"email": reply_to}
+            atts = _b64_attachments(attachments)
+            if atts:
+                payload["attachment"] = [{"name": fn, "content": c} for fn, c, _st in atts]
+            async with httpx.AsyncClient(timeout=20) as client:
+                r = await client.post("https://api.brevo.com/v3/smtp/email",
+                                      headers={"api-key": api_key, "accept": "application/json"}, json=payload)
+            return (True, None) if r.status_code < 300 else (False, f"Brevo {r.status_code}: {r.text[:300]}")
 
         return False, f"Proveedor de correo desconocido: {provider}"
     except Exception as exc:
