@@ -19,9 +19,10 @@ import {
   type Product, type Variant, type Warehouse as WarehouseT, type Movement,
   type Supplier, type ReorderAlert, type PurchaseOrder, type PurchaseOrderItem,
   type Recipe, type RecipeItem, type RecipeCostBreakdown, type ProductionOrder,
-  type BulkImportResult,
+  type BulkImportResult, type CustomerReturn,
 } from "./service";
 import { resolveMediaUrl } from "../../services/api";
+import ReturnModal from "./ReturnModal";
 
 type Warehouse_ = WarehouseT;
 
@@ -118,6 +119,8 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [warehouseForm, setWarehouseForm] = useState(false);
   const [entryForm, setEntryForm] = useState(false);
+  const [returnModal, setReturnModal] = useState(false);
+  const [returns, setReturns] = useState<CustomerReturn[]>([]);
   const [adjustForm, setAdjustForm] = useState(false);
   const [supplierForm, setSupplierForm] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
@@ -170,6 +173,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       setProducts(pr); setWarehouses(wh); setMovements(mv); setSuppliers(sup);
       setReorderAlerts(alerts); setPurchaseOrders(pos); setRecipes(recs); setProductionOrders(prods);
       inventoryService.getBranches().then(setBranches).catch(() => setBranches([]));
+      inventoryService.getReturns().then(setReturns).catch(() => setReturns([]));
       setDemo(false);
     } catch (err) {
       if (isNetworkError(err)) {
@@ -701,7 +705,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
               { icon: FileSpreadsheet, title: lang === "es" ? "Entrada manual" : "Manual entry", desc: lang === "es" ? "Registra entradas producto por producto" : "Register entries one by one", color: t.nova, action: () => setEntryForm(true) },
               { icon: Upload, title: lang === "es" ? "Importar plantilla" : "Import template", desc: lang === "es" ? "Sube un CSV/Excel con múltiples productos" : "Upload a CSV/Excel with multiple products", color: t.good, action: () => setTab("import") },
               { icon: Truck, title: lang === "es" ? "Orden de compra" : "Purchase order", desc: lang === "es" ? "Recibe mercancía de una orden existente" : "Receive goods from an existing order", color: "#A78BFA", action: () => setTab("purchase-orders") },
-              { icon: RotateCcw, title: lang === "es" ? "Devolución de cliente" : "Customer return", desc: lang === "es" ? "Regresa stock por devolución" : "Return stock from customer return", color: t.warn, action: () => alert(lang === "es" ? "Próximamente: devoluciones" : "Coming soon: returns") },
+              { icon: RotateCcw, title: lang === "es" ? "Devolución de cliente" : "Customer return", desc: lang === "es" ? "Regresa stock por devolución" : "Return stock from customer return", color: t.warn, action: () => demo ? alert(lang === "es" ? "Modo demo: backend no disponible para devoluciones." : "Demo mode: backend unavailable for returns.") : setReturnModal(true) },
             ].map(card => (
               <button key={card.title} onClick={card.action} style={{ ...glass(t), borderRadius: 12, padding: 20, textAlign: "left", cursor: "pointer", transition: "transform .12s, box-shadow .12s" }}
                 onMouseEnter={e => { (e.currentTarget as any).style.transform = "translateY(-2px)"; }}
@@ -733,6 +737,46 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
               </div>
             ))}
           </div>
+
+          {/* Recent customer returns */}
+          {returns.length > 0 && (
+            <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                <RotateCcw size={16} color={t.warn} /> {lang === "es" ? "Devoluciones recientes" : "Recent returns"}
+              </div>
+              {returns.slice(0, 6).map(r => {
+                const units = r.items.reduce((a, it) => a + (it.quantity || 0), 0);
+                const cancelled = r.status === "cancelled";
+                return (
+                  <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: `1px solid ${t.borderSoft}`, opacity: cancelled ? 0.5 : 1 }}>
+                    <div style={{ background: t.warn + "22", color: t.warn, borderRadius: 8, padding: 7, display: "flex" }}><RotateCcw size={14} /></div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, color: t.textHi, fontWeight: 600 }}>
+                        <span style={{ fontFamily: "monospace", color: t.nova }}>{r.folio || `#${r.id}`}</span>
+                        {r.order_folio && <span style={{ color: t.textLo, fontWeight: 400 }}> · {lang === "es" ? "pedido" : "order"} {r.order_folio}</span>}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: t.textLo }}>
+                        {units} {lang === "es" ? "uds." : "units"}{r.customer_name ? ` · ${r.customer_name}` : ""}{r.reason ? ` · ${r.reason}` : ""}
+                        {r.settlement_type === "refund" && ` · ${lang === "es" ? "Reembolso" : "Refund"} ${mxn(r.refund_amount)}`}
+                        {r.settlement_type === "store_credit" && ` · ${lang === "es" ? "Saldo a favor" : "Store credit"} ${mxn(r.refund_amount)}`}
+                      </div>
+                    </div>
+                    {cancelled
+                      ? <span style={{ fontSize: 11, fontWeight: 700, color: t.bad, background: t.bad + "18", padding: "3px 9px", borderRadius: 20 }}>{lang === "es" ? "CANCELADA" : "CANCELLED"}</span>
+                      : (
+                        <button onClick={async () => {
+                          if (!confirm(lang === "es" ? `¿Cancelar la devolución ${r.folio}? Se revertirá el stock re-ingresado y el reembolso.` : `Cancel return ${r.folio}? Restocked items and refund will be reversed.`)) return;
+                          try { await inventoryService.cancelReturn(r.id); load(); }
+                          catch { alert(lang === "es" ? "No se pudo cancelar" : "Could not cancel"); }
+                        }} style={{ background: "transparent", border: `1px solid ${t.border}`, borderRadius: 8, padding: "4px 10px", cursor: "pointer", color: t.textLo, fontSize: 11.5 }}>
+                          {lang === "es" ? "Cancelar" : "Cancel"}
+                        </button>
+                      )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -1270,6 +1314,11 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
             await load();
           }}
         />
+      )}
+
+      {/* ── MODAL: Customer Return ── */}
+      {returnModal && (
+        <ReturnModal t={t} lang={lang} onClose={() => setReturnModal(false)} onSaved={() => load()} />
       )}
 
       {/* ── MODAL: Adjustment Form ── */}

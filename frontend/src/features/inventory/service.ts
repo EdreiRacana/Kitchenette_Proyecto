@@ -172,6 +172,55 @@ export interface BulkImportResult {
     errors: BulkImportRowError[];
 }
 
+// ── Devoluciones de cliente (MVP) ───────────────────────────────────────────
+export interface ReturnableItem {
+    variant_id?: number;
+    product_name?: string;
+    sku?: string;
+    unit_price: number;
+    sold_quantity: number;
+    returned_quantity: number;
+    returnable_quantity: number;
+}
+export interface ReturnableOrder {
+    order_id: number;
+    folio?: string;
+    customer_id?: number;
+    customer_name?: string;
+    warehouse_id?: number;
+    items: ReturnableItem[];
+}
+export interface CustomerReturnItem {
+    id: number;
+    return_id: number;
+    variant_id?: number;
+    product_name?: string;
+    sku?: string;
+    quantity: number;
+    unit_price: number;
+    condition: 'sellable' | 'damaged';
+    subtotal: number;
+}
+export interface CustomerReturn {
+    id: number;
+    folio?: string;
+    order_id?: number;
+    customer_id?: number;
+    warehouse_id?: number;
+    user_id?: number;
+    status: 'completed' | 'cancelled';
+    reason?: string;
+    settlement_type: 'refund' | 'store_credit' | 'none';
+    refund_amount: number;
+    notes?: string;
+    created_at: string;
+    completed_at?: string;
+    items: CustomerReturnItem[];
+    customer_name?: string;
+    order_folio?: string;
+}
+export interface OrderLite { id: number; folio?: string; customer_id?: number; status: string; total_amount: number; created_at: string; }
+
 function downloadBlob(blob: Blob, filename: string) {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -281,4 +330,13 @@ export const inventoryService = {
         });
         return data;
     },
+
+    // Devoluciones de cliente
+    searchOrders: async (q: string) =>
+        (await api.get<{ items: OrderLite[]; total: number }>('/sales', { params: { q, kind: 'order', limit: 10 } })).data.items,
+    getReturnableOrder: async (orderId: number) =>
+        (await api.get<ReturnableOrder>(`/sales/returns/returnable/${orderId}`)).data,
+    getReturns: async () => (await api.get<CustomerReturn[]>('/sales/returns')).data,
+    createReturn: async (data: any) => (await api.post<CustomerReturn>('/sales/returns', data)).data,
+    cancelReturn: async (id: number) => (await api.post<CustomerReturn>(`/sales/returns/${id}/cancel`)).data,
 };
