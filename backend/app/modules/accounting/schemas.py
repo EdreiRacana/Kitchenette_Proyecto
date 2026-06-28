@@ -169,3 +169,17 @@ class IncomeStatement(BaseModel):
     total_gastos: float
     utilidad_bruta: float
     utilidad_neta: float
+
+
+# ── Mapeo de cuentas (Fase 3) ─────────────────────────────────────────────────
+
+class AccountMapItem(BaseModel):
+    role: str
+    label: str
+    account_id: Optional[int] = None
+    account_code: Optional[str] = None
+    account_name: Optional[str] = None
+
+
+class AccountMapUpdate(BaseModel):
+    mapping: dict[str, Optional[int]]

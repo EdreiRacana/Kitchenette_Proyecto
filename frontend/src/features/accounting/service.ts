@@ -86,6 +86,14 @@ export interface IncomeStatement {
     utilidad_bruta: number; utilidad_neta: number;
 }
 
+export interface AccountMapItem {
+    role: string;
+    label: string;
+    account_id?: number | null;
+    account_code?: string | null;
+    account_name?: string | null;
+}
+
 export const accountingService = {
     // Catálogo de cuentas
     getAccounts: async (onlyActive = false) =>
@@ -112,4 +120,9 @@ export const accountingService = {
         (await api.get<BalanceSheet>('/accounting/reports/balance-sheet', { params })).data,
     getIncomeStatement: async (params?: any) =>
         (await api.get<IncomeStatement>('/accounting/reports/income-statement', { params })).data,
+
+    // Configuración contable (mapeo de cuentas para pólizas automáticas)
+    getAccountMap: async () => (await api.get<AccountMapItem[]>('/accounting/config/account-map')).data,
+    setAccountMap: async (mapping: Record<string, number | null>) =>
+        (await api.put('/accounting/config/account-map', { mapping })).data,
 };

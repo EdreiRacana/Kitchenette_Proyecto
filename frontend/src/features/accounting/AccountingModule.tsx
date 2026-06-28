@@ -4,10 +4,11 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   BookOpen, Layers, FileText, Plus, X, Check, Trash2, RefreshCw, Search,
   ChevronRight, AlertTriangle, Ban, Info, BarChart3, Scale, TrendingUp,
+  SlidersHorizontal, Zap,
 } from "lucide-react";
 import {
   accountingService, type Account, type JournalEntry, type LedgerReport,
-  type TrialBalance, type BalanceSheet, type IncomeStatement,
+  type TrialBalance, type BalanceSheet, type IncomeStatement, type AccountMapItem,
 } from "./service";
 
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -21,7 +22,7 @@ const TYPE_COLOR: Record<string, string> = {
   ingreso: "#34D399", costo: "#F472B6", gasto: "#F87171", orden: "#94A3B8",
 };
 
-type Tab = "accounts" | "entries" | "ledger" | "reports";
+type Tab = "accounts" | "entries" | "ledger" | "reports" | "config";
 
 export default function AccountingModule({ t, s }: { t: any; s: any }) {
   const lang = s?.nav ? "es" : "en";
@@ -66,6 +67,7 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
     { id: "entries", label: lang === "es" ? "Pólizas" : "Journal entries", icon: FileText },
     { id: "ledger", label: lang === "es" ? "Mayor / auxiliar" : "Ledger", icon: BookOpen },
     { id: "reports", label: lang === "es" ? "Estados financieros" : "Financial statements", icon: BarChart3 },
+    { id: "config", label: lang === "es" ? "Configuración" : "Settings", icon: SlidersHorizontal },
   ] as const;
 
   return (
@@ -179,7 +181,12 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
                     <tr><td colSpan={8} style={{ textAlign: "center", padding: 40, color: t.textLo, fontSize: 14 }}>{lang === "es" ? "Sin pólizas todavía. Crea la primera con “Nueva póliza”." : "No entries yet."}</td></tr>
                   ) : entries.map(e => (
                     <tr key={e.id} style={{ borderBottom: `1px solid ${t.borderSoft}`, opacity: e.status === "cancelled" ? 0.5 : 1 }}>
-                      <td style={{ padding: "10px 14px", fontFamily: "monospace", fontWeight: 700, color: t.nova, fontSize: 13 }}>{e.folio}</td>
+                      <td style={{ padding: "10px 14px", fontSize: 13 }}>
+                        <span style={{ fontFamily: "monospace", fontWeight: 700, color: t.nova }}>{e.folio}</span>
+                        {e.source && e.source !== "manual" && (
+                          <span title={e.source} style={{ marginLeft: 7, display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 700, color: t.warn, background: t.warn + "1e", padding: "2px 6px", borderRadius: 6 }}><Zap size={10} /> {lang === "es" ? "Auto" : "Auto"}</span>
+                        )}
+                      </td>
                       <td style={{ padding: "10px 14px", fontSize: 12.5, color: t.textMid }}>{new Date(e.date).toLocaleDateString("es-MX")}</td>
                       <td style={{ padding: "10px 14px", fontSize: 12.5, color: t.textMid, textTransform: "capitalize" }}>{e.entry_type}</td>
                       <td style={{ padding: "10px 14px", fontSize: 13, color: t.textHi }}>{e.concept || "—"}</td>
@@ -215,6 +222,11 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Estados financieros ── */}
       {tab === "reports" && accounts.length > 0 && (
         <ReportsView t={t} lang={lang} />
+      )}
+
+      {/* ── TAB: Configuración contable ── */}
+      {tab === "config" && accounts.length > 0 && (
+        <ConfigView t={t} lang={lang} accounts={accounts} />
       )}
 
       {/* Modales */}
@@ -653,6 +665,62 @@ function ReportsView({ t, lang }: { t: any; lang: string }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Vista: Configuración contable (mapeo de cuentas para pólizas automáticas) ──
+function ConfigView({ t, lang, accounts }: { t: any; lang: string; accounts: Account[] }) {
+  const [map, setMap] = useState<AccountMapItem[]>([]);
+  const [draft, setDraft] = useState<Record<string, number | null>>({});
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const inp: React.CSSProperties = { padding: "8px 11px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, outline: "none", width: "100%", boxSizing: "border-box", cursor: "pointer" };
+
+  useEffect(() => {
+    accountingService.getAccountMap().then(m => {
+      setMap(m);
+      const d: Record<string, number | null> = {};
+      m.forEach(x => { d[x.role] = x.account_id ?? null; });
+      setDraft(d);
+    }).catch(() => { });
+  }, []);
+
+  const save = async () => {
+    setSaving(true); setMsg(null);
+    try { await accountingService.setAccountMap(draft); setMsg(lang === "es" ? "Configuración guardada ✓" : "Saved ✓"); }
+    catch { setMsg(lang === "es" ? "No se pudo guardar" : "Error saving"); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 760 }}>
+      <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <Zap size={16} color={t.warn} />
+          <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi }}>{lang === "es" ? "Cuentas para pólizas automáticas" : "Accounts for auto entries"}</div>
+        </div>
+        <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 18, lineHeight: 1.5 }}>
+          {lang === "es"
+            ? "Define qué cuenta contable usa cada concepto. Con esto, cada venta y cobro generan su póliza automáticamente. Ya viene preconfigurado con el catálogo base; ajústalo si cambiaste tu catálogo."
+            : "Map each concept to an account so sales and payments post automatically."}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {map.map(item => (
+            <div key={item.role} style={{ display: "grid", gridTemplateColumns: "210px 1fr", gap: 12, alignItems: "center" }}>
+              <label style={{ fontSize: 13, color: t.textMid, fontWeight: 600 }}>{item.label}</label>
+              <select value={draft[item.role] ?? ""} onChange={e => setDraft(d => ({ ...d, [item.role]: e.target.value ? Number(e.target.value) : null }))} style={inp}>
+                <option value="">{lang === "es" ? "— Sin asignar —" : "— None —"}</option>
+                {accounts.filter(a => a.is_postable).map(a => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 20 }}>
+          <button onClick={save} disabled={saving} style={{ padding: "9px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>{saving ? "…" : (lang === "es" ? "Guardar" : "Save")}</button>
+          {msg && <span style={{ fontSize: 12.5, color: msg.includes("✓") ? t.good : t.bad }}>{msg}</span>}
+        </div>
+      </div>
     </div>
   );
 }

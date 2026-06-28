@@ -59,6 +59,18 @@ class JournalEntry(Base):
     lines = relationship("JournalLine", back_populates="entry", cascade="all, delete-orphan")
 
 
+class AccountMap(Base):
+    """Mapeo de 'rol contable' → cuenta, para generar pólizas automáticas desde
+    la operación (ventas, cobros, compras, nómina…). p.ej. role='sales' → 4101."""
+    __tablename__ = "accounting_account_map"
+
+    id = Column(Integer, primary_key=True, index=True)
+    role = Column(String, unique=True, index=True, nullable=False)
+    account_id = Column(Integer, ForeignKey("accounting_accounts.id"), nullable=True)
+
+    account = relationship("Account")
+
+
 class JournalLine(Base):
     """Movimiento (partida) de una póliza: cargo o abono a una cuenta."""
     __tablename__ = "accounting_journal_lines"

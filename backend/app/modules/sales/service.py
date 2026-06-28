@@ -164,6 +164,36 @@ async def _reverse_finance_income(db: AsyncSession, order: models.Order) -> None
     ))
 
 
+# ── Accounting integration (auto-pólizas; defensivo: nunca rompe la venta) ──────
+
+async def _accounting_record_sale(db: AsyncSession, order: models.Order) -> None:
+    try:
+        from app.modules.accounting import service as acc
+        await acc.record_sale(db, order_id=order.id, total=order.total_amount or 0.0,
+                              tax=order.tax_amount or 0.0,
+                              concept=f"Venta {order.folio or '#' + str(order.id)}", user_id=order.user_id)
+    except Exception as e:  # la contabilidad jamás debe tumbar una venta
+        print(f"[accounting] hook venta error: {e}")
+
+
+async def _accounting_record_payment(db: AsyncSession, order: models.Order, amount: float) -> None:
+    try:
+        from app.modules.accounting import service as acc
+        await acc.record_payment(db, order_id=order.id, paid_cumulative=order.paid_amount or 0.0,
+                                 amount=amount, concept=f"Cobro {order.folio or '#' + str(order.id)}",
+                                 user_id=order.user_id)
+    except Exception as e:
+        print(f"[accounting] hook cobro error: {e}")
+
+
+async def _accounting_void_order(db: AsyncSession, order: models.Order) -> None:
+    try:
+        from app.modules.accounting import service as acc
+        await acc.void_order(db, order_id=order.id)
+    except Exception as e:
+        print(f"[accounting] hook void error: {e}")
+
+
 # ── Item materialization (snapshots from catalog) ──────────────────────────────
 
 async def _build_items(db: AsyncSession, items_in: List[schemas.OrderItemCreate]) -> List[models.OrderItem]:
@@ -343,6 +373,7 @@ async def create_order(db: AsyncSession, order_in: schemas.OrderCreate,
     # Commit stock for real orders (not drafts / quotes)
     if kind == "order" and status not in ("draft", "cancelled"):
         await _apply_stock_for_items(db, order, items, "out", user_id)
+        await _accounting_record_sale(db, order)
 
     # If created already paid, register the full payment (finance + ledger)
     if kind == "order" and status == "paid":
@@ -410,6 +441,7 @@ async def change_status(db: AsyncSession, order_id: int, new_status: str,
         if order.kind == "order" and old not in ("draft", "cancelled"):
             await _apply_stock_for_items(db, order, order.items, "in", user_id)
         await _reverse_finance_income(db, order)
+        await _accounting_void_order(db, order)
 
     # Re-activating a draft order commits stock
     if old == "draft" and new_status in ("pending", "partial", "paid") and order.kind == "order":
@@ -442,6 +474,7 @@ async def _settle_payment(db: AsyncSession, order: models.Order, amount: float, 
         order.status = "partial"
     _log_event(db, order.id, "payment", from_status=prev, to_status=order.status,
                message=f"Pago de ${_r(amount):,.2f}", user_id=user_id)
+    await _accounting_record_payment(db, order, amount)
 
 
 async def register_payment(db: AsyncSession, order_id: int, pay: schemas.PaymentCreate,
@@ -495,6 +528,7 @@ async def convert_quote_to_order(db: AsyncSession, quote_id: int,
         items.append(it)
     _compute_totals(order, items)
     await _apply_stock_for_items(db, order, items, "out", user_id)
+    await _accounting_record_sale(db, order)
 
     quote.status = "converted"
     _log_event(db, quote.id, "status_change", from_status="quote", to_status="converted",

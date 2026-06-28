@@ -27,7 +27,22 @@ async def list_accounts(db: DB, _: CurrentUser, only_active: bool = False):
 @router.post("/accounts/seed-default")
 async def seed_default(db: DB, _: CurrentUser):
     created = await service.seed_default_chart(db)
-    return {"created": created}
+    mapped = await service.ensure_default_map(db)
+    return {"created": created, "mapped": mapped}
+
+
+# ── Configuración contable: mapeo de cuentas para pólizas automáticas ──────────
+
+@router.get("/config/account-map", response_model=List[schemas.AccountMapItem])
+async def get_account_map(db: DB, _: CurrentUser):
+    await service.ensure_default_map(db)
+    return await service.list_account_map(db)
+
+
+@router.put("/config/account-map")
+async def update_account_map(data: schemas.AccountMapUpdate, db: DB, _: CurrentUser):
+    await service.set_account_map(db, {k: v for k, v in data.mapping.items()})
+    return {"ok": True}
 
 
 @router.post("/accounts", response_model=schemas.AccountInDB, status_code=201)

@@ -460,3 +460,142 @@ async def income_statement(db: AsyncSession, date_from: Optional[datetime] = Non
         costos=costos, total_costos=_r(tot_cos), gastos=gastos, total_gastos=_r(tot_gas),
         utilidad_bruta=utilidad_bruta, utilidad_neta=utilidad_neta,
     )
+
+
+# ── Pólizas automáticas (Fase 3): mapeo de cuentas + generación desde operación ─
+ROLE_DEFAULTS = {
+    "bank": "1102", "cash": "1101", "clients": "1103", "sales": "4101",
+    "iva_trasladado": "2103", "iva_acreditable": "1105", "suppliers": "2101",
+    "inventory": "1107", "cogs": "5101", "expenses": "6101",
+    "payroll_payable": "2102", "taxes_withheld": "2106",
+}
+ROLE_LABELS = {
+    "bank": "Bancos (cobros/pagos)", "cash": "Caja", "clients": "Clientes", "sales": "Ventas",
+    "iva_trasladado": "IVA trasladado (cobrado)", "iva_acreditable": "IVA acreditable",
+    "suppliers": "Proveedores", "inventory": "Inventarios", "cogs": "Costo de ventas",
+    "expenses": "Gastos", "payroll_payable": "Sueldos por pagar", "taxes_withheld": "Impuestos retenidos",
+}
+ROLE_ORDER = ["bank", "cash", "clients", "sales", "iva_trasladado", "iva_acreditable",
+              "suppliers", "inventory", "cogs", "expenses", "payroll_payable", "taxes_withheld"]
+
+
+async def get_account_map(db: AsyncSession) -> dict:
+    rows = (await db.execute(select(models.AccountMap))).scalars().all()
+    return {r.role: r.account_id for r in rows if r.account_id}
+
+
+async def ensure_default_map(db: AsyncSession) -> int:
+    """Crea los mapeos faltantes apuntando a las cuentas del catálogo base por su
+    número. Idempotente: no pisa lo que ya esté configurado."""
+    existing = {r.role for r in (await db.execute(select(models.AccountMap))).scalars().all()}
+    by_code = {a.code: a.id for a in await list_accounts(db)}
+    created = 0
+    for role, code in ROLE_DEFAULTS.items():
+        if role in existing:
+            continue
+        db.add(models.AccountMap(role=role, account_id=by_code.get(code)))
+        created += 1
+    if created:
+        await db.commit()
+    return created
+
+
+async def set_account_map(db: AsyncSession, mapping: dict) -> None:
+    rows = {r.role: r for r in (await db.execute(select(models.AccountMap))).scalars().all()}
+    for role, acc_id in mapping.items():
+        if role in rows:
+            rows[role].account_id = acc_id
+        else:
+            db.add(models.AccountMap(role=role, account_id=acc_id))
+    await db.commit()
+
+
+async def list_account_map(db: AsyncSession) -> List[schemas.AccountMapItem]:
+    current = {r.role: r.account_id for r in (await db.execute(select(models.AccountMap))).scalars().all()}
+    by_id = {a.id: a for a in await list_accounts(db)}
+    out = []
+    for role in ROLE_ORDER:
+        acc_id = current.get(role)
+        acc = by_id.get(acc_id) if acc_id else None
+        out.append(schemas.AccountMapItem(
+            role=role, label=ROLE_LABELS[role], account_id=acc_id,
+            account_code=acc.code if acc else None, account_name=acc.name if acc else None,
+        ))
+    return out
+
+
+async def _auto_entry(db: AsyncSession, *, source: str, entry_type: str, concept: str,
+                      specs: list, branch_id=None, user_id=None) -> None:
+    """Crea una póliza automática (NO hace commit; lo hace el flujo anfitrión).
+    specs: lista de (account_id, cargo, abono). Idempotente por 'source';
+    si no cuadra o falta cuenta, no hace nada (nunca rompe la operación)."""
+    if any(s[0] is None for s in specs):
+        return
+    exists = (await db.execute(
+        select(models.JournalEntry.id).where(
+            models.JournalEntry.source == source, models.JournalEntry.status != "cancelled")
+    )).first()
+    if exists:
+        return
+    td = _r(sum(s[1] for s in specs))
+    tc = _r(sum(s[2] for s in specs))
+    if td <= 0 or td != tc:
+        return
+    entry = models.JournalEntry(
+        folio=await _generate_folio(db), date=_now(), entry_type=entry_type, concept=concept,
+        source=source, status="posted", total_debit=td, total_credit=tc,
+        branch_id=branch_id, user_id=user_id,
+    )
+    db.add(entry)
+    await db.flush()
+    for acc_id, d, c in specs:
+        db.add(models.JournalLine(entry_id=entry.id, account_id=acc_id, debit=_r(d), credit=_r(c)))
+
+
+async def record_sale(db: AsyncSession, *, order_id: int, total: float, tax: float,
+                      concept: str, branch_id=None, user_id=None) -> None:
+    """Devengo de la venta: cargo Clientes / abono Ventas (+ IVA trasladado)."""
+    m = await get_account_map(db)
+    clients, sales, iva = m.get("clients"), m.get("sales"), m.get("iva_trasladado")
+    if not clients or not sales:
+        return
+    total = _r(total)
+    tax = _r(tax or 0)
+    if total <= 0:
+        return
+    specs = [(clients, total, 0.0)]
+    if iva and tax > 0:
+        specs.append((sales, 0.0, _r(total - tax)))
+        specs.append((iva, 0.0, tax))
+    else:
+        specs.append((sales, 0.0, total))
+    await _auto_entry(db, source=f"venta:{order_id}", entry_type="ingreso", concept=concept,
+                      specs=specs, branch_id=branch_id, user_id=user_id)
+
+
+async def record_payment(db: AsyncSession, *, order_id: int, paid_cumulative: float,
+                         amount: float, concept: str, branch_id=None, user_id=None) -> None:
+    """Cobro: cargo Bancos / abono Clientes."""
+    m = await get_account_map(db)
+    bank, clients = m.get("bank"), m.get("clients")
+    if not bank or not clients:
+        return
+    amount = _r(amount)
+    if amount <= 0:
+        return
+    await _auto_entry(db, source=f"cobro:{order_id}:{_r(paid_cumulative)}", entry_type="ingreso",
+                      concept=concept, specs=[(bank, amount, 0.0), (clients, 0.0, amount)],
+                      branch_id=branch_id, user_id=user_id)
+
+
+async def void_order(db: AsyncSession, *, order_id: int) -> None:
+    """Cancela las pólizas automáticas (venta y cobros) de un pedido (NO commit)."""
+    res = await db.execute(
+        select(models.JournalEntry).where(
+            or_(models.JournalEntry.source == f"venta:{order_id}",
+                models.JournalEntry.source.like(f"cobro:{order_id}:%")),
+            models.JournalEntry.status != "cancelled")
+    )
+    for e in res.scalars().all():
+        e.status = "cancelled"
+        e.cancelled_at = _now()
