@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   BookOpen, Layers, FileText, Plus, X, Check, Trash2, RefreshCw, Search,
   ChevronRight, AlertTriangle, Ban, Info, BarChart3, Scale, TrendingUp,
-  SlidersHorizontal, Zap,
+  SlidersHorizontal, Zap, Landmark, Download,
 } from "lucide-react";
 import {
   accountingService, type Account, type JournalEntry, type LedgerReport,
@@ -22,7 +22,7 @@ const TYPE_COLOR: Record<string, string> = {
   ingreso: "#34D399", costo: "#F472B6", gasto: "#F87171", orden: "#94A3B8",
 };
 
-type Tab = "accounts" | "entries" | "ledger" | "reports" | "config";
+type Tab = "accounts" | "entries" | "ledger" | "reports" | "sat" | "config";
 
 export default function AccountingModule({ t, s }: { t: any; s: any }) {
   const lang = s?.nav ? "es" : "en";
@@ -67,6 +67,7 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
     { id: "entries", label: lang === "es" ? "Pólizas" : "Journal entries", icon: FileText },
     { id: "ledger", label: lang === "es" ? "Mayor / auxiliar" : "Ledger", icon: BookOpen },
     { id: "reports", label: lang === "es" ? "Estados financieros" : "Financial statements", icon: BarChart3 },
+    { id: "sat", label: lang === "es" ? "Contabilidad Electrónica (SAT)" : "SAT e-accounting", icon: Landmark },
     { id: "config", label: lang === "es" ? "Configuración" : "Settings", icon: SlidersHorizontal },
   ] as const;
 
@@ -222,6 +223,11 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Estados financieros ── */}
       {tab === "reports" && accounts.length > 0 && (
         <ReportsView t={t} lang={lang} />
+      )}
+
+      {/* ── TAB: Contabilidad Electrónica SAT ── */}
+      {tab === "sat" && accounts.length > 0 && (
+        <SatView t={t} lang={lang} />
       )}
 
       {/* ── TAB: Configuración contable ── */}
@@ -720,6 +726,103 @@ function ConfigView({ t, lang, accounts }: { t: any; lang: string; accounts: Acc
           <button onClick={save} disabled={saving} style={{ padding: "9px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>{saving ? "…" : (lang === "es" ? "Guardar" : "Save")}</button>
           {msg && <span style={{ fontSize: 12.5, color: msg.includes("✓") ? t.good : t.bad }}>{msg}</span>}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Vista: Contabilidad Electrónica (SAT, Anexo 24) ──
+function SatView({ t, lang }: { t: any; lang: string }) {
+  const now = new Date();
+  const [anio, setAnio] = useState(now.getFullYear());
+  const [mes, setMes] = useState(now.getMonth() + 1);
+  const [rfc, setRfc] = useState("");
+  const [tipoEnvio, setTipoEnvio] = useState("N");
+  const [tipoSol, setTipoSol] = useState("AF");
+  const [numOrden, setNumOrden] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const inp: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", boxSizing: "border-box" };
+  const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre", "Cierre (13)"];
+  const baseParams = () => { const p: any = { anio, mes }; if (rfc.trim()) p.rfc = rfc.trim().toUpperCase(); return p; };
+  const dl = async (kind: string, fn: () => Promise<void>) => {
+    setBusy(kind); setError(null);
+    try { await fn(); }
+    catch { setError(lang === "es" ? "No se pudo generar el XML. Verifica el RFC (o configúralo en el perfil de la empresa) y que existan movimientos en el periodo." : "Could not generate the XML."); }
+    finally { setBusy(null); }
+  };
+
+  const card = (key: string, title: string, desc: string, icon: any, onDl: () => Promise<void>, extra?: any) => {
+    const Icon = icon;
+    return (
+      <div style={{ ...glass(t), borderRadius: 12, padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 10, padding: 9, display: "flex" }}><Icon size={18} /></div>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi }}>{title}</div>
+            <div style={{ fontSize: 12, color: t.textLo }}>{desc}</div>
+          </div>
+        </div>
+        {extra}
+        <button onClick={() => dl(key, onDl)} disabled={busy === key} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: "10px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+          <Download size={15} /> {busy === key ? (lang === "es" ? "Generando…" : "Generating…") : (lang === "es" ? "Descargar XML" : "Download XML")}
+        </button>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.nova + "12", border: `1px solid ${t.nova}33`, color: t.textMid, borderRadius: 10, padding: "10px 14px", fontSize: 12.5 }}>
+        <Info size={15} color={t.nova} /> {lang === "es" ? "Genera los XML del Anexo 24 y súbelos al Buzón Tributario del SAT con tu e.firma. Valídalos antes con el validador del SAT." : "Generate the Anexo 24 XMLs and upload them to the SAT portal."}
+      </div>
+
+      {/* Parámetros */}
+      <div style={{ ...glass(t), borderRadius: 12, padding: 18, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div><label style={{ fontSize: 11, color: t.textLo, display: "block", marginBottom: 4 }}>{lang === "es" ? "Año" : "Year"}</label><input type="number" value={anio} onChange={e => setAnio(Number(e.target.value))} style={{ ...inp, width: 110 }} /></div>
+        <div><label style={{ fontSize: 11, color: t.textLo, display: "block", marginBottom: 4 }}>{lang === "es" ? "Mes" : "Month"}</label>
+          <select value={mes} onChange={e => setMes(Number(e.target.value))} style={{ ...inp, cursor: "pointer" }}>
+            {MESES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </select>
+        </div>
+        <div style={{ flex: 1, minWidth: 200 }}><label style={{ fontSize: 11, color: t.textLo, display: "block", marginBottom: 4 }}>{lang === "es" ? "RFC (opcional, usa el de la empresa)" : "RFC (optional)"}</label><input value={rfc} onChange={e => setRfc(e.target.value)} placeholder="XAXX010101000" style={{ ...inp, width: "100%", textTransform: "uppercase" }} /></div>
+      </div>
+
+      {error && <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.bad + "18", border: `1px solid ${t.bad}44`, color: t.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}><AlertTriangle size={15} /> {error}</div>}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+        {card("cat", lang === "es" ? "Catálogo de cuentas" : "Chart of accounts", "CT · 1.3", Layers,
+          () => accountingService.downloadSatCatalogo(baseParams()))}
+
+        {card("bal", lang === "es" ? "Balanza de comprobación" : "Trial balance", "B" + (tipoEnvio === "C" ? "C" : "N") + " · 1.3", Scale,
+          () => accountingService.downloadSatBalanza({ ...baseParams(), tipo_envio: tipoEnvio }),
+          <div><label style={{ fontSize: 11, color: t.textLo, display: "block", marginBottom: 4 }}>{lang === "es" ? "Tipo de envío" : "Type"}</label>
+            <select value={tipoEnvio} onChange={e => setTipoEnvio(e.target.value)} style={{ ...inp, cursor: "pointer", width: "100%" }}>
+              <option value="N">{lang === "es" ? "Normal" : "Normal"}</option>
+              <option value="C">{lang === "es" ? "Complementaria" : "Complementary"}</option>
+            </select>
+          </div>
+        )}
+
+        {card("pol", lang === "es" ? "Pólizas del periodo" : "Journal entries", "PL · 1.3", FileText,
+          () => accountingService.downloadSatPolizas({
+            ...baseParams(), tipo_solicitud: tipoSol,
+            num_orden: (tipoSol === "AF" || tipoSol === "FC") ? (numOrden.trim() || undefined) : undefined,
+            num_tramite: (tipoSol === "DE" || tipoSol === "CO") ? (numOrden.trim() || undefined) : undefined,
+          }),
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div><label style={{ fontSize: 11, color: t.textLo, display: "block", marginBottom: 4 }}>{lang === "es" ? "Tipo de solicitud" : "Request type"}</label>
+              <select value={tipoSol} onChange={e => setTipoSol(e.target.value)} style={{ ...inp, cursor: "pointer", width: "100%" }}>
+                <option value="AF">AF · {lang === "es" ? "Acto de fiscalización" : "Audit"}</option>
+                <option value="FC">FC · {lang === "es" ? "Fiscalización compulsa" : "Compulsa"}</option>
+                <option value="DE">DE · {lang === "es" ? "Devolución" : "Refund"}</option>
+                <option value="CO">CO · {lang === "es" ? "Compensación" : "Offset"}</option>
+              </select>
+            </div>
+            <div><label style={{ fontSize: 11, color: t.textLo, display: "block", marginBottom: 4 }}>{(tipoSol === "DE" || tipoSol === "CO") ? (lang === "es" ? "No. trámite" : "Procedure no.") : (lang === "es" ? "No. orden" : "Order no.")}</label><input value={numOrden} onChange={e => setNumOrden(e.target.value)} placeholder={tipoSol === "AF" ? "ABC6912345/12" : ""} style={{ ...inp, width: "100%" }} /></div>
+          </div>
+        )}
       </div>
     </div>
   );

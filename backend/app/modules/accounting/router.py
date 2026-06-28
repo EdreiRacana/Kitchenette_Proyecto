@@ -45,6 +45,58 @@ async def update_account_map(data: schemas.AccountMapUpdate, db: DB, _: CurrentU
     return {"ok": True}
 
 
+# ── Contabilidad Electrónica SAT (Fase 4): XML del Anexo 24 ───────────────────
+
+from fastapi import Response  # noqa: E402
+
+
+async def _resolve_rfc(db, rfc: Optional[str]) -> str:
+    if rfc:
+        return rfc.strip().upper()
+    try:
+        from app.modules.core_config.service import get_company_profile
+        company = await get_company_profile(db)
+        if company and getattr(company, "tax_id", None):
+            return str(company.tax_id).strip().upper()
+    except Exception:
+        pass
+    raise HTTPException(status_code=400, detail="Falta el RFC. Indícalo o configúralo en el perfil de la empresa.")
+
+
+def _xml_response(content: str, filename: str) -> Response:
+    return Response(content=content, media_type="application/xml",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.get("/sat/catalogo")
+async def sat_catalogo(db: DB, _: CurrentUser, anio: int, mes: int, rfc: Optional[str] = None):
+    from app.modules.accounting import sat
+    r = await _resolve_rfc(db, rfc)
+    xml = await sat.xml_catalogo(db, rfc=r, anio=anio, mes=mes)
+    return _xml_response(xml, f"{r}{anio}{int(mes):02d}CT.xml")
+
+
+@router.get("/sat/balanza")
+async def sat_balanza(db: DB, _: CurrentUser, anio: int, mes: int,
+                      rfc: Optional[str] = None, tipo_envio: str = "N"):
+    from app.modules.accounting import sat
+    r = await _resolve_rfc(db, rfc)
+    xml = await sat.xml_balanza(db, rfc=r, anio=anio, mes=mes, tipo_envio=tipo_envio)
+    suf = "B" + ("C" if tipo_envio == "C" else "N")
+    return _xml_response(xml, f"{r}{anio}{int(mes):02d}{suf}.xml")
+
+
+@router.get("/sat/polizas")
+async def sat_polizas(db: DB, _: CurrentUser, anio: int, mes: int, rfc: Optional[str] = None,
+                      tipo_solicitud: str = "AF", num_orden: Optional[str] = None,
+                      num_tramite: Optional[str] = None):
+    from app.modules.accounting import sat
+    r = await _resolve_rfc(db, rfc)
+    xml = await sat.xml_polizas(db, rfc=r, anio=anio, mes=mes, tipo_solicitud=tipo_solicitud,
+                                num_orden=num_orden, num_tramite=num_tramite)
+    return _xml_response(xml, f"{r}{anio}{int(mes):02d}PL.xml")
+
+
 @router.post("/accounts", response_model=schemas.AccountInDB, status_code=201)
 async def create_account(data: schemas.AccountCreate, db: DB, _: CurrentUser):
     try:

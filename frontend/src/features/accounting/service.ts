@@ -1,5 +1,17 @@
 import api from '../../services/api';
 
+async function downloadXml(url: string, params: any) {
+    const res = await api.get(url, { params, responseType: 'blob' });
+    const cd = (res.headers as any)['content-disposition'] || '';
+    const m = /filename="?([^"]+)"?/.exec(cd);
+    const filename = m ? m[1] : 'contabilidad_electronica.xml';
+    const blobUrl = window.URL.createObjectURL(res.data as Blob);
+    const a = document.createElement('a');
+    a.href = blobUrl; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    window.URL.revokeObjectURL(blobUrl);
+}
+
 export interface Account {
     id: number;
     code: string;
@@ -125,4 +137,9 @@ export const accountingService = {
     getAccountMap: async () => (await api.get<AccountMapItem[]>('/accounting/config/account-map')).data,
     setAccountMap: async (mapping: Record<string, number | null>) =>
         (await api.put('/accounting/config/account-map', { mapping })).data,
+
+    // Contabilidad Electrónica SAT (XML del Anexo 24)
+    downloadSatCatalogo: (params: any) => downloadXml('/accounting/sat/catalogo', params),
+    downloadSatBalanza: (params: any) => downloadXml('/accounting/sat/balanza', params),
+    downloadSatPolizas: (params: any) => downloadXml('/accounting/sat/polizas', params),
 };
