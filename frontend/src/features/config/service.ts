@@ -95,6 +95,7 @@ const configService = {
     createIntegration: async (data: Omit<SystemIntegration, 'id'>) => (await api.post<SystemIntegration>('/config/integrations', data)).data,
     updateIntegration: async (id: string, data: Partial<SystemIntegration>) => (await api.put<SystemIntegration>(`/config/integrations/${id}`, data)).data,
     deleteIntegration: async (id: string) => { await api.delete(`/config/integrations/${id}`); },
+    testEmail: async (to?: string) => (await api.post<{ ok: boolean; error: string | null; to: string | null }>('/config/integrations/email/test', { to: to || null })).data,
 };
 
 export default configService;

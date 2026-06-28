@@ -132,6 +132,28 @@ async def update_integration(
     await service.create_audit_log(db, user_id=current_user.id, action="UPDATE_INTEGRATION", module="config", description=f"Updated integration: {integration.provider_name}")
     return await service.update_integration(db=db, db_obj=integration, obj_in=integration_in)
 
+
+from pydantic import BaseModel  # noqa: E402
+
+
+class EmailTestRequest(BaseModel):
+    to: str | None = None
+
+
+@router.post("/integrations/email/test")
+async def test_email_integration(
+    *,
+    payload: EmailTestRequest | None = None,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_superuser),
+):
+    """Envía un correo de prueba con la integración EMAIL activa y devuelve el
+    resultado real (ok / error legible) para diagnosticar la configuración."""
+    from app.core.email import send_test_email
+    to = payload.to if payload else None
+    ok, error = await send_test_email(db, to=to)
+    return {"ok": ok, "error": error, "to": to}
+
 @router.delete("/integrations/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_integration(
     *,

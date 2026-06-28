@@ -156,6 +156,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const [emailIntegration, setEmailIntegration] = useState<SystemIntegration | null>(null);
   const [emailForm, setEmailForm] = useState({ host: "", port: "587", username: "", password: "", from_email: "", from_name: "", use_tls: true, is_active: false });
   const [emailSaving, setEmailSaving] = useState(false);
+  const [emailTesting, setEmailTesting] = useState(false);
   const [emailMsg, setEmailMsg] = useState("");
 
   const [companyExists, setCompanyExists] = useState(false);
@@ -290,7 +291,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
 
   useEffect(() => { if (tab === "integrations") loadEmailIntegration(); }, [tab, loadEmailIntegration]);
 
-  const handleSaveEmailIntegration = async () => {
+  const handleSaveEmailIntegration = async (): Promise<boolean> => {
     setEmailSaving(true); setEmailMsg("");
     try {
       const payload = {
@@ -306,10 +307,29 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
       else await configService.createIntegration(payload);
       setEmailMsg("Configuración de correo guardada ✓");
       await loadEmailIntegration();
+      return true;
     } catch (err: any) {
       setEmailMsg(errorMessage(err, "No se pudo guardar la configuración de correo."));
+      return false;
     } finally {
       setEmailSaving(false);
+    }
+  };
+
+  // Guarda primero (para que la prueba use lo que ves) y luego envía un correo
+  // de prueba; muestra el resultado real (éxito o el error exacto del servidor).
+  const handleTestEmail = async () => {
+    setEmailTesting(true);
+    try {
+      const saved = await handleSaveEmailIntegration();
+      if (!saved) return;
+      const res = await configService.testEmail(emailForm.from_email || emailForm.username);
+      if (res.ok) setEmailMsg(`Correo de prueba enviado a ${res.to} ✓ Revisa la bandeja (y spam).`);
+      else setEmailMsg(`No se pudo enviar: ${res.error}`);
+    } catch (err: any) {
+      setEmailMsg(errorMessage(err, "No se pudo enviar el correo de prueba."));
+    } finally {
+      setEmailTesting(false);
     }
   };
 
@@ -708,7 +728,10 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: t.textMid, cursor: "pointer" }}>
                 <input type="checkbox" checked={emailForm.is_active} onChange={e => setEmailForm(f => ({ ...f, is_active: e.target.checked }))} /> Activar envío de correos
               </label>
-              <button onClick={handleSaveEmailIntegration} disabled={emailSaving || !emailForm.host || !emailForm.from_email} style={{ marginLeft: "auto", padding: "9px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: (!emailForm.host || !emailForm.from_email) ? 0.5 : 1 }}>
+              <button onClick={handleTestEmail} disabled={emailSaving || emailTesting || !emailForm.host || !emailForm.from_email} style={{ marginLeft: "auto", padding: "9px 16px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: (!emailForm.host || !emailForm.from_email) ? 0.5 : 1 }}>
+                {emailTesting ? "Enviando prueba…" : "Probar correo"}
+              </button>
+              <button onClick={handleSaveEmailIntegration} disabled={emailSaving || emailTesting || !emailForm.host || !emailForm.from_email} style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: (!emailForm.host || !emailForm.from_email) ? 0.5 : 1 }}>
                 {emailSaving ? "Guardando…" : "Guardar"}
               </button>
             </div>
