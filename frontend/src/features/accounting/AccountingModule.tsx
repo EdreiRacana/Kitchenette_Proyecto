@@ -3,9 +3,12 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   BookOpen, Layers, FileText, Plus, X, Check, Trash2, RefreshCw, Search,
-  ChevronRight, AlertTriangle, Ban, Info,
+  ChevronRight, AlertTriangle, Ban, Info, BarChart3, Scale, TrendingUp,
 } from "lucide-react";
-import { accountingService, type Account, type JournalEntry, type LedgerReport } from "./service";
+import {
+  accountingService, type Account, type JournalEntry, type LedgerReport,
+  type TrialBalance, type BalanceSheet, type IncomeStatement,
+} from "./service";
 
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -18,7 +21,7 @@ const TYPE_COLOR: Record<string, string> = {
   ingreso: "#34D399", costo: "#F472B6", gasto: "#F87171", orden: "#94A3B8",
 };
 
-type Tab = "accounts" | "entries" | "ledger";
+type Tab = "accounts" | "entries" | "ledger" | "reports";
 
 export default function AccountingModule({ t, s }: { t: any; s: any }) {
   const lang = s?.nav ? "es" : "en";
@@ -62,6 +65,7 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
     { id: "accounts", label: lang === "es" ? "Catálogo de cuentas" : "Chart of accounts", icon: Layers },
     { id: "entries", label: lang === "es" ? "Pólizas" : "Journal entries", icon: FileText },
     { id: "ledger", label: lang === "es" ? "Mayor / auxiliar" : "Ledger", icon: BookOpen },
+    { id: "reports", label: lang === "es" ? "Estados financieros" : "Financial statements", icon: BarChart3 },
   ] as const;
 
   return (
@@ -206,6 +210,11 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Mayor ── */}
       {tab === "ledger" && accounts.length > 0 && (
         <LedgerView t={t} lang={lang} postable={postable} />
+      )}
+
+      {/* ── TAB: Estados financieros ── */}
+      {tab === "reports" && accounts.length > 0 && (
+        <ReportsView t={t} lang={lang} />
       )}
 
       {/* Modales */}
@@ -492,6 +501,157 @@ function LedgerView({ t, lang, postable }: { t: any; lang: string; postable: Acc
             </div>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+// ── Vista: Estados financieros (Balanza · Balance General · Estado de Resultados) ──
+function ReportsView({ t, lang }: { t: any; lang: string }) {
+  type Kind = "trial" | "balance" | "income";
+  const [kind, setKind] = useState<Kind>("balance");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [asOf, setAsOf] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [tb, setTb] = useState<TrialBalance | null>(null);
+  const [bs, setBs] = useState<BalanceSheet | null>(null);
+  const [is_, setIs] = useState<IncomeStatement | null>(null);
+
+  const inp: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", boxSizing: "border-box" };
+  const card: React.CSSProperties = { ...glass(t), borderRadius: 12, padding: 18 };
+  const sectionTitle: React.CSSProperties = { fontSize: 12.5, fontWeight: 700, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5, padding: "10px 4px 6px" };
+  const rowLine = (name: string, amount: number, opts: { bold?: boolean; indent?: number; color?: string } = {}) => (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 4px", paddingLeft: 4 + (opts.indent || 0) * 14, borderBottom: `1px solid ${t.borderSoft}` }}>
+      <span style={{ fontSize: 13, color: opts.color || (opts.bold ? t.textHi : t.textMid), fontWeight: opts.bold ? 700 : 400 }}>{name}</span>
+      <span style={{ fontSize: 13, color: opts.color || t.textHi, fontWeight: opts.bold ? 700 : 500, fontVariantNumeric: "tabular-nums" }}>{mxn(amount)}</span>
+    </div>
+  );
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      if (kind === "trial") {
+        const p: any = {}; if (dateFrom) p.date_from = dateFrom; if (dateTo) p.date_to = dateTo;
+        setTb(await accountingService.getTrialBalance(p));
+      } else if (kind === "balance") {
+        const p: any = {}; if (asOf) p.as_of = asOf;
+        setBs(await accountingService.getBalanceSheet(p));
+      } else {
+        const p: any = {}; if (dateFrom) p.date_from = dateFrom; if (dateTo) p.date_to = dateTo;
+        setIs(await accountingService.getIncomeStatement(p));
+      }
+    } catch { /* vacío */ }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { run(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [kind]);
+
+  const KINDS: { id: Kind; label: string; icon: any }[] = [
+    { id: "balance", label: lang === "es" ? "Balance General" : "Balance Sheet", icon: Scale },
+    { id: "income", label: lang === "es" ? "Estado de Resultados" : "Income Statement", icon: TrendingUp },
+    { id: "trial", label: lang === "es" ? "Balanza de comprobación" : "Trial Balance", icon: BarChart3 },
+  ];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {KINDS.map(k => (
+            <button key={k.id} onClick={() => setKind(k.id)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${kind === k.id ? t.nova : t.border}`, background: kind === k.id ? t.nova + "1e" : "transparent", color: kind === k.id ? t.nova : t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              <k.icon size={15} /> {k.label}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          {kind === "balance" ? (
+            <div><label style={{ fontSize: 11, color: t.textLo, display: "block", marginBottom: 4 }}>{lang === "es" ? "Al día" : "As of"}</label><input type="date" value={asOf} onChange={e => setAsOf(e.target.value)} style={inp} /></div>
+          ) : (
+            <>
+              <div><label style={{ fontSize: 11, color: t.textLo, display: "block", marginBottom: 4 }}>{lang === "es" ? "Desde" : "From"}</label><input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={inp} /></div>
+              <div><label style={{ fontSize: 11, color: t.textLo, display: "block", marginBottom: 4 }}>{lang === "es" ? "Hasta" : "To"}</label><input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={inp} /></div>
+            </>
+          )}
+          <button onClick={run} style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>{lang === "es" ? "Generar" : "Run"}</button>
+        </div>
+      </div>
+
+      {loading && <div style={{ color: t.textLo, fontSize: 13 }}>{lang === "es" ? "Calculando…" : "Calculating…"}</div>}
+
+      {kind === "balance" && bs && !loading && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
+          <div style={card}>
+            <div style={sectionTitle}>{lang === "es" ? "Activo" : "Assets"}</div>
+            {bs.activo.map(l => rowLine(`${l.code} · ${l.name}`, l.amount))}
+            {rowLine(lang === "es" ? "Total activo" : "Total assets", bs.total_activo, { bold: true, color: t.nova })}
+          </div>
+          <div style={card}>
+            <div style={sectionTitle}>{lang === "es" ? "Pasivo" : "Liabilities"}</div>
+            {bs.pasivo.map(l => rowLine(`${l.code} · ${l.name}`, l.amount))}
+            {rowLine(lang === "es" ? "Total pasivo" : "Total liabilities", bs.total_pasivo, { bold: true })}
+            <div style={{ ...sectionTitle, marginTop: 8 }}>{lang === "es" ? "Capital" : "Equity"}</div>
+            {bs.capital.map(l => rowLine(`${l.code} · ${l.name}`, l.amount))}
+            {rowLine(lang === "es" ? "Resultado del ejercicio" : "Net result", bs.resultado_ejercicio, { color: bs.resultado_ejercicio >= 0 ? t.good : t.bad })}
+            {rowLine(lang === "es" ? "Total capital" : "Total equity", bs.total_capital, { bold: true })}
+            {rowLine(lang === "es" ? "Pasivo + Capital" : "Liab. + Equity", bs.total_pasivo + bs.total_capital, { bold: true, color: t.nova })}
+            <div style={{ marginTop: 10, fontSize: 12, fontWeight: 700, color: bs.balanced ? t.good : t.bad, display: "flex", alignItems: "center", gap: 6 }}>
+              {bs.balanced ? <Check size={14} /> : <AlertTriangle size={14} />}
+              {bs.balanced ? (lang === "es" ? "El balance cuadra" : "Balanced") : (lang === "es" ? `Descuadre: ${mxn(bs.difference)}` : `Off by ${mxn(bs.difference)}`)}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {kind === "income" && is_ && !loading && (
+        <div style={{ ...card, maxWidth: 640 }}>
+          <div style={sectionTitle}>{lang === "es" ? "Ingresos" : "Revenue"}</div>
+          {is_.ingresos.map(l => rowLine(`${l.code} · ${l.name}`, l.amount, { indent: 1 }))}
+          {rowLine(lang === "es" ? "Total ingresos" : "Total revenue", is_.total_ingresos, { bold: true })}
+          <div style={sectionTitle}>{lang === "es" ? "Costos" : "Cost of sales"}</div>
+          {is_.costos.map(l => rowLine(`${l.code} · ${l.name}`, l.amount, { indent: 1 }))}
+          {rowLine(lang === "es" ? "Total costos" : "Total cost", is_.total_costos, { bold: true })}
+          {rowLine(lang === "es" ? "Utilidad bruta" : "Gross profit", is_.utilidad_bruta, { bold: true, color: t.nova })}
+          <div style={sectionTitle}>{lang === "es" ? "Gastos" : "Expenses"}</div>
+          {is_.gastos.map(l => rowLine(`${l.code} · ${l.name}`, l.amount, { indent: 1 }))}
+          {rowLine(lang === "es" ? "Total gastos" : "Total expenses", is_.total_gastos, { bold: true })}
+          <div style={{ marginTop: 6, padding: "10px 4px", borderTop: `2px solid ${t.border}`, display: "flex", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 14, fontWeight: 800, color: t.textHi }}>{is_.utilidad_neta >= 0 ? (lang === "es" ? "Utilidad neta" : "Net income") : (lang === "es" ? "Pérdida neta" : "Net loss")}</span>
+            <span style={{ fontSize: 15, fontWeight: 800, color: is_.utilidad_neta >= 0 ? t.good : t.bad, fontVariantNumeric: "tabular-nums" }}>{mxn(is_.utilidad_neta)}</span>
+          </div>
+        </div>
+      )}
+
+      {kind === "trial" && tb && !loading && (
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+              <thead>
+                <tr style={{ background: t.panel2 }}>
+                  {["Cuenta", "Nombre", "Saldo inicial", "Cargos", "Abonos", "Saldo final"].map((h, i) => (
+                    <th key={i} style={{ padding: "10px 14px", textAlign: i >= 2 ? "right" : "left", fontSize: 11, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {tb.rows.map(r => (
+                  <tr key={r.account_id} style={{ borderBottom: `1px solid ${t.borderSoft}`, background: r.is_postable ? "transparent" : t.panel2 }}>
+                    <td style={{ padding: "8px 14px", fontFamily: "monospace", fontWeight: r.is_postable ? 500 : 700, color: t.nova, fontSize: 12.5, paddingLeft: 14 + (r.level - 1) * 14 }}>{r.code}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 13, color: t.textHi, fontWeight: r.is_postable ? 400 : 700 }}>{r.name}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 12.5, color: t.textMid, textAlign: "right" }}>{r.saldo_inicial ? mxn(r.saldo_inicial) : "—"}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 12.5, color: t.textMid, textAlign: "right" }}>{r.cargos ? mxn(r.cargos) : "—"}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 12.5, color: t.textMid, textAlign: "right" }}>{r.abonos ? mxn(r.abonos) : "—"}</td>
+                    <td style={{ padding: "8px 14px", fontSize: 13, fontWeight: 600, color: t.textHi, textAlign: "right" }}>{mxn(r.saldo_final)}</td>
+                  </tr>
+                ))}
+                <tr style={{ background: t.panel3 }}>
+                  <td colSpan={3} style={{ padding: "10px 14px", fontSize: 13, fontWeight: 700, color: t.textHi }}>{lang === "es" ? "Totales (detalle)" : "Totals"}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 13, fontWeight: 700, color: t.textHi, textAlign: "right" }}>{mxn(tb.total_cargos)}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 13, fontWeight: 700, color: t.textHi, textAlign: "right" }}>{mxn(tb.total_abonos)}</td>
+                  <td style={{ padding: "10px 14px", textAlign: "right", fontSize: 12, fontWeight: 700, color: Math.abs(tb.total_cargos - tb.total_abonos) < 0.01 ? t.good : t.bad }}>{Math.abs(tb.total_cargos - tb.total_abonos) < 0.01 ? "OK" : "≠"}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -61,6 +61,31 @@ export interface LedgerReport {
     movements: LedgerMovement[];
 }
 
+// ── Estados financieros (Fase 2) ───────────────────────────────────────────
+export interface ReportLine { account_id: number; code: string; name: string; level: number; amount: number; }
+export interface TrialBalanceRow {
+    account_id: number; code: string; name: string; level: number; is_postable: boolean;
+    nature: string; saldo_inicial: number; cargos: number; abonos: number; saldo_final: number;
+}
+export interface TrialBalance {
+    date_from?: string; date_to?: string; rows: TrialBalanceRow[];
+    total_cargos: number; total_abonos: number;
+}
+export interface BalanceSheet {
+    as_of?: string;
+    activo: ReportLine[]; total_activo: number;
+    pasivo: ReportLine[]; total_pasivo: number;
+    capital: ReportLine[]; resultado_ejercicio: number; total_capital: number;
+    balanced: boolean; difference: number;
+}
+export interface IncomeStatement {
+    date_from?: string; date_to?: string;
+    ingresos: ReportLine[]; total_ingresos: number;
+    costos: ReportLine[]; total_costos: number;
+    gastos: ReportLine[]; total_gastos: number;
+    utilidad_bruta: number; utilidad_neta: number;
+}
+
 export const accountingService = {
     // Catálogo de cuentas
     getAccounts: async (onlyActive = false) =>
@@ -79,4 +104,12 @@ export const accountingService = {
     // Mayor / auxiliar
     getLedger: async (accountId: number, params?: any) =>
         (await api.get<LedgerReport>(`/accounting/ledger/${accountId}`, { params })).data,
+
+    // Estados financieros
+    getTrialBalance: async (params?: any) =>
+        (await api.get<TrialBalance>('/accounting/reports/trial-balance', { params })).data,
+    getBalanceSheet: async (params?: any) =>
+        (await api.get<BalanceSheet>('/accounting/reports/balance-sheet', { params })).data,
+    getIncomeStatement: async (params?: any) =>
+        (await api.get<IncomeStatement>('/accounting/reports/income-statement', { params })).data,
 };

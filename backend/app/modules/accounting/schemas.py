@@ -112,3 +112,60 @@ class LedgerReport(BaseModel):
     total_credit: float
     closing_balance: float
     movements: List[LedgerMovement] = []
+
+
+# ── Estados financieros (Fase 2) ──────────────────────────────────────────────
+
+class ReportLine(BaseModel):
+    account_id: int
+    code: str
+    name: str
+    level: int = 1
+    amount: float
+
+
+class TrialBalanceRow(BaseModel):
+    account_id: int
+    code: str
+    name: str
+    level: int
+    is_postable: bool
+    nature: str
+    saldo_inicial: float
+    cargos: float
+    abonos: float
+    saldo_final: float
+
+
+class TrialBalance(BaseModel):
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
+    rows: List[TrialBalanceRow] = []
+    total_cargos: float
+    total_abonos: float
+
+
+class BalanceSheet(BaseModel):
+    as_of: Optional[datetime] = None
+    activo: List[ReportLine] = []
+    total_activo: float
+    pasivo: List[ReportLine] = []
+    total_pasivo: float
+    capital: List[ReportLine] = []
+    resultado_ejercicio: float
+    total_capital: float
+    balanced: bool
+    difference: float
+
+
+class IncomeStatement(BaseModel):
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
+    ingresos: List[ReportLine] = []
+    total_ingresos: float
+    costos: List[ReportLine] = []
+    total_costos: float
+    gastos: List[ReportLine] = []
+    total_gastos: float
+    utilidad_bruta: float
+    utilidad_neta: float

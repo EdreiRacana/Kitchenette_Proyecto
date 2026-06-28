@@ -1,7 +1,8 @@
 """Lógica de Contabilidad — Fase 1: catálogo, pólizas (partida doble) y mayor."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from sqlalchemy import select, func, or_
@@ -317,4 +318,145 @@ async def ledger(db: AsyncSession, account_id: int, *, date_from: Optional[datet
         account_id=acc.id, account_code=acc.code, account_name=acc.name, nature=acc.nature,
         opening_balance=_r(opening), total_debit=total_debit, total_credit=total_credit,
         closing_balance=_r(running), movements=movements,
+    )
+
+
+# ── Estados financieros (Fase 2) ──────────────────────────────────────────────
+# Naturaleza normal por SECCIÓN (tipo de cuenta) para agregar estados: las cuentas
+# de contra (p. ej. Depreciación acumulada en activo, Devoluciones en ingresos) se
+# netean solas porque su saldo queda con signo contrario dentro de su sección.
+SECTION_NORMAL = {"activo": "d", "pasivo": "c", "capital": "c",
+                  "ingreso": "c", "costo": "d", "gasto": "d", "orden": "d"}
+
+
+def _section_amount(account_type: str, debit: float, credit: float) -> float:
+    return (debit - credit) if SECTION_NORMAL.get(account_type, "d") == "d" else (credit - debit)
+
+
+def _eod(d: Optional[datetime]) -> Optional[datetime]:
+    """Fin de día exclusivo: para incluir las pólizas del propio día 'hasta'."""
+    return (d + timedelta(days=1)) if d else None
+
+
+async def _account_sums(db: AsyncSession, *, lt: Optional[datetime] = None,
+                        gte: Optional[datetime] = None) -> dict:
+    """{account_id: (suma_cargos, suma_abonos)} de pólizas contabilizadas."""
+    stmt = (
+        select(models.JournalLine.account_id,
+               func.coalesce(func.sum(models.JournalLine.debit), 0.0),
+               func.coalesce(func.sum(models.JournalLine.credit), 0.0))
+        .join(models.JournalEntry, models.JournalLine.entry_id == models.JournalEntry.id)
+        .where(models.JournalEntry.status == "posted")
+    )
+    if lt is not None:
+        stmt = stmt.where(models.JournalEntry.date < lt)
+    if gte is not None:
+        stmt = stmt.where(models.JournalEntry.date >= gte)
+    stmt = stmt.group_by(models.JournalLine.account_id)
+    return {r[0]: (float(r[1] or 0.0), float(r[2] or 0.0)) for r in (await db.execute(stmt)).all()}
+
+
+async def trial_balance(db: AsyncSession, date_from: Optional[datetime] = None,
+                        date_to: Optional[datetime] = None) -> schemas.TrialBalance:
+    accounts = await list_accounts(db)
+    by_id = {a.id: a for a in accounts}
+    opening = await _account_sums(db, lt=date_from) if date_from else {}
+    period = await _account_sums(db, gte=date_from, lt=_eod(date_to))
+
+    od, oc, pd_, pc = defaultdict(float), defaultdict(float), defaultdict(float), defaultdict(float)
+    for a in accounts:
+        if not a.is_postable:
+            continue
+        o = opening.get(a.id, (0.0, 0.0))
+        p = period.get(a.id, (0.0, 0.0))
+        node = a
+        while node is not None:  # acumular en la cuenta y sus padres (subtotales)
+            od[node.id] += o[0]; oc[node.id] += o[1]; pd_[node.id] += p[0]; pc[node.id] += p[1]
+            node = by_id.get(node.parent_id)
+
+    rows, tot_cargos, tot_abonos = [], 0.0, 0.0
+    for a in sorted(accounts, key=lambda x: x.code):
+        o_d, o_c, p_d, p_c = od[a.id], oc[a.id], pd_[a.id], pc[a.id]
+        if round(o_d + o_c + p_d + p_c, 2) == 0:
+            continue
+        deudora = a.nature == "deudora"
+        si = _r((o_d - o_c) if deudora else (o_c - o_d))
+        sf = _r(((o_d + p_d) - (o_c + p_c)) if deudora else ((o_c + p_c) - (o_d + p_d)))
+        rows.append(schemas.TrialBalanceRow(
+            account_id=a.id, code=a.code, name=a.name, level=a.level, is_postable=a.is_postable,
+            nature=a.nature, saldo_inicial=si, cargos=_r(p_d), abonos=_r(p_c), saldo_final=sf,
+        ))
+        if a.is_postable:
+            tot_cargos += p_d; tot_abonos += p_c
+    return schemas.TrialBalance(date_from=date_from, date_to=date_to, rows=rows,
+                                total_cargos=_r(tot_cargos), total_abonos=_r(tot_abonos))
+
+
+async def balance_sheet(db: AsyncSession, as_of: Optional[datetime] = None) -> schemas.BalanceSheet:
+    accounts = await list_accounts(db)
+    closing = await _account_sums(db, lt=_eod(as_of)) if as_of else await _account_sums(db)
+
+    activo, pasivo, capital = [], [], []
+    tot_a = tot_p = tot_c = tot_ing = tot_cos = tot_gas = 0.0
+    for a in sorted(accounts, key=lambda x: x.code):
+        if not a.is_postable:
+            continue
+        d, c = closing.get(a.id, (0.0, 0.0))
+        amt = _r(_section_amount(a.account_type, d, c))
+        line = schemas.ReportLine(account_id=a.id, code=a.code, name=a.name, level=a.level, amount=amt)
+        if a.account_type == "activo":
+            tot_a += amt
+            if amt != 0: activo.append(line)
+        elif a.account_type == "pasivo":
+            tot_p += amt
+            if amt != 0: pasivo.append(line)
+        elif a.account_type == "capital":
+            tot_c += amt
+            if amt != 0: capital.append(line)
+        elif a.account_type == "ingreso":
+            tot_ing += amt
+        elif a.account_type == "costo":
+            tot_cos += amt
+        elif a.account_type == "gasto":
+            tot_gas += amt
+
+    resultado = _r(tot_ing - tot_cos - tot_gas)
+    total_capital = _r(tot_c + resultado)
+    total_activo, total_pasivo = _r(tot_a), _r(tot_p)
+    diff = _r(total_activo - (total_pasivo + total_capital))
+    return schemas.BalanceSheet(
+        as_of=as_of, activo=activo, total_activo=total_activo, pasivo=pasivo, total_pasivo=total_pasivo,
+        capital=capital, resultado_ejercicio=resultado, total_capital=total_capital,
+        balanced=abs(diff) < 0.01, difference=diff,
+    )
+
+
+async def income_statement(db: AsyncSession, date_from: Optional[datetime] = None,
+                           date_to: Optional[datetime] = None) -> schemas.IncomeStatement:
+    accounts = await list_accounts(db)
+    period = await _account_sums(db, gte=date_from, lt=_eod(date_to))
+
+    ingresos, costos, gastos = [], [], []
+    tot_ing = tot_cos = tot_gas = 0.0
+    for a in sorted(accounts, key=lambda x: x.code):
+        if not a.is_postable:
+            continue
+        d, c = period.get(a.id, (0.0, 0.0))
+        amt = _r(_section_amount(a.account_type, d, c))
+        if amt == 0:
+            continue
+        line = schemas.ReportLine(account_id=a.id, code=a.code, name=a.name, level=a.level, amount=amt)
+        if a.account_type == "ingreso":
+            ingresos.append(line); tot_ing += amt
+        elif a.account_type == "costo":
+            costos.append(line); tot_cos += amt
+        elif a.account_type == "gasto":
+            gastos.append(line); tot_gas += amt
+
+    utilidad_bruta = _r(tot_ing - tot_cos)
+    utilidad_neta = _r(tot_ing - tot_cos - tot_gas)
+    return schemas.IncomeStatement(
+        date_from=date_from, date_to=date_to, ingresos=ingresos, total_ingresos=_r(tot_ing),
+        costos=costos, total_costos=_r(tot_cos), gastos=gastos, total_gastos=_r(tot_gas),
+        utilidad_bruta=utilidad_bruta, utilidad_neta=utilidad_neta,
     )

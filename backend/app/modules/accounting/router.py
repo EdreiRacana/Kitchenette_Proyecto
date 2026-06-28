@@ -99,3 +99,22 @@ async def ledger(account_id: int, db: DB, _: CurrentUser,
     if not rep:
         raise HTTPException(status_code=404, detail="Cuenta no encontrada")
     return rep
+
+
+# ── Estados financieros (Fase 2) ──────────────────────────────────────────────
+
+@router.get("/reports/trial-balance", response_model=schemas.TrialBalance)
+async def trial_balance(db: DB, _: CurrentUser,
+                        date_from: Optional[datetime] = None, date_to: Optional[datetime] = None):
+    return await service.trial_balance(db, date_from=date_from, date_to=date_to)
+
+
+@router.get("/reports/balance-sheet", response_model=schemas.BalanceSheet)
+async def balance_sheet(db: DB, _: CurrentUser, as_of: Optional[datetime] = None):
+    return await service.balance_sheet(db, as_of=as_of)
+
+
+@router.get("/reports/income-statement", response_model=schemas.IncomeStatement)
+async def income_statement(db: DB, _: CurrentUser,
+                           date_from: Optional[datetime] = None, date_to: Optional[datetime] = None):
+    return await service.income_statement(db, date_from=date_from, date_to=date_to)
