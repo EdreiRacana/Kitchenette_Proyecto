@@ -1011,3 +1011,216 @@ def _attach_balance(order: models.Order) -> models.Order:
     # `balance` is a @property; OrderInDB reads it via from_attributes. No-op kept
     # for readability of intent at call sites.
     return order
+
+
+# ── Customer returns (devoluciones) — MVP ─────────────────────────────────────
+
+def _return_key(variant_id, sku, product_name) -> str:
+    """Stable key to match a line across an order and its returns. Uses the
+    catalog variant when present, else a text fallback for free-text lines."""
+    return str(variant_id) if variant_id else f"txt:{sku or product_name or ''}"
+
+
+async def _generate_return_folio(db: AsyncSession) -> str:
+    n = (await db.execute(select(func.count(models.CustomerReturn.id)))).scalar() or 0
+    return f"DEV-{n + 1:06d}"
+
+
+async def _move_return_stock(db: AsyncSession, *, variant_id: Optional[int], warehouse_id: Optional[int],
+                             qty: int, direction: str, return_id: int, user_id: Optional[int]) -> None:
+    """Mirror of sales _move_stock but tagged to a return. direction='in'
+    restocks (revendible), 'out' reverses it (cancelación de la devolución)."""
+    if not variant_id or not warehouse_id or not qty:
+        return
+    from app.modules.inventory import models as inv
+    res = await db.execute(
+        select(inv.StockLevel).where(
+            inv.StockLevel.variant_id == variant_id,
+            inv.StockLevel.warehouse_id == warehouse_id,
+        )
+    )
+    level = res.scalars().first()
+    delta = qty if direction == "in" else -qty
+    if level is None:
+        level = inv.StockLevel(variant_id=variant_id, warehouse_id=warehouse_id, quantity=0)
+        db.add(level)
+    level.quantity = (level.quantity or 0) + delta
+    db.add(inv.StockMovement(
+        variant_id=variant_id, warehouse_id=warehouse_id,
+        quantity=delta, movement_type="in" if direction == "in" else "out",
+        reference=f"return:{return_id}", user_id=user_id,
+        notes=(f"Devolución de cliente #{return_id}" if direction == "in"
+               else f"Reverso devolución #{return_id}"),
+    ))
+
+
+async def _returned_qty_by_key(db: AsyncSession, order_id: int) -> dict:
+    """How many units (per line key) were already returned (non-cancelled) for
+    an order, so a new return can't exceed what was sold."""
+    res = await db.execute(
+        select(models.CustomerReturnItem)
+        .join(models.CustomerReturn, models.CustomerReturnItem.return_id == models.CustomerReturn.id)
+        .where(models.CustomerReturn.order_id == order_id,
+               models.CustomerReturn.status != "cancelled")
+    )
+    out: dict = {}
+    for it in res.scalars().all():
+        k = _return_key(it.variant_id, it.sku, it.product_name)
+        out[k] = out.get(k, 0) + (it.quantity or 0)
+    return out
+
+
+async def get_returnable_order(db: AsyncSession, order_id: int) -> Optional[schemas.ReturnableOrder]:
+    """Lines of a real order with how much is still returnable."""
+    order = await get_order(db, order_id)
+    if not order or order.kind != "order":
+        return None
+    returned = await _returned_qty_by_key(db, order_id)
+    agg: dict = {}
+    for it in order.items:
+        k = _return_key(it.variant_id, it.sku, it.product_name)
+        e = agg.setdefault(k, {"variant_id": it.variant_id, "product_name": it.product_name,
+                               "sku": it.sku, "unit_price": it.unit_price or 0.0, "sold": 0})
+        e["sold"] += it.quantity or 0
+    items = []
+    for k, e in agg.items():
+        rq = returned.get(k, 0)
+        items.append(schemas.ReturnableItem(
+            variant_id=e["variant_id"], product_name=e["product_name"], sku=e["sku"],
+            unit_price=_r(e["unit_price"]), sold_quantity=e["sold"],
+            returned_quantity=rq, returnable_quantity=max(e["sold"] - rq, 0),
+        ))
+    return schemas.ReturnableOrder(
+        order_id=order.id, folio=order.folio, customer_id=order.customer_id,
+        customer_name=(order.customer.name if order.customer else None),
+        warehouse_id=order.warehouse_id, items=items,
+    )
+
+
+_RETURN_LOAD = (
+    selectinload(models.CustomerReturn.items),
+    selectinload(models.CustomerReturn.customer),
+    selectinload(models.CustomerReturn.order),
+)
+
+
+async def _load_return(db: AsyncSession, return_id: int) -> Optional[models.CustomerReturn]:
+    res = await db.execute(
+        select(models.CustomerReturn).where(models.CustomerReturn.id == return_id).options(*_RETURN_LOAD)
+    )
+    return res.scalars().first()
+
+
+def _serialize_return(r: models.CustomerReturn) -> schemas.ReturnDetail:
+    return schemas.ReturnDetail(
+        id=r.id, folio=r.folio, order_id=r.order_id, customer_id=r.customer_id,
+        warehouse_id=r.warehouse_id, user_id=r.user_id, status=r.status, reason=r.reason,
+        settlement_type=r.settlement_type, refund_amount=r.refund_amount, notes=r.notes,
+        created_at=r.created_at, completed_at=r.completed_at,
+        items=[schemas.ReturnItemInDB.model_validate(it) for it in r.items],
+        customer_name=(r.customer.name if r.customer else None),
+        order_folio=(r.order.folio if r.order else None),
+    )
+
+
+async def get_return_detail(db: AsyncSession, return_id: int) -> Optional[schemas.ReturnDetail]:
+    r = await _load_return(db, return_id)
+    return _serialize_return(r) if r else None
+
+
+async def list_returns(db: AsyncSession, *, skip: int = 0, limit: int = 100,
+                       branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.ReturnDetail]:
+    R = models.CustomerReturn
+    stmt = select(R).options(*_RETURN_LOAD).order_by(R.created_at.desc())
+    if branch_warehouse_ids is not None:
+        stmt = stmt.where(or_(R.warehouse_id.in_(branch_warehouse_ids), R.warehouse_id.is_(None)))
+    rows = (await db.execute(stmt.offset(skip).limit(limit))).scalars().unique().all()
+    return [_serialize_return(r) for r in rows]
+
+
+async def create_return(db: AsyncSession, data: schemas.ReturnCreate,
+                        user_id: Optional[int] = None) -> schemas.ReturnDetail:
+    order = None
+    returnable: dict = {}
+    if data.order_id:
+        order = await get_order(db, data.order_id)
+        if not order or order.kind != "order":
+            raise ValueError("Pedido no encontrado")
+        ro = await get_returnable_order(db, data.order_id)
+        returnable = {_return_key(i.variant_id, i.sku, i.product_name): i for i in (ro.items if ro else [])}
+
+    customer_id = data.customer_id or (order.customer_id if order else None)
+    warehouse_id = await _resolve_warehouse_id(db, data.warehouse_id or (order.warehouse_id if order else None))
+
+    ret = models.CustomerReturn(
+        folio=await _generate_return_folio(db),
+        order_id=data.order_id, customer_id=customer_id, warehouse_id=warehouse_id,
+        user_id=user_id, status="completed", reason=data.reason,
+        settlement_type=data.settlement_type or "none", notes=data.notes,
+        refund_amount=0.0, completed_at=_now(),
+    )
+    db.add(ret)
+    await db.flush()
+
+    total_value = 0.0
+    for raw in data.items:
+        k = _return_key(raw.variant_id, raw.sku, raw.product_name)
+        ref_line = returnable.get(k)
+        if order is not None and ref_line is not None and raw.quantity > ref_line.returnable_quantity:
+            raise ValueError(
+                f"No puedes devolver {raw.quantity} de {raw.sku or raw.product_name or 'la partida'}; "
+                f"máximo {ref_line.returnable_quantity}."
+            )
+        unit_price = _r(raw.unit_price if raw.unit_price else (ref_line.unit_price if ref_line else 0.0))
+        subtotal = _r(unit_price * raw.quantity)
+        total_value += subtotal
+        db.add(models.CustomerReturnItem(
+            return_id=ret.id, variant_id=raw.variant_id,
+            product_name=raw.product_name or (ref_line.product_name if ref_line else None),
+            sku=raw.sku or (ref_line.sku if ref_line else None),
+            quantity=raw.quantity, unit_price=unit_price, condition=raw.condition,
+            subtotal=subtotal,
+        ))
+        # Revendible -> vuelve a stock; dañado -> merma (no entra a inventario).
+        if raw.condition == "sellable":
+            await _move_return_stock(db, variant_id=raw.variant_id, warehouse_id=warehouse_id,
+                                     qty=raw.quantity, direction="in", return_id=ret.id, user_id=user_id)
+
+    ret.refund_amount = _r(total_value) if ret.settlement_type != "none" else 0.0
+
+    # Liquidación financiera (operativa, no fiscal):
+    if ret.settlement_type == "refund" and ret.refund_amount > 0:
+        from app.modules.finance import models as fin
+        db.add(fin.Transaction(
+            type="expense", amount=ret.refund_amount, category="sales_return",
+            description=f"Reembolso devolución {ret.folio}", reference=f"return:{ret.id}",
+        ))
+    # store_credit: se registra el saldo a favor en la devolución (refund_amount);
+    # aplicarlo automáticamente a pedidos futuros es Fase 2.
+
+    await db.commit()
+    return await get_return_detail(db, ret.id)
+
+
+async def cancel_return(db: AsyncSession, return_id: int,
+                        user_id: Optional[int] = None) -> Optional[schemas.ReturnDetail]:
+    r = await _load_return(db, return_id)
+    if not r:
+        return None
+    if r.status == "cancelled":
+        return _serialize_return(r)
+    # Revertir stock que se había re-ingresado (solo revendibles)
+    for it in r.items:
+        if it.condition == "sellable":
+            await _move_return_stock(db, variant_id=it.variant_id, warehouse_id=r.warehouse_id,
+                                     qty=it.quantity, direction="out", return_id=r.id, user_id=user_id)
+    # Revertir el egreso financiero de un reembolso
+    if r.settlement_type == "refund" and (r.refund_amount or 0) > 0:
+        from app.modules.finance import models as fin
+        db.add(fin.Transaction(
+            type="income", amount=_r(r.refund_amount), category="sales_return_reversal",
+            description=f"Reverso devolución {r.folio}", reference=f"return:{r.id}:reversal",
+        ))
+    r.status = "cancelled"
+    await db.commit()
+    return await get_return_detail(db, return_id)

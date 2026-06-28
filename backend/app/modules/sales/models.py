@@ -160,3 +160,61 @@ class OrderEvent(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     order = relationship("Order", back_populates="events")
+
+
+# ── Customer returns (devoluciones de cliente) — MVP ─────────────────────────
+# Una devolución regresa, total o parcialmente, las partidas de un pedido. Al
+# completarse: las piezas REVENDIBLES vuelven a stock (StockMovement IN) y las
+# DAÑADAS se dan de baja (merma, no entran a stock vendible). La liquidación es
+# operativa (no fiscal): reembolso (egreso en Finanzas) o saldo a favor.
+
+RETURN_STATUSES = ("completed", "cancelled")
+RETURN_CONDITIONS = ("sellable", "damaged")
+RETURN_SETTLEMENTS = ("refund", "store_credit", "none")
+
+
+class CustomerReturn(Base):
+    __tablename__ = "customer_returns"
+
+    id = Column(Integer, primary_key=True, index=True)
+    folio = Column(String, unique=True, index=True, nullable=True)  # DEV-000001
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=True)  # destino del restock
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)            # quien la registra
+
+    status = Column(String, default="completed", nullable=False, index=True)
+    reason = Column(String, nullable=True)              # defectuoso, equivocado, arrepentido...
+    settlement_type = Column(String, default="none", nullable=False)  # refund | store_credit | none
+    refund_amount = Column(Float, default=0.0, nullable=False)         # valor devuelto al cliente
+    notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    items = relationship(
+        "CustomerReturnItem", back_populates="customer_return",
+        cascade="all, delete-orphan",
+    )
+    order = relationship("Order")
+    customer = relationship("Customer")
+
+
+class CustomerReturnItem(Base):
+    __tablename__ = "customer_return_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    return_id = Column(Integer, ForeignKey("customer_returns.id"), nullable=False, index=True)
+    variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=True)
+
+    # Snapshots para que la partida siga siendo legible aunque cambie el catálogo
+    product_name = Column(String, nullable=True)
+    sku = Column(String, nullable=True)
+
+    quantity = Column(Integer, default=1, nullable=False)
+    unit_price = Column(Float, default=0.0, nullable=False)
+    condition = Column(String, default="sellable", nullable=False)  # sellable | damaged
+    subtotal = Column(Float, default=0.0, nullable=False)           # unit_price * quantity
+
+    customer_return = relationship("CustomerReturn", back_populates="items")
+    variant = relationship("ProductVariant")

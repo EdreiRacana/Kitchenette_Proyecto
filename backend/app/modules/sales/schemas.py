@@ -289,3 +289,79 @@ class Customer360(BaseModel):
     avg_ticket: float
     last_order_at: Optional[datetime] = None
     recent_orders: List[OrderInDB] = []
+
+
+# ── Customer returns (devoluciones) ──────────────────────────────────────────
+
+class ReturnItemCreate(BaseModel):
+    variant_id: Optional[int] = None
+    product_name: Optional[str] = None
+    sku: Optional[str] = None
+    quantity: int = Field(ge=1)
+    unit_price: float = Field(default=0.0, ge=0)
+    condition: Literal["sellable", "damaged"] = "sellable"
+
+
+class ReturnCreate(BaseModel):
+    order_id: Optional[int] = None
+    customer_id: Optional[int] = None
+    warehouse_id: Optional[int] = None
+    reason: Optional[str] = None
+    settlement_type: Literal["refund", "store_credit", "none"] = "none"
+    notes: Optional[str] = None
+    items: List[ReturnItemCreate] = Field(min_length=1)
+
+
+class ReturnItemInDB(BaseModel):
+    id: int
+    return_id: int
+    variant_id: Optional[int] = None
+    product_name: Optional[str] = None
+    sku: Optional[str] = None
+    quantity: int
+    unit_price: float
+    condition: str
+    subtotal: float
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ReturnInDB(BaseModel):
+    id: int
+    folio: Optional[str] = None
+    order_id: Optional[int] = None
+    customer_id: Optional[int] = None
+    warehouse_id: Optional[int] = None
+    user_id: Optional[int] = None
+    status: str
+    reason: Optional[str] = None
+    settlement_type: str
+    refund_amount: float
+    notes: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ReturnDetail(ReturnInDB):
+    items: List[ReturnItemInDB] = []
+    customer_name: Optional[str] = None
+    order_folio: Optional[str] = None
+
+
+class ReturnableItem(BaseModel):
+    variant_id: Optional[int] = None
+    product_name: Optional[str] = None
+    sku: Optional[str] = None
+    unit_price: float
+    sold_quantity: int
+    returned_quantity: int
+    returnable_quantity: int
+
+
+class ReturnableOrder(BaseModel):
+    order_id: int
+    folio: Optional[str] = None
+    customer_id: Optional[int] = None
+    customer_name: Optional[str] = None
+    warehouse_id: Optional[int] = None
+    items: List[ReturnableItem] = []
