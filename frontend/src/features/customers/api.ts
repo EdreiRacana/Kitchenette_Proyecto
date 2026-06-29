@@ -75,7 +75,10 @@ export const customersApi = {
     fd.append("file", file);
     const { data } = await api.post<CustomerDocument>(
       `/customers/${customerId}/documents`, fd,
-      { params: { document_type: documentType } },
+      // El Content-Type por defecto de la instancia es application/json; hay que
+      // quitarlo aquí para que axios mande el FormData como multipart (con
+      // boundary) en vez de convertirlo a JSON y perder el archivo adjunto.
+      { params: { document_type: documentType }, headers: { "Content-Type": undefined } },
     );
     return data;
   },
