@@ -1,6 +1,7 @@
 // Reusable, theme-aware UI primitives for the Sales module.
 
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import type { CSSProperties, ReactNode, ChangeEvent } from "react";
 import { X } from "lucide-react";
 import type { Tokens } from "./theme";
@@ -165,7 +166,7 @@ export function Modal({ tk, open, onClose, title, children, footer, width = 640,
   }, [open, onClose, confirmClose]);
 
   if (!open) return null;
-  return (
+  return createPortal(
     <div onClick={tryClose} style={{
       position: "fixed", inset: 0, background: "rgba(3,8,22,0.7)", zIndex: 60,
       display: "flex", alignItems: "flex-start", justifyContent: "center",
@@ -191,7 +192,8 @@ export function Modal({ tk, open, onClose, title, children, footer, width = 640,
           }}>{footer}</div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

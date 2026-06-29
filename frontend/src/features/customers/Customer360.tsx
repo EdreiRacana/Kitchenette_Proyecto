@@ -5,6 +5,7 @@
 // Datos demo realistas (derivados del cliente + periodo) hasta conectar el backend real.
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   X, TrendingUp, RotateCcw, Receipt, Truck, Megaphone, Percent, Landmark,
   ArrowUpRight, ArrowDownRight, ShoppingBag, Package, CreditCard,
@@ -232,7 +233,7 @@ export default function Customer360({
     { label: "Contribución neta del cliente", value: pnl.net_contribution, prev: pnlPrev.net_contribution, icon: TrendingUp, subtotal: true, strong: true, pct: contribPct },
   ];
 
-  return (
+  return createPortal(
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.7)", zIndex: 70, display: "flex", justifyContent: "flex-end", overflow: "hidden" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: 680, maxWidth: "100vw", minWidth: 0, boxSizing: "border-box", height: "100%", background: tk.base, borderLeft: `1px solid ${tk.border}`, overflowX: "hidden", overflowY: "auto", display: "flex", flexDirection: "column" }}>
 
@@ -528,6 +529,7 @@ export default function Customer360({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
