@@ -234,7 +234,7 @@ export default function Customer360({
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.7)", zIndex: 70, display: "flex", justifyContent: "flex-end", overflow: "hidden" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 680, maxWidth: "100vw", minWidth: 0, boxSizing: "border-box", height: "100vh", background: tk.base, borderLeft: `1px solid ${tk.border}`, overflowX: "hidden", overflowY: "auto", display: "flex", flexDirection: "column" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 680, maxWidth: "100vw", minWidth: 0, boxSizing: "border-box", height: "100%", background: tk.base, borderLeft: `1px solid ${tk.border}`, overflowX: "hidden", overflowY: "auto", display: "flex", flexDirection: "column" }}>
 
         {/* Header */}
         <div style={{ padding: "22px 24px", borderBottom: `1px solid ${tk.border}`, background: tk.panel, position: "sticky", top: 0, zIndex: 5 }}>
