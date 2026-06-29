@@ -58,3 +58,40 @@ async def upload_bytes(content: bytes, filename: str, folder: str = "misc") -> s
 
     await run_in_threadpool(_write)
     return f"/static/{folder}/{unique_filename}"
+
+
+async def create_signed_upload(filename: str, folder: str = "misc") -> dict | None:
+    """Pide a Supabase una URL firmada para que el NAVEGADOR suba el archivo
+    directo a Supabase Storage (sin pasar los bytes por nuestro backend).
+
+    Evita el doble salto navegador→Render→Supabase, que en Render free tier
+    (poco ancho de banda saliente + cold start) hace lentas o agota el tiempo
+    de subidas que en Supabase directo tardan segundos.
+
+    Devuelve None si Supabase no está configurado (el caller debe usar el
+    flujo de subida por el backend / disco local como respaldo).
+    """
+    if not _is_supabase_configured():
+        return None
+
+    unique_filename = _unique_name(filename)
+    object_path = f"{folder}/{unique_filename}"
+    sign_url = f"{settings.SUPABASE_URL}/storage/v1/object/upload/sign/{settings.SUPABASE_BUCKET}/{object_path}"
+    headers = {
+        "Authorization": f"Bearer {settings.SUPABASE_SERVICE_KEY}",
+        "apikey": settings.SUPABASE_SERVICE_KEY,
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(sign_url, headers=headers, json={})
+        resp.raise_for_status()
+        signed = resp.json()
+
+    # `url` viene como ruta relativa, p. ej. "/object/upload/sign/<bucket>/<path>?token=...".
+    upload_url = f"{settings.SUPABASE_URL}/storage/v1{signed['url']}"
+    return {"upload_url": upload_url, "public_url": public_url_for(object_path), "path": object_path}
+
+
+def public_url_for(object_path: str) -> str:
+    """Reconstruye la URL pública de un objeto ya subido a Supabase, dado su path."""
+    return f"{settings.SUPABASE_URL}/storage/v1/object/public/{settings.SUPABASE_BUCKET}/{object_path}"

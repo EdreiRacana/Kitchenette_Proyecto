@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
-from app.core.storage import upload_bytes
+from app.core.storage import create_signed_upload, upload_bytes
 from app.modules.auth.models import User
 from app.modules.customers import schemas, service
 
@@ -77,12 +77,55 @@ async def update_customer(customer_id: int, data: schemas.CustomerUpdate, db: DB
 
 
 # ── Documents (authenticated, as in the original module) ────────────────────
+#
+# Subida directa: el navegador pide una URL firmada (/sign-upload), sube el
+# archivo DIRECTO a Supabase con esa URL (sin pasar por este backend) y luego
+# confirma con /finalize, que solo guarda el registro en la base de datos.
+# Esto evita el doble salto navegador→Render→Supabase, que en el plan free de
+# Render (cold start + poco ancho de banda saliente) hacía las subidas lentas
+# o las tumbaba por timeout. El endpoint multipart de abajo queda como
+# respaldo para cuando Supabase no está configurado (desarrollo local).
+
+@router.post("/{customer_id}/documents/sign-upload", response_model=schemas.CustomerDocumentSignResponse)
+async def sign_customer_document_upload(
+    customer_id: int, body: schemas.CustomerDocumentSignRequest, db: DB, current_user: CurrentUser,
+):
+    customer = await service.get_customer(db, customer_id)
+    if not customer:
+        raise HTTPException(404, "Cliente no encontrado")
+
+    safe_name = f"cli{customer_id}_{int(datetime.now().timestamp())}_{body.file_name}"
+    signed = await create_signed_upload(safe_name, folder="clientes")
+    if not signed:
+        raise HTTPException(409, "Subida directa no disponible: configura Supabase Storage en el servidor.")
+    return schemas.CustomerDocumentSignResponse(upload_url=signed["upload_url"], path=signed["path"])
+
+
+@router.post("/{customer_id}/documents/finalize", response_model=schemas.CustomerDocumentInDB)
+async def finalize_customer_document(
+    customer_id: int, body: schemas.CustomerDocumentFinalize, db: DB, current_user: CurrentUser,
+):
+    from app.core.storage import public_url_for
+
+    customer = await service.get_customer(db, customer_id)
+    if not customer:
+        raise HTTPException(404, "Cliente no encontrado")
+
+    doc_in = schemas.CustomerDocumentCreate(
+        customer_id=customer_id, document_type=body.document_type,
+        file_name=body.file_name, file_path=public_url_for(body.path),
+        mime_type=body.mime_type,
+    )
+    return await service.create_document(db, doc_in)
+
 
 @router.post("/{customer_id}/documents", response_model=schemas.CustomerDocumentInDB)
 async def upload_customer_document(
     customer_id: int, document_type: str, db: DB, current_user: CurrentUser,
     file: UploadFile = File(...),
 ):
+    """Respaldo: sube el archivo a través del backend (multipart). Se usa solo
+    si Supabase no está configurado y se cae al disco local efímero."""
     customer = await service.get_customer(db, customer_id)
     if not customer:
         raise HTTPException(404, "Cliente no encontrado")

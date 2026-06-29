@@ -1,5 +1,6 @@
 // Customers API service. Reuses the shared axios instance from the Sales module.
 
+import axios from "axios";
 import api from "../../services/api";
 import type { Customer, CustomerDraft, CustomerFilters, PaginatedCustomers, CustomerStats, CustomerDocument } from "./types";
 
@@ -70,22 +71,30 @@ export const customersApi = {
     const { data } = await api.get<CustomerDocument[]>(`/customers/${customerId}/documents`);
     return data;
   },
+  // Subida directa a Supabase Storage: el navegador pide una URL firmada,
+  // sube el archivo DIRECTO a Supabase (sin pasar por nuestro backend) y
+  // luego confirma para que se guarde el registro en la base de datos.
+  // Esto evita el doble salto navegador→Render→Supabase (lento/propenso a
+  // timeout en el plan free de Render) — el archivo va directo al storage,
+  // igual que en cualquier sistema de subida de archivos de nivel mundial.
   async uploadDocument(customerId: number, documentType: string, file: File): Promise<CustomerDocument> {
-    const fd = new FormData();
-    fd.append("file", file);
+    const mimeType = file.type || "application/octet-stream";
+
+    const { data: signed } = await api.post<{ upload_url: string; path: string }>(
+      `/customers/${customerId}/documents/sign-upload`,
+      { file_name: file.name, mime_type: mimeType },
+    );
+
+    // PUT directo a Supabase: SIN la instancia `api` (no debe llevar el
+    // Authorization de nuestro backend; la URL firmada ya autoriza la subida).
+    await axios.put(signed.upload_url, file, {
+      headers: { "Content-Type": mimeType },
+      timeout: 120000,
+    });
+
     const { data } = await api.post<CustomerDocument>(
-      `/customers/${customerId}/documents`, fd,
-      {
-        params: { document_type: documentType },
-        // El Content-Type por defecto de la instancia es application/json; hay que
-        // quitarlo aquí para que axios mande el FormData como multipart (con
-        // boundary) en vez de convertirlo a JSON y perder el archivo adjunto.
-        headers: { "Content-Type": undefined },
-        // La subida implica transferir el archivo al backend y de ahí a Supabase
-        // Storage; con cold start de Render + Supabase, 30s (timeout global) no
-        // siempre alcanza. Se da más margen solo para esta petición.
-        timeout: 60000,
-      },
+      `/customers/${customerId}/documents/finalize`,
+      { document_type: documentType, file_name: file.name, path: signed.path, mime_type: mimeType },
     );
     return data;
   },

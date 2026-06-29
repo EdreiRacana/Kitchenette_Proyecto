@@ -31,6 +31,23 @@ class CustomerDocumentUpdate(BaseModel):
     status: Optional[str] = None
 
 
+class CustomerDocumentSignRequest(BaseModel):
+    file_name: str
+    mime_type: str = "application/octet-stream"
+
+
+class CustomerDocumentSignResponse(BaseModel):
+    upload_url: str
+    path: str
+
+
+class CustomerDocumentFinalize(BaseModel):
+    document_type: str
+    file_name: str
+    path: str
+    mime_type: str = "application/octet-stream"
+
+
 class CustomerDocumentInDB(CustomerDocumentBase):
     id: int
     customer_id: int
