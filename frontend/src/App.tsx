@@ -817,10 +817,8 @@ function Login({ t, s, lang, onEnter }) {
   const onKey = (e) => { if (e.key === "Enter" && !loading) handleLogin(); };
 
   return (
-    <div style={{ minHeight: "100vh", background: t.base, display: "grid", placeItems: "center", padding: 24, position: "relative", overflow: "hidden" }}>
+    <div style={{ minHeight: "100vh", background: `radial-gradient(ellipse 60% 50% at 50% 38%, #16306a 0%, #102656 35%, #0c1f49 65%, ${t.base} 100%)`, display: "grid", placeItems: "center", padding: 24, position: "relative", overflow: "hidden" }}>
       <svg viewBox="0 0 800 800" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.5 }} preserveAspectRatio="xMidYMid meet" aria-hidden>
-        <defs><radialGradient id="bgGlow" cx="50%" cy="38%" r="75%"><stop offset="0" stopColor="#16306a" /><stop offset="0.35" stopColor="#102656" /><stop offset="0.65" stopColor="#0c1f49" /><stop offset="1" stopColor={t.base} /></radialGradient></defs>
-        <rect width="800" height="800" fill="url(#bgGlow)" />
         <g stroke="#23396f" strokeWidth="1" fill="none" opacity="0.6" className="login-tri"><polygon points="400,8 760,792 400,648 40,792" /><polyline points="400,8 580,648 760,792" /></g>
       </svg>
       <div style={{ position: "relative", width: "100%", maxWidth: 380, textAlign: "center" }}>
