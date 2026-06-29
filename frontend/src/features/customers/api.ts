@@ -75,7 +75,7 @@ export const customersApi = {
     fd.append("file", file);
     const { data } = await api.post<CustomerDocument>(
       `/customers/${customerId}/documents`, fd,
-      { params: { document_type: documentType }, headers: { "Content-Type": "multipart/form-data" } },
+      { params: { document_type: documentType } },
     );
     return data;
   },

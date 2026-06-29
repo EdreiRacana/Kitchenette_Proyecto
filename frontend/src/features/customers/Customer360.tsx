@@ -20,6 +20,21 @@ import { customersApi } from "./api";
 
 const DOC_TYPES = ["INE/Identificación", "Constancia de situación fiscal", "Comprobante de domicilio", "Contrato", "Otro"];
 
+// Convierte el error de axios en un mensaje útil: sin esto, un bloqueo CORS o
+// un 500 del servidor se ven idénticos en la UI ("no se pudo subir"), lo que
+// hace imposible diagnosticar el problema sin abrir la consola del navegador.
+function describeUploadError(err: unknown): string {
+  const e = err as { response?: { status?: number; data?: { detail?: string } }; request?: unknown; message?: string };
+  if (e?.response) {
+    const detail = e.response.data?.detail;
+    return `Servidor respondió ${e.response.status}${detail ? `: ${detail}` : "."}`;
+  }
+  if (e?.request) {
+    return "El servidor no respondió (sin conexión, CORS o backend caído/dormido en Render). Verifica el despliegue del backend.";
+  }
+  return e?.message || "Error desconocido.";
+}
+
 type Period = "week" | "month" | "quarter" | "year";
 
 const PERIOD_LABELS: Record<Period, string> = { week: "Semana", month: "Mes", quarter: "Trimestre", year: "Año" };
@@ -169,7 +184,7 @@ export default function Customer360({
       const doc = await customersApi.uploadDocument(customer.id, newDocType, newDocFile);
       setDocs((p) => [...p, doc]);
       setNewDocFile(null);
-    } catch { alert("No se pudo subir el documento."); }
+    } catch (err) { alert(`No se pudo subir el documento.\n${describeUploadError(err)}`); }
     finally { setDocBusy(false); }
   };
 
@@ -178,7 +193,7 @@ export default function Customer360({
     try {
       await customersApi.deleteDocument(customer.id, docId);
       setDocs((p) => p.filter((x) => x.id !== docId));
-    } catch { alert("No se pudo eliminar el documento."); }
+    } catch (err) { alert(`No se pudo eliminar el documento.\n${describeUploadError(err)}`); }
   };
 
   const pnl = useMemo(() => demoPnL(customer, period, false), [customer, period]);
