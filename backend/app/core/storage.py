@@ -96,3 +96,24 @@ async def create_signed_upload(filename: str, folder: str = "misc") -> dict | No
 def public_url_for(object_path: str) -> str:
     """Reconstruye la URL pública de un objeto ya subido a Supabase, dado su path."""
     return f"{settings.SUPABASE_URL}/storage/v1/object/public/{settings.SUPABASE_BUCKET}/{object_path}"
+
+
+async def create_signed_download(object_path: str, expires_in: int = 600) -> str:
+    """Genera una URL de lectura firmada y temporal (bucket privado): el
+    documento solo es accesible durante `expires_in` segundos, nunca queda
+    público. Se usa para documentos sensibles de clientes (identificación,
+    estados de cuenta), a diferencia de las imágenes de producto del
+    Inventario, que sí usan el bucket/URL pública.
+    """
+    sign_url = f"{settings.SUPABASE_URL}/storage/v1/object/sign/{settings.SUPABASE_BUCKET}/{object_path}"
+    headers = {
+        "Authorization": f"Bearer {settings.SUPABASE_SERVICE_KEY}",
+        "apikey": settings.SUPABASE_SERVICE_KEY,
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(sign_url, headers=headers, json={"expiresIn": expires_in})
+        if resp.is_error:
+            raise RuntimeError(f"Supabase sign-download falló ({resp.status_code}): {resp.text}")
+        signed = resp.json()
+    return f"{settings.SUPABASE_URL}/storage/v1{signed['signedURL']}"

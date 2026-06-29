@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
-from app.core.storage import create_signed_upload, upload_bytes
+from app.core.storage import create_signed_download, create_signed_upload, upload_bytes
 from app.modules.auth.models import User
 from app.modules.customers import schemas, service
 
@@ -108,18 +108,30 @@ async def sign_customer_document_upload(
 async def finalize_customer_document(
     customer_id: int, body: schemas.CustomerDocumentFinalize, db: DB, current_user: CurrentUser,
 ):
-    from app.core.storage import public_url_for
-
+    # Guardamos solo el path del objeto (no una URL pública): los documentos
+    # de clientes son sensibles (identificación, estados de cuenta) y el
+    # bucket es privado. La URL de lectura se firma al vuelo y expira.
     customer = await service.get_customer(db, customer_id)
     if not customer:
         raise HTTPException(404, "Cliente no encontrado")
 
     doc_in = schemas.CustomerDocumentCreate(
         customer_id=customer_id, document_type=body.document_type,
-        file_name=body.file_name, file_path=public_url_for(body.path),
+        file_name=body.file_name, file_path=body.path,
         mime_type=body.mime_type,
     )
-    return await service.create_document(db, doc_in)
+    doc = await service.create_document(db, doc_in)
+    return await _with_signed_url(doc)
+
+
+async def _with_signed_url(doc) -> schemas.CustomerDocumentInDB:
+    """Convierte el ORM a schema y, si el path es un objeto de Supabase
+    (no un fallback local), lo reemplaza por una URL de lectura firmada y
+    temporal. No muta el ORM: el path crudo es lo único que se persiste."""
+    out = schemas.CustomerDocumentInDB.model_validate(doc)
+    if not out.file_path.startswith("/static/") and not out.file_path.startswith("http"):
+        out.file_path = await create_signed_download(out.file_path)
+    return out
 
 
 @router.post("/{customer_id}/documents", response_model=schemas.CustomerDocumentInDB)
@@ -147,7 +159,8 @@ async def upload_customer_document(
 
 @router.get("/{customer_id}/documents", response_model=List[schemas.CustomerDocumentInDB])
 async def list_customer_documents(customer_id: int, db: DB, _: CurrentUser):
-    return await service.get_customer_documents(db, customer_id)
+    docs = await service.get_customer_documents(db, customer_id)
+    return [await _with_signed_url(d) for d in docs]
 
 
 @router.delete("/{customer_id}/documents/{doc_id}", status_code=204)
