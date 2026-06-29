@@ -3,13 +3,24 @@
 
 import { useEffect } from "react";
 import {
-  X, CreditCard, CheckCircle, XCircle, Pencil, ArrowRightLeft, Printer, FileText,
+  X, CreditCard, CheckCircle, XCircle, Pencil, ArrowRightLeft, Printer, FileText, MessageCircle,
 } from "lucide-react";
 import type { Tokens, Translator } from "./theme";
 import { money, dateTime, paymentLabel, statusColors, statusMeta } from "./theme";
 import type { Order } from "./types";
 import { Badge, Button, IconButton } from "./ui";
 import configService from "../config/service";
+import { openWhatsApp } from "../../utils/whatsapp";
+
+function whatsappTicketMessage(order: Order): string {
+  const lines = order.items.map((it) => `· ${it.quantity}x ${it.product_name ?? ""} — ${money((it.subtotal ?? it.unit_price * it.quantity))}`);
+  return [
+    `*${order.kind === "quote" ? "Cotización" : "Pedido"} ${order.folio ?? ""}*`,
+    ...lines,
+    `Total: ${money(order.total_amount)}`,
+    `Saldo: ${money(order.balance)}`,
+  ].join("\n");
+}
 
 async function printTicket(order: Order) {
   const w = window.open("", "_blank", "width=480,height=720");
@@ -220,6 +231,9 @@ export function OrderDrawer({
                 <Button tk={tk} variant="ghost" icon={<CheckCircle size={16} />} onClick={() => onMarkPaid(order)}>{tr("sales_btn_mark_paid", "Marcar pagado")}</Button>
               )}
               <Button tk={tk} variant="ghost" icon={<Printer size={16} />} onClick={() => printTicket(order)}>{tr("sales_print", "Imprimir ticket")}</Button>
+              {order.customer?.phone && (
+                <Button tk={tk} variant="ghost" icon={<MessageCircle size={16} />} onClick={() => openWhatsApp(order.customer!.phone!, whatsappTicketMessage(order))}>{tr("sales_whatsapp", "Enviar por WhatsApp")}</Button>
+              )}
               <Button tk={tk} variant="ghost" icon={<FileText size={16} />} onClick={() => onInvoice(order)}>{tr("sales_invoice", "CFDI")}</Button>
               {!closed && order.status !== "paid" && <Button tk={tk} variant="ghost" icon={<Pencil size={16} />} onClick={() => onEdit(order)}>{tr("sales_edit", "Editar")}</Button>}
               <div style={{ flex: 1 }} />

@@ -13,7 +13,7 @@ import {
   RotateCcw, ArrowLeftRight, Eye, Edit2, Trash2, Trash,
   DollarSign,
   Users, ClipboardList, Factory, FlaskConical,
-  FileText, Mail,
+  FileText, Mail, MessageCircle,
 } from "lucide-react";
 import {
   inventoryService,
@@ -23,6 +23,7 @@ import {
   type BulkImportResult, type CustomerReturn,
 } from "./service";
 import { resolveMediaUrl } from "../../services/api";
+import { openWhatsApp } from "../../utils/whatsapp";
 import ReturnModal from "./ReturnModal";
 
 type Warehouse_ = WarehouseT;
@@ -241,6 +242,11 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
   const supplierNameById = useMemo(() => {
     const map = new Map<number, string>();
     suppliers.forEach(sup => map.set(sup.id, sup.name));
+    return map;
+  }, [suppliers]);
+  const supplierById = useMemo(() => {
+    const map = new Map<number, Supplier>();
+    suppliers.forEach(sup => map.set(sup.id, sup));
     return map;
   }, [suppliers]);
   const recipeNameById = useMemo(() => {
@@ -942,6 +948,19 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                           }} title={lang === "es" ? "Enviar por correo" : "Send by email"} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
                             <Mail size={14} /> {lang === "es" ? "Correo" : "Email"}
                           </button>
+                          {(() => {
+                            const sup = supplierById.get(po.supplier_id);
+                            const phone = sup?.phone || sup?.extra_contacts?.find(c => c.phone)?.phone;
+                            if (!phone) return null;
+                            const msg = (lang === "es"
+                              ? `Hola${sup?.contact_name ? ` ${sup.contact_name}` : ""}, te enviamos la orden de compra ${po.folio || `PO-${po.id}`} con ${po.items?.length || 0} artículo(s). Quedamos atentos.`
+                              : `Hello${sup?.contact_name ? ` ${sup.contact_name}` : ""}, here is purchase order ${po.folio || `PO-${po.id}`} with ${po.items?.length || 0} item(s). Looking forward to your confirmation.`);
+                            return (
+                              <button onClick={() => openWhatsApp(phone, msg)} title={lang === "es" ? "Enviar por WhatsApp" : "Send by WhatsApp"} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
+                                <MessageCircle size={14} /> WhatsApp
+                              </button>
+                            );
+                          })()}
                           {canReceive && (
                             <button onClick={() => { setEditingPO(po); setPoForm(true); }} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
                               {lang === "es" ? "Editar" : "Edit"}

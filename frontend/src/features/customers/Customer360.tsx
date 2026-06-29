@@ -10,13 +10,14 @@ import {
   X, TrendingUp, RotateCcw, Receipt, Truck, Megaphone, Percent, Landmark,
   ArrowUpRight, ArrowDownRight, ShoppingBag, Package, CreditCard,
   FileText, Wallet, Store, Globe, Building2, Star, Users, Info,
-  Paperclip, Upload, Trash2,
+  Paperclip, Upload, Trash2, MessageCircle,
 } from "lucide-react";
 import type { Tokens } from "../sales/theme";
 import { money } from "../sales/theme";
 import { Badge, Select, Button } from "../sales/ui";
 import type { Customer, CustomerDocument } from "./types";
 import { customersApi } from "./api";
+import { openWhatsApp } from "../../utils/whatsapp";
 
 const DOC_TYPES = ["INE/Identificación", "Constancia de situación fiscal", "Comprobante de domicilio", "Contrato", "Otro"];
 
@@ -300,7 +301,18 @@ export default function Customer360({
                 </div>
               </div>
             </div>
-            <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: tk.textLo, padding: 4 }}><X size={22} /></button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {customer.phone && (
+                <button
+                  onClick={() => openWhatsApp(customer.phone!, `Hola ${customer.name}, te contactamos de parte de Sthenova.`)}
+                  title="Enviar WhatsApp"
+                  style={{ background: "#25D36622", border: `1px solid #25D36655`, borderRadius: 8, cursor: "pointer", color: "#25D366", padding: 6, display: "flex" }}
+                >
+                  <MessageCircle size={18} />
+                </button>
+              )}
+              <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: tk.textLo, padding: 4 }}><X size={22} /></button>
+            </div>
           </div>
 
           {/* Selector de periodo */}
