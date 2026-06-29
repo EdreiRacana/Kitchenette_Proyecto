@@ -90,6 +90,19 @@ async def customer_360(customer_id: int, db: DB, _: CurrentUser):
     return data
 
 
+@router.get("/customers/{customer_id}/pnl", response_model=schemas.CustomerPnLReport)
+async def customer_pnl(
+    customer_id: int, db: DB, _: CurrentUser,
+    start: datetime, end: datetime,
+):
+    if end <= start:
+        raise HTTPException(400, "El fin del periodo debe ser posterior al inicio")
+    data = await service.customer_pnl_report(db, customer_id, start, end)
+    if not data:
+        raise HTTPException(404, "Cliente no encontrado")
+    return data
+
+
 @router.get("/export")
 async def export_orders(
     db: DB, _: CurrentUser,

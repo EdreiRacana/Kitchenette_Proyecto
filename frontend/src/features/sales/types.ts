@@ -131,6 +131,25 @@ export interface TopProduct { variant_id: number | null; name: string; quantity:
 export interface SalesBySeller { user_id: number | null; name: string; total: number; orders: number; }
 export interface SalesByChannel { channel: string; total: number; orders: number; }
 
+export interface CustomerPnLBreakdown {
+  gross_sales: number; returns: number; allowances: number; discounts: number;
+  net_sales: number; cogs: number; gross_margin: number; shipping_costs: number;
+  withholdings: number; net_contribution: number; orders_count: number;
+}
+export interface CustomerTransaction {
+  id: string; type: "venta" | "devolucion" | "nota_credito" | "pago";
+  date: string; ref: string; amount: number; status: string;
+}
+export interface CustomerReturnLine {
+  id: string; date: string; ref: string; product: string; qty: number; amount: number; reason?: string | null;
+}
+export interface CustomerPnLReport {
+  customer: CustomerLite;
+  period_start: string; period_end: string;
+  current: CustomerPnLBreakdown; previous: CustomerPnLBreakdown;
+  transactions: CustomerTransaction[]; returns: CustomerReturnLine[];
+}
+
 export interface OrderFilters {
   q?: string;
   kind?: OrderKind;

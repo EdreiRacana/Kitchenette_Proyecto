@@ -291,6 +291,51 @@ class Customer360(BaseModel):
     recent_orders: List[OrderInDB] = []
 
 
+# ── Customer P&L report (real data, replaces the old frontend demo) ──────────
+
+class CustomerPnLBreakdown(BaseModel):
+    gross_sales: float = 0.0
+    returns: float = 0.0
+    allowances: float = 0.0
+    discounts: float = 0.0
+    net_sales: float = 0.0
+    cogs: float = 0.0
+    gross_margin: float = 0.0
+    shipping_costs: float = 0.0
+    withholdings: float = 0.0
+    net_contribution: float = 0.0
+    orders_count: int = 0
+
+
+class CustomerTransaction(BaseModel):
+    id: str
+    type: Literal["venta", "devolucion", "nota_credito", "pago"]
+    date: datetime
+    ref: str
+    amount: float
+    status: str
+
+
+class CustomerReturnLine(BaseModel):
+    id: str
+    date: datetime
+    ref: str
+    product: str
+    qty: int
+    amount: float
+    reason: Optional[str] = None
+
+
+class CustomerPnLReport(BaseModel):
+    customer: CustomerLite
+    period_start: datetime
+    period_end: datetime
+    current: CustomerPnLBreakdown
+    previous: CustomerPnLBreakdown
+    transactions: List[CustomerTransaction]
+    returns: List[CustomerReturnLine]
+
+
 # ── Customer returns (devoluciones) ──────────────────────────────────────────
 
 class ReturnItemCreate(BaseModel):

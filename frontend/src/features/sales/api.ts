@@ -4,6 +4,7 @@ import api from "../../services/api";
 import type {
   Order, Paginated, SalesStats, TrendPoint, TopCustomer, TopProduct,
   SalesBySeller, SalesByChannel, OrderFilters, OrderDraft, CustomerLite, AverageReturns, CustomerForecast,
+  CustomerPnLReport,
 } from "./types";
 
 export interface VariantOption {
@@ -105,6 +106,10 @@ export const salesApi = {
   },
   async customerForecast(customerId: number, months = 6): Promise<CustomerForecast> {
     const { data } = await api.get<CustomerForecast>(`/sales/analytics/forecast/${customerId}`, { params: { months } });
+    return data;
+  },
+  async customerPnl(customerId: number, start: string, end: string): Promise<CustomerPnLReport> {
+    const { data } = await api.get<CustomerPnLReport>(`/sales/customers/${customerId}/pnl`, { params: { start, end } });
     return data;
   },
   async topCustomers(limit = 5, start?: string, end?: string): Promise<TopCustomer[]> {

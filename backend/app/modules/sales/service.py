@@ -946,6 +946,103 @@ async def customer_360(db: AsyncSession, customer_id: int) -> Optional[schemas.C
     )
 
 
+async def _customer_pnl_breakdown(
+    db: AsyncSession, customer_id: int, start: datetime, end: datetime,
+) -> Tuple[schemas.CustomerPnLBreakdown, List[models.Order], List[models.CustomerReturn]]:
+    from app.modules.inventory.models import ProductVariant
+
+    res = await db.execute(
+        select(models.Order).where(
+            models.Order.customer_id == customer_id, models.Order.kind == "order",
+            models.Order.created_at >= start, models.Order.created_at < end,
+        ).options(
+            selectinload(models.Order.items).selectinload(models.OrderItem.variant),
+            selectinload(models.Order.payments),
+        ).order_by(models.Order.created_at.desc())
+    )
+    orders = res.scalars().unique().all()
+    active = [o for o in orders if o.status != "cancelled"]
+
+    rres = await db.execute(
+        select(models.CustomerReturn).where(
+            models.CustomerReturn.customer_id == customer_id,
+            models.CustomerReturn.status != "cancelled",
+            models.CustomerReturn.created_at >= start, models.CustomerReturn.created_at < end,
+        ).options(*_RETURN_LOAD).order_by(models.CustomerReturn.created_at.desc())
+    )
+    returns = rres.scalars().unique().all()
+
+    gross_sales = sum(o.subtotal or 0 for o in active)
+    discounts = sum(o.discount_amount or 0 for o in active)
+    shipping_costs = sum(o.shipping_amount or 0 for o in active)
+    returns_amount = sum(r.refund_amount or 0 for r in returns)
+    cogs = sum(
+        (it.quantity or 0) * (it.variant.cost_price or 0)
+        for o in active for it in o.items if it.variant and it.variant.cost_price
+    )
+    net_sales = gross_sales - returns_amount - discounts
+    gross_margin = net_sales - cogs
+    net_contribution = gross_margin - shipping_costs
+
+    breakdown = schemas.CustomerPnLBreakdown(
+        gross_sales=_r(gross_sales), returns=_r(returns_amount), allowances=0.0,
+        discounts=_r(discounts), net_sales=_r(net_sales), cogs=_r(cogs),
+        gross_margin=_r(gross_margin), shipping_costs=_r(shipping_costs),
+        withholdings=0.0, net_contribution=_r(net_contribution), orders_count=len(active),
+    )
+    return breakdown, orders, list(returns)
+
+
+async def customer_pnl_report(
+    db: AsyncSession, customer_id: int, start: datetime, end: datetime,
+) -> Optional[schemas.CustomerPnLReport]:
+    from app.modules.customers import models as cust
+    cres = await db.execute(select(cust.Customer).where(cust.Customer.id == customer_id))
+    customer = cres.scalars().first()
+    if not customer:
+        return None
+
+    duration = end - start
+    prev_start, prev_end = start - duration, start
+
+    current, orders, returns = await _customer_pnl_breakdown(db, customer_id, start, end)
+    previous, _, _ = await _customer_pnl_breakdown(db, customer_id, prev_start, prev_end)
+
+    transactions: List[schemas.CustomerTransaction] = []
+    for o in orders:
+        transactions.append(schemas.CustomerTransaction(
+            id=f"ord-{o.id}", type="venta", date=o.created_at,
+            ref=o.folio or f"ORD-{o.id}", amount=_r(o.total_amount), status=o.status,
+        ))
+        for p in o.payments:
+            transactions.append(schemas.CustomerTransaction(
+                id=f"pay-{p.id}", type="pago", date=p.created_at,
+                ref=o.folio or f"ORD-{o.id}", amount=_r(p.amount), status="Aplicado",
+            ))
+    for r in returns:
+        transactions.append(schemas.CustomerTransaction(
+            id=f"ret-{r.id}", type="devolucion", date=r.created_at,
+            ref=r.folio or f"DEV-{r.id}", amount=_r(r.refund_amount), status=r.status,
+        ))
+    transactions.sort(key=lambda t: t.date, reverse=True)
+
+    return_lines: List[schemas.CustomerReturnLine] = []
+    for r in returns:
+        for it in r.items:
+            return_lines.append(schemas.CustomerReturnLine(
+                id=f"reti-{it.id}", date=r.created_at, ref=r.folio or f"DEV-{r.id}",
+                product=it.product_name or it.sku or "—", qty=it.quantity,
+                amount=_r(it.subtotal), reason=r.reason,
+            ))
+
+    return schemas.CustomerPnLReport(
+        customer=schemas.CustomerLite.model_validate(customer),
+        period_start=start, period_end=end,
+        current=current, previous=previous,
+        transactions=transactions, returns=return_lines,
+    )
+
+
 # ── Export & invoice ──────────────────────────────────────────────────────────
 
 EXPORT_HEADERS = ["Folio", "Tipo", "Cliente", "Fecha", "Estado", "Metodo",

@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  X, TrendingUp, RotateCcw, Receipt, Truck, Megaphone, Percent, Landmark,
+  X, TrendingUp, RotateCcw, Receipt, Truck, Percent, Landmark,
   ArrowUpRight, ArrowDownRight, ShoppingBag, Package, CreditCard,
   FileText, Wallet, Store, Globe, Building2, Star, Users, Info,
   Paperclip, Upload, Trash2, MessageCircle,
@@ -18,6 +18,8 @@ import { Badge, Select, Button } from "../sales/ui";
 import type { Customer, CustomerDocument } from "./types";
 import { customersApi } from "./api";
 import { openWhatsApp } from "../../utils/whatsapp";
+import { salesApi } from "../sales/api";
+import type { CustomerPnLBreakdown, CustomerTransaction, CustomerReturnLine } from "../sales/types";
 
 const DOC_TYPES = ["INE/Identificación", "Constancia de situación fiscal", "Comprobante de domicilio", "Contrato", "Otro"];
 
@@ -65,17 +67,27 @@ type Period = "week" | "month" | "quarter" | "year";
 
 const PERIOD_LABELS: Record<Period, string> = { week: "Semana", month: "Mes", quarter: "Trimestre", year: "Año" };
 const PERIOD_PREV_LABELS: Record<Period, string> = { week: "semana anterior", month: "mes anterior", quarter: "trimestre anterior", year: "año anterior" };
-// Factor que escala el "mes base" a cada periodo
-const PERIOD_FACTOR: Record<Period, number> = { week: 0.25, month: 1, quarter: 3, year: 12 };
 
-// ── Tipos del P&L por cliente ───────────────────────────────────────────────
-interface CustomerPnL {
-  gross_sales: number; returns: number; allowances: number; discounts: number;
-  net_sales: number; cogs: number; gross_margin: number; commissions: number;
-  shipping_costs: number; marketing: number; withholdings: number; net_contribution: number;
+// ── Tipos del P&L por cliente (datos reales del backend) ────────────────────
+type CustomerPnL = CustomerPnLBreakdown;
+type Transaction = CustomerTransaction;
+type ReturnItem = CustomerReturnLine;
+
+const EMPTY_PNL: CustomerPnL = {
+  gross_sales: 0, returns: 0, allowances: 0, discounts: 0, net_sales: 0, cogs: 0,
+  gross_margin: 0, shipping_costs: 0, withholdings: 0, net_contribution: 0, orders_count: 0,
+};
+
+// Rango de fechas [start, end) para cada periodo, anclado a "ahora".
+function periodRange(period: Period): { start: Date; end: Date } {
+  const end = new Date();
+  const start = new Date(end);
+  if (period === "week") start.setDate(start.getDate() - 7);
+  else if (period === "month") start.setMonth(start.getMonth() - 1);
+  else if (period === "quarter") start.setMonth(start.getMonth() - 3);
+  else start.setFullYear(start.getFullYear() - 1);
+  return { start, end };
 }
-interface Transaction { id: string; type: "venta" | "devolucion" | "nota_credito" | "pago"; date: string; ref: string; amount: number; status: string; }
-interface ReturnItem { id: string; date: string; ref: string; product: string; qty: number; amount: number; reason: string; }
 
 // ── Segmento / tipo de cliente ──────────────────────────────────────────────
 const SEGMENT_META: Record<string, { label: string; icon: typeof Store; color: string }> = {
@@ -92,83 +104,6 @@ function segmentOf(c: Customer): keyof typeof SEGMENT_META {
   if (t.includes("especial") || t.includes("vip")) return "especial";
   if (t.includes("tienda") || t.includes("física") || t.includes("fisica") || t.includes("sucursal") || t.includes("distribuidor")) return "fisica";
   return "individual";
-}
-
-// ── Generador demo determinista (mismo cliente + periodo → mismos números) ──
-function hashId(c: Customer): number {
-  const base = (c.client_number || c.name || String(c.id));
-  let h = 0;
-  for (let i = 0; i < base.length; i++) h = (h * 31 + base.charCodeAt(i)) >>> 0;
-  return h;
-}
-
-// P&L para un periodo. `prev` = periodo anterior (ligeramente distinto para comparar).
-function demoPnL(c: Customer, period: Period, prev = false): CustomerPnL {
-  const h = hashId(c);
-  const factor = PERIOD_FACTOR[period];
-  // El periodo anterior varía -6% a +14% respecto al actual (determinista)
-  const growth = prev ? (1 - (((h % 20) - 6) / 100)) : 1;
-  const baseMonth = 180000 + (h % 1700000);
-  const gross = Math.round(baseMonth * factor * growth);
-  const returns = Math.round(gross * (0.02 + (h % 60) / 1000));
-  const allowances = Math.round(gross * 0.01);
-  const discounts = Math.round(gross * (0.02 + (h % 40) / 1000));
-  const net_sales = gross - returns - allowances - discounts;
-  const seg = segmentOf(c);
-  const marginRate = seg === "propia" ? 0.34 : seg === "marketplace" ? 0.18 : seg === "especial" ? 0.28 : 0.26;
-  const cogs = Math.round(net_sales * (1 - marginRate));
-  const gross_margin = net_sales - cogs;
-  const commissions = Math.round(net_sales * (seg === "marketplace" ? 0.12 : 0.03));
-  const shipping_costs = Math.round(net_sales * 0.025);
-  const marketing = Math.round(net_sales * (seg === "marketplace" ? 0.06 : 0.02));
-  const withholdings = Math.round(net_sales * 0.0125);
-  const net_contribution = gross_margin - commissions - shipping_costs - marketing - withholdings;
-  return { gross_sales: gross, returns, allowances, discounts, net_sales, cogs, gross_margin, commissions, shipping_costs, marketing, withholdings, net_contribution };
-}
-
-function demoTransactions(c: Customer, period: Period): Transaction[] {
-  const h = hashId(c);
-  const factor = PERIOD_FACTOR[period];
-  const count = period === "week" ? 4 : period === "month" ? 6 : period === "quarter" ? 9 : 12;
-  const types: Transaction["type"][] = ["venta", "venta", "pago", "devolucion", "venta", "nota_credito", "venta", "pago", "venta", "venta", "devolucion", "pago"];
-  const out: Transaction[] = [];
-  for (let i = 0; i < count; i++) {
-    const tp = types[i % types.length];
-    const monthsBack = Math.floor((i / count) * factor);
-    const mo = 6 - monthsBack;
-    const day = Math.max(1, 26 - (i * 2) % 25);
-    out.push({
-      id: `T${i}`,
-      type: tp,
-      date: `2026-${String(Math.max(1, mo)).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
-      ref: `${tp === "venta" ? "VTA" : tp === "pago" ? "PAG" : tp === "devolucion" ? "DEV" : "NC"}-${2000 + ((h + i * 7) % 900)}`,
-      amount: 8000 + ((h + i * 131) % 80000),
-      status: tp === "pago" ? "Aplicado" : tp === "devolucion" ? "Procesada" : "Completada",
-    });
-  }
-  return out;
-}
-
-function demoReturns(c: Customer, period: Period): ReturnItem[] {
-  const h = hashId(c);
-  const products = ["Cemento gris CPC 30R", "Pintura vinílica 19L", "Varilla 3/8\"", "Tubo PVC 4\"", "Cable THW cal. 12"];
-  const reasons = ["Producto dañado", "No coincide pedido", "Defecto de fábrica", "Cliente cambió de opinión", "Entrega tardía"];
-  const base = 2 + (h % 3);
-  const n = period === "week" ? Math.max(1, Math.round(base * 0.4)) : period === "month" ? base : period === "quarter" ? base + 2 : base + 5;
-  const out: ReturnItem[] = [];
-  for (let i = 0; i < n; i++) {
-    const mo = 6 - Math.floor((i / n) * PERIOD_FACTOR[period]);
-    out.push({
-      id: `R${i}`,
-      date: `2026-${String(Math.max(1, mo)).padStart(2, "0")}-${String(Math.max(1, 16 - (i * 3) % 15)).padStart(2, "0")}`,
-      ref: `DEV-${1000 + ((h + i * 53) % 900)}`,
-      product: products[(h + i) % products.length],
-      qty: 1 + ((h + i) % 12),
-      amount: 1500 + ((h + i * 97) % 18000),
-      reason: reasons[(h + i) % reasons.length],
-    });
-  }
-  return out;
 }
 
 const TX_META: Record<Transaction["type"], { label: string; color: string; icon: typeof Receipt }> = {
@@ -222,10 +157,30 @@ export default function Customer360({
     } catch (err) { alert(`No se pudo eliminar el documento.\n${describeUploadError(err)}`); }
   };
 
-  const pnl = useMemo(() => demoPnL(customer, period, false), [customer, period]);
-  const pnlPrev = useMemo(() => demoPnL(customer, period, true), [customer, period]);
-  const txs = useMemo(() => demoTransactions(customer, period), [customer, period]);
-  const returns = useMemo(() => demoReturns(customer, period), [customer, period]);
+  const [pnl, setPnl] = useState<CustomerPnL>(EMPTY_PNL);
+  const [pnlPrev, setPnlPrev] = useState<CustomerPnL>(EMPTY_PNL);
+  const [txs, setTxs] = useState<Transaction[]>([]);
+  const [returns, setReturns] = useState<ReturnItem[]>([]);
+  const [pnlLoading, setPnlLoading] = useState(false);
+  const [pnlError, setPnlError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const { start, end } = periodRange(period);
+    setPnlLoading(true);
+    setPnlError(null);
+    salesApi.customerPnl(customer.id, start.toISOString(), end.toISOString())
+      .then((r) => {
+        setPnl(r.current);
+        setPnlPrev(r.previous);
+        setTxs(r.transactions);
+        setReturns(r.returns);
+      })
+      .catch((err) => {
+        setPnl(EMPTY_PNL); setPnlPrev(EMPTY_PNL); setTxs([]); setReturns([]);
+        setPnlError(describeUploadError(err));
+      })
+      .finally(() => setPnlLoading(false));
+  }, [customer.id, period]);
 
   const seg = segmentOf(customer);
   const segMeta = SEGMENT_META[seg];
@@ -235,7 +190,7 @@ export default function Customer360({
   const contribPct = pnl.net_sales > 0 ? (pnl.net_contribution / pnl.net_sales) * 100 : 0;
   const returnRate = pnl.gross_sales > 0 ? (pnl.returns / pnl.gross_sales) * 100 : 0;
 
-  const fmtDate = (d: string) => new Date(d + "T12:00:00").toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
+  const fmtDate = (d: string) => new Date(d).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
 
   const tabBtn = (active: boolean): React.CSSProperties => ({
     padding: "10px 16px", borderRadius: "10px 10px 0 0", border: "none", cursor: "pointer",
@@ -267,9 +222,7 @@ export default function Customer360({
     { label: "Venta neta", value: pnl.net_sales, prev: pnlPrev.net_sales, icon: TrendingUp, subtotal: true, strong: true },
     { label: "Costo de mercancía (COGS)", value: pnl.cogs, prev: pnlPrev.cogs, icon: Package, neg: true, invert: true },
     { label: "Margen bruto", value: pnl.gross_margin, prev: pnlPrev.gross_margin, icon: Wallet, subtotal: true, strong: true, pct: marginPct },
-    { label: "Comisiones", value: pnl.commissions, prev: pnlPrev.commissions, icon: Receipt, neg: true, invert: true },
     { label: "Costos de envío", value: pnl.shipping_costs, prev: pnlPrev.shipping_costs, icon: Truck, neg: true, invert: true },
-    { label: "Gastos de marketing", value: pnl.marketing, prev: pnlPrev.marketing, icon: Megaphone, neg: true, invert: true },
     { label: "Retenciones de impuestos", value: pnl.withholdings, prev: pnlPrev.withholdings, icon: Landmark, neg: true, invert: true },
     { label: "Contribución neta del cliente", value: pnl.net_contribution, prev: pnlPrev.net_contribution, icon: TrendingUp, subtotal: true, strong: true, pct: contribPct },
   ];
@@ -353,6 +306,15 @@ export default function Customer360({
         </div>
 
         <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 18 }}>
+
+          {pnlLoading && tab !== "documentos" && (
+            <div style={{ fontSize: 12.5, color: tk.textLo }}>Cargando datos del periodo…</div>
+          )}
+          {pnlError && tab !== "documentos" && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: tk.bad + "18", border: `1px solid ${tk.bad}44`, color: tk.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
+              {pnlError}
+            </div>
+          )}
 
           {/* ── TAB: Resumen ── */}
           {tab === "resumen" && (
