@@ -714,6 +714,8 @@ function Login({ t, s, lang, onEnter }) {
   const [p, setP] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [loginToken, setLoginToken] = useState<string | null>(null);
+  const [code, setCode] = useState("");
 
   const handleLogin = async () => {
     if (!u || !p) {
@@ -730,6 +732,11 @@ function Login({ t, s, lang, onEnter }) {
       const res = await api.post("/auth/login", body, {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
       });
+
+      if (res.data?.requires_2fa) {
+        setLoginToken(res.data.login_token);
+        return;
+      }
 
       const token = res.data?.access_token;
       if (!token) throw new Error("no token");
@@ -752,11 +759,66 @@ function Login({ t, s, lang, onEnter }) {
     }
   };
 
+  const handleVerify2fa = async () => {
+    if (!code) return;
+    setError("");
+    setLoading(true);
+    try {
+      const res = await api.post("/auth/login/2fa", { login_token: loginToken, code });
+      const token = res.data?.access_token;
+      if (!token) throw new Error("no token");
+      localStorage.setItem("token", token);
+      onEnter();
+    } catch (err) {
+      const status = err?.response?.status;
+      setError(status === 401
+        ? (lang === "en" ? "Incorrect verification code." : "Código de verificación incorrecto.")
+        : (lang === "en" ? "Could not verify. Try again." : "No se pudo verificar. Intenta de nuevo."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loginToken) {
+    const onKey2fa = (e) => { if (e.key === "Enter" && !loading) handleVerify2fa(); };
+    return (
+      <div style={{ minHeight: "100vh", background: t.base, display: "grid", placeItems: "center", padding: 24 }}>
+        <div style={{ position: "relative", width: "100%", maxWidth: 380, textAlign: "center" }}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}><NovaMark size={86} /></div>
+          <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: 6, color: t.textHi }}>STHENOVA®</div>
+          <Card t={t} style={{ padding: 26, textAlign: "left", marginTop: 24 }}>
+            <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600 }}>
+              {lang === "en" ? "Verification code" : "Código de verificación"}
+            </label>
+            <div style={{ fontSize: 11.5, color: t.textLo, margin: "4px 0 10px" }}>
+              {lang === "en" ? "Enter the 6-digit code from your authenticator app, or a backup code." : "Ingresa el código de 6 dígitos de tu app de autenticación, o un código de respaldo."}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 20px" }}>
+              <Lock size={16} color={t.textLo} />
+              <input value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={onKey2fa} autoFocus placeholder="000000" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 14, letterSpacing: 2 }} />
+            </div>
+            {error && (
+              <div style={{ background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 9, padding: "9px 12px", fontSize: 12.5, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                <AlertTriangle size={15} /> {error}
+              </div>
+            )}
+            <button onClick={handleVerify2fa} disabled={loading} style={{ width: "100%", border: "none", cursor: loading ? "default" : "pointer", color: "#fff", fontSize: 15, fontWeight: 600, padding: "12px", borderRadius: 10, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, opacity: loading ? 0.7 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              {loading ? <><RefreshCw size={16} className="spin" /> {lang === "en" ? "Verifying…" : "Verificando…"}</> : (lang === "en" ? "Verify" : "Verificar")}
+            </button>
+            <button onClick={() => { setLoginToken(null); setCode(""); setError(""); }} style={{ width: "100%", border: "none", background: "transparent", color: t.textLo, fontSize: 12.5, marginTop: 10, cursor: "pointer" }}>
+              {lang === "en" ? "Back" : "Regresar"}
+            </button>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   const onKey = (e) => { if (e.key === "Enter" && !loading) handleLogin(); };
 
   return (
     <div style={{ minHeight: "100vh", background: t.base, display: "grid", placeItems: "center", padding: 24, position: "relative", overflow: "hidden" }}>
-      <svg viewBox="0 0 800 800" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.5 }} preserveAspectRatio="xMidYMid slice" aria-hidden>
+      <svg viewBox="0 0 800 800" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.5 }} preserveAspectRatio="xMidYMid meet" aria-hidden>
         <defs><radialGradient id="bgGlow" cx="50%" cy="38%" r="55%"><stop offset="0" stopColor="#16306a" /><stop offset="1" stopColor={t.base} /></radialGradient></defs>
         <rect width="800" height="800" fill="url(#bgGlow)" />
         <g stroke="#23396f" strokeWidth="1" fill="none" opacity="0.6" className="login-tri"><polygon points="400,120 560,520 400,440 240,520" /><polyline points="400,120 480,440 560,520" /></g>
@@ -767,12 +829,12 @@ function Login({ t, s, lang, onEnter }) {
         <div style={{ fontSize: 10, letterSpacing: 6, color: t.textLo, marginBottom: 30 }}>COMPLETE SYSTEM</div>
         <Card t={t} style={{ padding: 26, textAlign: "left" }}>
           <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600 }}>{s.login.user}</label>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 16px" }}>
+          <div className="login-input-glow" style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.nova}55`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 16px" }}>
             <UserIcon size={16} color={t.textLo} />
             <input value={u} onChange={(e) => setU(e.target.value)} onKeyDown={onKey} autoComplete="username" placeholder="correo@empresa.com" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 14 }} />
           </div>
           <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600 }}>{s.login.pass}</label>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 20px" }}>
+          <div className="login-input-glow" style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.nova}55`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 20px" }}>
             <Lock size={16} color={t.textLo} />
             <input type="password" value={p} onChange={(e) => setP(e.target.value)} onKeyDown={onKey} autoComplete="current-password" placeholder="••••••••" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 14 }} />
           </div>
@@ -1384,7 +1446,10 @@ export default function App() {
         }
         .spin{animation:spin360 .9s linear infinite}
         @keyframes spin360{to{transform:rotate(360deg)}}
-        @media (prefers-reduced-motion:reduce){.nova-glow,.login-tri{animation:none}}
+        .login-input-glow{transition:box-shadow .25s ease, border-color .25s ease; animation:inputGlow 3.2s ease-in-out infinite}
+        @keyframes inputGlow{0%,100%{box-shadow:0 0 0 1px ${t.nova}22, 0 0 8px ${t.nova}22}50%{box-shadow:0 0 0 1px ${t.nova}55, 0 0 14px ${t.nova}40}}
+        .login-input-glow:focus-within{box-shadow:0 0 0 1px ${t.nova}88, 0 0 18px ${t.nova}55; animation:none}
+        @media (prefers-reduced-motion:reduce){.nova-glow,.login-tri,.login-input-glow{animation:none}}
       `}</style>
       <Login t={t} s={s} lang={lang} onEnter={() => setAuthed(true)} />
     </>);

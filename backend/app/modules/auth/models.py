@@ -47,9 +47,16 @@ class User(Base):
 
     # Sucursal asignada (cimiento multi-empresa; el aislamiento se construye encima).
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
-    
+
     # Keep the legacy role string for compatibility if needed, but phase it out
     role = Column(String, default="user") # admin, manager, user
+
+    # Autenticación de dos factores (TOTP, RFC 6238 — compatible con Google
+    # Authenticator/Authy). El secreto solo se persiste tras confirmar un
+    # código válido en /2fa/enable; hasta entonces two_factor_enabled=False.
+    two_factor_secret = Column(String, nullable=True)
+    two_factor_enabled = Column(Boolean, default=False, nullable=False)
+    two_factor_backup_codes = Column(String, nullable=True)  # CSV de hashes, un solo uso c/u
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

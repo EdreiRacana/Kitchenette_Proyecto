@@ -91,6 +91,12 @@ const configService = {
     changeMyPassword: async (current_password: string, new_password: string) =>
         (await api.post('/auth/me/password', { current_password, new_password })).data,
 
+    // ── Autenticación de dos factores (2FA) ──
+    get2faStatus: async () => (await api.get<{ enabled: boolean }>('/auth/me/2fa/status')).data,
+    setup2fa: async () => (await api.post<{ qr_data_uri: string }>('/auth/me/2fa/setup')).data,
+    enable2fa: async (code: string) => (await api.post<{ backup_codes: string[] }>('/auth/me/2fa/enable', { code })).data,
+    disable2fa: async () => { await api.post('/auth/me/2fa/disable'); },
+
     getIntegrations: async () => (await api.get<SystemIntegration[]>('/config/integrations')).data,
     createIntegration: async (data: Omit<SystemIntegration, 'id'>) => (await api.post<SystemIntegration>('/config/integrations', data)).data,
     updateIntegration: async (id: string, data: Partial<SystemIntegration>) => (await api.put<SystemIntegration>(`/config/integrations/${id}`, data)).data,

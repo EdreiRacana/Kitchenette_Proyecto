@@ -288,6 +288,10 @@ _AUTH_STATEMENTS = [
     "ALTER TABLE roles ADD COLUMN IF NOT EXISTS color VARCHAR",
     "UPDATE roles SET is_system = FALSE WHERE is_system IS NULL",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_id INTEGER",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret VARCHAR",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_backup_codes VARCHAR",
+    "UPDATE users SET two_factor_enabled = FALSE WHERE two_factor_enabled IS NULL",
 ]
 
 _BRANCH_STATEMENTS = [

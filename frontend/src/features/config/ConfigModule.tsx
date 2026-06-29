@@ -837,28 +837,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                 ))}
               </div>
             </div>
-            <div style={card}>
-              {sectionTitle(ShieldCheck, "Autenticación de dos factores (2FA)", t.good)}
-              <div style={{ background: t.warn + "12", border: `1px solid ${t.warn}33`, borderRadius: 8, padding: "12px 14px", marginBottom: 14, display: "flex", gap: 10 }}>
-                <AlertTriangle size={16} color={t.warn} style={{ flexShrink: 0, marginTop: 1 }} />
-                <span style={{ fontSize: 12.5, color: t.warn }}>Recomendamos activar 2FA para todos los administradores y usuarios con acceso a finanzas.</span>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {[
-                  { method: "Aplicación autenticadora", desc: "Google Authenticator, Authy", on: true },
-                  { method: "SMS", desc: "Código por mensaje de texto", on: false },
-                  { method: "Email", desc: "Código por correo electrónico", on: true },
-                ].map(m => (
-                  <div key={m.method} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 8, background: t.panel2 }}>
-                    <div>
-                      <div style={{ fontSize: 13, color: t.textHi, fontWeight: 500 }}>{m.method}</div>
-                      <div style={{ fontSize: 11.5, color: t.textLo }}>{m.desc}</div>
-                    </div>
-                    {m.on ? <ToggleRight size={30} color={t.good} /> : <ToggleLeft size={30} color={t.textLo} />}
-                  </div>
-                ))}
-              </div>
-            </div>
+            <TwoFactorCard t={t} card={card} sectionTitle={sectionTitle} />
           </div>
           <div style={card}>
             {sectionTitle(Activity, "Registro de auditoría", "#A78BFA")}
@@ -1058,6 +1037,104 @@ function ChangePasswordCard({ t, card, lbl, inp, sectionTitle }: any) {
           {msg && <span style={{ fontSize: 12.5, color: msg.includes("✓") ? t.good : t.bad }}>{msg}</span>}
         </div>
       </div>
+    </div>
+  );
+}
+
+function TwoFactorCard({ t, card, sectionTitle }: any) {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [qr, setQr] = useState("");
+  const [code, setCode] = useState("");
+  const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    configService.get2faStatus().then(r => setEnabled(r.enabled)).catch(() => setEnabled(false));
+  }, []);
+
+  const startSetup = async () => {
+    setBusy(true); setError("");
+    try { const r = await configService.setup2fa(); setQr(r.qr_data_uri); }
+    catch (err: any) { setError(errorMessage(err, "No se pudo iniciar la configuración de 2FA.")); }
+    finally { setBusy(false); }
+  };
+
+  const confirmSetup = async () => {
+    setBusy(true); setError("");
+    try {
+      const r = await configService.enable2fa(code);
+      setBackupCodes(r.backup_codes);
+      setQr(""); setCode(""); setEnabled(true);
+    } catch (err: any) { setError(errorMessage(err, "Código inválido.")); }
+    finally { setBusy(false); }
+  };
+
+  const disable = async () => {
+    if (!confirm("¿Desactivar la autenticación de dos factores?")) return;
+    setBusy(true); setError("");
+    try { await configService.disable2fa(); setEnabled(false); setBackupCodes(null); }
+    catch (err: any) { setError(errorMessage(err, "No se pudo desactivar 2FA.")); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={card}>
+      {sectionTitle(ShieldCheck, "Autenticación de dos factores (2FA)", t.good)}
+      {enabled === null ? (
+        <div style={{ fontSize: 12.5, color: t.textLo }}>Cargando…</div>
+      ) : backupCodes ? (
+        <div>
+          <div style={{ background: t.good + "12", border: `1px solid ${t.good}33`, borderRadius: 8, padding: "12px 14px", marginBottom: 12, fontSize: 12.5, color: t.good }}>
+            2FA activado ✓ Guarda estos códigos de respaldo en un lugar seguro — cada uno funciona una sola vez si pierdes acceso a tu app de autenticación.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontFamily: "monospace", fontSize: 13, background: t.panel2, borderRadius: 8, padding: 12 }}>
+            {backupCodes.map(c => <span key={c} style={{ color: t.textHi }}>{c}</span>)}
+          </div>
+          <button onClick={() => setBackupCodes(null)} style={{ marginTop: 12, padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+            Listo
+          </button>
+        </div>
+      ) : enabled ? (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 8, background: t.panel2 }}>
+            <div>
+              <div style={{ fontSize: 13, color: t.textHi, fontWeight: 500 }}>Aplicación autenticadora</div>
+              <div style={{ fontSize: 11.5, color: t.textLo }}>Activada — Google Authenticator, Authy u otra app TOTP</div>
+            </div>
+            <ToggleRight size={30} color={t.good} />
+          </div>
+          {error && <div style={{ fontSize: 12.5, color: t.bad, marginTop: 10 }}>{error}</div>}
+          <button onClick={disable} disabled={busy} style={{ marginTop: 12, padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.bad}55`, background: "transparent", color: t.bad, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+            {busy ? "…" : "Desactivar 2FA"}
+          </button>
+        </div>
+      ) : qr ? (
+        <div>
+          <div style={{ fontSize: 12.5, color: t.textMid, marginBottom: 10 }}>
+            Escanea este código con Google Authenticator, Authy o tu app de autenticación preferida, luego ingresa el código de 6 dígitos para confirmar.
+          </div>
+          <img src={qr} alt="QR 2FA" style={{ width: 180, height: 180, borderRadius: 8, border: `1px solid ${t.border}`, display: "block", margin: "0 auto 14px" }} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <input value={code} onChange={e => setCode(e.target.value)} placeholder="000000" style={{ flex: 1, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 8, padding: "9px 12px", color: t.textHi, fontSize: 14, letterSpacing: 2 }} />
+            <button onClick={confirmSetup} disabled={busy || code.length < 6} style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600, opacity: code.length < 6 ? 0.5 : 1 }}>
+              {busy ? "…" : "Confirmar"}
+            </button>
+          </div>
+          {error && <div style={{ fontSize: 12.5, color: t.bad, marginTop: 10 }}>{error}</div>}
+        </div>
+      ) : (
+        <div>
+          <div style={{ background: t.warn + "12", border: `1px solid ${t.warn}33`, borderRadius: 8, padding: "12px 14px", marginBottom: 14, display: "flex", gap: 10 }}>
+            <AlertTriangle size={16} color={t.warn} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 12.5, color: t.warn }}>Recomendamos activar 2FA para todos los administradores y usuarios con acceso a finanzas.</span>
+          </div>
+          {error && <div style={{ fontSize: 12.5, color: t.bad, marginBottom: 10 }}>{error}</div>}
+          <button onClick={startSetup} disabled={busy} style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            {busy ? "…" : "Activar 2FA"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

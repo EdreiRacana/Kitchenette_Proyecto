@@ -75,3 +75,25 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     email: Optional[str] = None
+
+class LoginResponse(BaseModel):
+    access_token: Optional[str] = None
+    token_type: Optional[str] = None
+    requires_2fa: bool = False
+    login_token: Optional[str] = None  # token corto de un solo uso para completar /login/2fa
+
+class TwoFactorVerify(BaseModel):
+    login_token: str
+    code: str
+
+class TwoFactorSetupResponse(BaseModel):
+    qr_data_uri: str
+
+class TwoFactorEnableRequest(BaseModel):
+    code: str
+
+class TwoFactorEnableResponse(BaseModel):
+    backup_codes: List[str]
+
+class TwoFactorStatus(BaseModel):
+    enabled: bool

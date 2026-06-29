@@ -1,4 +1,10 @@
 
+import secrets
+import base64
+from io import BytesIO
+
+import pyotp
+import qrcode
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -140,5 +146,80 @@ async def delete_user(db: AsyncSession, db_obj: User) -> bool:
     await db.delete(db_obj)
     await db.commit()
     return True
+
+
+# ── Autenticación de dos factores (TOTP, RFC 6238) ──────────────────────────
+# El secreto se genera y se devuelve junto a un QR para que el usuario lo
+# escanee con Google Authenticator/Authy, pero NO se persiste como activo
+# hasta que confirme un código válido en `enable_two_factor` — así un setup
+# abandonado a medias nunca bloquea el login.
+_BACKUP_CODE_COUNT = 8
+
+
+def generate_totp_secret() -> str:
+    return pyotp.random_base32()
+
+
+def build_totp_qr_data_uri(email: str, secret: str) -> str:
+    uri = pyotp.totp.TOTP(secret).provisioning_uri(name=email, issuer_name="STHENOVA ERP")
+    img = qrcode.make(uri)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return f"data:image/png;base64,{b64}"
+
+
+def verify_totp_code(secret: str, code: str) -> bool:
+    return pyotp.TOTP(secret).verify(code, valid_window=1)
+
+
+def _generate_backup_codes() -> list[str]:
+    return [secrets.token_hex(4) for _ in range(_BACKUP_CODE_COUNT)]
+
+
+async def start_two_factor_setup(db: AsyncSession, user: User) -> dict:
+    """Genera (o regenera) el secreto pendiente de confirmación y su QR."""
+    secret = generate_totp_secret()
+    user.two_factor_secret = secret
+    user.two_factor_enabled = False
+    db.add(user)
+    await db.commit()
+    return {"secret": secret, "qr_data_uri": build_totp_qr_data_uri(user.email, secret)}
+
+
+async def confirm_two_factor_setup(db: AsyncSession, user: User, code: str) -> list[str]:
+    """Verifica el primer código y activa 2FA. Devuelve los códigos de respaldo (texto plano, una sola vez)."""
+    if not user.two_factor_secret or not verify_totp_code(user.two_factor_secret, code):
+        raise ValueError("Código inválido")
+    backup_codes = _generate_backup_codes()
+    user.two_factor_enabled = True
+    user.two_factor_backup_codes = ",".join(get_password_hash(c) for c in backup_codes)
+    db.add(user)
+    await db.commit()
+    return backup_codes
+
+
+async def disable_two_factor(db: AsyncSession, user: User) -> None:
+    user.two_factor_enabled = False
+    user.two_factor_secret = None
+    user.two_factor_backup_codes = None
+    db.add(user)
+    await db.commit()
+
+
+async def verify_two_factor_login(db: AsyncSession, user: User, code: str) -> bool:
+    """Acepta un código TOTP vigente o un código de respaldo (de un solo uso)."""
+    if user.two_factor_secret and verify_totp_code(user.two_factor_secret, code):
+        return True
+    if user.two_factor_backup_codes:
+        hashes = user.two_factor_backup_codes.split(",")
+        for h in hashes:
+            if verify_password(code, h):
+                hashes.remove(h)
+                user.two_factor_backup_codes = ",".join(hashes)
+                db.add(user)
+                await db.commit()
+                return True
+    return False
 
 
