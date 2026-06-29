@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   LayoutDashboard, TrendingUp, Package, PackageX, Wallet, Users, Sliders,
   SlidersHorizontal, ArrowUpRight, ArrowDownRight, Minus, AlertTriangle,
@@ -637,7 +638,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
         const pct = target ? Math.round((k.value / target) * 100) : null;
         const prevVal = Math.round(k.value / (1 + k.delta / 100));
         const Icon = kpiIcons[k.label];
-        return (
+        return createPortal(
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", justifyContent: "flex-end" }} onClick={() => setKpiDrill(null)}>
             <div onClick={(e) => e.stopPropagation()} style={{ width: 440, maxWidth: "100%", height: "100vh", background: t.panel, borderLeft: `1px solid ${t.border}`, overflowY: "auto", display: "flex", flexDirection: "column" }}>
               <div style={{ padding: 24, borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
@@ -701,7 +702,8 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
                 </button>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         );
       })()}
     </div>
