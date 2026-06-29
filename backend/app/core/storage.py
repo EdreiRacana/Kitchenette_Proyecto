@@ -84,7 +84,8 @@ async def create_signed_upload(filename: str, folder: str = "misc") -> dict | No
     }
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(sign_url, headers=headers, json={})
-        resp.raise_for_status()
+        if resp.is_error:
+            raise RuntimeError(f"Supabase sign-upload falló ({resp.status_code}): {resp.text}")
         signed = resp.json()
 
     # `url` viene como ruta relativa, p. ej. "/object/upload/sign/<bucket>/<path>?token=...".

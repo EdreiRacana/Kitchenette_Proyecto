@@ -95,7 +95,10 @@ async def sign_customer_document_upload(
         raise HTTPException(404, "Cliente no encontrado")
 
     safe_name = f"cli{customer_id}_{int(datetime.now().timestamp())}_{body.file_name}"
-    signed = await create_signed_upload(safe_name, folder="clientes")
+    try:
+        signed = await create_signed_upload(safe_name, folder="clientes")
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
     if not signed:
         raise HTTPException(409, "Subida directa no disponible: configura Supabase Storage en el servidor.")
     return schemas.CustomerDocumentSignResponse(upload_url=signed["upload_url"], path=signed["path"])
