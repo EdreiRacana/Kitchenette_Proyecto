@@ -712,6 +712,8 @@ function Login({ t, s, lang, onEnter }) {
   const [p, setP] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [loginToken, setLoginToken] = useState<string | null>(null);
+  const [code, setCode] = useState("");
 
   const handleLogin = async () => {
     if (!u || !p) {
@@ -728,6 +730,11 @@ function Login({ t, s, lang, onEnter }) {
       const res = await api.post("/auth/login", body, {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
       });
+
+      if (res.data?.requires_2fa) {
+        setLoginToken(res.data.login_token);
+        return;
+      }
 
       const token = res.data?.access_token;
       if (!token) throw new Error("no token");
@@ -749,6 +756,61 @@ function Login({ t, s, lang, onEnter }) {
       setLoading(false);
     }
   };
+
+  const handleVerify2fa = async () => {
+    if (!code) return;
+    setError("");
+    setLoading(true);
+    try {
+      const res = await api.post("/auth/login/2fa", { login_token: loginToken, code });
+      const token = res.data?.access_token;
+      if (!token) throw new Error("no token");
+      localStorage.setItem("token", token);
+      onEnter();
+    } catch (err) {
+      const status = err?.response?.status;
+      setError(status === 401
+        ? (lang === "en" ? "Incorrect verification code." : "Código de verificación incorrecto.")
+        : (lang === "en" ? "Could not verify. Try again." : "No se pudo verificar. Intenta de nuevo."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loginToken) {
+    const onKey2fa = (e) => { if (e.key === "Enter" && !loading) handleVerify2fa(); };
+    return (
+      <div style={{ minHeight: "100vh", background: t.base, display: "grid", placeItems: "center", padding: 24 }}>
+        <div style={{ position: "relative", width: "100%", maxWidth: 380, textAlign: "center" }}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}><NovaMark size={86} /></div>
+          <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: 6, color: t.textHi }}>STHENOVA®</div>
+          <Card t={t} style={{ padding: 26, textAlign: "left", marginTop: 24 }}>
+            <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600 }}>
+              {lang === "en" ? "Verification code" : "Código de verificación"}
+            </label>
+            <div style={{ fontSize: 11.5, color: t.textLo, margin: "4px 0 10px" }}>
+              {lang === "en" ? "Enter the 6-digit code from your authenticator app, or a backup code." : "Ingresa el código de 6 dígitos de tu app de autenticación, o un código de respaldo."}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 20px" }}>
+              <Lock size={16} color={t.textLo} />
+              <input value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={onKey2fa} autoFocus placeholder="000000" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 14, letterSpacing: 2 }} />
+            </div>
+            {error && (
+              <div style={{ background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 9, padding: "9px 12px", fontSize: 12.5, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                <AlertTriangle size={15} /> {error}
+              </div>
+            )}
+            <button onClick={handleVerify2fa} disabled={loading} style={{ width: "100%", border: "none", cursor: loading ? "default" : "pointer", color: "#fff", fontSize: 15, fontWeight: 600, padding: "12px", borderRadius: 10, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, opacity: loading ? 0.7 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              {loading ? <><RefreshCw size={16} className="spin" /> {lang === "en" ? "Verifying…" : "Verificando…"}</> : (lang === "en" ? "Verify" : "Verificar")}
+            </button>
+            <button onClick={() => { setLoginToken(null); setCode(""); setError(""); }} style={{ width: "100%", border: "none", background: "transparent", color: t.textLo, fontSize: 12.5, marginTop: 10, cursor: "pointer" }}>
+              {lang === "en" ? "Back" : "Regresar"}
+            </button>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   const onKey = (e) => { if (e.key === "Enter" && !loading) handleLogin(); };
 

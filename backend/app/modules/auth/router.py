@@ -16,7 +16,7 @@ from app.core.config import settings
 router = APIRouter()
 
 
-@router.post("/login", response_model=schemas.Token)
+@router.post("/login", response_model=schemas.LoginResponse)
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(deps.get_db)]
@@ -29,6 +29,39 @@ async def login_for_access_token(
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if user.two_factor_enabled:
+        # Token de corta vida (5 min) que solo sirve para completar /login/2fa;
+        # NO concede acceso a la API (no es un access_token normal).
+        login_token = security.create_access_token(
+            data={"sub": user.email, "purpose": "2fa_pending"}, expires_delta=timedelta(minutes=5)
+        )
+        return {"requires_2fa": True, "login_token": login_token}
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = security.create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer", "requires_2fa": False}
+
+
+@router.post("/login/2fa", response_model=schemas.Token)
+async def login_verify_2fa(
+    body: schemas.TwoFactorVerify,
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+):
+    """Segundo paso del login cuando el usuario tiene 2FA activo."""
+    from jose import JWTError, jwt
+    try:
+        payload = jwt.decode(body.login_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("purpose") != "2fa_pending":
+            raise HTTPException(status_code=401, detail="Token de login inválido")
+        email = payload.get("sub")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token de login expirado o inválido")
+    user = await service.get_user_by_email(db, email)
+    if not user or not user.two_factor_enabled:
+        raise HTTPException(status_code=401, detail="Token de login inválido")
+    if not await service.verify_two_factor_login(db, user, body.code):
+        raise HTTPException(status_code=401, detail="Código de verificación incorrecto")
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
@@ -108,6 +141,46 @@ async def change_my_password(
     current_user.hashed_password = security.get_password_hash(body.new_password)
     db.add(current_user)
     await db.commit()
+    return {"ok": True}
+
+
+@router.get("/me/2fa/status", response_model=schemas.TwoFactorStatus)
+async def read_my_2fa_status(
+    current_user: Annotated[User, Depends(deps.get_current_active_user)]
+):
+    return {"enabled": current_user.two_factor_enabled}
+
+
+@router.post("/me/2fa/setup", response_model=schemas.TwoFactorSetupResponse)
+async def setup_my_2fa(
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+    current_user: Annotated[User, Depends(deps.get_current_active_user)],
+):
+    """Genera un nuevo secreto TOTP (pendiente de confirmar) y su QR."""
+    result = await service.start_two_factor_setup(db, current_user)
+    return {"qr_data_uri": result["qr_data_uri"]}
+
+
+@router.post("/me/2fa/enable", response_model=schemas.TwoFactorEnableResponse)
+async def enable_my_2fa(
+    body: schemas.TwoFactorEnableRequest,
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+    current_user: Annotated[User, Depends(deps.get_current_active_user)],
+):
+    """Confirma el código del setup y activa 2FA. Devuelve códigos de respaldo (solo una vez)."""
+    try:
+        backup_codes = await service.confirm_two_factor_setup(db, current_user, body.code)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"backup_codes": backup_codes}
+
+
+@router.post("/me/2fa/disable")
+async def disable_my_2fa(
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+    current_user: Annotated[User, Depends(deps.get_current_active_user)],
+):
+    await service.disable_two_factor(db, current_user)
     return {"ok": True}
 
 
