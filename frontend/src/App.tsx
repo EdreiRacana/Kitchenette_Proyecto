@@ -376,7 +376,7 @@ function Gauge({ t, value, target, max = 60 }) {
 /* ComparisonChart con tooltip interactivo (línea guía, puntos, valores y %) */
 function ComparisonChart({ t, series, xlabels }) {
   const [hover, setHover] = useState(null);
-  const W = 660, H = 250, P = { l: 8, r: 8, t: 16, b: 30 };
+  const W = 660, H = 190, P = { l: 8, r: 8, t: 14, b: 26 };
   const iw = W - P.l - P.r, ih = H - P.t - P.b, n = series.cur.length;
   const max = Math.max(...series.cur, ...series.prev) * 1.14;
   const x = (i) => P.l + (n === 1 ? iw / 2 : (i * iw) / (n - 1));
@@ -389,7 +389,7 @@ function ComparisonChart({ t, series, xlabels }) {
   const hv = hover !== null ? { i: hover, cur: series.cur[hover], prev: series.prev[hover], label: xlabels[hover], delta: series.prev[hover] === 0 ? 0 : Math.round((series.cur[hover] - series.prev[hover]) / series.prev[hover] * 1000) / 10 } : null;
   return (
     <div style={{ position: "relative" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 250, cursor: "crosshair" }} preserveAspectRatio="none"
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 190, cursor: "crosshair" }} preserveAspectRatio="none"
         onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover(near((e.clientX - r.left) / r.width * W)); }}
         onMouseLeave={() => setHover(null)}>
         <defs><linearGradient id="cmpFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.nova} stopOpacity="0.3" /><stop offset="100%" stopColor={t.nova} stopOpacity="0" /></linearGradient></defs>
@@ -515,7 +515,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 10 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 23, fontWeight: 700, color: t.textHi, letterSpacing: -0.3 }}>{s.nav.dashboard}</h1>
           <p style={{ margin: "5px 0 0", color: t.textLo, fontSize: 13 }}>{fmtDate(r0, s)} <span style={{ opacity: 0.55 }}>{s.dash.to}</span> {fmtDate(r1, s)}</p>
@@ -534,7 +534,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 12, alignItems: "stretch", flexWrap: "wrap", marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "stretch", flexWrap: "wrap", marginBottom: 12 }}>
         <Card t={t} style={{ flex: "1 1 380px", padding: "8px 10px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div style={{ display: "flex", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 9, padding: 3 }}>
             {PRESET_IDS.map((id) => {
@@ -560,14 +560,14 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
         </Card>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px,1fr))", gap: 14, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))", gap: 10, marginBottom: 12 }}>
         {data.kpis.map((k, i) => {
           const up = k.delta >= 0; const c = statusColor(t, k.delta);
           const target = kpiTargets[k.label];
           const pct = target ? Math.min(100, Math.round((k.value / target) * 100)) : null;
           const Icon = kpiIcons[k.label];
           return (
-            <Card key={k.label} t={t} className="clickrow" onClick={() => setKpiDrill(i)} style={{ padding: 18, position: "relative", overflow: "hidden", cursor: "pointer" }}>
+            <Card key={k.label} t={t} className="clickrow" onClick={() => setKpiDrill(i)} style={{ padding: 13, position: "relative", overflow: "hidden", cursor: "pointer" }}>
               <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: c + "66" }} />
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -576,8 +576,8 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
                 </span>
                 <span style={{ width: 8, height: 8, borderRadius: 999, background: c + "cc", boxShadow: `0 0 0 3px ${c}1f` }} />
               </div>
-              <div style={{ fontSize: 23, fontWeight: 700, color: t.textHi, marginTop: 10, fontVariantNumeric: "tabular-nums" }}>{k.money ? mxn(k.value) : k.value.toLocaleString("es-MX")}</div>
-              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginTop: 8 }}>
+              <div style={{ fontSize: 19, fontWeight: 700, color: t.textHi, marginTop: 7, fontVariantNumeric: "tabular-nums" }}>{k.money ? mxn(k.value) : k.value.toLocaleString("es-MX")}</div>
+              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginTop: 6 }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   {up ? <ArrowUpRight size={14} color={t.good} /> : <ArrowDownRight size={14} color={t.bad} />}
                   <span style={{ fontSize: 12.5, fontWeight: 600, color: up ? t.good : t.bad }}>{Math.abs(k.delta)}%</span>
@@ -586,7 +586,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
                 {k.spark && k.spark.length > 1 && <Sparkline data={k.spark} color={c} gid={`spk${i}`} />}
               </div>
               {target && (
-                <div style={{ marginTop: 10 }}>
+                <div style={{ marginTop: 7 }}>
                   <div style={{ height: 4, background: t.panel3, borderRadius: 999, overflow: "hidden" }}>
                     <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: pct >= 90 ? t.good : pct >= 65 ? t.nova : t.warn }} />
                   </div>
@@ -598,8 +598,8 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
         })}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 2fr) minmax(0, 1fr)", gap: 14 }}>
-        <Card t={t} style={{ padding: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 2fr) minmax(0, 1fr)", gap: 10 }}>
+        <Card t={t} style={{ padding: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, flexWrap: "wrap", gap: 8 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>{s.dash.chartTitle} <span style={{ color: t.textLo, fontWeight: 400 }}>{s.dash.chartUnit}</span></div>
             <div style={{ display: "flex", gap: 16 }}>
@@ -609,18 +609,18 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
           </div>
           {xlabels.length > 0 ? <ComparisonChart t={t} series={data.series} xlabels={xlabels} /> : <div style={{ fontSize: 13, color: t.textLo, padding: "40px 0", textAlign: "center" }}>{s.dash.loadError}</div>}
         </Card>
-        <Card t={t} style={{ padding: 20, display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}><Target size={17} color={t.nova} /><span style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>{s.dash.metaTitle}</span></div>
+        <Card t={t} style={{ padding: 14, display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}><Target size={17} color={t.nova} /><span style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>{s.dash.metaTitle}</span></div>
           {data.goal.configured ? (
             <>
-              <div style={{ fontSize: 30, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{goalPct}%</div>
-              <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 16 }}>{s.dash.metaSub}</div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{goalPct}%</div>
+              <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 12 }}>{s.dash.metaSub}</div>
               <div style={{ height: 12, background: t.panel3, borderRadius: 999, overflow: "hidden" }}><div style={{ width: `${Math.min(100, goalPct)}%`, height: "100%", borderRadius: 999, background: goalPct >= 90 ? t.good : goalPct >= 65 ? t.nova : t.warn }} /></div>
               <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, fontSize: 12.5 }}>
                 <span style={{ color: t.textLo }}>{s.dash.real} <b style={{ color: t.textHi }}>{mxnShort(data.goal.actual)}</b></span>
                 <span style={{ color: t.textLo }}>{s.dash.meta} <b style={{ color: t.textHi }}>{mxnShort(data.goal.target)}</b></span>
               </div>
-              <div style={{ marginTop: "auto", paddingTop: 16, fontSize: 12.5, color: t.textMid, borderTop: `1px solid ${t.borderSoft}` }}>{s.dash.remaining(mxn(Math.max(0, data.goal.target - data.goal.actual)))}</div>
+              <div style={{ marginTop: "auto", paddingTop: 12, fontSize: 12.5, color: t.textMid, borderTop: `1px solid ${t.borderSoft}` }}>{s.dash.remaining(mxn(Math.max(0, data.goal.target - data.goal.actual)))}</div>
             </>
           ) : (
             <div style={{ marginTop: 6, fontSize: 13, color: t.textLo, lineHeight: 1.5 }}>{s.dash.noGoal}</div>
