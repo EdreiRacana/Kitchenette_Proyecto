@@ -75,10 +75,17 @@ export const customersApi = {
     fd.append("file", file);
     const { data } = await api.post<CustomerDocument>(
       `/customers/${customerId}/documents`, fd,
-      // El Content-Type por defecto de la instancia es application/json; hay que
-      // quitarlo aquí para que axios mande el FormData como multipart (con
-      // boundary) en vez de convertirlo a JSON y perder el archivo adjunto.
-      { params: { document_type: documentType }, headers: { "Content-Type": undefined } },
+      {
+        params: { document_type: documentType },
+        // El Content-Type por defecto de la instancia es application/json; hay que
+        // quitarlo aquí para que axios mande el FormData como multipart (con
+        // boundary) en vez de convertirlo a JSON y perder el archivo adjunto.
+        headers: { "Content-Type": undefined },
+        // La subida implica transferir el archivo al backend y de ahí a Supabase
+        // Storage; con cold start de Render + Supabase, 30s (timeout global) no
+        // siempre alcanza. Se da más margen solo para esta petición.
+        timeout: 60000,
+      },
     );
     return data;
   },

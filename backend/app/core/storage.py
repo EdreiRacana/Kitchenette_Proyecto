@@ -40,7 +40,7 @@ async def upload_bytes(content: bytes, filename: str, folder: str = "misc") -> s
             "Content-Type": content_type,
             "x-upsert": "true",
         }
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=45) as client:
             resp = await client.post(url, headers=headers, content=content)
             resp.raise_for_status()
         return f"{settings.SUPABASE_URL}/storage/v1/object/public/{settings.SUPABASE_BUCKET}/{object_path}"
