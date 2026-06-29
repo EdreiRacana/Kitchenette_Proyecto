@@ -4,16 +4,20 @@
 // Respeta el patrón modular del proyecto: usa Tokens, componentes de ../sales/ui y money().
 // Datos demo realistas (derivados del cliente + periodo) hasta conectar el backend real.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   X, TrendingUp, RotateCcw, Receipt, Truck, Megaphone, Percent, Landmark,
   ArrowUpRight, ArrowDownRight, ShoppingBag, Package, CreditCard,
   FileText, Wallet, Store, Globe, Building2, Star, Users, Info,
+  Paperclip, Upload, Trash2,
 } from "lucide-react";
 import type { Tokens } from "../sales/theme";
 import { money } from "../sales/theme";
-import { Badge } from "../sales/ui";
-import type { Customer } from "./types";
+import { Badge, Select, Button } from "../sales/ui";
+import type { Customer, CustomerDocument } from "./types";
+import { customersApi } from "./api";
+
+const DOC_TYPES = ["INE/Identificación", "Constancia de situación fiscal", "Comprobante de domicilio", "Contrato", "Otro"];
 
 type Period = "week" | "month" | "quarter" | "year";
 
@@ -141,8 +145,40 @@ export default function Customer360({
 }: {
   tk: Tokens; customer: Customer; onClose: () => void; onEdit?: (c: Customer) => void;
 }) {
-  const [tab, setTab] = useState<"resumen" | "pnl" | "transacciones" | "devoluciones">("resumen");
+  const [tab, setTab] = useState<"resumen" | "pnl" | "transacciones" | "devoluciones" | "documentos">("resumen");
   const [period, setPeriod] = useState<Period>("quarter");
+
+  const [docs, setDocs] = useState<CustomerDocument[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
+  const [newDocType, setNewDocType] = useState(DOC_TYPES[0]);
+  const [newDocFile, setNewDocFile] = useState<File | null>(null);
+  const [docBusy, setDocBusy] = useState(false);
+
+  const loadDocs = () => {
+    setDocsLoading(true);
+    customersApi.listDocuments(customer.id).then(setDocs).catch(() => setDocs([])).finally(() => setDocsLoading(false));
+  };
+
+  useEffect(() => { loadDocs(); }, [customer.id]);
+
+  const addDocument = async () => {
+    if (!newDocFile) return;
+    setDocBusy(true);
+    try {
+      const doc = await customersApi.uploadDocument(customer.id, newDocType, newDocFile);
+      setDocs((p) => [...p, doc]);
+      setNewDocFile(null);
+    } catch { alert("No se pudo subir el documento."); }
+    finally { setDocBusy(false); }
+  };
+
+  const removeDocument = async (docId: number) => {
+    if (!window.confirm("¿Eliminar este documento?")) return;
+    try {
+      await customersApi.deleteDocument(customer.id, docId);
+      setDocs((p) => p.filter((x) => x.id !== docId));
+    } catch { alert("No se pudo eliminar el documento."); }
+  };
 
   const pnl = useMemo(() => demoPnL(customer, period, false), [customer, period]);
   const pnlPrev = useMemo(() => demoPnL(customer, period, true), [customer, period]);
@@ -248,11 +284,15 @@ export default function Customer360({
               { id: "pnl", label: "Estado de resultados", icon: Receipt },
               { id: "transacciones", label: "Transacciones", icon: FileText },
               { id: "devoluciones", label: "Devoluciones", icon: RotateCcw },
+              { id: "documentos", label: "Documentos", icon: Paperclip },
             ] as const).map(({ id, label, icon: Icon }) => (
               <button key={id} onClick={() => setTab(id)} style={tabBtn(tab === id)}>
                 <Icon size={14} />{label}
                 {id === "devoluciones" && returns.length > 0 && (
                   <span style={{ background: tk.bad, color: "#fff", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99 }}>{returns.length}</span>
+                )}
+                {id === "documentos" && docs.length > 0 && (
+                  <span style={{ background: tk.accent, color: "#06122B", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99 }}>{docs.length}</span>
                 )}
               </button>
             ))}
@@ -436,6 +476,46 @@ export default function Customer360({
                 </div>
               </div>
             </>
+          )}
+
+          {/* ── TAB: Documentos ── */}
+          {tab === "documentos" && (
+            <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: tk.textHi }}>Documentos del cliente</div>
+
+              {docsLoading ? (
+                <div style={{ fontSize: 13, color: tk.textLo }}>Cargando…</div>
+              ) : docs.length === 0 ? (
+                <div style={{ fontSize: 13, color: tk.textLo }}>Este cliente no tiene documentos cargados.</div>
+              ) : docs.map((doc) => (
+                <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 10, background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 8, padding: "10px 14px" }}>
+                  <FileText size={16} style={{ color: tk.accent, flexShrink: 0 }} />
+                  <a href={doc.file_path} target="_blank" rel="noreferrer" style={{ color: tk.textHi, fontSize: 13.5, fontWeight: 600, textDecoration: "none", flex: 1 }}>
+                    {doc.file_name}
+                  </a>
+                  <span style={{ fontSize: 11.5, color: tk.textLo }}>{doc.document_type}</span>
+                  <Badge tk={tk} bg={tk.accent + "22"} color={tk.accent} border={tk.accent + "55"}>{doc.status}</Badge>
+                  <button onClick={() => removeDocument(doc.id)} title="Eliminar"
+                    style={{ background: "transparent", border: `1px solid ${tk.border}`, borderRadius: 8, padding: 7, cursor: "pointer", color: tk.bad, display: "flex" }}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8, paddingTop: 14, borderTop: `1px solid ${tk.border}` }}>
+                <div style={{ minWidth: 220 }}>
+                  <Select tk={tk} value={newDocType} onChange={setNewDocType} options={DOC_TYPES.map((v) => ({ value: v, label: v }))} />
+                </div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1px dashed ${tk.border}`, borderRadius: 8, padding: "8px 14px", cursor: "pointer", color: tk.textHi, fontSize: 13 }}>
+                  <Upload size={14} />
+                  {newDocFile ? newDocFile.name : "Elegir archivo…"}
+                  <input type="file" style={{ display: "none" }} onChange={(e) => setNewDocFile(e.target.files?.[0] || null)} />
+                </label>
+                <Button tk={tk} variant="ghost" onClick={addDocument} disabled={!newDocFile || docBusy}>
+                  {docBusy ? "Subiendo…" : "Agregar"}
+                </Button>
+              </div>
+            </div>
           )}
         </div>
 
