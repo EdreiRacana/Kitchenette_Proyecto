@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 from datetime import datetime
 from typing import Annotated, List, Optional
 
@@ -11,6 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
+from app.core.storage import upload_bytes
 from app.modules.auth.models import User
 from app.modules.customers import schemas, service
 
@@ -18,9 +17,6 @@ router = APIRouter()
 
 DB = Annotated[AsyncSession, Depends(deps.get_db)]
 CurrentUser = Annotated[User, Depends(deps.get_current_active_user)]
-
-UPLOAD_DIR = "uploads/customers"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 # ── Search / stats (declared before /{id} so paths don't collide) ─────────────
@@ -91,15 +87,13 @@ async def upload_customer_document(
     if not customer:
         raise HTTPException(404, "Cliente no encontrado")
 
-    ext = os.path.splitext(file.filename or "")[1]
-    safe = f"{customer_id}_{document_type}_{int(datetime.now().timestamp())}{ext}"
-    path = os.path.join(UPLOAD_DIR, safe)
-    with open(path, "wb") as buf:
-        shutil.copyfileobj(file.file, buf)
+    content = await file.read()
+    safe_name = f"cli{customer_id}_{document_type}_{int(datetime.now().timestamp())}_{file.filename or 'documento'}"
+    url = await upload_bytes(content, safe_name, folder="clientes")
 
     doc_in = schemas.CustomerDocumentCreate(
         customer_id=customer_id, document_type=document_type,
-        file_name=file.filename or safe, file_path=f"customers/{safe}",
+        file_name=file.filename or safe_name, file_path=url,
         mime_type=file.content_type or "application/octet-stream",
     )
     return await service.create_document(db, doc_in)
@@ -108,6 +102,13 @@ async def upload_customer_document(
 @router.get("/{customer_id}/documents", response_model=List[schemas.CustomerDocumentInDB])
 async def list_customer_documents(customer_id: int, db: DB, _: CurrentUser):
     return await service.get_customer_documents(db, customer_id)
+
+
+@router.delete("/{customer_id}/documents/{doc_id}", status_code=204)
+async def delete_customer_document(customer_id: int, doc_id: int, db: DB, current_user: CurrentUser):
+    ok = await service.delete_document(db, customer_id, doc_id)
+    if not ok:
+        raise HTTPException(404, "Documento no encontrado")
 
 
 @router.patch("/documents/{doc_id}/status", response_model=schemas.CustomerDocumentInDB)

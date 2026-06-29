@@ -87,11 +87,17 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
     setFormOpen(true);
   };
 
-  const handleSubmit = useCallback(async (draft: CustomerDraft) => {
+  const handleSubmit = useCallback(async (draft: CustomerDraft, pendingDocs: { docType: string; file: File }[]) => {
     setSaving(true);
     try {
-      if (editing) await customersApi.update(editing.id, draft);
-      else await customersApi.create(draft);
+      if (editing) {
+        await customersApi.update(editing.id, draft);
+      } else {
+        const created = await customersApi.create(draft);
+        for (const p of pendingDocs) {
+          await customersApi.uploadDocument(created.id, p.docType, p.file);
+        }
+      }
       setFormOpen(false); setEditing(null);
       await refresh();
     } catch (e) { alert(extractErr(e)); } finally { setSaving(false); }

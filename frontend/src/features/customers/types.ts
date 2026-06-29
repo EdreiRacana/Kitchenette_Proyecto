@@ -77,3 +77,16 @@ export interface CustomerStats {
   credit: number;
   credit_exposure: number;
 }
+
+export interface CustomerDocument {
+  id: number;
+  customer_id: number;
+  document_type: string;
+  file_name: string;
+  file_path: string;
+  mime_type: string;
+  status: string;
+  upload_date: string;
+  verified_at: string | null;
+  verified_by_id: number | null;
+}

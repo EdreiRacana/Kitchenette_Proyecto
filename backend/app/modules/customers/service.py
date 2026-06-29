@@ -216,3 +216,12 @@ async def update_document_status(db: AsyncSession, doc_id: int, status: str,
         await db.commit()
         await db.refresh(db_doc)
     return db_doc
+
+
+async def delete_document(db: AsyncSession, customer_id: int, doc_id: int) -> bool:
+    doc = await get_document(db, doc_id)
+    if not doc or doc.customer_id != customer_id:
+        return False
+    await db.delete(doc)
+    await db.commit()
+    return True

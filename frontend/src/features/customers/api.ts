@@ -1,7 +1,7 @@
 // Customers API service. Reuses the shared axios instance from the Sales module.
 
 import api from "../../services/api";
-import type { Customer, CustomerDraft, CustomerFilters, PaginatedCustomers, CustomerStats } from "./types";
+import type { Customer, CustomerDraft, CustomerFilters, PaginatedCustomers, CustomerStats, CustomerDocument } from "./types";
 
 function qs(f: CustomerFilters): string {
   const p = new URLSearchParams();
@@ -65,5 +65,21 @@ export const customersApi = {
   async stats(): Promise<CustomerStats> {
     const { data } = await api.get<CustomerStats>(`/customers/stats`);
     return data;
+  },
+  async listDocuments(customerId: number): Promise<CustomerDocument[]> {
+    const { data } = await api.get<CustomerDocument[]>(`/customers/${customerId}/documents`);
+    return data;
+  },
+  async uploadDocument(customerId: number, documentType: string, file: File): Promise<CustomerDocument> {
+    const fd = new FormData();
+    fd.append("file", file);
+    const { data } = await api.post<CustomerDocument>(
+      `/customers/${customerId}/documents`, fd,
+      { params: { document_type: documentType }, headers: { "Content-Type": "multipart/form-data" } },
+    );
+    return data;
+  },
+  async deleteDocument(customerId: number, docId: number): Promise<void> {
+    await api.delete(`/customers/${customerId}/documents/${docId}`);
   },
 };
