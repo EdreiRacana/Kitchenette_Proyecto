@@ -233,8 +233,8 @@ export default function Customer360({
   ];
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.7)", zIndex: 70, display: "flex", justifyContent: "flex-end" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 680, maxWidth: "100%", height: "100vh", background: tk.base, borderLeft: `1px solid ${tk.border}`, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.7)", zIndex: 70, display: "flex", justifyContent: "flex-end", overflow: "hidden" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 680, maxWidth: "100vw", minWidth: 0, boxSizing: "border-box", height: "100vh", background: tk.base, borderLeft: `1px solid ${tk.border}`, overflowX: "hidden", overflowY: "auto", display: "flex", flexDirection: "column" }}>
 
         {/* Header */}
         <div style={{ padding: "22px 24px", borderBottom: `1px solid ${tk.border}`, background: tk.panel, position: "sticky", top: 0, zIndex: 5 }}>
@@ -488,27 +488,28 @@ export default function Customer360({
               ) : docs.length === 0 ? (
                 <div style={{ fontSize: 13, color: tk.textLo }}>Este cliente no tiene documentos cargados.</div>
               ) : docs.map((doc) => (
-                <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 10, background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 8, padding: "10px 14px" }}>
+                <div key={doc.id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 8, padding: "10px 14px", minWidth: 0 }}>
                   <FileText size={16} style={{ color: tk.accent, flexShrink: 0 }} />
-                  <a href={doc.file_path} target="_blank" rel="noreferrer" style={{ color: tk.textHi, fontSize: 13.5, fontWeight: 600, textDecoration: "none", flex: 1 }}>
+                  <a href={doc.file_path} target="_blank" rel="noreferrer" title={doc.file_name}
+                    style={{ color: tk.textHi, fontSize: 13.5, fontWeight: 600, textDecoration: "none", flex: "1 1 140px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {doc.file_name}
                   </a>
-                  <span style={{ fontSize: 11.5, color: tk.textLo }}>{doc.document_type}</span>
+                  <span style={{ fontSize: 11.5, color: tk.textLo, whiteSpace: "nowrap" }}>{doc.document_type}</span>
                   <Badge tk={tk} bg={tk.accent + "22"} color={tk.accent} border={tk.accent + "55"}>{doc.status}</Badge>
                   <button onClick={() => removeDocument(doc.id)} title="Eliminar"
-                    style={{ background: "transparent", border: `1px solid ${tk.border}`, borderRadius: 8, padding: 7, cursor: "pointer", color: tk.bad, display: "flex" }}>
+                    style={{ background: "transparent", border: `1px solid ${tk.border}`, borderRadius: 8, padding: 7, cursor: "pointer", color: tk.bad, display: "flex", flexShrink: 0 }}>
                     <Trash2 size={14} />
                   </button>
                 </div>
               ))}
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8, paddingTop: 14, borderTop: `1px solid ${tk.border}` }}>
-                <div style={{ minWidth: 220 }}>
+                <div style={{ minWidth: 0, flex: "1 1 180px" }}>
                   <Select tk={tk} value={newDocType} onChange={setNewDocType} options={DOC_TYPES.map((v) => ({ value: v, label: v }))} />
                 </div>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1px dashed ${tk.border}`, borderRadius: 8, padding: "8px 14px", cursor: "pointer", color: tk.textHi, fontSize: 13 }}>
-                  <Upload size={14} />
-                  {newDocFile ? newDocFile.name : "Elegir archivo…"}
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1px dashed ${tk.border}`, borderRadius: 8, padding: "8px 14px", cursor: "pointer", color: tk.textHi, fontSize: 13, minWidth: 0, maxWidth: "100%", overflow: "hidden" }}>
+                  <Upload size={14} style={{ flexShrink: 0 }} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{newDocFile ? newDocFile.name : "Elegir archivo…"}</span>
                   <input type="file" style={{ display: "none" }} onChange={(e) => setNewDocFile(e.target.files?.[0] || null)} />
                 </label>
                 <Button tk={tk} variant="ghost" onClick={addDocument} disabled={!newDocFile || docBusy}>

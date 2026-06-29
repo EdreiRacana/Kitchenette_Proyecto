@@ -2,7 +2,7 @@
 import axios from 'axios';
 
 // --- Config del retry (cubre el cold start de Render free, ~30-60s) ---
-const MAX_RETRIES = 8;            // reintentos ante cold start
+const MAX_RETRIES = 14;           // reintentos ante cold start (Render free puede tardar +60s en despertar)
 const RETRY_DELAY = 5000;         // 5s entre reintentos
 const PER_REQUEST_TIMEOUT = 30000; // 30s por intento
 

@@ -173,8 +173,8 @@ export function Modal({ tk, open, onClose, title, children, footer, width = 640,
     }}>
       <div onClick={(e) => e.stopPropagation()} style={{
         background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 16,
-        width, maxWidth: "100%", boxShadow: "0 24px 64px rgba(0,0,0,0.5)",
-        display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 80px)",
+        width, maxWidth: "100%", minWidth: 0, boxSizing: "border-box", boxShadow: "0 24px 64px rgba(0,0,0,0.5)",
+        display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 80px)", overflowX: "hidden",
       }}>
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
