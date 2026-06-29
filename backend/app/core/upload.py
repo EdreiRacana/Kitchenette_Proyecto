@@ -1,29 +1,14 @@
-import shutil
-import os
-from pathlib import Path
 from fastapi import UploadFile
 from typing import List
-import uuid
 
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+from app.core.storage import upload_bytes
+
 
 class UploadService:
     @staticmethod
     async def save_file(file: UploadFile) -> str:
-        from starlette.concurrency import run_in_threadpool
-        # Generate generic unique filename
-        file_extension = os.path.splitext(file.filename)[1]
-        unique_filename = f"{uuid.uuid4()}{file_extension}"
-        file_path = UPLOAD_DIR / unique_filename
-        
-        def _write_file():
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-        
-        await run_in_threadpool(_write_file)
-            
-        return f"/static/{unique_filename}"
+        content = await file.read()
+        return await upload_bytes(content, file.filename or "archivo", folder="misc")
 
     @staticmethod
     async def save_files(files: List[UploadFile]) -> List[str]:

@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = ["*"]
 
+    # Almacenamiento de archivos (documentos de proveedores, imágenes, etc.)
+    SUPABASE_URL: str | None = None
+    SUPABASE_SERVICE_KEY: str | None = None
+    SUPABASE_BUCKET: str = "sthenova-files"
+
     model_config = SettingsConfigDict(case_sensitive=True, env_file=".env")
 
     def __init__(self, **data):

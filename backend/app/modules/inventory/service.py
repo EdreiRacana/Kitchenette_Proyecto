@@ -33,16 +33,16 @@ async def get_products(db: AsyncSession, skip: int = 0, limit: int = 100, item_t
     return result.scalars().all()
 
 
-def save_compressed_image(content: bytes, filename: str, upload_dir: str, url_prefix: str) -> str:
-    """Comprime/convierte la imagen a WebP para no saturar el almacenamiento."""
+async def save_compressed_image(content: bytes, filename: str, url_prefix: str) -> str:
+    """Comprime/convierte la imagen a WebP y la sube al almacenamiento configurado."""
     from PIL import Image
+    from app.core.storage import upload_bytes
     img = Image.open(BytesIO(content))
     img = img.convert("RGB")
     img.thumbnail((1200, 1200))
-    unique_name = f"{uuid.uuid4()}.webp"
-    path = os.path.join(upload_dir, unique_name)
-    img.save(path, "WEBP", quality=80)
-    return f"/static/{url_prefix}/{unique_name}"
+    buf = BytesIO()
+    img.save(buf, "WEBP", quality=80)
+    return await upload_bytes(buf.getvalue(), "imagen.webp", folder=url_prefix)
 
 async def get_product(db: AsyncSession, product_id: int) -> Optional[Product]:
     result = await db.execute(

@@ -29,7 +29,7 @@ async def read_products(db: DB, skip: int = 0, limit: int = 200, item_type: str 
 @router.post("/products/upload-image")
 async def upload_product_image(db: DB, current_user: CurrentUser, file: UploadFile = File(...)):
     content = await file.read()
-    url = service.save_compressed_image(content, file.filename, UPLOAD_DIR, "inventory")
+    url = await service.save_compressed_image(content, file.filename, "inventory")
     return {"url": url}
 
 # --- Carga masiva (Excel/CSV) ---
@@ -128,12 +128,11 @@ async def delete_supplier(supplier_id: int, db: DB, current_user: CurrentUser):
 
 @router.post("/suppliers/{supplier_id}/documents", response_model=schemas.SupplierDocumentInDB)
 async def upload_supplier_document(supplier_id: int, db: DB, current_user: CurrentUser, doc_type: str, file: UploadFile = File(...)):
-    ext = os.path.splitext(file.filename or "")[1]
-    safe = f"sup{supplier_id}_{doc_type}_{int(datetime.now().timestamp())}{ext}"
-    path = os.path.join(UPLOAD_DIR, safe)
-    with open(path, "wb") as buf:
-        shutil.copyfileobj(file.file, buf)
-    doc = await service.add_supplier_document(db, supplier_id, doc_type, f"inventory/{safe}", file.filename)
+    from app.core.storage import upload_bytes
+    content = await file.read()
+    safe_name = f"sup{supplier_id}_{doc_type}_{int(datetime.now().timestamp())}_{file.filename or 'documento'}"
+    url = await upload_bytes(content, safe_name, folder="proveedores")
+    doc = await service.add_supplier_document(db, supplier_id, doc_type, url, file.filename)
     if not doc:
         raise HTTPException(status_code=404, detail="Supplier not found")
     return doc
