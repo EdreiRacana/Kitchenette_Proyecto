@@ -2,6 +2,7 @@
 // Flujo: busca el pedido → elige partidas y cantidades → condición (revendible/
 // dañado) → motivo + liquidación → registra. Reusa el theme { t } de InventoryModule.
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { X, Search, RotateCcw, AlertTriangle, Check } from "lucide-react";
 import { inventoryService, type ReturnableOrder, type OrderLite } from "./service";
 
@@ -83,7 +84,7 @@ export default function ReturnModal({ t, lang, onClose, onSaved }: {
     } finally { setSaving(false); }
   };
 
-  return (
+  return createPortal(
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, width: "100%", maxWidth: 820, maxHeight: "90vh", overflow: "auto", boxShadow: "0 24px 64px rgba(0,0,0,0.4)" }}>
         {/* Header */}
@@ -221,6 +222,7 @@ export default function ReturnModal({ t, lang, onClose, onSaved }: {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

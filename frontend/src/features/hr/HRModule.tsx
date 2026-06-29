@@ -4,6 +4,7 @@
 // Contrato { t, s } igual que App.tsx
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
   Users, UserPlus, Clock, Fingerprint, Receipt, Banknote, BarChart3,
   AlertTriangle, CheckCircle, XCircle, AlertCircle, Calendar, Search,
@@ -995,7 +996,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
       )}
 
       {/* ── DRAWER: Employee Detail ── */}
-      {selectedEmployee && (
+      {selectedEmployee && createPortal(
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }} onClick={() => setSelectedEmployee(null)}>
           <div onClick={e => e.stopPropagation()} style={{ width: 480, height: "100vh", background: t.panel, borderLeft: `1px solid ${t.border}`, overflowY: "auto", display: "flex", flexDirection: "column" }}>
             {/* Header */}
@@ -1079,7 +1080,8 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ── MODAL: Employee Form ── */}
@@ -1150,7 +1152,7 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
     try { await onSave(form); } finally { setSaving(false); }
   };
 
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 620, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", maxHeight: "92vh", overflow: "hidden" }}>
         {/* Header */}
@@ -1345,7 +1347,8 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1371,7 +1374,7 @@ function AttendanceFormModal({ t, employees, onClose, onSave }: any) {
     try { await onSave({ ...form, employee_id: Number(form.employee_id), hours: form.hours !== "" ? Number(form.hours) : null }); } finally { setSaving(false); }
   };
 
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 460, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, padding: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
@@ -1418,7 +1421,8 @@ function AttendanceFormModal({ t, employees, onClose, onSave }: any) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1443,7 +1447,7 @@ function PeriodFormModal({ t, onClose, onSave }: any) {
     try { await onSave(form); } finally { setSaving(false); }
   };
 
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 460, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, padding: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
@@ -1481,6 +1485,7 @@ function PeriodFormModal({ t, onClose, onSave }: any) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

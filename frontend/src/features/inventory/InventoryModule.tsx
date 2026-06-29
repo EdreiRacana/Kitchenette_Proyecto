@@ -4,6 +4,7 @@
 // Modo demo automático si el backend no responde
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
   LayoutDashboard, Package, Warehouse, ArrowDownToLine, ArrowUpFromLine,
   SlidersHorizontal, Search, Plus, Download, Upload, ChevronRight,
@@ -1155,7 +1156,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       )}
 
       {/* ── MODAL: Product Detail (drawer sólido) ── */}
-      {selectedProduct && (
+      {selectedProduct && createPortal(
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }} onClick={() => setSelectedProduct(null)}>
           <div onClick={e => e.stopPropagation()} style={{ width: 420, height: "100vh", background: t.panel, borderLeft: `1px solid ${t.border}`, padding: 24, overflowY: "auto", display: "flex", flexDirection: "column", gap: 20 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1215,11 +1216,12 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ── MODAL: Recipe Cost Breakdown ── */}
-      {recipeCostView && (
+      {recipeCostView && createPortal(
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }} onClick={() => setRecipeCostView(null)}>
           <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 440, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
             <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1257,7 +1259,8 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ── MODAL: Product Form ── */}
@@ -1569,7 +1572,7 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
 
   const STEPS = [lang === "es" ? "Información" : "Info", lang === "es" ? "Variantes" : "Variants", lang === "es" ? "Stock inicial" : "Initial stock"];
 
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 600, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", maxHeight: "90vh" }}>
         {/* Header */}
@@ -1718,7 +1721,8 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1743,7 +1747,7 @@ function EntryFormModal({ t, lang, products, warehouses, onClose, onSave }: any)
     catch (err: any) { setError(err?.response?.data?.detail || (lang === "es" ? "Error al registrar la entrada" : "Error registering entry")); }
     finally { setSaving(false); }
   };
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 480, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1787,7 +1791,8 @@ function EntryFormModal({ t, lang, products, warehouses, onClose, onSave }: any)
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1813,7 +1818,7 @@ function AdjustmentFormModal({ t, lang, products, warehouses, onClose, onSave }:
     catch (err: any) { setError(err?.response?.data?.detail || (lang === "es" ? "Error al aplicar el ajuste" : "Error applying adjustment")); }
     finally { setSaving(false); }
   };
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 480, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1859,7 +1864,8 @@ function AdjustmentFormModal({ t, lang, products, warehouses, onClose, onSave }:
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1879,7 +1885,7 @@ function WarehouseFormModal({ t, lang, editing, branches, onClose, onSave }: any
     catch (err: any) { setError(err?.response?.data?.detail || (lang === "es" ? "Error al guardar el almacén" : "Error saving warehouse")); }
     finally { setSaving(false); }
   };
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 440, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1931,7 +1937,8 @@ function WarehouseFormModal({ t, lang, editing, branches, onClose, onSave }: any
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1957,7 +1964,7 @@ function SupplierFormModal({ t, lang, editing, onClose, onSave }: any) {
     } catch (err: any) { setError(err?.response?.data?.detail || (lang === "es" ? "Error al guardar el proveedor" : "Error saving supplier")); }
     finally { setSaving(false); }
   };
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 520, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1998,7 +2005,8 @@ function SupplierFormModal({ t, lang, editing, onClose, onSave }: any) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -2033,7 +2041,7 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, edit
     finally { setSaving(false); }
   };
 
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 620, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -2107,7 +2115,8 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, edit
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -2140,7 +2149,7 @@ function RecipeFormModal({ t, lang, products, editing, onClose, onSave }: any) {
     finally { setSaving(false); }
   };
 
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 620, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -2205,7 +2214,8 @@ function RecipeFormModal({ t, lang, products, editing, onClose, onSave }: any) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -2222,7 +2232,7 @@ function ProductionOrderFormModal({ t, lang, recipes, warehouses, productNameByV
     catch (err: any) { setError(err?.response?.data?.detail || (lang === "es" ? "Error al crear la orden de producción" : "Error creating production order")); }
     finally { setSaving(false); }
   };
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 480, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -2258,6 +2268,7 @@ function ProductionOrderFormModal({ t, lang, recipes, warehouses, productNameByV
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -1,6 +1,7 @@
 // AccountingModule.tsx — Contabilidad (Fase 1): Catálogo · Pólizas · Mayor
 // Mismo contrato { t, s } que el resto de módulos.
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
   BookOpen, Layers, FileText, Plus, X, Check, Trash2, RefreshCw, Search,
   ChevronRight, AlertTriangle, Ban, Info, BarChart3, Scale, TrendingUp,
@@ -287,7 +288,7 @@ function EntryModal({ t, lang, postable, onClose, onSaved }: { t: any; lang: str
     finally { setSaving(false); }
   };
 
-  return (
+  return createPortal(
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, width: "100%", maxWidth: 880, maxHeight: "90vh", overflow: "auto" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 22px", borderBottom: `1px solid ${t.border}`, position: "sticky", top: 0, background: t.panel }}>
@@ -368,7 +369,8 @@ function EntryModal({ t, lang, postable, onClose, onSaved }: { t: any; lang: str
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -393,7 +395,7 @@ function AccountModal({ t, lang, accounts, onClose, onSaved }: { t: any; lang: s
     finally { setSaving(false); }
   };
 
-  return (
+  return createPortal(
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, width: "100%", maxWidth: 520 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 22px", borderBottom: `1px solid ${t.border}` }}>
@@ -435,7 +437,8 @@ function AccountModal({ t, lang, accounts, onClose, onSaved }: { t: any; lang: s
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

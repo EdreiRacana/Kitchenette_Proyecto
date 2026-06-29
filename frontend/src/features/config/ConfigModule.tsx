@@ -4,6 +4,7 @@
 // Contrato { t, s } igual que App.tsx
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import configService, { type SystemIntegration, type CompanyProfile, type ApiUser, type ApiRole, type PermissionDef } from "./service";
 import {
   Building2, Users, Shield, Receipt, Plug, Workflow, Lock, Settings,
@@ -959,7 +960,7 @@ function BranchFormModal({ t, lbl, inp, editing, onClose, onSaved }: any) {
     finally { setSaving(false); }
   };
 
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 480, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -998,7 +999,8 @@ function BranchFormModal({ t, lbl, inp, editing, onClose, onSaved }: any) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1168,7 +1170,7 @@ function UserFormModal({ t, lbl, inp, roles, branches, editing, onClose, onSaved
     finally { setSaving(false); }
   };
 
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 460, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1226,7 +1228,8 @@ function UserFormModal({ t, lbl, inp, roles, branches, editing, onClose, onSaved
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1248,7 +1251,7 @@ function RoleFormModal({ t, lbl, inp, onClose, onSaved }: any) {
     finally { setSaving(false); }
   };
 
-  return (
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 440, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}` }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1278,6 +1281,7 @@ function RoleFormModal({ t, lbl, inp, onClose, onSaved }: any) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
