@@ -20,13 +20,38 @@ import { customersApi } from "./api";
 
 const DOC_TYPES = ["INE/Identificación", "Constancia de situación fiscal", "Comprobante de domicilio", "Contrato", "Otro"];
 
+// El `detail` de un 422 de FastAPI suele ser un arreglo de errores de
+// validación ([{loc, msg, type}, ...]), no un string: hay que extraer el
+// texto útil de cada uno en vez de interpolarlo directo (da "[object Object]").
+function formatDetail(detail: unknown): string {
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d) => {
+        if (d && typeof d === "object" && "msg" in d) {
+          const rawLoc = (d as { loc?: unknown[] }).loc;
+          const loc = Array.isArray(rawLoc) ? rawLoc.filter((x) => x !== "body" && x !== "query").join(".") : "";
+          const msg = (d as { msg: string }).msg;
+          return loc ? `${loc}: ${msg}` : msg;
+        }
+        return JSON.stringify(d);
+      })
+      .join("; ");
+  }
+  if (typeof detail === "object") {
+    try { return JSON.stringify(detail); } catch { return String(detail); }
+  }
+  return String(detail);
+}
+
 // Convierte el error de axios en un mensaje útil: sin esto, un bloqueo CORS o
 // un 500 del servidor se ven idénticos en la UI ("no se pudo subir"), lo que
 // hace imposible diagnosticar el problema sin abrir la consola del navegador.
 function describeUploadError(err: unknown): string {
-  const e = err as { response?: { status?: number; data?: { detail?: string } }; request?: unknown; message?: string };
+  const e = err as { response?: { status?: number; data?: { detail?: unknown } }; request?: unknown; message?: string };
   if (e?.response) {
-    const detail = e.response.data?.detail;
+    const detail = formatDetail(e.response.data?.detail);
     return `Servidor respondió ${e.response.status}${detail ? `: ${detail}` : "."}`;
   }
   if (e?.request) {
