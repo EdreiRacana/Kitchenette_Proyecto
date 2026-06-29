@@ -1446,9 +1446,9 @@ export default function App() {
         }
         .spin{animation:spin360 .9s linear infinite}
         @keyframes spin360{to{transform:rotate(360deg)}}
-        .login-input-glow{transition:box-shadow .25s ease, border-color .25s ease; animation:inputGlow 3.2s ease-in-out infinite}
-        @keyframes inputGlow{0%,100%{box-shadow:0 0 0 1px ${t.nova}22, 0 0 8px ${t.nova}22}50%{box-shadow:0 0 0 1px ${t.nova}55, 0 0 14px ${t.nova}40}}
-        .login-input-glow:focus-within{box-shadow:0 0 0 1px ${t.nova}88, 0 0 18px ${t.nova}55; animation:none}
+        .login-input-glow{border-color:${t.nova}99 !important; transition:box-shadow .25s ease, border-color .25s ease; animation:inputGlow 2.6s ease-in-out infinite}
+        @keyframes inputGlow{0%,100%{box-shadow:0 0 0 1.5px ${t.nova}66, 0 0 12px ${t.nova}55}50%{box-shadow:0 0 0 1.5px ${t.nova}, 0 0 20px ${t.nova}99}}
+        .login-input-glow:focus-within{box-shadow:0 0 0 2px ${t.nova}, 0 0 24px ${t.nova}cc; animation:none}
         @media (prefers-reduced-motion:reduce){.nova-glow,.login-tri,.login-input-glow{animation:none}}
       `}</style>
       <Login t={t} s={s} lang={lang} onEnter={() => setAuthed(true)} />
