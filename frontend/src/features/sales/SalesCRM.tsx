@@ -191,6 +191,18 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     }
   };
 
+  const toggleAutoCrear = async (fuenteId: number, valor: boolean) => {
+    setAsignandoCliente(fuenteId);
+    try {
+      await api.put(`/ingesta/fuentes/${fuenteId}`, { auto_crear_ventas: valor });
+      cargarFuentes();
+    } catch {
+      alert("No se pudo actualizar la generación automática. Intenta de nuevo.");
+    } finally {
+      setAsignandoCliente(null);
+    }
+  };
+
   const borrar = async (id: number, nombre: string) => {
     if (!window.confirm(`¿Eliminar la fuente "${nombre}" y todos sus datos? Esta acción no se puede deshacer.`)) return;
     setBorrando(id);
@@ -425,6 +437,17 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
                     <option value="">Sin asignar (solo BI)</option>
                     {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
+                  ·
+                  <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: asignandoCliente === f.id ? "default" : "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={!!f.auto_crear_ventas}
+                      disabled={asignandoCliente === f.id}
+                      onChange={(e) => toggleAutoCrear(f.id, e.target.checked)}
+                      style={{ cursor: asignandoCliente === f.id ? "default" : "pointer" }}
+                    />
+                    Generar pedidos automáticamente
+                  </label>
                   {asignandoCliente === f.id && "guardando..."}
                 </div>
               </div>
