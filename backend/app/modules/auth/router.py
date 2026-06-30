@@ -1,11 +1,13 @@
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from typing import Annotated, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func as sqlfunc
 from datetime import timedelta
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.api import deps
 from app.modules.auth import schemas, service
@@ -14,10 +16,23 @@ from app.core import security
 from app.core.config import settings
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
+
+# Roles que manejan dinero/datos sensibles: 2FA es obligatorio para ellos.
+MANDATORY_2FA_ROLES = {"Administrador", "Contador"}
+
+
+def _needs_2fa_setup(user: User) -> bool:
+    if user.two_factor_enabled:
+        return False
+    role_name = user.role_obj.name if user.role_obj else None
+    return bool(user.is_superuser or role_name in MANDATORY_2FA_ROLES)
 
 
 @router.post("/login", response_model=schemas.LoginResponse)
+@limiter.limit("10/minute")
 async def login_for_access_token(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(deps.get_db)]
 ):
@@ -40,11 +55,16 @@ async def login_for_access_token(
     access_token = security.create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer", "requires_2fa": False}
+    return {
+        "access_token": access_token, "token_type": "bearer", "requires_2fa": False,
+        "must_setup_2fa": _needs_2fa_setup(user),
+    }
 
 
 @router.post("/login/2fa", response_model=schemas.Token)
+@limiter.limit("10/minute")
 async def login_verify_2fa(
+    request: Request,
     body: schemas.TwoFactorVerify,
     db: Annotated[AsyncSession, Depends(deps.get_db)],
 ):
@@ -74,7 +94,9 @@ async def login_verify_2fa(
 # usuarios, pero al inicio la base está vacía. Se auto-deshabilita en cuanto
 # exista al menos un usuario, así que no es un hueco de seguridad permanente.
 @router.post("/setup", response_model=schemas.User)
+@limiter.limit("5/minute")
 async def setup_first_admin(
+    request: Request,
     user_in: schemas.UserCreate,
     db: Annotated[AsyncSession, Depends(deps.get_db)]
 ):

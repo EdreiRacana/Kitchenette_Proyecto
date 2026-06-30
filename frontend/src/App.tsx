@@ -744,6 +744,7 @@ function Login({ t, s, lang, onEnter }) {
       if (!token) throw new Error("no token");
 
       localStorage.setItem("token", token);
+      localStorage.setItem("must_setup_2fa", res.data?.must_setup_2fa ? "1" : "0");
       onEnter();
     } catch (err) {
       const status = err?.response?.status;
@@ -770,6 +771,7 @@ function Login({ t, s, lang, onEnter }) {
       const token = res.data?.access_token;
       if (!token) throw new Error("no token");
       localStorage.setItem("token", token);
+      localStorage.setItem("must_setup_2fa", "0");
       onEnter();
     } catch (err) {
       const status = err?.response?.status;
@@ -1402,6 +1404,12 @@ export default function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [searchNav, setSearchNav] = useState(null);
   const [perms, setPerms] = useState(null);
+  const [must2fa, setMust2fa] = useState(() => localStorage.getItem("must_setup_2fa") === "1");
+  useEffect(() => {
+    const onResolved = () => setMust2fa(false);
+    window.addEventListener("must_setup_2fa_resolved", onResolved);
+    return () => window.removeEventListener("must_setup_2fa_resolved", onResolved);
+  }, []);
   const t = THEMES[theme];
   const s = STRINGS[lang];
 
@@ -1466,7 +1474,7 @@ export default function App() {
     contabilidad: <AccountingModule t={t} s={s} />,
     rh: <HRModule t={t} s={s} />,
     reportes: <BIModule t={t} s={s} />,
-    config: <ConfigModule t={t} s={s} />,
+    config: <ConfigModule t={t} s={s} initialTab={must2fa ? "security" : undefined} />,
   };
 
   return (
@@ -1487,7 +1495,26 @@ export default function App() {
       `}</style>
       <Sidebar t={t} s={s} page={page} setPage={goToPage} collapsed={collapsed} setCollapsed={setCollapsed} mobile={isMobile} mobileOpen={mobileNavOpen} setMobileOpen={setMobileNavOpen} allowedIds={allowedModuleIds} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
-        <Topbar t={t} s={s} lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} onLogout={() => { localStorage.removeItem("token"); setAuthed(false); }} isMobile={isMobile} onMenuClick={() => setMobileNavOpen(true)} onNavigate={handleSearchNavigate} />
+        <Topbar t={t} s={s} lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} onLogout={() => { localStorage.removeItem("token"); localStorage.removeItem("must_setup_2fa"); setAuthed(false); }} isMobile={isMobile} onMenuClick={() => setMobileNavOpen(true)} onNavigate={handleSearchNavigate} />
+        {must2fa && page !== "config" && (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
+            background: (t.bad ?? "#e5484d") + "18", borderBottom: `1px solid ${(t.bad ?? "#e5484d")}55`,
+            padding: "10px 24px", fontSize: 13, color: t.textHi,
+          }}>
+            <span>
+              {lang === "en"
+                ? "Your role requires two-factor authentication (2FA). Set it up now to keep your account secure."
+                : "Tu rol requiere autenticación de dos factores (2FA). Actívala ahora para mantener tu cuenta segura."}
+            </span>
+            <button onClick={() => goToPage("config")} style={{
+              border: "none", cursor: "pointer", color: "#fff", fontSize: 12.5, fontWeight: 600,
+              padding: "7px 14px", borderRadius: 8, background: t.bad ?? "#e5484d",
+            }}>
+              {lang === "en" ? "Set up 2FA" : "Activar 2FA"}
+            </button>
+          </div>
+        )}
         <main style={{ flex: 1, padding: isMobile ? 12 : 24, overflowX: "hidden", position: "relative" }}>
           {theme === "dark" && (
             <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>

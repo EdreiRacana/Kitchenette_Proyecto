@@ -4,6 +4,9 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from app.core.config import settings
 from app.api.v1.api import api_router
 
@@ -14,17 +17,25 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
 )
 
+# ── Rate limiting ────────────────────────────────────────────────────────────
+# Protege endpoints sensibles (login, etc.) contra fuerza bruta. Límite por IP.
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # ── CORS ─────────────────────────────────────────────────────────────────────
 # IMPORTANTE: con allow_credentials=True NO se puede usar allow_origins=["*"].
 # El estándar CORS lo prohíbe, y FastAPI entonces omite el header
 # Access-Control-Allow-Origin → el navegador bloquea todo. Por eso listamos
 # los orígenes explícitos del frontend (producción + desarrollo local).
-ALLOWED_ORIGINS = [
-    "https://sthenova-frontend.onrender.com",  # frontend en producción
-    "http://localhost:5173",                   # Vite dev server
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",                   # por si usas otro puerto
-]
+ALLOWED_ORIGINS = [settings.FRONTEND_URL]
+if settings.ENVIRONMENT != "production":
+    # Puertos locales de desarrollo: jamás se exponen en producción.
+    ALLOWED_ORIGINS += [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+    ]
 
 app.add_middleware(
     CORSMiddleware,

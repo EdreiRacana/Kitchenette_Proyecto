@@ -66,8 +66,8 @@ function errorMessage(err: any, fallback: string): string {
 const PERM_LABELS = { view: "Ver", create: "Crear", edit: "Editar", delete: "Eliminar", approve: "Aprobar" };
 const PERM_COLORS = { view: "#60A5FA", create: "#34D399", edit: "#FBBF24", delete: "#F87171", approve: "#A78BFA" };
 
-export default function ConfigModule({ t, s, company }: { t: any; s: any; company?: any }) {
-  const [tab, setTab] = useState<"company" | "users" | "roles" | "fiscal" | "integrations" | "automation" | "security" | "preferences">("company");
+export default function ConfigModule({ t, s, company, initialTab }: { t: any; s: any; company?: any; initialTab?: "company" | "users" | "roles" | "fiscal" | "integrations" | "automation" | "security" | "preferences" }) {
+  const [tab, setTab] = useState<"company" | "users" | "roles" | "fiscal" | "integrations" | "automation" | "security" | "preferences">(initialTab || "company");
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [permList, setPermList] = useState<PermissionDef[]>([]);
@@ -1068,6 +1068,8 @@ function TwoFactorCard({ t, card, sectionTitle }: any) {
       const r = await configService.enable2fa(code);
       setBackupCodes(r.backup_codes);
       setQr(""); setCode(""); setEnabled(true);
+      localStorage.setItem("must_setup_2fa", "0");
+      window.dispatchEvent(new Event("must_setup_2fa_resolved"));
     } catch (err: any) { setError(errorMessage(err, "Código inválido.")); }
     finally { setBusy(false); }
   };

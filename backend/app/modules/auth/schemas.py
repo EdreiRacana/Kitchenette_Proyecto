@@ -81,6 +81,11 @@ class LoginResponse(BaseModel):
     token_type: Optional[str] = None
     requires_2fa: bool = False
     login_token: Optional[str] = None  # token corto de un solo uso para completar /login/2fa
+    # True cuando el rol del usuario exige 2FA (admin/contador) pero aún no lo
+    # activó. El acceso se concede igual (no es un bloqueo duro) para no dejar
+    # al usuario sin forma de entrar y activarlo; el frontend debe forzar el
+    # flujo de configuración de 2FA antes de dejarlo usar el resto de la app.
+    must_setup_2fa: bool = False
 
 class TwoFactorVerify(BaseModel):
     login_token: str

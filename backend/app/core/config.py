@@ -6,6 +6,9 @@ import os
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Sthenova ERP"
     API_V1_STR: str = "/api/v1"
+    # ENVIRONMENT controla validaciones de seguridad estrictas (ver __init__).
+    # Debe establecerse explícitamente a "production" en el hosting real.
+    ENVIRONMENT: str = "development"
     SECRET_KEY: str = "changethis"  # Overridden by the SECRET_KEY env var in production
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8  # 8 days
@@ -17,7 +20,9 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "sthenova"
     SQLALCHEMY_DATABASE_URI: str | None = None
 
-    # CORS
+    # CORS: dominio del frontend en producción. En desarrollo se agregan
+    # además los puertos locales típicos de Vite (ver main.py).
+    FRONTEND_URL: str = "https://sthenova-frontend.onrender.com"
     BACKEND_CORS_ORIGINS: List[str] = ["*"]
 
     # Almacenamiento de archivos (documentos de proveedores, imágenes, etc.)
@@ -29,6 +34,19 @@ class Settings(BaseSettings):
 
     def __init__(self, **data):
         super().__init__(**data)
+        if self.ENVIRONMENT == "production":
+            insecure_defaults = []
+            if self.SECRET_KEY == "changethis":
+                insecure_defaults.append("SECRET_KEY")
+            if self.POSTGRES_PASSWORD == "password":
+                insecure_defaults.append("POSTGRES_PASSWORD")
+            if insecure_defaults:
+                raise RuntimeError(
+                    "ENVIRONMENT=production pero las siguientes variables siguen con su "
+                    f"valor inseguro por defecto: {', '.join(insecure_defaults)}. "
+                    "Define valores fuertes y únicos en las variables de entorno del hosting "
+                    "antes de arrancar en producción."
+                )
         if not self.SQLALCHEMY_DATABASE_URI:
             db_url = os.getenv("DATABASE_URL")
             if db_url:
