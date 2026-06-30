@@ -9,7 +9,7 @@ import {
   Upload, Zap, Settings2, CheckCircle, AlertTriangle, FileSpreadsheet, Check, Trash2, ChevronLeft, Pencil,
   RotateCcw,
 } from "lucide-react";
-import api from "../../services/api";
+import api, { onServerWaking } from "../../services/api";
 import IngestaConfigurador from "./IngestaConfigurador";
 import { resolveTheme, makeTr, money, dateShort, statusColors, statusMeta, paymentLabel, ORDER_PIPELINE, PAYMENT_METHODS } from "./theme";
 import type { Tokens } from "./theme";
@@ -165,6 +165,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
   const [borrando, setBorrando] = useState<number | null>(null);
   const [resultado, setResultado] = useState<ResultadoLote | null>(null);
   const [subiendo, setSubiendo] = useState(false);
+  const [serverWaking, setServerWaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generandoVentas, setGenerandoVentas] = useState(false);
   const [ventasGeneradas, setVentasGeneradas] = useState<{ ordenes_creadas: number } | null>(null);
@@ -178,6 +179,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
   };
 
   useEffect(() => { cargarFuentes(); salesApi.customers().then(setCustomers).catch(() => {}); }, []);
+  useEffect(() => onServerWaking(setServerWaking), []);
 
   const asignarCliente = async (fuenteId: number, customerId: number | "") => {
     setAsignandoCliente(fuenteId);
@@ -391,7 +393,10 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
 
       {subiendo && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.nova + "18", border: `1px solid ${tk.nova}44`, color: tk.nova, borderRadius: 10, padding: "12px 14px", fontSize: 13 }}>
-          <Upload size={16} /> Procesando archivo... esto puede tomar unos segundos.
+          <Upload size={16} />
+          {serverWaking
+            ? "El servidor estaba inactivo y se está reactivando — esto puede tardar hasta 1-2 minutos. No cierres ni recargues esta página."
+            : "Procesando archivo... esto puede tomar unos segundos."}
         </div>
       )}
 
