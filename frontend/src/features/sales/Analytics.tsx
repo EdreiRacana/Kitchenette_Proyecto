@@ -253,7 +253,7 @@ export function Analytics({ tk, tr, trend, topCustomers, topProducts, customers,
               {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
-          <CombinedChart tk={tk} data={trend} />
+          <AreaTrendChart tk={tk} data={trend} />
           <ChartLegend tk={tk} hasGoal={hasGoal} />
         </div>
         <AverageReturnsCard tk={tk} tr={tr} avgReturns={avgReturns} customerName={customerName} />
