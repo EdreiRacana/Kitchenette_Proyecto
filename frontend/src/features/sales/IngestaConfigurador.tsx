@@ -301,9 +301,27 @@ export default function IngestaConfigurador({ tk, fuenteId, onGuardado, onCancel
         : await api.post("/ingesta/fuentes", payload);
       if (!modoEdicion && tipoIngesta === "api" && res.data.api_key) {
         setCreada({ id: res.data.id, tipo_ingesta: res.data.tipo_ingesta, api_key: res.data.api_key });
-      } else if (onGuardado) {
-        onGuardado(res.data.id);
+        return;
       }
+      // El archivo que se usó para configurar el mapeo es real: lo subimos y
+      // procesamos de una vez, para que el usuario no tenga que repetir el
+      // paso de "Subir reporte" por separado tras configurar la fuente.
+      if (archivo && tipoIngesta !== "api") {
+        try {
+          const fd = new FormData();
+          fd.append("archivo", archivo);
+          const subRes = await api.post(`/ingesta/fuentes/${res.data.id}/upload`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+          alert(
+            `Perfil guardado y archivo procesado: ${subRes.data.filas_ok} registro(s) cargados` +
+            (subRes.data.filas_error ? `, ${subRes.data.filas_error} con error.` : ".") +
+            (autoCrearVentas ? " Los pedidos de venta se generaron automáticamente." : " Ve a Historial y pulsa \"Generar / revisar ventas\" para crear los pedidos.")
+          );
+        } catch (uploadErr: unknown) {
+          const ue = uploadErr as { response?: { data?: { detail?: string } } };
+          alert(`El perfil se guardó, pero el archivo no se pudo procesar: ${ue?.response?.data?.detail ?? "intenta subirlo de nuevo desde \"Subir reporte\"."}`);
+        }
+      }
+      if (onGuardado) onGuardado(res.data.id);
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } } };
       setError(e?.response?.data?.detail ?? "Error al guardar. Intenta de nuevo.");
