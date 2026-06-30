@@ -96,11 +96,11 @@ const inputStyle = (tk: Tokens): CSSProperties => ({
   background: tk.inputBg, color: tk.textHi, fontSize: 14, boxSizing: "border-box", outline: "none",
 });
 
-export function TextInput({ tk, value, onChange, placeholder, type = "text" }: {
-  tk: Tokens; value: string; onChange: (v: string) => void; placeholder?: string; type?: string;
+export function TextInput({ tk, value, onChange, placeholder, type = "text", list }: {
+  tk: Tokens; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; list?: string;
 }) {
   return (
-    <input type={type} value={value} placeholder={placeholder}
+    <input type={type} value={value} placeholder={placeholder} list={list}
       onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
       style={inputStyle(tk)}
       onFocus={(e) => (e.currentTarget.style.borderColor = tk.accent)}

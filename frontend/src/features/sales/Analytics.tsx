@@ -1,57 +1,104 @@
-// Lightweight analytics: dependency-free SVG combined chart (sales bars +
-// returns line + goal line) + top lists + average-returns metric, all
-// filterable by customer.
+// Lightweight analytics: dependency-free SVG area chart (sales area at the
+// back, returns area layered on top) + goal line + interactive tooltip +
+// top lists + average-returns metric, all filterable by customer.
 
+import { useState } from "react";
 import type { Tokens, Translator } from "./theme";
 import { money } from "./theme";
 import type { TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns, CustomerForecast } from "./types";
 import { EmptyState } from "./ui";
 
-function CombinedChart({ tk, data }: { tk: Tokens; data: TrendPoint[] }) {
+function AreaTrendChart({ tk, data }: { tk: Tokens; data: TrendPoint[] }) {
+  const [hover, setHover] = useState<number | null>(null);
   if (!data.length) return <EmptyState tk={tk} title="Sin datos de tendencia" />;
-  const W = 720, H = 220, pad = 28;
-  const max = Math.max(...data.map((d) => Math.max(d.total, d.returns_total, d.goal ?? 0)), 1);
-  const bw = (W - pad * 2) / data.length;
-  const labelEvery = Math.ceil(data.length / 8);
-  const yFor = (v: number) => H - pad - (H - pad * 2) * (v / max);
-  const xFor = (i: number) => pad + i * bw + bw / 2;
 
-  const returnsPath = data.map((d, i) => `${i === 0 ? "M" : "L"}${xFor(i)},${yFor(d.returns_total)}`).join(" ");
+  const W = 720, H = 240, padL = 8, padR = 8, padT = 14, padB = 28;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const max = Math.max(...data.map((d) => Math.max(d.total, d.returns_total, d.goal ?? 0)), 1) * 1.08;
+  const step = data.length > 1 ? innerW / (data.length - 1) : 0;
+  const labelEvery = Math.ceil(data.length / 8);
+  const yFor = (v: number) => padT + innerH - innerH * (v / max);
+  const xFor = (i: number) => padL + i * step;
+
+  const lineFor = (key: "total" | "returns_total") =>
+    data.map((d, i) => `${i === 0 ? "M" : "L"}${xFor(i)},${yFor(d[key])}`).join(" ");
+  const areaFor = (key: "total" | "returns_total") => {
+    const line = lineFor(key);
+    return `${line} L${xFor(data.length - 1)},${padT + innerH} L${xFor(0)},${padT + innerH} Z`;
+  };
   const hasGoal = data.some((d) => d.goal != null);
-  const goalPath = hasGoal
-    ? data.map((d, i) => `${i === 0 ? "M" : "L"}${xFor(i)},${yFor(d.goal ?? 0)}`).join(" ")
-    : "";
+  const goalPath = hasGoal ? lineFor("goal" as "total") : "";
+
+  const accent = tk.accent, bad = tk.bad ?? "#e5484d";
+  const hd = hover != null ? data[hover] : null;
+  const tipLeft = hover != null ? Math.min(Math.max((xFor(hover) / W) * 100, 14), 86) : 0;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
-      {[0.25, 0.5, 0.75, 1].map((g) => (
-        <line key={g} x1={pad} x2={W - pad} y1={H - pad - (H - pad * 2) * g} y2={H - pad - (H - pad * 2) * g}
-          stroke={tk.border} strokeWidth={1} strokeDasharray="3 4" />
-      ))}
-      {data.map((d, i) => {
-        const h = (H - pad * 2) * (d.total / max);
-        const x = pad + i * bw + bw * 0.18;
-        const w = bw * 0.64;
-        const y = H - pad - h;
-        return (
-          <g key={i}>
-            <rect x={x} y={y} width={w} height={Math.max(h, 1)} rx={3} fill={tk.accent} opacity={0.85}>
-              <title>{`${d.period}: ${money(d.total)} ventas, ${money(d.returns_total)} devoluciones`}</title>
-            </rect>
-            {i % labelEvery === 0 && (
-              <text x={x + w / 2} y={H - pad + 14} fontSize={9} fill={tk.textLo} textAnchor="middle">
-                {d.period.slice(5)}
-              </text>
-            )}
-          </g>
-        );
-      })}
-      <path d={returnsPath} fill="none" stroke={tk.bad ?? "#e5484d"} strokeWidth={2} />
-      {data.map((d, i) => (
-        <circle key={i} cx={xFor(i)} cy={yFor(d.returns_total)} r={2.5} fill={tk.bad ?? "#e5484d"} />
-      ))}
-      {hasGoal && <path d={goalPath} fill="none" stroke={tk.textLo} strokeWidth={1.5} strokeDasharray="5 4" />}
-    </svg>
+    <div style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}
+        onMouseLeave={() => setHover(null)}
+        onMouseMove={(e) => {
+          const svg = e.currentTarget;
+          const rect = svg.getBoundingClientRect();
+          const relX = ((e.clientX - rect.left) / rect.width) * W;
+          const i = step > 0 ? Math.round((relX - padL) / step) : 0;
+          setHover(Math.min(Math.max(i, 0), data.length - 1));
+        }}>
+        {[0.25, 0.5, 0.75, 1].map((g) => (
+          <line key={g} x1={padL} x2={W - padR} y1={padT + innerH * (1 - g)} y2={padT + innerH * (1 - g)}
+            stroke={tk.border} strokeWidth={1} strokeDasharray="3 4" />
+        ))}
+
+        {/* Ventas: área de fondo, color discreto y translúcido */}
+        <path d={areaFor("total")} fill={accent} opacity={0.16} />
+        <path d={lineFor("total")} fill="none" stroke={accent} strokeWidth={1.75} opacity={0.9} />
+
+        {/* Devoluciones: área superpuesta, más translúcida aún */}
+        <path d={areaFor("returns_total")} fill={bad} opacity={0.22} />
+        <path d={lineFor("returns_total")} fill="none" stroke={bad} strokeWidth={1.75} opacity={0.9} />
+
+        {hasGoal && <path d={goalPath} fill="none" stroke={tk.textLo} strokeWidth={1.25} strokeDasharray="5 4" opacity={0.8} />}
+
+        {data.map((d, i) => i % labelEvery === 0 && (
+          <text key={i} x={xFor(i)} y={H - padB + 16} fontSize={9} fill={tk.textLo} textAnchor="middle">
+            {d.period.slice(5)}
+          </text>
+        ))}
+
+        {hover != null && (
+          <line x1={xFor(hover)} x2={xFor(hover)} y1={padT} y2={padT + innerH} stroke={tk.textLo} strokeWidth={1} strokeDasharray="2 3" opacity={0.6} />
+        )}
+        {hover != null && (
+          <>
+            <circle cx={xFor(hover)} cy={yFor(data[hover].total)} r={3.5} fill={accent} />
+            <circle cx={xFor(hover)} cy={yFor(data[hover].returns_total)} r={3.5} fill={bad} />
+          </>
+        )}
+      </svg>
+
+      {hd && (
+        <div style={{
+          position: "absolute", top: 6, left: `${tipLeft}%`, transform: "translateX(-50%)",
+          background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 8,
+          padding: "8px 10px", fontSize: 11, color: tk.textHi, pointerEvents: "none",
+          boxShadow: "0 4px 14px rgba(0,0,0,.25)", whiteSpace: "nowrap", zIndex: 2,
+        }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>{hd.period}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: accent }} /> Ventas: <strong>{money(hd.total)}</strong>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: bad }} /> Devoluciones: <strong>{money(hd.returns_total)}</strong>
+            {hd.total > 0 && <span style={{ color: tk.textLo }}>({((hd.returns_total / hd.total) * 100).toFixed(1)}%)</span>}
+          </div>
+          {hd.goal != null && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: tk.textLo }} /> Meta: <strong>{money(hd.goal)}</strong>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -103,6 +150,9 @@ function RankPanel<T>({ tk, title, rows, render }: {
 function AverageReturnsCard({ tk, tr, avgReturns, customerName }: {
   tk: Tokens; tr: Translator; avgReturns: AverageReturns | null; customerName: string | null;
 }) {
+  const pct = avgReturns?.return_rate_pct ?? 0;
+  const good = tk.good ?? "#3dd68c", warn = "#f5a623", bad = tk.bad ?? "#e5484d";
+  const pctColor = pct >= 10 ? bad : pct >= 5 ? warn : good;
   return (
     <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: 16, minWidth: 220 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: tk.textHi, marginBottom: 6 }}>
@@ -111,11 +161,22 @@ function AverageReturnsCard({ tk, tr, avgReturns, customerName }: {
       <div style={{ fontSize: 11, color: tk.textLo, marginBottom: 10 }}>
         {customerName ? customerName : tr("sales_avg_returns_all", "Todos los clientes")}
       </div>
-      <div style={{ fontSize: 24, fontWeight: 800, color: tk.textHi }}>
-        {money(avgReturns?.average_amount ?? 0)}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <div style={{ fontSize: 24, fontWeight: 800, color: tk.textHi }}>
+          {money(avgReturns?.average_amount ?? 0)}
+        </div>
+        <div style={{
+          fontSize: 13, fontWeight: 700, color: pctColor, background: pctColor + "1A",
+          borderRadius: 6, padding: "2px 8px",
+        }}>
+          {pct.toFixed(1)}%
+        </div>
       </div>
       <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>
         {avgReturns?.count ?? 0} {tr("sales_returns_count", "ventas canceladas")}
+      </div>
+      <div style={{ fontSize: 11, color: tk.textLo, marginTop: 2 }}>
+        {tr("sales_returns_of_total", "del total de ventas")} ({money(avgReturns?.total_returns ?? 0)} / {money((avgReturns?.total_sales ?? 0) + (avgReturns?.total_returns ?? 0))})
       </div>
     </div>
   );

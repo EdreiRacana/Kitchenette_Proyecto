@@ -4,7 +4,7 @@ import api from "../../services/api";
 import type {
   Order, Paginated, SalesStats, TrendPoint, TopCustomer, TopProduct,
   SalesBySeller, SalesByChannel, OrderFilters, OrderDraft, CustomerLite, AverageReturns, CustomerForecast,
-  CustomerPnLReport, CustomerReturn,
+  CustomerPnLReport, CustomerReturn, SellerLite,
 } from "./types";
 
 export interface VariantOption {
@@ -28,6 +28,7 @@ function draftToPayload(d: OrderDraft) {
   return {
     kind: d.kind,
     customer_id: d.customer_id,
+    seller_user_id: d.seller_user_id,
     payment_method: d.payment_method || null,
     channel: d.channel || null,
     status: d.status,
@@ -102,6 +103,10 @@ export const salesApi = {
     const { data } = await api.get<AverageReturns>(`/sales/analytics/returns-avg`, {
       params: { customer_id: customerId ?? undefined },
     });
+    return data;
+  },
+  async listSellers(): Promise<SellerLite[]> {
+    const { data } = await api.get<SellerLite[]>(`/sales/sellers`);
     return data;
   },
   async customerForecast(customerId: number, months = 6): Promise<CustomerForecast> {

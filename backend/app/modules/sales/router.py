@@ -45,6 +45,11 @@ async def trend(db: DB, current_user: CurrentUser,
     return await service.sales_trend(db, granularity=granularity, days=days, end=end, customer_id=customer_id, branch_warehouse_ids=ids)
 
 
+@router.get("/sellers", response_model=List[schemas.SellerLite])
+async def sellers(db: DB, _: CurrentUser):
+    return await service.list_sellers(db)
+
+
 @router.get("/analytics/returns-avg", response_model=schemas.AverageReturns)
 async def returns_avg(db: DB, current_user: CurrentUser, customer_id: Optional[int] = None):
     ids = await _branch_ids(db, current_user)

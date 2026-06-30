@@ -340,7 +340,7 @@ async def create_order(db: AsyncSession, order_in: schemas.OrderCreate,
         kind=kind,
         customer_id=order_in.customer_id,
         warehouse_id=order_in.warehouse_id,
-        user_id=user_id,
+        user_id=order_in.seller_user_id or user_id,
         status=status,
         payment_method=order_in.payment_method,
         channel=order_in.channel,
@@ -401,6 +401,8 @@ async def update_order(db: AsyncSession, order_id: int,
         val = getattr(data, f)
         if val is not None:
             setattr(order, f, val)
+    if data.seller_user_id is not None:
+        order.user_id = data.seller_user_id
 
     # Item replacement (with stock re-sync)
     if data.items is not None:
@@ -703,6 +705,22 @@ async def _sales_goal_by_month(db: AsyncSession, start: datetime, end: datetime)
     return out
 
 
+async def list_sellers(db: AsyncSession) -> List[schemas.SellerLite]:
+    """Agentes de venta disponibles: empleados activos del módulo de Personal
+    con cuenta de usuario vinculada (por email), para asignar como vendedor."""
+    from app.modules.auth.models import User
+    from app.modules.hr.models import Employee
+
+    stmt = (
+        select(User)
+        .join(Employee, func.lower(Employee.email) == func.lower(User.email))
+        .where(Employee.is_active.is_(True), User.is_active.is_(True))
+        .order_by(User.full_name)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [schemas.SellerLite(id=u.id, full_name=u.full_name, email=u.email) for u in rows]
+
+
 async def get_average_returns(db: AsyncSession, customer_id: Optional[int] = None,
                               branch_warehouse_ids: Optional[List[int]] = None) -> schemas.AverageReturns:
     """Average size of cancelled ("returned") orders, optionally scoped to one
@@ -716,9 +734,30 @@ async def get_average_returns(db: AsyncSession, customer_id: Optional[int] = Non
     stmt = select(
         func.coalesce(func.avg(O.total_amount), 0.0).label("avg_amount"),
         func.count(O.id).label("count"),
+        func.coalesce(func.sum(O.total_amount), 0.0).label("sum_amount"),
     ).where(*conds)
     row = (await db.execute(stmt)).one()
-    return schemas.AverageReturns(customer_id=customer_id, average_amount=_r(row.avg_amount or 0.0), count=row.count or 0)
+
+    sales_conds = [O.kind == "order", O.status != "cancelled"]
+    if customer_id is not None:
+        sales_conds.append(O.customer_id == customer_id)
+    if branch_warehouse_ids is not None:
+        sales_conds.append(_branch_cond(O, branch_warehouse_ids))
+    sales_stmt = select(func.coalesce(func.sum(O.total_amount), 0.0)).where(*sales_conds)
+    total_sales = (await db.execute(sales_stmt)).scalar() or 0.0
+
+    total_returns = row.sum_amount or 0.0
+    denom = total_sales + total_returns
+    return_rate_pct = (total_returns / denom * 100) if denom > 0 else 0.0
+
+    return schemas.AverageReturns(
+        customer_id=customer_id,
+        average_amount=_r(row.avg_amount or 0.0),
+        count=row.count or 0,
+        total_returns=_r(total_returns),
+        total_sales=_r(total_sales),
+        return_rate_pct=_r(return_rate_pct),
+    )
 
 
 async def get_customer_forecast(db: AsyncSession, customer_id: int, months: int = 6) -> schemas.CustomerForecast:
@@ -982,13 +1021,18 @@ async def _customer_pnl_breakdown(
     )
     net_sales = gross_sales - returns_amount - discounts
     gross_margin = net_sales - cogs
-    net_contribution = gross_margin - shipping_costs
+    # Retenciones fiscales mexicanas vigentes: IVA 50% de la tasa estándar
+    # (50% * 16% = 8%) + ISR 2.5%, aplicadas sobre la venta neta.
+    IVA_RETENTION_RATE = 0.08
+    ISR_RETENTION_RATE = 0.025
+    withholdings = max(net_sales, 0) * (IVA_RETENTION_RATE + ISR_RETENTION_RATE)
+    net_contribution = gross_margin - shipping_costs - withholdings
 
     breakdown = schemas.CustomerPnLBreakdown(
         gross_sales=_r(gross_sales), returns=_r(returns_amount), allowances=0.0,
         discounts=_r(discounts), net_sales=_r(net_sales), cogs=_r(cogs),
         gross_margin=_r(gross_margin), shipping_costs=_r(shipping_costs),
-        withholdings=0.0, net_contribution=_r(net_contribution), orders_count=len(active),
+        withholdings=_r(withholdings), net_contribution=_r(net_contribution), orders_count=len(active),
     )
     return breakdown, orders, list(returns)
 

@@ -78,6 +78,7 @@ class OrderBase(BaseModel):
     kind: Literal["order", "quote"] = "order"
     customer_id: Optional[int] = None
     warehouse_id: Optional[int] = None
+    seller_user_id: Optional[int] = None
     payment_method: Optional[str] = None
     channel: Optional[str] = None
     currency: str = "MXN"
@@ -115,6 +116,7 @@ class OrderUpdate(BaseModel):
     """Full edit of an order header + (optionally) its items."""
     customer_id: Optional[int] = None
     warehouse_id: Optional[int] = None
+    seller_user_id: Optional[int] = None
     payment_method: Optional[str] = None
     channel: Optional[str] = None
     status: Optional[str] = None
@@ -244,6 +246,9 @@ class AverageReturns(BaseModel):
     customer_id: Optional[int] = None
     average_amount: float
     count: int
+    total_returns: float = 0.0
+    total_sales: float = 0.0
+    return_rate_pct: float = 0.0
 
 
 class CustomerForecast(BaseModel):

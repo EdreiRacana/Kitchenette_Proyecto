@@ -13,7 +13,7 @@ import api, { onServerWaking } from "../../services/api";
 import IngestaConfigurador from "./IngestaConfigurador";
 import { resolveTheme, makeTr, money, dateShort, statusColors, statusMeta, paymentLabel, ORDER_PIPELINE, PAYMENT_METHODS } from "./theme";
 import type { Tokens } from "./theme";
-import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns, CustomerForecast, CustomerReturn } from "./types";
+import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns, CustomerForecast, CustomerReturn, SellerLite } from "./types";
 import { salesApi } from "./api";
 import type { VariantOption } from "./api";
 import { Spinner, Badge, Button, EmptyState, Spinkeyframes } from "./ui";
@@ -515,6 +515,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const [avgReturns, setAvgReturns] = useState<AverageReturns | null>(null);
   const [forecast, setForecast] = useState<CustomerForecast | null>(null);
   const [variants, setVariants] = useState<VariantOption[]>([]);
+  const [sellers, setSellers] = useState<SellerLite[]>([]);
 
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -654,6 +655,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const loadCatalogs = useCallback(async () => {
     salesApi.customers().then(setCustomers).catch(() => {});
     salesApi.variantOptions().then(setVariants).catch(() => {});
+    salesApi.listSellers().then(setSellers).catch(() => {});
   }, []);
 
   const refreshData = useCallback(async () => {
@@ -898,31 +900,31 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
             avgReturns={avgReturns} forecast={forecast} />
         )
       ) : view === "pipeline" ? (
-        <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 8 }}>
+        <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8 }}>
           {ORDER_PIPELINE.map((col) => {
             const colOrders = orders.filter((o) => o.kind === "order" && o.status === col);
             const sc = statusColors(tk, col);
             return (
               <div key={col} onDragOver={(e) => { e.preventDefault(); setDragCol(col); }} onDrop={() => { if (dragId !== null) { const o = orders.find((x) => x.id === dragId); if (o) changeStatus(o, col); } setDragId(null); setDragCol(null); }}
-                style={{ flex: "0 0 270px", background: dragCol === col ? sc.bg : tk.panel, border: `2px solid ${dragCol === col ? sc.border : tk.border}`, borderRadius: 12, padding: 12, minHeight: 320, transition: "border .2s, background .2s" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                  <span style={{ fontWeight: 700, color: sc.text, fontSize: 14 }}>{statusMeta(col).label}</span>
+                style={{ flex: "0 0 220px", background: dragCol === col ? sc.bg : tk.panel, border: `2px solid ${dragCol === col ? sc.border : tk.border}`, borderRadius: 10, padding: 10, minHeight: 0, maxHeight: 460, overflowY: "auto", transition: "border .2s, background .2s" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <span style={{ fontWeight: 700, color: sc.text, fontSize: 13 }}>{statusMeta(col).label}</span>
                   <Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{ordersLoading ? "…" : colOrders.length}</Badge>
                 </div>
-                <div style={{ fontSize: 12, color: tk.textLo, marginBottom: 10 }}>{ordersLoading ? "" : money(colOrders.reduce((a, b) => a + b.total_amount, 0))}</div>
+                <div style={{ fontSize: 11, color: tk.textLo, marginBottom: 8 }}>{ordersLoading ? "" : money(colOrders.reduce((a, b) => a + b.total_amount, 0))}</div>
                 {ordersLoading ? Array.from({ length: 2 }).map((_, i) => (
-                  <div key={i} style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
-                    <Skel tk={tk} w="50%" h={12} style={{ marginBottom: 6 }} /><Skel tk={tk} w="75%" h={11} style={{ marginBottom: 6 }} /><Skel tk={tk} w="40%" h={13} />
+                  <div key={i} style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 8, padding: "8px 10px", marginBottom: 6 }}>
+                    <Skel tk={tk} w="50%" h={11} style={{ marginBottom: 5 }} /><Skel tk={tk} w="75%" h={10} style={{ marginBottom: 5 }} /><Skel tk={tk} w="40%" h={12} />
                   </div>
                 )) : colOrders.map((o) => (
                   <div key={o.id} draggable onDragStart={() => setDragId(o.id)} onClick={() => openDetail(o)}
-                    style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10, cursor: "grab", opacity: dragId === o.id ? 0.5 : 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: tk.accent, marginBottom: 4 }}>{o.folio}</div>
-                    <div style={{ fontSize: 12, color: tk.textHi, marginBottom: 4 }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</div>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: tk.textHi }}>{money(o.total_amount)}</div>
+                    style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 8, padding: "8px 10px", marginBottom: 6, cursor: "grab", opacity: dragId === o.id ? 0.5 : 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: tk.accent, marginBottom: 2 }}>{o.folio}</div>
+                    <div style={{ fontSize: 11, color: tk.textHi, marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</div>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: tk.textHi }}>{money(o.total_amount)}</div>
                   </div>
                 ))}
-                {!ordersLoading && colOrders.length === 0 && <div style={{ textAlign: "center", color: tk.textLo, fontSize: 12, padding: "24px 0", opacity: 0.6 }}>—</div>}
+                {!ordersLoading && colOrders.length === 0 && <div style={{ textAlign: "center", color: tk.textLo, fontSize: 11, padding: "16px 0", opacity: 0.6 }}>—</div>}
               </div>
             );
           })}
@@ -1030,7 +1032,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
         </div>
       )}
 
-      <OrderForm tk={tk} tr={tr} open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} onSubmit={handleSubmit} editing={editing} customers={customers} variants={variants} saving={saving} />
+      <OrderForm tk={tk} tr={tr} open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} onSubmit={handleSubmit} editing={editing} customers={customers} variants={variants} sellers={sellers} saving={saving} />
       <PaymentModal tk={tk} tr={tr} open={!!payTarget} onClose={() => setPayTarget(null)} order={payTarget} onSubmit={handlePay} saving={saving} />
       <OrderDrawer tk={tk} tr={tr} order={selected} onClose={() => setSelected(null)} onEdit={openEdit} onPay={(o) => { setPayTarget(o); }} onMarkPaid={markPaid} onConvert={convert} onCancel={cancel} onInvoice={invoice} />
     </div>

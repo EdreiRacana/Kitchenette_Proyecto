@@ -112,7 +112,7 @@ export interface SalesStats {
 
 export interface TrendPoint { period: string; total: number; count: number; returns_total: number; goal: number | null; }
 export interface TopCustomer { customer_id: number | null; name: string; total: number; orders: number; }
-export interface AverageReturns { customer_id: number | null; average_amount: number; count: number; }
+export interface AverageReturns { customer_id: number | null; average_amount: number; count: number; total_returns: number; total_sales: number; return_rate_pct: number; }
 export interface CustomerForecast {
   customer_id: number | null;
   customer_name: string;
@@ -209,6 +209,7 @@ export interface OrderItemDraft {
 export interface OrderDraft {
   kind: OrderKind;
   customer_id: number | null;
+  seller_user_id: number | null;
   payment_method: string;
   channel: string;
   status?: string;
