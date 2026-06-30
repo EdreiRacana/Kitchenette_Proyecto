@@ -251,6 +251,7 @@ class Recipe(Base):
     name = Column(String, nullable=True)
     labor_cost = Column(Float, default=0)
     overhead_cost = Column(Float, default=0)
+    extra_costs = Column(JSON, nullable=True)  # [{description, amount}, ...] gastos extra (transporte, corte, maquila...)
     yield_quantity = Column(Integer, default=1)  # unidades de salida que produce 1 corrida
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

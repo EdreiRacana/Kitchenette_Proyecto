@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, FileText } from "lucide-react";
 import type { Tokens, Translator } from "./theme";
 import { money, PAYMENT_METHODS, CHANNELS } from "./theme";
-import type { Order, OrderDraft, OrderItemDraft, CustomerLite } from "./types";
+import type { Order, OrderDraft, OrderItemDraft, CustomerLite, SellerLite } from "./types";
 import type { VariantOption } from "./api";
 import { Modal, Field, TextInput, NumberInput, Select, Button, IconButton } from "./ui";
 
@@ -21,7 +21,7 @@ function emptyItem(): OrderItemDraft {
 
 function blankDraft(): OrderDraft {
   return {
-    kind: "order", customer_id: null, payment_method: "transfer", channel: "mostrador",
+    kind: "order", customer_id: null, seller_user_id: null, payment_method: "transfer", channel: "mostrador",
     status: undefined, discount_type: "amount", discount_value: 0, tax_rate: 16,
     shipping_amount: 0, notes: "", due_date: "", valid_until: "",
     bill_rfc: "", bill_name: "", bill_use: "G03", bill_regime: "", bill_zip: "",
@@ -31,7 +31,8 @@ function blankDraft(): OrderDraft {
 
 function fromOrder(o: Order): OrderDraft {
   return {
-    kind: o.kind, customer_id: o.customer_id, payment_method: o.payment_method ?? "",
+    kind: o.kind, customer_id: o.customer_id, seller_user_id: o.seller?.id ?? o.user_id ?? null,
+    payment_method: o.payment_method ?? "",
     channel: o.channel ?? "", status: o.status, discount_type: o.discount_type,
     discount_value: o.discount_value, tax_rate: o.tax_rate, shipping_amount: o.shipping_amount,
     notes: o.notes ?? "", due_date: o.due_date?.slice(0, 10) ?? "", valid_until: o.valid_until?.slice(0, 10) ?? "",
@@ -103,11 +104,11 @@ function ProductCombo({ tk, tr, variants, value, onPick }: {
 }
 
 export function OrderForm({
-  tk, tr, open, onClose, onSubmit, editing, customers, variants, saving,
+  tk, tr, open, onClose, onSubmit, editing, customers, variants, sellers, saving,
 }: {
   tk: Tokens; tr: Translator; open: boolean; onClose: () => void;
   onSubmit: (draft: OrderDraft) => void; editing: Order | null;
-  customers: CustomerLite[]; variants: VariantOption[]; saving: boolean;
+  customers: CustomerLite[]; variants: VariantOption[]; sellers: SellerLite[]; saving: boolean;
 }) {
   const [draft, setDraft] = useState<OrderDraft>(blankDraft());
   const [showBilling, setShowBilling] = useState(false);
@@ -138,6 +139,7 @@ export function OrderForm({
     : isQuote ? tr("sales_new_quote", "Nueva cotización") : tr("sales_new_order", "Nuevo pedido");
 
   const customerOpts = customers.map((c) => ({ value: String(c.id), label: c.name }));
+  const sellerOpts = sellers.map((s) => ({ value: String(s.id), label: s.full_name || s.email || `#${s.id}` }));
 
   return (
     <Modal tk={tk} open={open} onClose={onClose} title={title} width={780}
@@ -177,6 +179,11 @@ export function OrderForm({
         </Field>
         <Field tk={tk} label={tr("sales_channel", "Canal")}>
           <Select tk={tk} value={draft.channel} onChange={(v) => set({ channel: v })} options={CHANNELS} placeholder="—" />
+        </Field>
+        <Field tk={tk} label={tr("sales_agent", "Agente")} hint={tr("sales_agent_hint", "Personal activo dado de alta en RH")}>
+          <Select tk={tk} value={draft.seller_user_id ? String(draft.seller_user_id) : ""}
+            onChange={(v) => set({ seller_user_id: v ? Number(v) : null })}
+            options={sellerOpts} placeholder={tr("sales_agent_unassigned", "Sin asignar")} />
         </Field>
         {isQuote ? (
           <Field tk={tk} label={tr("sales_valid_until", "Vigencia")}>

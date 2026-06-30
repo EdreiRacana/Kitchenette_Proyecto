@@ -45,6 +45,11 @@ async def trend(db: DB, current_user: CurrentUser,
     return await service.sales_trend(db, granularity=granularity, days=days, end=end, customer_id=customer_id, branch_warehouse_ids=ids)
 
 
+@router.get("/sellers", response_model=List[schemas.SellerLite])
+async def sellers(db: DB, _: CurrentUser):
+    return await service.list_sellers(db)
+
+
 @router.get("/analytics/returns-avg", response_model=schemas.AverageReturns)
 async def returns_avg(db: DB, current_user: CurrentUser, customer_id: Optional[int] = None):
     ids = await _branch_ids(db, current_user)
@@ -85,6 +90,19 @@ async def by_channel(db: DB, current_user: CurrentUser, start: Optional[datetime
 @router.get("/customers/{customer_id}/360", response_model=schemas.Customer360)
 async def customer_360(customer_id: int, db: DB, _: CurrentUser):
     data = await service.customer_360(db, customer_id)
+    if not data:
+        raise HTTPException(404, "Cliente no encontrado")
+    return data
+
+
+@router.get("/customers/{customer_id}/pnl", response_model=schemas.CustomerPnLReport)
+async def customer_pnl(
+    customer_id: int, db: DB, _: CurrentUser,
+    start: datetime, end: datetime,
+):
+    if end <= start:
+        raise HTTPException(400, "El fin del periodo debe ser posterior al inicio")
+    data = await service.customer_pnl_report(db, customer_id, start, end)
     if not data:
         raise HTTPException(404, "Cliente no encontrado")
     return data

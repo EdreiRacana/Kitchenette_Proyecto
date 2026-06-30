@@ -7,12 +7,13 @@ import {
   Search, List, Columns, BarChart3, Plus, Download, DollarSign, Clock,
   TrendingUp, Percent, ChevronRight, ArrowUp, ArrowDown, FileText, Info,
   Upload, Zap, Settings2, CheckCircle, AlertTriangle, FileSpreadsheet, Check, Trash2, ChevronLeft, Pencil,
+  RotateCcw,
 } from "lucide-react";
-import api from "../../services/api";
+import api, { onServerWaking } from "../../services/api";
 import IngestaConfigurador from "./IngestaConfigurador";
 import { resolveTheme, makeTr, money, dateShort, statusColors, statusMeta, paymentLabel, ORDER_PIPELINE, PAYMENT_METHODS } from "./theme";
 import type { Tokens } from "./theme";
-import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns, CustomerForecast } from "./types";
+import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns, CustomerForecast, CustomerReturn, SellerLite } from "./types";
 import { salesApi } from "./api";
 import type { VariantOption } from "./api";
 import { Spinner, Badge, Button, EmptyState, Spinkeyframes } from "./ui";
@@ -22,7 +23,7 @@ import { OrderDrawer } from "./OrderDrawer";
 import { Analytics } from "./Analytics";
 import { DEMO_ORDERS, DEMO_CUSTOMERS, DEMO_VARIANTS } from "./demo";
 
-type ViewMode = "list" | "pipeline" | "analytics" | "ingesta";
+type ViewMode = "list" | "pipeline" | "analytics" | "ingesta" | "returns";
 const PAGE = 20;
 
 // ── Ingesta API ──────────────────────────────────────────────────────────────
@@ -164,9 +165,10 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
   const [borrando, setBorrando] = useState<number | null>(null);
   const [resultado, setResultado] = useState<ResultadoLote | null>(null);
   const [subiendo, setSubiendo] = useState(false);
+  const [serverWaking, setServerWaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generandoVentas, setGenerandoVentas] = useState(false);
-  const [ventasGeneradas, setVentasGeneradas] = useState<{ ordenes_creadas: number } | null>(null);
+  const [ventasGeneradas, setVentasGeneradas] = useState<{ ordenes_creadas: number; pedidos_ya_existentes?: number; devoluciones_generadas?: number } | null>(null);
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [asignandoCliente, setAsignandoCliente] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -177,6 +179,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
   };
 
   useEffect(() => { cargarFuentes(); salesApi.customers().then(setCustomers).catch(() => {}); }, []);
+  useEffect(() => onServerWaking(setServerWaking), []);
 
   const asignarCliente = async (fuenteId: number, customerId: number | "") => {
     setAsignandoCliente(fuenteId);
@@ -185,6 +188,18 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
       cargarFuentes();
     } catch {
       alert("No se pudo asignar el cliente. Intenta de nuevo.");
+    } finally {
+      setAsignandoCliente(null);
+    }
+  };
+
+  const toggleAutoCrear = async (fuenteId: number, valor: boolean) => {
+    setAsignandoCliente(fuenteId);
+    try {
+      await api.put(`/ingesta/fuentes/${fuenteId}`, { auto_crear_ventas: valor });
+      cargarFuentes();
+    } catch {
+      alert("No se pudo actualizar la generación automática. Intenta de nuevo.");
     } finally {
       setAsignandoCliente(null);
     }
@@ -228,7 +243,11 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     setGenerandoLote(loteId);
     try {
       const res = await ingestaApi.generarVentas(loteId);
-      alert(`${res.ordenes_creadas} pedido(s) generado(s) en Ventas. ${res.registros_omitidos ? `${res.registros_omitidos} registro(s) ya estaban vinculados.` : ""}`);
+      const partes = [`${res.ordenes_creadas} pedido(s) generado(s) en Ventas.`];
+      if (res.pedidos_ya_existentes) partes.push(`${res.pedidos_ya_existentes} pedido(s) ya existían de una carga anterior y no se duplicaron.`);
+      if (res.devoluciones_generadas) partes.push(`${res.devoluciones_generadas} se detectaron como devolución/reembolso y se registraron como tal.`);
+      if (res.registros_omitidos) partes.push(`${res.registros_omitidos} registro(s) ya estaban vinculados.`);
+      alert(partes.join(" "));
       if (fuenteHistorial) await verHistorial(fuenteHistorial.id, fuenteHistorial.nombre);
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
@@ -241,7 +260,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     setGenerandoVentas(true); setError(null);
     try {
       const res = await ingestaApi.generarVentas(resultado.lote_id);
-      setVentasGeneradas({ ordenes_creadas: res.ordenes_creadas });
+      setVentasGeneradas({ ordenes_creadas: res.ordenes_creadas, pedidos_ya_existentes: res.pedidos_ya_existentes, devoluciones_generadas: res.devoluciones_generadas });
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       setError(err?.response?.data?.detail ?? "No se pudieron generar las ventas.");
@@ -262,6 +281,12 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
           <CheckCircle size={28} color={tk.good} style={{ margin: "0 auto 10px", display: "block" }} />
           <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{ventasGeneradas.ordenes_creadas} pedido{ventasGeneradas.ordenes_creadas !== 1 ? "s" : ""} generado{ventasGeneradas.ordenes_creadas !== 1 ? "s" : ""} en Ventas</div>
           <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>Ya puedes verlos en el listado de pedidos.</div>
+          {!!ventasGeneradas.pedidos_ya_existentes && (
+            <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>{ventasGeneradas.pedidos_ya_existentes} pedido(s) ya existían de una carga anterior y no se duplicaron.</div>
+          )}
+          {!!ventasGeneradas.devoluciones_generadas && (
+            <div style={{ fontSize: 12, color: tk.warn, marginTop: 4 }}>{ventasGeneradas.devoluciones_generadas} se detectaron como devolución/reembolso y se registraron como tal.</div>
+          )}
         </div>
       ) : (
         <button onClick={generarVentas} disabled={generandoVentas}
@@ -378,7 +403,10 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
 
       {subiendo && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.nova + "18", border: `1px solid ${tk.nova}44`, color: tk.nova, borderRadius: 10, padding: "12px 14px", fontSize: 13 }}>
-          <Upload size={16} /> Procesando archivo... esto puede tomar unos segundos.
+          <Upload size={16} />
+          {serverWaking
+            ? "El servidor estaba inactivo y se está reactivando — esto puede tardar hasta 1-2 minutos. No cierres ni recargues esta página."
+            : "Procesando archivo... esto puede tomar unos segundos."}
         </div>
       )}
 
@@ -424,6 +452,17 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
                     <option value="">Sin asignar (solo BI)</option>
                     {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
+                  ·
+                  <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: asignandoCliente === f.id ? "default" : "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={!!f.auto_crear_ventas}
+                      disabled={asignandoCliente === f.id}
+                      onChange={(e) => toggleAutoCrear(f.id, e.target.checked)}
+                      style={{ cursor: asignandoCliente === f.id ? "default" : "pointer" }}
+                    />
+                    Generar pedidos automáticamente
+                  </label>
                   {asignandoCliente === f.id && "guardando..."}
                 </div>
               </div>
@@ -476,6 +515,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const [avgReturns, setAvgReturns] = useState<AverageReturns | null>(null);
   const [forecast, setForecast] = useState<CustomerForecast | null>(null);
   const [variants, setVariants] = useState<VariantOption[]>([]);
+  const [sellers, setSellers] = useState<SellerLite[]>([]);
 
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -485,6 +525,23 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const [demo, setDemo] = useState(false);
   const [view, setView] = useState<ViewMode>("list");
   const [saving, setSaving] = useState(false);
+
+  const [returns, setReturns] = useState<CustomerReturn[]>([]);
+  const [returnsLoading, setReturnsLoading] = useState(false);
+  const [returnsLoaded, setReturnsLoaded] = useState(false);
+  const loadReturns = useCallback(() => {
+    setReturnsLoading(true);
+    salesApi.returns()
+      .then(setReturns)
+      .catch(() => setReturns([]))
+      .finally(() => { setReturnsLoading(false); setReturnsLoaded(true); });
+  }, []);
+  useEffect(() => { if (view === "returns" && !demo && !returnsLoaded) loadReturns(); }, [view, demo, returnsLoaded, loadReturns]);
+  const cancelReturn = async (id: number) => {
+    if (!window.confirm(tr("sales_returns_cancel_confirm", "¿Cancelar esta devolución? El stock y el saldo del cliente se revertirán."))) return;
+    try { await salesApi.cancelReturn(id); loadReturns(); }
+    catch (err: any) { alert(err?.response?.data?.detail || tr("sales_returns_cancel_error", "Error al cancelar la devolución")); }
+  };
 
   const [q, setQ] = useState(initialQuery || "");
   useEffect(() => { if (initialQuery) setQ(initialQuery); }, [initialQuery]);
@@ -598,6 +655,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const loadCatalogs = useCallback(async () => {
     salesApi.customers().then(setCustomers).catch(() => {});
     salesApi.variantOptions().then(setVariants).catch(() => {});
+    salesApi.listSellers().then(setSellers).catch(() => {});
   }, []);
 
   const refreshData = useCallback(async () => {
@@ -771,7 +829,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
       )}
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        {view !== "ingesta" && (
+        {view !== "ingesta" && view !== "returns" && (
           <>
             <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
               <Search size={16} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: tk.textLo }} />
@@ -796,7 +854,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
         )}
 
         <div style={{ display: "flex", gap: 4 }}>
-          {([["list", List, "Lista"], ["pipeline", Columns, "Pipeline"], ["analytics", BarChart3, "Analytics"], ["ingesta", Upload, "Carga de ventas"]] as const).map(([v, Icon, label]) => (
+          {([["list", List, "Lista"], ["pipeline", Columns, "Pipeline"], ["analytics", BarChart3, "Analytics"], ["returns", RotateCcw, "Devoluciones"], ["ingesta", Upload, "Carga de ventas"]] as const).map(([v, Icon, label]) => (
             <button key={v} onClick={() => setView(v)} title={label}
               style={{ ...inputBase, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, background: view === v ? tk.accent : tk.inputBg, color: view === v ? "#06122B" : tk.textMid, borderColor: view === v ? tk.accent : tk.border }}>
               <Icon size={15} /><span style={{ fontSize: 12 }}>{label}</span>
@@ -804,7 +862,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
           ))}
         </div>
 
-        {view !== "ingesta" && (
+        {view !== "ingesta" && view !== "returns" && (
           <>
             <div style={{ position: "relative" }}>
               <Button tk={tk} variant="ghost" icon={<Download size={16} />} disabled={exporting} onClick={() => setExportMenuOpen((o) => !o)}>
@@ -842,35 +900,83 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
             avgReturns={avgReturns} forecast={forecast} />
         )
       ) : view === "pipeline" ? (
-        <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 8 }}>
+        <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8 }}>
           {ORDER_PIPELINE.map((col) => {
             const colOrders = orders.filter((o) => o.kind === "order" && o.status === col);
             const sc = statusColors(tk, col);
             return (
               <div key={col} onDragOver={(e) => { e.preventDefault(); setDragCol(col); }} onDrop={() => { if (dragId !== null) { const o = orders.find((x) => x.id === dragId); if (o) changeStatus(o, col); } setDragId(null); setDragCol(null); }}
-                style={{ flex: "0 0 270px", background: dragCol === col ? sc.bg : tk.panel, border: `2px solid ${dragCol === col ? sc.border : tk.border}`, borderRadius: 12, padding: 12, minHeight: 320, transition: "border .2s, background .2s" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                  <span style={{ fontWeight: 700, color: sc.text, fontSize: 14 }}>{statusMeta(col).label}</span>
+                style={{ flex: "0 0 220px", background: dragCol === col ? sc.bg : tk.panel, border: `2px solid ${dragCol === col ? sc.border : tk.border}`, borderRadius: 10, padding: 10, minHeight: 0, maxHeight: 460, overflowY: "auto", transition: "border .2s, background .2s" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <span style={{ fontWeight: 700, color: sc.text, fontSize: 13 }}>{statusMeta(col).label}</span>
                   <Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{ordersLoading ? "…" : colOrders.length}</Badge>
                 </div>
-                <div style={{ fontSize: 12, color: tk.textLo, marginBottom: 10 }}>{ordersLoading ? "" : money(colOrders.reduce((a, b) => a + b.total_amount, 0))}</div>
+                <div style={{ fontSize: 11, color: tk.textLo, marginBottom: 8 }}>{ordersLoading ? "" : money(colOrders.reduce((a, b) => a + b.total_amount, 0))}</div>
                 {ordersLoading ? Array.from({ length: 2 }).map((_, i) => (
-                  <div key={i} style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
-                    <Skel tk={tk} w="50%" h={12} style={{ marginBottom: 6 }} /><Skel tk={tk} w="75%" h={11} style={{ marginBottom: 6 }} /><Skel tk={tk} w="40%" h={13} />
+                  <div key={i} style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 8, padding: "8px 10px", marginBottom: 6 }}>
+                    <Skel tk={tk} w="50%" h={11} style={{ marginBottom: 5 }} /><Skel tk={tk} w="75%" h={10} style={{ marginBottom: 5 }} /><Skel tk={tk} w="40%" h={12} />
                   </div>
                 )) : colOrders.map((o) => (
                   <div key={o.id} draggable onDragStart={() => setDragId(o.id)} onClick={() => openDetail(o)}
-                    style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10, cursor: "grab", opacity: dragId === o.id ? 0.5 : 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: tk.accent, marginBottom: 4 }}>{o.folio}</div>
-                    <div style={{ fontSize: 12, color: tk.textHi, marginBottom: 4 }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</div>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: tk.textHi }}>{money(o.total_amount)}</div>
+                    style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 8, padding: "8px 10px", marginBottom: 6, cursor: "grab", opacity: dragId === o.id ? 0.5 : 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: tk.accent, marginBottom: 2 }}>{o.folio}</div>
+                    <div style={{ fontSize: 11, color: tk.textHi, marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</div>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: tk.textHi }}>{money(o.total_amount)}</div>
                   </div>
                 ))}
-                {!ordersLoading && colOrders.length === 0 && <div style={{ textAlign: "center", color: tk.textLo, fontSize: 12, padding: "24px 0", opacity: 0.6 }}>—</div>}
+                {!ordersLoading && colOrders.length === 0 && <div style={{ textAlign: "center", color: tk.textLo, fontSize: 11, padding: "16px 0", opacity: 0.6 }}>—</div>}
               </div>
             );
           })}
         </div>
+      ) : view === "returns" ? (
+        returnsLoading && !returnsLoaded ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 64 }}><Spinner tk={tk} size={28} /></div>
+        ) : (
+          <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
+                <thead><tr style={{ background: tk.panel2 }}>
+                  <th style={thBase}>{tr("returns_col_folio", "Folio")}</th>
+                  <th style={thBase}>{tr("returns_col_client", "Cliente")}</th>
+                  <th style={thBase}>{tr("returns_col_order", "Pedido")}</th>
+                  <th style={thBase}>{tr("returns_col_date", "Fecha")}</th>
+                  <th style={thBase}>{tr("returns_col_reason", "Motivo")}</th>
+                  <th style={thBase}>{tr("returns_col_settlement", "Liquidación")}</th>
+                  <th style={thBase}>{tr("returns_col_amount", "Monto")}</th>
+                  <th style={thBase}>{tr("returns_col_status", "Estado")}</th>
+                  <th style={{ borderBottom: `1px solid ${tk.border}` }}></th>
+                </tr></thead>
+                <tbody>
+                  {returns.length === 0 ? (
+                    <tr><td colSpan={9}><EmptyState tk={tk} title={tr("returns_no_results", "Sin devoluciones")} hint={tr("returns_no_results_hint", "Las devoluciones registradas aparecerán aquí.")} /></td></tr>
+                  ) : returns.map((r, i) => {
+                    const isCancelled = r.status === "cancelled";
+                    const sc = statusColors(tk, isCancelled ? "cancelled" : "paid");
+                    const settlementLabel = r.settlement_type === "refund" ? "Reembolso" : r.settlement_type === "store_credit" ? "Crédito en tienda" : "Sin liquidación";
+                    return (
+                      <tr key={r.id} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2 }}>
+                        <td style={{ padding: "12px 16px", fontSize: 14, color: tk.accent, fontWeight: 700 }}>{r.folio ?? `#${r.id}`}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi }}>{r.customer_name ?? tr("sales_no_customer", "Mostrador")}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{r.order_folio ?? "—"}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{dateShort(r.created_at)}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{r.reason ?? "—"}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{settlementLabel}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi, fontWeight: 700 }}>{money(r.refund_amount)}</td>
+                        <td style={{ padding: "12px 16px" }}><Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{isCancelled ? "Cancelada" : "Completada"}</Badge></td>
+                        <td style={{ padding: "12px 16px" }}>
+                          {!isCancelled && (
+                            <Button tk={tk} variant="ghost" onClick={() => cancelReturn(r.id)}>{tr("returns_cancel", "Cancelar")}</Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
       ) : (
         <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
@@ -926,7 +1032,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
         </div>
       )}
 
-      <OrderForm tk={tk} tr={tr} open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} onSubmit={handleSubmit} editing={editing} customers={customers} variants={variants} saving={saving} />
+      <OrderForm tk={tk} tr={tr} open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} onSubmit={handleSubmit} editing={editing} customers={customers} variants={variants} sellers={sellers} saving={saving} />
       <PaymentModal tk={tk} tr={tr} open={!!payTarget} onClose={() => setPayTarget(null)} order={payTarget} onSubmit={handlePay} saving={saving} />
       <OrderDrawer tk={tk} tr={tr} order={selected} onClose={() => setSelected(null)} onEdit={openEdit} onPay={(o) => { setPayTarget(o); }} onMarkPaid={markPaid} onConvert={convert} onCancel={cancel} onInvoice={invoice} />
     </div>

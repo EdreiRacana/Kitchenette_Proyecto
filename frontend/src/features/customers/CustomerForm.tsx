@@ -183,8 +183,11 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
         <Field tk={tk} label={tr("cust_comercial", "Nombre Comercial")}>
           <TextInput tk={tk} value={d.nombre_comercial || ""} onChange={(v) => set("nombre_comercial", v)} placeholder="Comercializadora …" />
         </Field>
-        <Field tk={tk} label={tr("cust_sucursal", "Sucursal")}>
-          <Select tk={tk} value={d.sucursal || ""} onChange={(v) => set("sucursal", v)} options={toOpts(SUCURSALES)} placeholder={tr("select", "Selecciona…")} />
+        <Field tk={tk} label={tr("cust_sucursal", "Sucursal / CEDIS")} hint={tr("cust_sucursal_hint", "Nombre de la sucursal o centro de distribución propio o del cliente")}>
+          <TextInput tk={tk} value={d.sucursal || ""} onChange={(v) => set("sucursal", v)} placeholder={tr("cust_sucursal_placeholder", "Ej. CEDIS Norte")} list="sucursales-sugeridas" />
+          <datalist id="sucursales-sugeridas">
+            {SUCURSALES.map((s) => <option key={s} value={s} />)}
+          </datalist>
         </Field>
       </Section>
 

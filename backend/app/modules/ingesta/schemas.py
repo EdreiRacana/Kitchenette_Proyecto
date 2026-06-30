@@ -272,6 +272,8 @@ class GenerarVentasResponse(BaseModel):
     lote_id: int
     ordenes_creadas: int
     registros_omitidos: int  # ya tenían order_id (procesados antes)
+    pedidos_ya_existentes: int = 0  # mismo id_pedido_origen ya facturado en un lote anterior: no se duplicó
+    devoluciones_generadas: int = 0  # pedidos ya existentes cuyo estatus cambió a devolución/reembolso
     order_ids: List[int] = []
 
 

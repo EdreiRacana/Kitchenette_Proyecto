@@ -340,7 +340,7 @@ async def create_order(db: AsyncSession, order_in: schemas.OrderCreate,
         kind=kind,
         customer_id=order_in.customer_id,
         warehouse_id=order_in.warehouse_id,
-        user_id=user_id,
+        user_id=order_in.seller_user_id or user_id,
         status=status,
         payment_method=order_in.payment_method,
         channel=order_in.channel,
@@ -401,6 +401,8 @@ async def update_order(db: AsyncSession, order_id: int,
         val = getattr(data, f)
         if val is not None:
             setattr(order, f, val)
+    if data.seller_user_id is not None:
+        order.user_id = data.seller_user_id
 
     # Item replacement (with stock re-sync)
     if data.items is not None:
@@ -703,6 +705,22 @@ async def _sales_goal_by_month(db: AsyncSession, start: datetime, end: datetime)
     return out
 
 
+async def list_sellers(db: AsyncSession) -> List[schemas.SellerLite]:
+    """Agentes de venta disponibles: empleados activos del módulo de Personal
+    con cuenta de usuario vinculada (por email), para asignar como vendedor."""
+    from app.modules.auth.models import User
+    from app.modules.hr.models import Employee
+
+    stmt = (
+        select(User)
+        .join(Employee, func.lower(Employee.email) == func.lower(User.email))
+        .where(Employee.is_active.is_(True), User.is_active.is_(True))
+        .order_by(User.full_name)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [schemas.SellerLite(id=u.id, full_name=u.full_name, email=u.email) for u in rows]
+
+
 async def get_average_returns(db: AsyncSession, customer_id: Optional[int] = None,
                               branch_warehouse_ids: Optional[List[int]] = None) -> schemas.AverageReturns:
     """Average size of cancelled ("returned") orders, optionally scoped to one
@@ -716,9 +734,30 @@ async def get_average_returns(db: AsyncSession, customer_id: Optional[int] = Non
     stmt = select(
         func.coalesce(func.avg(O.total_amount), 0.0).label("avg_amount"),
         func.count(O.id).label("count"),
+        func.coalesce(func.sum(O.total_amount), 0.0).label("sum_amount"),
     ).where(*conds)
     row = (await db.execute(stmt)).one()
-    return schemas.AverageReturns(customer_id=customer_id, average_amount=_r(row.avg_amount or 0.0), count=row.count or 0)
+
+    sales_conds = [O.kind == "order", O.status != "cancelled"]
+    if customer_id is not None:
+        sales_conds.append(O.customer_id == customer_id)
+    if branch_warehouse_ids is not None:
+        sales_conds.append(_branch_cond(O, branch_warehouse_ids))
+    sales_stmt = select(func.coalesce(func.sum(O.total_amount), 0.0)).where(*sales_conds)
+    total_sales = (await db.execute(sales_stmt)).scalar() or 0.0
+
+    total_returns = row.sum_amount or 0.0
+    denom = total_sales + total_returns
+    return_rate_pct = (total_returns / denom * 100) if denom > 0 else 0.0
+
+    return schemas.AverageReturns(
+        customer_id=customer_id,
+        average_amount=_r(row.avg_amount or 0.0),
+        count=row.count or 0,
+        total_returns=_r(total_returns),
+        total_sales=_r(total_sales),
+        return_rate_pct=_r(return_rate_pct),
+    )
 
 
 async def get_customer_forecast(db: AsyncSession, customer_id: int, months: int = 6) -> schemas.CustomerForecast:
@@ -943,6 +982,108 @@ async def customer_360(db: AsyncSession, customer_id: int) -> Optional[schemas.C
         open_balance=_r(open_balance), avg_ticket=avg_ticket,
         last_order_at=orders[0].created_at if orders else None,
         recent_orders=[schemas.OrderInDB.model_validate(_attach_balance(o)) for o in orders[:5]],
+    )
+
+
+async def _customer_pnl_breakdown(
+    db: AsyncSession, customer_id: int, start: datetime, end: datetime,
+) -> Tuple[schemas.CustomerPnLBreakdown, List[models.Order], List[models.CustomerReturn]]:
+    from app.modules.inventory.models import ProductVariant
+
+    res = await db.execute(
+        select(models.Order).where(
+            models.Order.customer_id == customer_id, models.Order.kind == "order",
+            models.Order.created_at >= start, models.Order.created_at < end,
+        ).options(
+            selectinload(models.Order.items).selectinload(models.OrderItem.variant),
+            selectinload(models.Order.payments),
+        ).order_by(models.Order.created_at.desc())
+    )
+    orders = res.scalars().unique().all()
+    active = [o for o in orders if o.status != "cancelled"]
+
+    rres = await db.execute(
+        select(models.CustomerReturn).where(
+            models.CustomerReturn.customer_id == customer_id,
+            models.CustomerReturn.status != "cancelled",
+            models.CustomerReturn.created_at >= start, models.CustomerReturn.created_at < end,
+        ).options(*_RETURN_LOAD).order_by(models.CustomerReturn.created_at.desc())
+    )
+    returns = rres.scalars().unique().all()
+
+    gross_sales = sum(o.subtotal or 0 for o in active)
+    discounts = sum(o.discount_amount or 0 for o in active)
+    shipping_costs = sum(o.shipping_amount or 0 for o in active)
+    returns_amount = sum(r.refund_amount or 0 for r in returns)
+    cogs = sum(
+        (it.quantity or 0) * (it.variant.cost_price or 0)
+        for o in active for it in o.items if it.variant and it.variant.cost_price
+    )
+    net_sales = gross_sales - returns_amount - discounts
+    gross_margin = net_sales - cogs
+    # Retenciones fiscales mexicanas vigentes: IVA 50% de la tasa estándar
+    # (50% * 16% = 8%) + ISR 2.5%, aplicadas sobre la venta neta.
+    IVA_RETENTION_RATE = 0.08
+    ISR_RETENTION_RATE = 0.025
+    withholdings = max(net_sales, 0) * (IVA_RETENTION_RATE + ISR_RETENTION_RATE)
+    net_contribution = gross_margin - shipping_costs - withholdings
+
+    breakdown = schemas.CustomerPnLBreakdown(
+        gross_sales=_r(gross_sales), returns=_r(returns_amount), allowances=0.0,
+        discounts=_r(discounts), net_sales=_r(net_sales), cogs=_r(cogs),
+        gross_margin=_r(gross_margin), shipping_costs=_r(shipping_costs),
+        withholdings=_r(withholdings), net_contribution=_r(net_contribution), orders_count=len(active),
+    )
+    return breakdown, orders, list(returns)
+
+
+async def customer_pnl_report(
+    db: AsyncSession, customer_id: int, start: datetime, end: datetime,
+) -> Optional[schemas.CustomerPnLReport]:
+    from app.modules.customers import models as cust
+    cres = await db.execute(select(cust.Customer).where(cust.Customer.id == customer_id))
+    customer = cres.scalars().first()
+    if not customer:
+        return None
+
+    duration = end - start
+    prev_start, prev_end = start - duration, start
+
+    current, orders, returns = await _customer_pnl_breakdown(db, customer_id, start, end)
+    previous, _, _ = await _customer_pnl_breakdown(db, customer_id, prev_start, prev_end)
+
+    transactions: List[schemas.CustomerTransaction] = []
+    for o in orders:
+        transactions.append(schemas.CustomerTransaction(
+            id=f"ord-{o.id}", type="venta", date=o.created_at,
+            ref=o.folio or f"ORD-{o.id}", amount=_r(o.total_amount), status=o.status,
+        ))
+        for p in o.payments:
+            transactions.append(schemas.CustomerTransaction(
+                id=f"pay-{p.id}", type="pago", date=p.created_at,
+                ref=o.folio or f"ORD-{o.id}", amount=_r(p.amount), status="Aplicado",
+            ))
+    for r in returns:
+        transactions.append(schemas.CustomerTransaction(
+            id=f"ret-{r.id}", type="devolucion", date=r.created_at,
+            ref=r.folio or f"DEV-{r.id}", amount=_r(r.refund_amount), status=r.status,
+        ))
+    transactions.sort(key=lambda t: t.date, reverse=True)
+
+    return_lines: List[schemas.CustomerReturnLine] = []
+    for r in returns:
+        for it in r.items:
+            return_lines.append(schemas.CustomerReturnLine(
+                id=f"reti-{it.id}", date=r.created_at, ref=r.folio or f"DEV-{r.id}",
+                product=it.product_name or it.sku or "—", qty=it.quantity,
+                amount=_r(it.subtotal), reason=r.reason,
+            ))
+
+    return schemas.CustomerPnLReport(
+        customer=schemas.CustomerLite.model_validate(customer),
+        period_start=start, period_end=end,
+        current=current, previous=previous,
+        transactions=transactions, returns=return_lines,
     )
 
 

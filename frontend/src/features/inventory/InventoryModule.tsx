@@ -3,7 +3,7 @@
 // Sistema de diseño: mismo contrato { t, s } que App.tsx
 // Modo demo automático si el backend no responde
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   LayoutDashboard, Package, Warehouse, ArrowDownToLine, ArrowUpFromLine,
@@ -115,6 +115,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exportWarehouseId, setExportWarehouseId] = useState("");
 
   // Forms
   const [productForm, setProductForm] = useState(false);
@@ -132,6 +133,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
   const [recipeForm, setRecipeForm] = useState(false);
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null);
   const [prodOrderForm, setProdOrderForm] = useState(false);
+  const [editingProdOrder, setEditingProdOrder] = useState<ProductionOrder | null>(null);
   const [recipeCostView, setRecipeCostView] = useState<{ recipe: Recipe; cost: RecipeCostBreakdown } | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
@@ -317,7 +319,30 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
           <h1 style={{ margin: 0, fontSize: 23, fontWeight: 700, color: t.textHi, letterSpacing: -0.3 }}>{lang === "es" ? "Inventario" : "Inventory"}</h1>
           <p style={{ margin: "4px 0 0", color: t.textLo, fontSize: 13 }}>{lang === "es" ? "Control total de existencias, almacenes y movimientos" : "Full stock, warehouse and movement control"}</p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select
+            value={exportWarehouseId}
+            onChange={e => setExportWarehouseId(e.target.value)}
+            style={{ padding: "9px 10px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5 }}
+            title={lang === "es" ? "Almacén a exportar" : "Warehouse to export"}
+          >
+            <option value="">{lang === "es" ? "Todos los almacenes" : "All warehouses"}</option>
+            {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+          <button
+            onClick={() => inventoryService.exportProducts("csv", exportWarehouseId ? Number(exportWarehouseId) : null).catch(() => alert(lang === "es" ? "Error al descargar el inventario" : "Error downloading inventory"))}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}
+            title={lang === "es" ? "Descargar inventario en CSV" : "Download inventory as CSV"}
+          >
+            <Download size={15} /> CSV
+          </button>
+          <button
+            onClick={() => inventoryService.exportProducts("xlsx", exportWarehouseId ? Number(exportWarehouseId) : null).catch(() => alert(lang === "es" ? "Error al descargar el inventario" : "Error downloading inventory"))}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}
+            title={lang === "es" ? "Descargar inventario en Excel" : "Download inventory as Excel"}
+          >
+            <Download size={15} /> XLSX
+          </button>
           <button onClick={load} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>
             <RefreshCw size={15} /> {lang === "es" ? "Actualizar" : "Refresh"}
           </button>
@@ -1058,7 +1083,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
               <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.textLo }} />
               <input value={prodOrderQ} onChange={e => setProdOrderQ(e.target.value)} placeholder={lang === "es" ? "Buscar folio, receta o almacén…" : "Search folio, recipe or warehouse…"} style={{ ...inp, paddingLeft: 34 }} />
             </div>
-            <button onClick={() => setProdOrderForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            <button onClick={() => { setEditingProdOrder(null); setProdOrderForm(true); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               <Plus size={15} /> {lang === "es" ? "Nueva orden de producción" : "New production order"}
             </button>
           </div>
@@ -1089,6 +1114,11 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                         <td style={{ padding: "12px 16px", fontSize: 13, color: t.textMid }}>{po.unit_cost_result != null ? mxn(po.unit_cost_result) : "—"}</td>
                         <td style={{ padding: "12px 16px", fontSize: 12, color: t.textLo, whiteSpace: "nowrap" }}>{new Date(po.completed_at || po.created_at).toLocaleDateString("es-MX")}</td>
                         <td style={{ padding: "12px 16px", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {po.status === "draft" && (
+                            <button onClick={() => { setEditingProdOrder(po); setProdOrderForm(true); }} title={lang === "es" ? "Editar" : "Edit"} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", display: "flex", alignItems: "center" }}>
+                              <Edit2 size={14} />
+                            </button>
+                          )}
                           <button onClick={async () => {
                             if (demo) { alert(lang === "es" ? "Modo demo: PDF no disponible" : "Demo mode: PDF unavailable"); return; }
                             try { await inventoryService.downloadProductionOrderPdf(po.id, po.folio); } catch (err) { console.error(err); alert(lang === "es" ? "Error al generar el PDF" : "Error generating PDF"); }
@@ -1252,6 +1282,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                 [lang === "es" ? "Materiales" : "Materials", mxn(recipeCostView.cost.materials_cost)],
                 [lang === "es" ? "Mano de obra" : "Labor", mxn(recipeCostView.cost.labor_cost)],
                 [lang === "es" ? "Indirectos" : "Overhead", mxn(recipeCostView.cost.overhead_cost)],
+                [lang === "es" ? "Gastos extra" : "Extra costs", mxn(recipeCostView.cost.extra_costs_total)],
               ].map(([label, val]) => (
                 <div key={label} style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, color: t.textMid }}>
                   <span>{label}</span><span style={{ fontWeight: 600, color: t.textHi }}>{val}</span>
@@ -1424,6 +1455,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
             const payload = {
               output_variant_id: Number(data.output_variant_id), name: data.name || undefined,
               labor_cost: Number(data.labor_cost) || 0, overhead_cost: Number(data.overhead_cost) || 0,
+              extra_costs: (data.extra_costs || []).map((c: any) => ({ description: c.description, amount: Number(c.amount) || 0 })),
               yield_quantity: Number(data.yield_quantity) || 1, is_active: data.is_active,
               items: data.items.map((it: any) => ({ input_variant_id: Number(it.input_variant_id), quantity: Number(it.quantity) })),
             };
@@ -1438,14 +1470,17 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       {/* ── MODAL: Production Order Form ── */}
       {prodOrderForm && (
         <ProductionOrderFormModal
-          t={t} lang={lang} recipes={recipes} warehouses={warehouses} productNameByVariant={productNameByVariant}
-          onClose={() => setProdOrderForm(false)}
+          t={t} lang={lang} recipes={recipes} warehouses={warehouses} productNameByVariant={productNameByVariant} editing={editingProdOrder}
+          onClose={() => { setProdOrderForm(false); setEditingProdOrder(null); }}
           onSave={async (form: any) => {
-            if (demo) { alert(lang === "es" ? "Modo demo: orden simulada ✓" : "Demo mode: simulated order ✓"); setProdOrderForm(false); return; }
-            await inventoryService.createProductionOrder({
+            if (demo) { alert(lang === "es" ? "Modo demo: orden simulada ✓" : "Demo mode: simulated order ✓"); setProdOrderForm(false); setEditingProdOrder(null); return; }
+            const payload = {
               recipe_id: Number(form.recipe_id), warehouse_id: Number(form.warehouse_id), runs: Number(form.runs) || 1, notes: form.notes || undefined,
-            });
+            };
+            if (editingProdOrder) await inventoryService.updateProductionOrder(editingProdOrder.id, payload);
+            else await inventoryService.createProductionOrder(payload);
             setProdOrderForm(false);
+            setEditingProdOrder(null);
             await load();
           }}
         />
@@ -2140,6 +2175,53 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, edit
 }
 
 // ── Recipe Form Modal ──────────────────────────────────────────────────────
+// ── Searchable variant combobox (búsqueda por nombre o código) ────────────
+function VariantSearchSelect({ t, lang, options, value, onChange, placeholder }: any) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = options.find((v: any) => String(v.id) === String(value));
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+  const filtered = options.filter((v: any) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return v.product_name?.toLowerCase().includes(q) || v.sku?.toLowerCase().includes(q);
+  });
+  const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <div style={{ position: "relative" }}>
+        <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.textLo }} />
+        <input
+          value={open ? query : (selected ? `${selected.product_name} — ${selected.sku}` : "")}
+          onChange={e => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => { setQuery(""); setOpen(true); }}
+          placeholder={placeholder || (lang === "es" ? "Buscar por nombre o código…" : "Search by name or code…")}
+          style={{ ...inp, paddingLeft: 30, cursor: "text" }}
+        />
+      </div>
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 8, maxHeight: 220, overflowY: "auto", zIndex: 200, boxShadow: "0 8px 24px rgba(0,0,0,0.35)" }}>
+          {filtered.length === 0 && <div style={{ padding: "10px 12px", fontSize: 12.5, color: t.textLo }}>{lang === "es" ? "Sin resultados" : "No results"}</div>}
+          {filtered.map((v: any) => (
+            <div key={v.id} onClick={() => { onChange(String(v.id)); setOpen(false); setQuery(""); }}
+              style={{ padding: "9px 12px", fontSize: 13, color: t.textHi, cursor: "pointer", display: "flex", justifyContent: "space-between", gap: 8 }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = t.panel2)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
+              <span>{v.product_name}</span>
+              <span style={{ color: t.textLo, fontWeight: 600 }}>{v.sku}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RecipeFormModal({ t, lang, products, editing, onClose, onSave }: any) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -2150,6 +2232,7 @@ function RecipeFormModal({ t, lang, products, editing, onClose, onSave }: any) {
   const [yieldQty, setYieldQty] = useState(String(editing?.yield_quantity ?? "1"));
   const [isActive, setIsActive] = useState(editing?.is_active ?? true);
   const [items, setItems] = useState(editing?.items?.map((it: RecipeItem) => ({ input_variant_id: String(it.input_variant_id), quantity: String(it.quantity) })) || [{ input_variant_id: "", quantity: "" }]);
+  const [extraCosts, setExtraCosts] = useState((editing?.extra_costs || []).map((c: any) => ({ description: c.description || "", amount: String(c.amount ?? "") })));
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const allVariants = products.flatMap((p: Product) => p.variants.map((v: Variant) => ({ ...v, product_name: p.name })));
@@ -2159,11 +2242,17 @@ function RecipeFormModal({ t, lang, products, editing, onClose, onSave }: any) {
   const removeItem = (idx: number) => setItems((i: any[]) => i.filter((_, k) => k !== idx));
   const updateItem = (idx: number, field: string, val: any) => setItems((i: any[]) => i.map((it, k) => k === idx ? { ...it, [field]: val } : it));
 
-  const valid = outputVariantId && yieldQty && items.length > 0 && items.every((it: any) => it.input_variant_id && it.quantity);
+  const addExtraCost = () => setExtraCosts((c: any[]) => [...c, { description: "", amount: "" }]);
+  const removeExtraCost = (idx: number) => setExtraCosts((c: any[]) => c.filter((_, k) => k !== idx));
+  const updateExtraCost = (idx: number, field: string, val: any) => setExtraCosts((c: any[]) => c.map((c2, k) => k === idx ? { ...c2, [field]: val } : c2));
+
+  const valid = outputVariantId && yieldQty && items.length > 0 && items.every((it: any) => it.input_variant_id && it.quantity)
+    && extraCosts.every((c: any) => (c.description && c.amount) || (!c.description && !c.amount));
 
   const handleSave = async () => {
     setSaving(true); setError("");
-    try { await onSave({ output_variant_id: outputVariantId, name, labor_cost: laborCost, overhead_cost: overheadCost, yield_quantity: yieldQty, is_active: isActive, items }); }
+    const cleanExtraCosts = extraCosts.filter((c: any) => c.description && c.amount);
+    try { await onSave({ output_variant_id: outputVariantId, name, labor_cost: laborCost, overhead_cost: overheadCost, yield_quantity: yieldQty, is_active: isActive, items, extra_costs: cleanExtraCosts }); }
     catch (err: any) { setError(err?.response?.data?.detail || (lang === "es" ? "Error al guardar la receta" : "Error saving recipe")); }
     finally { setSaving(false); }
   };
@@ -2180,10 +2269,7 @@ function RecipeFormModal({ t, lang, products, editing, onClose, onSave }: any) {
         </div>
         <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16, overflowY: "auto" }}>
           <div><label style={label}>{lang === "es" ? "Producto / Variante resultante *" : "Output product / variant *"}</label>
-            <select value={outputVariantId} onChange={e => setOutputVariantId(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
-              <option value="">{lang === "es" ? "Seleccionar…" : "Select…"}</option>
-              {allVariants.map((v: any) => <option key={v.id} value={v.id}>{v.product_name} — {v.sku}</option>)}
-            </select>
+            <VariantSearchSelect t={t} lang={lang} options={allVariants} value={outputVariantId} onChange={setOutputVariantId} />
           </div>
           <div><label style={label}>{lang === "es" ? "Nombre de la receta" : "Recipe name"}</label><input value={name} onChange={e => setName(e.target.value)} placeholder={lang === "es" ? "Ej: Mezcla estándar" : "E.g: Standard mix"} style={inp} /></div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
@@ -2199,10 +2285,7 @@ function RecipeFormModal({ t, lang, products, editing, onClose, onSave }: any) {
                 <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 8, alignItems: "end" }}>
                   <div>
                     {i === 0 && <label style={label}>{lang === "es" ? "Insumo" : "Input"}</label>}
-                    <select value={it.input_variant_id} onChange={e => updateItem(i, "input_variant_id", e.target.value)} style={{ ...inp, cursor: "pointer" }}>
-                      <option value="">{lang === "es" ? "Seleccionar…" : "Select…"}</option>
-                      {insumoVariants.map((v: any) => <option key={v.id} value={v.id}>{v.product_name} — {v.sku}</option>)}
-                    </select>
+                    <VariantSearchSelect t={t} lang={lang} options={insumoVariants} value={it.input_variant_id} onChange={(val: string) => updateItem(i, "input_variant_id", val)} />
                     {insumoVariants.length === 0 && <div style={{ fontSize: 11, color: t.warn, marginTop: 4 }}>{lang === "es" ? "No hay productos clasificados como insumo. Edítalos en Productos." : "No products classified as raw material. Edit them in Products."}</div>}
                   </div>
                   <div>
@@ -2215,6 +2298,29 @@ function RecipeFormModal({ t, lang, products, editing, onClose, onSave }: any) {
             </div>
             <button onClick={addItem} style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 8, border: `2px dashed ${t.border}`, background: "transparent", color: t.textLo, cursor: "pointer", fontSize: 12.5 }}>
               <Plus size={14} /> {lang === "es" ? "Agregar insumo" : "Add input"}
+            </button>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>{lang === "es" ? "Gastos extra" : "Extra costs"}</div>
+            <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 10 }}>{lang === "es" ? "Ej: transporte de materias primas, corte, maquila, empaque…" : "E.g: raw material transport, cutting, outsourcing, packaging…"}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {extraCosts.map((c: any, i: number) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 8, alignItems: "end" }}>
+                  <div>
+                    {i === 0 && <label style={label}>{lang === "es" ? "Descripción" : "Description"}</label>}
+                    <input value={c.description} onChange={e => updateExtraCost(i, "description", e.target.value)} placeholder={lang === "es" ? "Ej: Transporte de insumos" : "E.g: Materials transport"} style={inp} />
+                  </div>
+                  <div>
+                    {i === 0 && <label style={label}>{lang === "es" ? "Monto" : "Amount"}</label>}
+                    <input type="number" min={0} step="any" value={c.amount} onChange={e => updateExtraCost(i, "amount", e.target.value)} style={inp} />
+                  </div>
+                  <button onClick={() => removeExtraCost(i)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.bad }}><Trash2 size={16} /></button>
+                </div>
+              ))}
+            </div>
+            <button onClick={addExtraCost} style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 8, border: `2px dashed ${t.border}`, background: "transparent", color: t.textLo, cursor: "pointer", fontSize: 12.5 }}>
+              <Plus size={14} /> {lang === "es" ? "Agregar gasto" : "Add cost"}
             </button>
           </div>
 
@@ -2239,10 +2345,15 @@ function RecipeFormModal({ t, lang, products, editing, onClose, onSave }: any) {
 }
 
 // ── Production Order Form Modal ────────────────────────────────────────────
-function ProductionOrderFormModal({ t, lang, recipes, warehouses, productNameByVariant, onClose, onSave }: any) {
+function ProductionOrderFormModal({ t, lang, recipes, warehouses, productNameByVariant, editing, onClose, onSave }: any) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ recipe_id: "", warehouse_id: "", runs: "1", notes: "" });
+  const [form, setForm] = useState({
+    recipe_id: String(editing?.recipe_id || ""),
+    warehouse_id: String(editing?.warehouse_id || ""),
+    runs: String(editing?.runs ?? "1"),
+    notes: editing?.notes || "",
+  });
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const handleSave = async () => {
@@ -2257,7 +2368,7 @@ function ProductionOrderFormModal({ t, lang, recipes, warehouses, productNameByV
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 8, padding: 8, display: "flex" }}><Factory size={18} /></div>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{lang === "es" ? "Nueva orden de producción" : "New production order"}</h2>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{editing ? (lang === "es" ? "Editar orden de producción" : "Edit production order") : (lang === "es" ? "Nueva orden de producción" : "New production order")}</h2>
           </div>
           <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
         </div>
@@ -2282,7 +2393,7 @@ function ProductionOrderFormModal({ t, lang, recipes, warehouses, productNameByV
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
             <button onClick={handleSave} disabled={saving || !form.recipe_id || !form.warehouse_id || !form.runs} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: (!form.recipe_id || !form.warehouse_id || !form.runs) ? 0.5 : 1 }}>
-              {saving ? "…" : (lang === "es" ? "Crear orden" : "Create order")}
+              {saving ? "…" : editing ? (lang === "es" ? "Guardar cambios" : "Save changes") : (lang === "es" ? "Crear orden" : "Create order")}
             </button>
           </div>
         </div>

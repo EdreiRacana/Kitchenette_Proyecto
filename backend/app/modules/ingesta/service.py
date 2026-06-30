@@ -440,6 +440,30 @@ def _es_fila_total(fila: Dict[str, Any], patron: Optional[str]) -> bool:
     return False
 
 
+def _es_devolucion(fila: Dict[str, Any], fuente: models.IngestaFuente) -> bool:
+    """
+    Detecta si una fila representa una devolución/reembolso según la regla
+    configurada en la fuente: columna de estatus (raw, tal como viene en el
+    archivo) + valor/condición a comparar. Esto es lo que permite que un
+    mismo pedido, re-subido en un periodo posterior con el estatus cambiado
+    (ej: "Entregado" → "Reembolsado"), se reconozca como devolución en vez
+    de quedar como una venta más.
+    """
+    reglas = fuente.reglas
+    if not reglas or not reglas.dev_columna_estatus or not reglas.dev_valor:
+        return False
+    valor_fila = fila.get(reglas.dev_columna_estatus)
+    if valor_fila is None:
+        return False
+    valor_fila = str(valor_fila).strip().lower()
+    valor_regla = str(reglas.dev_valor).strip().lower()
+    if reglas.dev_regla == "igual":
+        return valor_fila == valor_regla
+    if reglas.dev_regla == "diferente":
+        return valor_fila != valor_regla
+    return valor_regla in valor_fila  # "contiene" (default)
+
+
 def _normalizar_fila(
     fila: Dict[str, Any],
     mapeo: Dict[str, str],
@@ -477,6 +501,15 @@ def _normalizar_fila(
         else:
             resultado[campo_sthenova] = str(valor).strip() if valor is not None else None
 
+    # El campo de mapeo se llama "id_pedido" (CAMPOS_DESCRIPCION) pero la
+    # columna del modelo es "id_pedido_origen" — sin este alias, fuentes
+    # planas (sin filas anidadas) nunca guardan la clave de pedido y el
+    # sistema no puede reconocer un pedido re-subido en un periodo distinto.
+    if "id_pedido" in resultado:
+        resultado["id_pedido_origen"] = resultado.pop("id_pedido")
+
+    resultado["es_devolucion"] = _es_devolucion(fila, fuente)
+
     return resultado
 
 
@@ -510,9 +543,14 @@ def _agrupar_filas_anidadas(
     registros: List[Dict[str, Any]] = []
     for id_pedido, lineas in grupos.items():
         total_fila = totales.get(id_pedido, {})
+        # Algunas fuentes solo reportan el estatus (ej: "Reembolsado") en la
+        # fila de total, no en cada línea de detalle.
+        total_es_devolucion = _es_devolucion(total_fila, fuente) if total_fila else False
         for linea in lineas:
             reg = _normalizar_fila(linea, mapeo, fuente)
             reg["id_pedido_origen"] = id_pedido
+            if total_es_devolucion:
+                reg["es_devolucion"] = True
             # Tomar costo de envío del total si existe
             if patron_fila_total and total_fila:
                 envio_total = _limpiar_numero(
@@ -714,7 +752,7 @@ async def generar_ordenes_de_lote(
     lote_id: int,
     user_id: Optional[int] = None,
 ) -> schemas.GenerarVentasResponse:
-    from app.modules.sales import schemas as sales_schemas, service as sales_service
+    from app.modules.sales import models as sales_models, schemas as sales_schemas, service as sales_service
 
     lote = await db.get(models.IngestaLote, lote_id)
     if not lote:
@@ -742,8 +780,77 @@ async def generar_ordenes_de_lote(
         clave = reg.id_pedido_origen or f"_reg_{reg.id}"
         grupos.setdefault(clave, []).append(reg)
 
+    # Pedidos (id_pedido_origen real, no la clave sintética de una sola fila)
+    # que ya fueron facturados en un lote ANTERIOR de la misma fuente. Si el
+    # archivo se vuelve a subir (ej: el reporte de mayo repite pedidos de
+    # abril), estos no deben generar una segunda Order — solo se vinculan, y
+    # si el estatus cambió a devolución se registra la devolución real.
+    claves_reales = {reg.id_pedido_origen for reg in registros if reg.id_pedido_origen}
+    ordenes_previas: Dict[str, int] = {}
+    if claves_reales:
+        prev = await db.execute(
+            select(models.IngestaRegistro.id_pedido_origen, models.IngestaRegistro.order_id)
+            .where(
+                models.IngestaRegistro.fuente_id == fuente.id,
+                models.IngestaRegistro.lote_id != lote_id,
+                models.IngestaRegistro.id_pedido_origen.in_(claves_reales),
+                models.IngestaRegistro.order_id.isnot(None),
+            )
+        )
+        for id_pedido_origen, order_id in prev.all():
+            ordenes_previas.setdefault(id_pedido_origen, order_id)
+
     order_ids: List[int] = []
+    pedidos_ya_existentes = 0
+    devoluciones_generadas = 0
+
     for clave, regs in grupos.items():
+        id_pedido = regs[0].id_pedido_origen
+        order_id_existente = ordenes_previas.get(id_pedido) if id_pedido else None
+
+        if order_id_existente:
+            # Ya existe una venta para este pedido: no se duplica. Solo se
+            # vinculan los registros nuevos y, si cambió a devolución, se
+            # registra una devolución real sobre la Order existente.
+            pedidos_ya_existentes += 1
+            for reg in regs:
+                reg.order_id = order_id_existente
+
+            if any(reg.es_devolucion for reg in regs):
+                ya_tiene_devolucion = (await db.execute(
+                    select(func.count(sales_models.CustomerReturn.id)).where(
+                        sales_models.CustomerReturn.order_id == order_id_existente,
+                        sales_models.CustomerReturn.status != "cancelled",
+                    )
+                )).scalar() or 0
+                if not ya_tiene_devolucion:
+                    items_dev = [
+                        sales_schemas.ReturnItemCreate(
+                            variant_id=None,
+                            product_name=reg.descripcion or reg.sku_cliente or reg.upc or "Producto",
+                            sku=reg.sku_cliente or reg.sku_cadena or reg.upc,
+                            quantity=max(1, int(reg.cantidad_vendida or 1)),
+                            unit_price=reg.precio_unitario or (
+                                (reg.venta_neta or reg.venta_bruta or 0.0) / max(1, reg.cantidad_vendida or 1)
+                            ),
+                            condition="damaged",
+                        )
+                        for reg in regs
+                    ]
+                    await sales_service.create_return(
+                        db,
+                        sales_schemas.ReturnCreate(
+                            order_id=order_id_existente,
+                            reason="Detectado automáticamente al re-procesar la ingesta",
+                            settlement_type="refund",
+                            notes=f"Generado desde ingesta · fuente '{fuente.nombre}' · lote #{lote_id} · pedido {id_pedido}",
+                            items=items_dev,
+                        ),
+                        user_id=user_id,
+                    )
+                    devoluciones_generadas += 1
+            continue
+
         items = [
             sales_schemas.OrderItemCreate(
                 variant_id=None,
@@ -781,5 +888,7 @@ async def generar_ordenes_de_lote(
         lote_id=lote_id,
         ordenes_creadas=len(order_ids),
         registros_omitidos=omitidos,
+        pedidos_ya_existentes=pedidos_ya_existentes,
+        devoluciones_generadas=devoluciones_generadas,
         order_ids=order_ids,
     )

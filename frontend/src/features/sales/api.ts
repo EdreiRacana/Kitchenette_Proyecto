@@ -4,6 +4,7 @@ import api from "../../services/api";
 import type {
   Order, Paginated, SalesStats, TrendPoint, TopCustomer, TopProduct,
   SalesBySeller, SalesByChannel, OrderFilters, OrderDraft, CustomerLite, AverageReturns, CustomerForecast,
+  CustomerPnLReport, CustomerReturn, SellerLite,
 } from "./types";
 
 export interface VariantOption {
@@ -27,6 +28,7 @@ function draftToPayload(d: OrderDraft) {
   return {
     kind: d.kind,
     customer_id: d.customer_id,
+    seller_user_id: d.seller_user_id,
     payment_method: d.payment_method || null,
     channel: d.channel || null,
     status: d.status,
@@ -103,8 +105,16 @@ export const salesApi = {
     });
     return data;
   },
+  async listSellers(): Promise<SellerLite[]> {
+    const { data } = await api.get<SellerLite[]>(`/sales/sellers`);
+    return data;
+  },
   async customerForecast(customerId: number, months = 6): Promise<CustomerForecast> {
     const { data } = await api.get<CustomerForecast>(`/sales/analytics/forecast/${customerId}`, { params: { months } });
+    return data;
+  },
+  async customerPnl(customerId: number, start: string, end: string): Promise<CustomerPnLReport> {
+    const { data } = await api.get<CustomerPnLReport>(`/sales/customers/${customerId}/pnl`, { params: { start, end } });
     return data;
   },
   async topCustomers(limit = 5, start?: string, end?: string): Promise<TopCustomer[]> {
@@ -128,6 +138,14 @@ export const salesApi = {
     const { data } = await api.get<Blob>(`/sales/export${qs(filters)}${sep}formato=${formato}`, {
       responseType: "blob",
     });
+    return data;
+  },
+  async returns(): Promise<CustomerReturn[]> {
+    const { data } = await api.get<CustomerReturn[]>(`/sales/returns`);
+    return data;
+  },
+  async cancelReturn(id: number): Promise<CustomerReturn> {
+    const { data } = await api.post<CustomerReturn>(`/sales/returns/${id}/cancel`);
     return data;
   },
   async customers(): Promise<CustomerLite[]> {

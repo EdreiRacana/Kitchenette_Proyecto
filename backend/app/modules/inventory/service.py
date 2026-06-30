@@ -33,6 +33,82 @@ async def get_products(db: AsyncSession, skip: int = 0, limit: int = 100, item_t
     return result.scalars().all()
 
 
+EXPORT_HEADERS = ["SKU", "Codigo de barras", "Producto", "Tipo", "Categoria",
+                  "Talla", "Color", "Material", "Almacen", "Stock disponible",
+                  "Stock reservado", "Precio", "Costo"]
+
+
+async def _export_rows(db: AsyncSession, warehouse_id: Optional[int] = None) -> List[list]:
+    query = select(Product).options(
+        selectinload(Product.variants).selectinload(ProductVariant.stock_levels).selectinload(StockLevel.warehouse),
+    )
+    result = await db.execute(query)
+    products = result.scalars().unique().all()
+
+    rows: List[list] = []
+    for p in products:
+        for v in p.variants:
+            levels = v.stock_levels
+            if warehouse_id:
+                levels = [sl for sl in levels if sl.warehouse_id == warehouse_id]
+            if not levels:
+                if warehouse_id:
+                    continue
+                rows.append([
+                    v.sku, v.barcode or "", p.name, p.item_type, p.category or "",
+                    v.size or "", v.color or "", v.material or "", "—", 0, 0,
+                    v.price, v.cost_price or 0,
+                ])
+                continue
+            for sl in levels:
+                rows.append([
+                    v.sku, v.barcode or "", p.name, p.item_type, p.category or "",
+                    v.size or "", v.color or "", v.material or "",
+                    sl.warehouse.name if sl.warehouse else "—",
+                    sl.quantity, sl.reserved_quantity,
+                    v.price, v.cost_price or 0,
+                ])
+    return rows
+
+
+async def export_inventory_csv(db: AsyncSession, warehouse_id: Optional[int] = None) -> str:
+    import csv, io
+    rows = await _export_rows(db, warehouse_id)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(EXPORT_HEADERS)
+    w.writerows(rows)
+    return "﻿" + buf.getvalue()
+
+
+async def export_inventory_xlsx(db: AsyncSession, warehouse_id: Optional[int] = None) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    rows = await _export_rows(db, warehouse_id)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Inventario"
+    ws.append(EXPORT_HEADERS)
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="1E2E5C", end_color="1E2E5C", fill_type="solid")
+    money_cols = {12, 13}
+    for row in rows:
+        ws.append(row)
+        for col_idx in money_cols:
+            ws.cell(row=ws.max_row, column=col_idx).number_format = "#,##0.00"
+    for col_idx, header in enumerate(EXPORT_HEADERS, start=1):
+        max_len = max([len(str(header))] + [len(str(r[col_idx - 1])) for r in rows] + [8])
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 2, 40)
+    ws.freeze_panes = "A2"
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 async def save_compressed_image(content: bytes, filename: str, url_prefix: str) -> str:
     """Comprime/convierte la imagen a WebP y la sube al almacenamiento configurado."""
     from PIL import Image
@@ -607,6 +683,7 @@ async def create_recipe(db: AsyncSession, recipe_in: schemas.RecipeCreate) -> Re
     recipe = Recipe(
         output_variant_id=recipe_in.output_variant_id, name=recipe_in.name,
         labor_cost=recipe_in.labor_cost, overhead_cost=recipe_in.overhead_cost,
+        extra_costs=[c.model_dump() for c in recipe_in.extra_costs],
         yield_quantity=recipe_in.yield_quantity,
     )
     db.add(recipe)
@@ -635,6 +712,7 @@ async def update_recipe(db: AsyncSession, recipe_id: int, recipe_in: schemas.Rec
     recipe.name = recipe_in.name
     recipe.labor_cost = recipe_in.labor_cost
     recipe.overhead_cost = recipe_in.overhead_cost
+    recipe.extra_costs = [c.model_dump() for c in recipe_in.extra_costs]
     recipe.yield_quantity = recipe_in.yield_quantity
     recipe.is_active = recipe_in.is_active
     for old_item in list(recipe.items):
@@ -657,11 +735,13 @@ async def get_recipe_cost(db: AsyncSession, recipe_id: int) -> Optional[schemas.
             missing.append(variant.sku if variant else str(item.input_variant_id))
             continue
         materials_cost += item.quantity * variant.cost_price
-    total = materials_cost + recipe.labor_cost + recipe.overhead_cost
+    extra_costs_total = sum((c or {}).get("amount", 0) for c in (recipe.extra_costs or []))
+    total = materials_cost + recipe.labor_cost + recipe.overhead_cost + extra_costs_total
     unit_cost = total / recipe.yield_quantity if recipe.yield_quantity else total
     return schemas.RecipeCostBreakdown(
         recipe_id=recipe.id, materials_cost=round(materials_cost, 4), labor_cost=recipe.labor_cost,
-        overhead_cost=recipe.overhead_cost, total_cost=round(total, 4), unit_cost=round(unit_cost, 4),
+        overhead_cost=recipe.overhead_cost, extra_costs_total=round(extra_costs_total, 4),
+        total_cost=round(total, 4), unit_cost=round(unit_cost, 4),
         missing_cost_inputs=missing,
     )
 
@@ -685,6 +765,23 @@ async def get_production_orders(db: AsyncSession) -> List[ProductionOrder]:
     result = await db.execute(select(ProductionOrder).order_by(ProductionOrder.created_at.desc()))
     return result.scalars().all()
 
+async def update_production_order(db: AsyncSession, prod_id: int, po_in: schemas.ProductionOrderUpdate) -> Optional[ProductionOrder]:
+    prod = await db.get(ProductionOrder, prod_id)
+    if not prod:
+        return None
+    if prod.status != ProductionOrderStatus.DRAFT.value:
+        raise ValueError("Solo se pueden editar órdenes en borrador")
+    recipe = await get_recipe(db, po_in.recipe_id)
+    if not recipe:
+        raise ValueError("Receta no encontrada")
+    prod.recipe_id = po_in.recipe_id
+    prod.warehouse_id = po_in.warehouse_id
+    prod.runs = po_in.runs
+    prod.notes = po_in.notes
+    await db.commit()
+    await db.refresh(prod)
+    return prod
+
 async def complete_production_order(db: AsyncSession, prod_id: int, user_id: Optional[int] = None) -> ProductionOrder:
     prod = await db.get(ProductionOrder, prod_id)
     if not prod or prod.status != ProductionOrderStatus.DRAFT.value:
@@ -707,7 +804,8 @@ async def complete_production_order(db: AsyncSession, prod_id: int, user_id: Opt
 
     # 2. Dar de alta el producto terminado al costo real calculado
     output_qty = recipe.yield_quantity * prod.runs
-    total_cost = total_materials_cost + (recipe.labor_cost + recipe.overhead_cost) * prod.runs
+    extra_costs_total = sum((c or {}).get("amount", 0) for c in (recipe.extra_costs or []))
+    total_cost = total_materials_cost + (recipe.labor_cost + recipe.overhead_cost + extra_costs_total) * prod.runs
     unit_cost_result = total_cost / output_qty if output_qty else 0.0
 
     in_move = schemas.StockMovementCreate(

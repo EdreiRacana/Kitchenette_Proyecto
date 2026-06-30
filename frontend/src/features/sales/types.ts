@@ -112,7 +112,7 @@ export interface SalesStats {
 
 export interface TrendPoint { period: string; total: number; count: number; returns_total: number; goal: number | null; }
 export interface TopCustomer { customer_id: number | null; name: string; total: number; orders: number; }
-export interface AverageReturns { customer_id: number | null; average_amount: number; count: number; }
+export interface AverageReturns { customer_id: number | null; average_amount: number; count: number; total_returns: number; total_sales: number; return_rate_pct: number; }
 export interface CustomerForecast {
   customer_id: number | null;
   customer_name: string;
@@ -130,6 +130,55 @@ export interface CustomerForecast {
 export interface TopProduct { variant_id: number | null; name: string; quantity: number; total: number; }
 export interface SalesBySeller { user_id: number | null; name: string; total: number; orders: number; }
 export interface SalesByChannel { channel: string; total: number; orders: number; }
+
+export interface CustomerPnLBreakdown {
+  gross_sales: number; returns: number; allowances: number; discounts: number;
+  net_sales: number; cogs: number; gross_margin: number; shipping_costs: number;
+  withholdings: number; net_contribution: number; orders_count: number;
+}
+export interface CustomerTransaction {
+  id: string; type: "venta" | "devolucion" | "nota_credito" | "pago";
+  date: string; ref: string; amount: number; status: string;
+}
+export interface CustomerReturnLine {
+  id: string; date: string; ref: string; product: string; qty: number; amount: number; reason?: string | null;
+}
+export interface CustomerPnLReport {
+  customer: CustomerLite;
+  period_start: string; period_end: string;
+  current: CustomerPnLBreakdown; previous: CustomerPnLBreakdown;
+  transactions: CustomerTransaction[]; returns: CustomerReturnLine[];
+}
+
+export interface CustomerReturnItem {
+  id: number;
+  return_id: number;
+  variant_id?: number | null;
+  product_name?: string | null;
+  sku?: string | null;
+  quantity: number;
+  unit_price: number;
+  condition: "sellable" | "damaged";
+  subtotal: number;
+}
+export interface CustomerReturn {
+  id: number;
+  folio?: string | null;
+  order_id?: number | null;
+  customer_id?: number | null;
+  warehouse_id?: number | null;
+  user_id?: number | null;
+  status: "completed" | "cancelled";
+  reason?: string | null;
+  settlement_type: "refund" | "store_credit" | "none";
+  refund_amount: number;
+  notes?: string | null;
+  created_at: string;
+  completed_at?: string | null;
+  items: CustomerReturnItem[];
+  customer_name?: string | null;
+  order_folio?: string | null;
+}
 
 export interface OrderFilters {
   q?: string;
@@ -160,6 +209,7 @@ export interface OrderItemDraft {
 export interface OrderDraft {
   kind: OrderKind;
   customer_id: number | null;
+  seller_user_id: number | null;
   payment_method: string;
   channel: string;
   status?: string;
