@@ -168,7 +168,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
   const [serverWaking, setServerWaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generandoVentas, setGenerandoVentas] = useState(false);
-  const [ventasGeneradas, setVentasGeneradas] = useState<{ ordenes_creadas: number } | null>(null);
+  const [ventasGeneradas, setVentasGeneradas] = useState<{ ordenes_creadas: number; pedidos_ya_existentes?: number; devoluciones_generadas?: number } | null>(null);
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [asignandoCliente, setAsignandoCliente] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -243,7 +243,11 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     setGenerandoLote(loteId);
     try {
       const res = await ingestaApi.generarVentas(loteId);
-      alert(`${res.ordenes_creadas} pedido(s) generado(s) en Ventas. ${res.registros_omitidos ? `${res.registros_omitidos} registro(s) ya estaban vinculados.` : ""}`);
+      const partes = [`${res.ordenes_creadas} pedido(s) generado(s) en Ventas.`];
+      if (res.pedidos_ya_existentes) partes.push(`${res.pedidos_ya_existentes} pedido(s) ya existían de una carga anterior y no se duplicaron.`);
+      if (res.devoluciones_generadas) partes.push(`${res.devoluciones_generadas} se detectaron como devolución/reembolso y se registraron como tal.`);
+      if (res.registros_omitidos) partes.push(`${res.registros_omitidos} registro(s) ya estaban vinculados.`);
+      alert(partes.join(" "));
       if (fuenteHistorial) await verHistorial(fuenteHistorial.id, fuenteHistorial.nombre);
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
@@ -256,7 +260,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
     setGenerandoVentas(true); setError(null);
     try {
       const res = await ingestaApi.generarVentas(resultado.lote_id);
-      setVentasGeneradas({ ordenes_creadas: res.ordenes_creadas });
+      setVentasGeneradas({ ordenes_creadas: res.ordenes_creadas, pedidos_ya_existentes: res.pedidos_ya_existentes, devoluciones_generadas: res.devoluciones_generadas });
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } };
       setError(err?.response?.data?.detail ?? "No se pudieron generar las ventas.");
@@ -277,6 +281,12 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
           <CheckCircle size={28} color={tk.good} style={{ margin: "0 auto 10px", display: "block" }} />
           <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{ventasGeneradas.ordenes_creadas} pedido{ventasGeneradas.ordenes_creadas !== 1 ? "s" : ""} generado{ventasGeneradas.ordenes_creadas !== 1 ? "s" : ""} en Ventas</div>
           <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>Ya puedes verlos en el listado de pedidos.</div>
+          {!!ventasGeneradas.pedidos_ya_existentes && (
+            <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>{ventasGeneradas.pedidos_ya_existentes} pedido(s) ya existían de una carga anterior y no se duplicaron.</div>
+          )}
+          {!!ventasGeneradas.devoluciones_generadas && (
+            <div style={{ fontSize: 12, color: tk.warn, marginTop: 4 }}>{ventasGeneradas.devoluciones_generadas} se detectaron como devolución/reembolso y se registraron como tal.</div>
+          )}
         </div>
       ) : (
         <button onClick={generarVentas} disabled={generandoVentas}
