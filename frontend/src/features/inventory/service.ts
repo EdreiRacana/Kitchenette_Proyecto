@@ -131,12 +131,14 @@ export interface PurchaseOrder {
 }
 
 export interface RecipeItem { input_variant_id: number; quantity: number; }
+export interface RecipeExtraCost { description: string; amount: number; }
 export interface Recipe {
     id: number;
     output_variant_id: number;
     name?: string;
     labor_cost: number;
     overhead_cost: number;
+    extra_costs?: RecipeExtraCost[];
     yield_quantity: number;
     is_active: boolean;
     items: RecipeItem[];
@@ -146,6 +148,7 @@ export interface RecipeCostBreakdown {
     materials_cost: number;
     labor_cost: number;
     overhead_cost: number;
+    extra_costs_total: number;
     total_cost: number;
     unit_cost: number;
     missing_cost_inputs: string[];
@@ -243,6 +246,13 @@ export const inventoryService = {
         fd.append('file', file);
         return (await api.post<{ url: string }>('/inventory/products/upload-image', fd, { headers: { 'Content-Type': 'multipart/form-data' } })).data;
     },
+    exportProducts: async (formato: 'csv' | 'xlsx', warehouseId?: number | null) => {
+        const res = await api.get(`/inventory/products/export`, {
+            params: { formato, warehouse_id: warehouseId ?? undefined },
+            responseType: 'blob',
+        });
+        downloadBlob(res.data, `inventario.${formato}`);
+    },
 
     // Variants
     createVariant: async (data: any) => (await api.post('/inventory/variants', data)).data,
@@ -299,6 +309,7 @@ export const inventoryService = {
     // Production orders
     getProductionOrders: async () => (await api.get<ProductionOrder[]>('/inventory/production-orders')).data,
     createProductionOrder: async (data: any) => (await api.post('/inventory/production-orders', data)).data,
+    updateProductionOrder: async (id: number, data: any) => (await api.put(`/inventory/production-orders/${id}`, data)).data,
     completeProductionOrder: async (id: number) => (await api.post(`/inventory/production-orders/${id}/complete`)).data,
     downloadProductionOrderPdf: async (id: number, folio?: string) => {
         const res = await api.get(`/inventory/production-orders/${id}/pdf`, { responseType: 'blob' });

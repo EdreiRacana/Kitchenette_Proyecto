@@ -4,7 +4,7 @@ import api from "../../services/api";
 import type {
   Order, Paginated, SalesStats, TrendPoint, TopCustomer, TopProduct,
   SalesBySeller, SalesByChannel, OrderFilters, OrderDraft, CustomerLite, AverageReturns, CustomerForecast,
-  CustomerPnLReport,
+  CustomerPnLReport, CustomerReturn,
 } from "./types";
 
 export interface VariantOption {
@@ -133,6 +133,14 @@ export const salesApi = {
     const { data } = await api.get<Blob>(`/sales/export${qs(filters)}${sep}formato=${formato}`, {
       responseType: "blob",
     });
+    return data;
+  },
+  async returns(): Promise<CustomerReturn[]> {
+    const { data } = await api.get<CustomerReturn[]>(`/sales/returns`);
+    return data;
+  },
+  async cancelReturn(id: number): Promise<CustomerReturn> {
+    const { data } = await api.post<CustomerReturn>(`/sales/returns/${id}/cancel`);
     return data;
   },
   async customers(): Promise<CustomerLite[]> {

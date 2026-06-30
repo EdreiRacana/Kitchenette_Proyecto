@@ -150,6 +150,36 @@ export interface CustomerPnLReport {
   transactions: CustomerTransaction[]; returns: CustomerReturnLine[];
 }
 
+export interface CustomerReturnItem {
+  id: number;
+  return_id: number;
+  variant_id?: number | null;
+  product_name?: string | null;
+  sku?: string | null;
+  quantity: number;
+  unit_price: number;
+  condition: "sellable" | "damaged";
+  subtotal: number;
+}
+export interface CustomerReturn {
+  id: number;
+  folio?: string | null;
+  order_id?: number | null;
+  customer_id?: number | null;
+  warehouse_id?: number | null;
+  user_id?: number | null;
+  status: "completed" | "cancelled";
+  reason?: string | null;
+  settlement_type: "refund" | "store_credit" | "none";
+  refund_amount: number;
+  notes?: string | null;
+  created_at: string;
+  completed_at?: string | null;
+  items: CustomerReturnItem[];
+  customer_name?: string | null;
+  order_folio?: string | null;
+}
+
 export interface OrderFilters {
   q?: string;
   kind?: OrderKind;

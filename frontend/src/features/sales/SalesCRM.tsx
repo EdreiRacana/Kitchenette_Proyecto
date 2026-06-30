@@ -7,12 +7,13 @@ import {
   Search, List, Columns, BarChart3, Plus, Download, DollarSign, Clock,
   TrendingUp, Percent, ChevronRight, ArrowUp, ArrowDown, FileText, Info,
   Upload, Zap, Settings2, CheckCircle, AlertTriangle, FileSpreadsheet, Check, Trash2, ChevronLeft, Pencil,
+  RotateCcw,
 } from "lucide-react";
 import api from "../../services/api";
 import IngestaConfigurador from "./IngestaConfigurador";
 import { resolveTheme, makeTr, money, dateShort, statusColors, statusMeta, paymentLabel, ORDER_PIPELINE, PAYMENT_METHODS } from "./theme";
 import type { Tokens } from "./theme";
-import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns, CustomerForecast } from "./types";
+import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns, CustomerForecast, CustomerReturn } from "./types";
 import { salesApi } from "./api";
 import type { VariantOption } from "./api";
 import { Spinner, Badge, Button, EmptyState, Spinkeyframes } from "./ui";
@@ -22,7 +23,7 @@ import { OrderDrawer } from "./OrderDrawer";
 import { Analytics } from "./Analytics";
 import { DEMO_ORDERS, DEMO_CUSTOMERS, DEMO_VARIANTS } from "./demo";
 
-type ViewMode = "list" | "pipeline" | "analytics" | "ingesta";
+type ViewMode = "list" | "pipeline" | "analytics" | "ingesta" | "returns";
 const PAGE = 20;
 
 // ── Ingesta API ──────────────────────────────────────────────────────────────
@@ -486,6 +487,23 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const [view, setView] = useState<ViewMode>("list");
   const [saving, setSaving] = useState(false);
 
+  const [returns, setReturns] = useState<CustomerReturn[]>([]);
+  const [returnsLoading, setReturnsLoading] = useState(false);
+  const [returnsLoaded, setReturnsLoaded] = useState(false);
+  const loadReturns = useCallback(() => {
+    setReturnsLoading(true);
+    salesApi.returns()
+      .then(setReturns)
+      .catch(() => setReturns([]))
+      .finally(() => { setReturnsLoading(false); setReturnsLoaded(true); });
+  }, []);
+  useEffect(() => { if (view === "returns" && !demo && !returnsLoaded) loadReturns(); }, [view, demo, returnsLoaded, loadReturns]);
+  const cancelReturn = async (id: number) => {
+    if (!window.confirm(tr("sales_returns_cancel_confirm", "¿Cancelar esta devolución? El stock y el saldo del cliente se revertirán."))) return;
+    try { await salesApi.cancelReturn(id); loadReturns(); }
+    catch (err: any) { alert(err?.response?.data?.detail || tr("sales_returns_cancel_error", "Error al cancelar la devolución")); }
+  };
+
   const [q, setQ] = useState(initialQuery || "");
   useEffect(() => { if (initialQuery) setQ(initialQuery); }, [initialQuery]);
   const [kind, setKind] = useState("");
@@ -771,7 +789,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
       )}
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        {view !== "ingesta" && (
+        {view !== "ingesta" && view !== "returns" && (
           <>
             <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
               <Search size={16} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: tk.textLo }} />
@@ -796,7 +814,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
         )}
 
         <div style={{ display: "flex", gap: 4 }}>
-          {([["list", List, "Lista"], ["pipeline", Columns, "Pipeline"], ["analytics", BarChart3, "Analytics"], ["ingesta", Upload, "Carga de ventas"]] as const).map(([v, Icon, label]) => (
+          {([["list", List, "Lista"], ["pipeline", Columns, "Pipeline"], ["analytics", BarChart3, "Analytics"], ["returns", RotateCcw, "Devoluciones"], ["ingesta", Upload, "Carga de ventas"]] as const).map(([v, Icon, label]) => (
             <button key={v} onClick={() => setView(v)} title={label}
               style={{ ...inputBase, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, background: view === v ? tk.accent : tk.inputBg, color: view === v ? "#06122B" : tk.textMid, borderColor: view === v ? tk.accent : tk.border }}>
               <Icon size={15} /><span style={{ fontSize: 12 }}>{label}</span>
@@ -804,7 +822,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
           ))}
         </div>
 
-        {view !== "ingesta" && (
+        {view !== "ingesta" && view !== "returns" && (
           <>
             <div style={{ position: "relative" }}>
               <Button tk={tk} variant="ghost" icon={<Download size={16} />} disabled={exporting} onClick={() => setExportMenuOpen((o) => !o)}>
@@ -871,6 +889,54 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
             );
           })}
         </div>
+      ) : view === "returns" ? (
+        returnsLoading && !returnsLoaded ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 64 }}><Spinner tk={tk} size={28} /></div>
+        ) : (
+          <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
+                <thead><tr style={{ background: tk.panel2 }}>
+                  <th style={thBase}>{tr("returns_col_folio", "Folio")}</th>
+                  <th style={thBase}>{tr("returns_col_client", "Cliente")}</th>
+                  <th style={thBase}>{tr("returns_col_order", "Pedido")}</th>
+                  <th style={thBase}>{tr("returns_col_date", "Fecha")}</th>
+                  <th style={thBase}>{tr("returns_col_reason", "Motivo")}</th>
+                  <th style={thBase}>{tr("returns_col_settlement", "Liquidación")}</th>
+                  <th style={thBase}>{tr("returns_col_amount", "Monto")}</th>
+                  <th style={thBase}>{tr("returns_col_status", "Estado")}</th>
+                  <th style={{ borderBottom: `1px solid ${tk.border}` }}></th>
+                </tr></thead>
+                <tbody>
+                  {returns.length === 0 ? (
+                    <tr><td colSpan={9}><EmptyState tk={tk} title={tr("returns_no_results", "Sin devoluciones")} hint={tr("returns_no_results_hint", "Las devoluciones registradas aparecerán aquí.")} /></td></tr>
+                  ) : returns.map((r, i) => {
+                    const isCancelled = r.status === "cancelled";
+                    const sc = statusColors(tk, isCancelled ? "cancelled" : "paid");
+                    const settlementLabel = r.settlement_type === "refund" ? "Reembolso" : r.settlement_type === "store_credit" ? "Crédito en tienda" : "Sin liquidación";
+                    return (
+                      <tr key={r.id} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2 }}>
+                        <td style={{ padding: "12px 16px", fontSize: 14, color: tk.accent, fontWeight: 700 }}>{r.folio ?? `#${r.id}`}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi }}>{r.customer_name ?? tr("sales_no_customer", "Mostrador")}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{r.order_folio ?? "—"}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{dateShort(r.created_at)}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{r.reason ?? "—"}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{settlementLabel}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi, fontWeight: 700 }}>{money(r.refund_amount)}</td>
+                        <td style={{ padding: "12px 16px" }}><Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{isCancelled ? "Cancelada" : "Completada"}</Badge></td>
+                        <td style={{ padding: "12px 16px" }}>
+                          {!isCancelled && (
+                            <Button tk={tk} variant="ghost" onClick={() => cancelReturn(r.id)}>{tr("returns_cancel", "Cancelar")}</Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
       ) : (
         <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>

@@ -290,11 +290,16 @@ class RecipeItemCreate(BaseModel):
     input_variant_id: int
     quantity: float
 
+class RecipeExtraCost(BaseModel):
+    description: str
+    amount: float
+
 class RecipeCreate(BaseModel):
     output_variant_id: int
     name: Optional[str] = None
     labor_cost: float = 0
     overhead_cost: float = 0
+    extra_costs: List[RecipeExtraCost] = []
     yield_quantity: int = 1
     items: List[RecipeItemCreate]
 
@@ -313,6 +318,7 @@ class RecipeInDB(BaseModel):
     name: Optional[str] = None
     labor_cost: float
     overhead_cost: float
+    extra_costs: List[RecipeExtraCost] = []
     yield_quantity: int
     is_active: bool
     items: List[RecipeItemInDB] = []
@@ -325,6 +331,7 @@ class RecipeCostBreakdown(BaseModel):
     materials_cost: float
     labor_cost: float
     overhead_cost: float
+    extra_costs_total: float
     total_cost: float
     unit_cost: float  # total_cost / yield_quantity
     missing_cost_inputs: List[str] = []  # SKUs sin costo definido
@@ -335,6 +342,9 @@ class ProductionOrderCreate(BaseModel):
     warehouse_id: int
     runs: int = 1
     notes: Optional[str] = None
+
+class ProductionOrderUpdate(ProductionOrderCreate):
+    pass
 
 class ProductionOrderInDB(BaseModel):
     id: int

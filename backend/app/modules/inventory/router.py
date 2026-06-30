@@ -26,6 +26,23 @@ async def create_product(product_in: schemas.ProductCreate, db: DB, current_user
 async def read_products(db: DB, skip: int = 0, limit: int = 200, item_type: str | None = None):
     return await service.get_products(db, skip, limit, item_type=item_type)
 
+@router.get("/products/export")
+async def export_products(db: DB, current_user: CurrentUser,
+                           formato: str = "csv", warehouse_id: Optional[int] = None):
+    if formato == "xlsx":
+        contenido = await service.export_inventory_xlsx(db, warehouse_id=warehouse_id)
+        return StreamingResponse(
+            BytesIO(contenido),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=inventario.xlsx"},
+        )
+    csv_text = await service.export_inventory_csv(db, warehouse_id=warehouse_id)
+    from io import StringIO
+    return StreamingResponse(
+        StringIO(csv_text), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=inventario.csv"},
+    )
+
 @router.post("/products/upload-image")
 async def upload_product_image(db: DB, current_user: CurrentUser, file: UploadFile = File(...)):
     content = await file.read()
@@ -289,6 +306,16 @@ async def create_production_order(po_in: schemas.ProductionOrderCreate, db: DB, 
 @router.get("/production-orders", response_model=List[schemas.ProductionOrderInDB])
 async def read_production_orders(db: DB, current_user: CurrentUser):
     return await service.get_production_orders(db)
+
+@router.put("/production-orders/{prod_id}", response_model=schemas.ProductionOrderInDB)
+async def update_production_order(prod_id: int, po_in: schemas.ProductionOrderUpdate, db: DB, current_user: CurrentUser):
+    try:
+        prod = await service.update_production_order(db, prod_id, po_in)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not prod:
+        raise HTTPException(status_code=404, detail="Production order not found")
+    return prod
 
 @router.post("/production-orders/{prod_id}/complete", response_model=schemas.ProductionOrderInDB)
 async def complete_production_order(prod_id: int, db: DB, current_user: CurrentUser):

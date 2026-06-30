@@ -266,6 +266,7 @@ _INVENTORY_STATEMENTS = [
     "UPDATE purchase_orders SET total_amount = 0 WHERE total_amount IS NULL",
     "UPDATE purchase_orders SET paid_amount = 0 WHERE paid_amount IS NULL",
     "UPDATE stock_movements SET movement_type = lower(movement_type) WHERE movement_type <> lower(movement_type)",
+    "ALTER TABLE recipes ADD COLUMN IF NOT EXISTS extra_costs JSONB",
 ]
 
 _FINANCE_STATEMENTS = [
