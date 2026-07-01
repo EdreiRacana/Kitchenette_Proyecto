@@ -78,6 +78,19 @@ async def login_verify_2fa(
 # Resuelve el problema del "huevo y la gallina": necesitas un admin para crear
 # usuarios, pero al inicio la base está vacía. Se auto-deshabilita en cuanto
 # exista al menos un usuario, así que no es un hueco de seguridad permanente.
+@router.get("/setup-status")
+@limiter.limit("30/minute")
+async def get_setup_status(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+):
+    """Público (sin auth): le dice al frontend si debe mostrar la pantalla de
+    login normal o la de 'primer administrador' porque la base está vacía."""
+    result = await db.execute(select(sqlfunc.count()).select_from(User))
+    user_count = result.scalar_one()
+    return {"needs_setup": user_count == 0}
+
+
 @router.post("/setup", response_model=schemas.User)
 @limiter.limit("5/hour")
 async def setup_first_admin(
