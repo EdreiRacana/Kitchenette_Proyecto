@@ -28,3 +28,4 @@ pdf2image==1.17.0
 Pillow==10.4.0
 pyotp==2.9.0
 qrcode==7.4.2
+slowapi==0.1.10
