@@ -1,12 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
 from app.api import deps
 from . import service, schemas
 from app.modules.auth.models import User
+from app.core import security
+from app.core.rate_limit import limiter
 
 router = APIRouter()
+logger = logging.getLogger("uvicorn.error")
 
 # -- Branches (Sucursales) --
 from typing import Annotated  # noqa: E402
@@ -179,3 +184,48 @@ async def read_audit_logs(
     current_user: User = Depends(deps.get_current_superuser)
 ):
     return await service.get_audit_logs(db, skip=skip, limit=limit)
+
+
+# -- Zona de peligro: reset total de datos operativos --
+
+@router.post("/danger/reset-data", response_model=schemas.DataResetResponse)
+@limiter.limit("5/hour")
+async def reset_operational_data(
+    request: Request,
+    payload: schemas.DataResetRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_superuser),
+):
+    """Borra todos los datos operativos (usuarios, clientes, ventas, RH,
+    inventario, finanzas, contabilidad, ingesta), conservando la config. de
+    empresa. Solo el superusuario, y solo con su contraseña + la frase de
+    confirmación exacta. Registrado en el log del servidor porque la propia
+    tabla de auditoría se vacía como parte del borrado."""
+    if payload.confirm != "BORRAR TODO":
+        raise HTTPException(status_code=400, detail='Debes escribir exactamente "BORRAR TODO" para confirmar.')
+    if not security.verify_password(payload.password, current_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Contraseña incorrecta.")
+
+    from app.db.session import engine
+    from app.db.reset import wipe_operational_data, reseed_after_wipe
+
+    # La sesión de este request (abierta por la dependencia de autenticación,
+    # que ya leyó de "users") debe cerrarse antes del TRUNCATE: si sigue
+    # "idle in transaction" retiene un lock de lectura sobre esa tabla y el
+    # TRUNCATE (que necesita lock exclusivo) se queda esperando para siempre.
+    await db.close()
+
+    logger.warning(
+        "RESET TOTAL DE DATOS iniciado por %s (user_id=%s)", current_user.email, current_user.id
+    )
+    try:
+        wiped = await wipe_operational_data(engine)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await reseed_after_wipe()
+    logger.warning("RESET TOTAL DE DATOS completado: %d tablas vaciadas.", len(wiped))
+
+    return schemas.DataResetResponse(
+        wiped_tables=wiped,
+        message="Datos borrados. Tu sesión ya no es válida — crea el primer administrador real en /auth/setup.",
+    )
