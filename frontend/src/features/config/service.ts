@@ -102,6 +102,10 @@ const configService = {
     updateIntegration: async (id: string, data: Partial<SystemIntegration>) => (await api.put<SystemIntegration>(`/config/integrations/${id}`, data)).data,
     deleteIntegration: async (id: string) => { await api.delete(`/config/integrations/${id}`); },
     testEmail: async (to?: string) => (await api.post<{ ok: boolean; error: string | null; to: string | null }>('/config/integrations/email/test', { to: to || null })).data,
+
+    // ── Zona de peligro: reset total de datos (solo superusuario) ──
+    resetAllData: async (password: string, confirm: string) =>
+        (await api.post<{ wiped_tables: string[]; message: string }>('/config/danger/reset-data', { password, confirm })).data,
 };
 
 export default configService;

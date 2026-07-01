@@ -18,20 +18,17 @@ Uso (desde backend/, con DATABASE_URL apuntando a la base de PRODUCCIÓN):
 Es interactivo a propósito: pide dos confirmaciones explícitas y nunca
 corre solo. Se niega a ejecutarse contra SQLite (protección para no
 borrar por accidente una base local de desarrollo).
+
+Alternativa sin línea de comandos: el mismo borrado está disponible desde
+la app en Configuración → Seguridad → Zona de peligro (solo visible para
+el superusuario, pide contraseña + confirmación).
 """
 
 import asyncio
 
-from sqlalchemy import text
-
 from app.core.config import settings
-from app.db.session import engine, Base
-
-# Importar todos los routers para que sus modelos registren sus tablas en
-# Base.metadata antes de leerla.
-from app.api.v1 import api as _api  # noqa: F401
-
-KEEP_TABLES = {"company_profile", "branches", "system_integrations"}
+from app.db.session import engine
+from app.db.reset import KEEP_TABLES, tables_to_wipe, wipe_operational_data, reseed_after_wipe
 
 
 def _masked_target() -> str:
@@ -48,8 +45,7 @@ async def run() -> None:
         print("para la base de datos de PRODUCCIÓN (Postgres en Render). Abortando.")
         return
 
-    all_tables = [t.name for t in Base.metadata.sorted_tables]
-    tables_to_wipe = [t for t in all_tables if t not in KEEP_TABLES]
+    wipe_targets = tables_to_wipe()
 
     print("=" * 70)
     print("RESET DE DATOS DE PRODUCCIÓN")
@@ -58,8 +54,8 @@ async def run() -> None:
     print(f"\nSe conservan ({len(KEEP_TABLES)} tablas, config. de empresa):")
     for t in sorted(KEEP_TABLES):
         print(f"  - {t}")
-    print(f"\nSe BORRA TODO el contenido de estas {len(tables_to_wipe)} tablas:")
-    for t in sorted(tables_to_wipe):
+    print(f"\nSe BORRA TODO el contenido de estas {len(wipe_targets)} tablas:")
+    for t in sorted(wipe_targets):
         print(f"  - {t}")
     print("\nEsto incluye usuarios: tras el borrado, POST /api/v1/auth/setup")
     print("vuelve a estar disponible para crear el primer administrador real.")
@@ -76,17 +72,10 @@ async def run() -> None:
         print("El host no coincide. Abortado, no se borró nada.")
         return
 
-    quoted = ", ".join(f'"{t}"' for t in tables_to_wipe)
-    async with engine.begin() as conn:
-        await conn.execute(text(f"TRUNCATE TABLE {quoted} RESTART IDENTITY CASCADE"))
-    print(f"\nListo: {len(tables_to_wipe)} tablas vaciadas.")
+    wiped = await wipe_operational_data(engine)
+    print(f"\nListo: {len(wiped)} tablas vaciadas.")
 
-    from app.db.session import AsyncSessionLocal
-    from app.modules.auth.rbac import seed_rbac
-
-    async with AsyncSessionLocal() as db:
-        await seed_rbac(db)
-        await db.commit()
+    await reseed_after_wipe()
     print("Roles y permisos de sistema re-sembrados (Administrador, Contador, Vendedor, etc.).")
     print("\nSiguiente paso: POST /api/v1/auth/setup para crear el primer administrador real.")
 

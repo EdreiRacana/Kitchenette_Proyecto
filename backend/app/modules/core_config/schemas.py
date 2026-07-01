@@ -103,3 +103,14 @@ class AuditLogResponse(AuditLogBase):
 
     class Config:
         from_attributes = True
+
+# -- Reset total de datos (zona de peligro) --
+
+class DataResetRequest(BaseModel):
+    password: str
+    confirm: str
+
+
+class DataResetResponse(BaseModel):
+    wiped_tables: list[str]
+    message: str

@@ -864,6 +864,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               <Download size={14} /> Exportar registro completo
             </button>
           </div>
+          <DangerZoneCard t={t} card={card} lbl={lbl} inp={inp} sectionTitle={sectionTitle} />
         </div>
       )}
 
@@ -1135,6 +1136,87 @@ function TwoFactorCard({ t, card, sectionTitle }: any) {
           <button onClick={startSetup} disabled={busy} style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
             {busy ? "…" : "Activar 2FA"}
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Tarjeta: zona de peligro — reset total de datos (solo superusuario) ────
+function DangerZoneCard({ t, card, lbl, inp, sectionTitle }: any) {
+  const [isSuperuser, setIsSuperuser] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<{ wiped_tables: string[]; message: string } | null>(null);
+
+  useEffect(() => {
+    configService.getMyPermissions().then(p => setIsSuperuser(!!p.is_superuser)).catch(() => setIsSuperuser(false));
+  }, []);
+
+  if (!isSuperuser) return null;
+
+  const canSubmit = password.length > 0 && confirmText === "BORRAR TODO" && !busy;
+
+  const runReset = async () => {
+    setBusy(true); setError("");
+    try {
+      const r = await configService.resetAllData(password, confirmText);
+      setResult(r);
+      localStorage.removeItem("token");
+      setTimeout(() => window.location.reload(), 3000);
+    } catch (err: any) {
+      setError(errorMessage(err, "No se pudo completar el borrado."));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ ...card, border: `1px solid ${t.bad}55` }}>
+      {sectionTitle(AlertTriangle, "Zona de peligro", t.bad)}
+      {result ? (
+        <div style={{ fontSize: 13, color: t.good }}>
+          {result.message}
+          <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 6 }}>
+            {result.wiped_tables.length} tablas vaciadas. Cerrando tu sesión…
+          </div>
+        </div>
+      ) : !open ? (
+        <div>
+          <div style={{ fontSize: 12.5, color: t.textMid, marginBottom: 12 }}>
+            Borra TODOS los datos operativos (usuarios, clientes, ventas, devoluciones, RH, inventario,
+            finanzas, contabilidad, ingesta) dejando el esquema vacío para arrancar con datos reales.
+            Se conserva la configuración de empresa (perfil, sucursales, integraciones). Esta acción es
+            irreversible.
+          </div>
+          <button onClick={() => setOpen(true)} style={{ padding: "9px 16px", borderRadius: 10, border: `1px solid ${t.bad}`, background: "transparent", color: t.bad, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            Borrar todos los datos
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 420 }}>
+          <div style={{ background: t.bad + "12", border: `1px solid ${t.bad}33`, borderRadius: 8, padding: "12px 14px", fontSize: 12.5, color: t.bad }}>
+            Esto es irreversible. Se borrarán todos los datos de todas las empresas/sucursales en esta base de datos.
+          </div>
+          <div>
+            <label style={lbl}>Tu contraseña *</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} style={inp} autoComplete="current-password" />
+          </div>
+          <div>
+            <label style={lbl}>Escribe "BORRAR TODO" para confirmar *</label>
+            <input value={confirmText} onChange={e => setConfirmText(e.target.value)} style={inp} placeholder="BORRAR TODO" />
+          </div>
+          {error && <div style={{ fontSize: 12.5, color: t.bad }}>{error}</div>}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={runReset} disabled={!canSubmit} style={{ padding: "9px 16px", borderRadius: 10, border: "none", background: t.bad, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: canSubmit ? 1 : 0.5 }}>
+              {busy ? "Borrando…" : "Confirmar borrado total"}
+            </button>
+            <button onClick={() => { setOpen(false); setPassword(""); setConfirmText(""); setError(""); }} disabled={busy} style={{ padding: "9px 16px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              Cancelar
+            </button>
+          </div>
         </div>
       )}
     </div>
