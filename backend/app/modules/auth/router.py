@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from typing import Annotated, List
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,12 +12,15 @@ from app.modules.auth import schemas, service
 from app.modules.auth.models import User
 from app.core import security
 from app.core.config import settings
+from app.core.rate_limit import limiter
 
 router = APIRouter()
 
 
 @router.post("/login", response_model=schemas.LoginResponse)
+@limiter.limit("10/minute")
 async def login_for_access_token(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(deps.get_db)]
 ):
@@ -44,7 +47,9 @@ async def login_for_access_token(
 
 
 @router.post("/login/2fa", response_model=schemas.Token)
+@limiter.limit("10/minute")
 async def login_verify_2fa(
+    request: Request,
     body: schemas.TwoFactorVerify,
     db: Annotated[AsyncSession, Depends(deps.get_db)],
 ):
@@ -74,7 +79,9 @@ async def login_verify_2fa(
 # usuarios, pero al inicio la base está vacía. Se auto-deshabilita en cuanto
 # exista al menos un usuario, así que no es un hueco de seguridad permanente.
 @router.post("/setup", response_model=schemas.User)
+@limiter.limit("5/hour")
 async def setup_first_admin(
+    request: Request,
     user_in: schemas.UserCreate,
     db: Annotated[AsyncSession, Depends(deps.get_db)]
 ):

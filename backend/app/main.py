@@ -4,7 +4,10 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.api.v1.api import api_router
 
 logger = logging.getLogger("uvicorn.error")
@@ -13,6 +16,9 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
 # IMPORTANTE: con allow_credentials=True NO se puede usar allow_origins=["*"].
