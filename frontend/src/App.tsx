@@ -857,6 +857,122 @@ function Login({ t, s, lang, onEnter }) {
   );
 }
 
+/* ============================ Setup (primer administrador) ============================ */
+function SetupScreen({ t, lang, onDone }) {
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+
+  const valid = fullName && email && pass.length >= 6 && pass === confirm;
+
+  const handleSubmit = async () => {
+    if (!valid) return;
+    setError(""); setLoading(true);
+    try {
+      await api.post("/auth/setup", { email, password: pass, full_name: fullName });
+      setDone(true);
+      setTimeout(onDone, 1800);
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status === 403) {
+        setError(lang === "en" ? "Setup already completed. Reloading…" : "La configuración inicial ya se completó. Recargando…");
+        setTimeout(onDone, 1500);
+      } else if (status === 400) {
+        setError(lang === "en" ? "That email is already registered." : "Ese correo ya está registrado.");
+      } else {
+        setError(lang === "en" ? "Could not create the administrator. Try again." : "No se pudo crear el administrador. Intenta de nuevo.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onKey = (e) => { if (e.key === "Enter" && !loading) handleSubmit(); };
+
+  return (
+    <div style={{ minHeight: "100vh", background: `radial-gradient(ellipse 60% 50% at 50% 38%, #16306a 0%, #102656 35%, #0c1f49 65%, ${t.base} 100%)`, display: "grid", placeItems: "center", padding: 24, position: "relative", overflow: "hidden" }}>
+      <svg viewBox="0 0 800 800" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.5 }} preserveAspectRatio="xMidYMid meet" aria-hidden>
+        <g stroke="#23396f" strokeWidth="1" fill="none" opacity="0.6" className="login-tri"><polygon points="400,8 760,792 400,648 40,792" /><polyline points="400,8 580,648 760,792" /></g>
+      </svg>
+      <div style={{ position: "relative", width: "100%", maxWidth: 400, textAlign: "center" }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}><NovaMark size={86} /></div>
+        <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: 6, color: t.textHi }}>STHENOVA®</div>
+        <div style={{ fontSize: 10, letterSpacing: 6, color: t.textLo, marginBottom: 30 }}>COMPLETE SYSTEM</div>
+        <Card t={t} style={{ padding: 26, textAlign: "left" }}>
+          {done ? (
+            <div style={{ textAlign: "center", padding: "10px 0" }}>
+              <CheckCircle size={32} color={t.good} style={{ marginBottom: 10 }} />
+              <div style={{ fontSize: 14, color: t.textHi, fontWeight: 600 }}>
+                {lang === "en" ? "Administrator created" : "Administrador creado"}
+              </div>
+              <div style={{ fontSize: 12.5, color: t.textLo, marginTop: 4 }}>
+                {lang === "en" ? "Redirecting to login…" : "Redirigiendo al login…"}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, marginBottom: 2 }}>
+                {lang === "en" ? "Welcome — set up your administrator" : "Bienvenido — configura tu administrador"}
+              </div>
+              <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 18 }}>
+                {lang === "en" ? "This database is empty. Create the first account to get started." : "Esta base de datos está vacía. Crea la primera cuenta para empezar."}
+              </div>
+
+              <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600 }}>{lang === "en" ? "Full name" : "Nombre completo"}</label>
+              <div className="login-input-glow" style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.nova}55`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 14px" }}>
+                <UserIcon size={16} color={t.textLo} />
+                <input value={fullName} onChange={(e) => setFullName(e.target.value)} onKeyDown={onKey} placeholder={lang === "en" ? "Your name" : "Tu nombre"} style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 14 }} />
+              </div>
+
+              <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600 }}>{lang === "en" ? "Email" : "Correo"}</label>
+              <div className="login-input-glow" style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.nova}55`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 14px" }}>
+                <UserIcon size={16} color={t.textLo} />
+                <input value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={onKey} autoComplete="username" placeholder="correo@empresa.com" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 14 }} />
+              </div>
+
+              <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600 }}>{lang === "en" ? "Password" : "Contraseña"}</label>
+              <div className="login-input-glow" style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.nova}55`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 14px" }}>
+                <Lock size={16} color={t.textLo} />
+                <input type="password" value={pass} onChange={(e) => setPass(e.target.value)} onKeyDown={onKey} autoComplete="new-password" placeholder={lang === "en" ? "Minimum 6 characters" : "Mínimo 6 caracteres"} style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 14 }} />
+              </div>
+
+              <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600 }}>{lang === "en" ? "Confirm password" : "Confirmar contraseña"}</label>
+              <div className="login-input-glow" style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.nova}55`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 20px" }}>
+                <Lock size={16} color={t.textLo} />
+                <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} onKeyDown={onKey} autoComplete="new-password" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 14 }} />
+              </div>
+
+              {confirm.length > 0 && pass !== confirm && (
+                <div style={{ fontSize: 11.5, color: t.warn, marginBottom: 10 }}>
+                  {lang === "en" ? "Passwords don't match." : "Las contraseñas no coinciden."}
+                </div>
+              )}
+              {error && (
+                <div style={{ background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 9, padding: "9px 12px", fontSize: 12.5, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                  <AlertTriangle size={15} /> {error}
+                </div>
+              )}
+
+              <button onClick={handleSubmit} disabled={loading || !valid} style={{ width: "100%", border: "none", cursor: (loading || !valid) ? "default" : "pointer", color: "#fff", fontSize: 15, fontWeight: 600, padding: "12px", borderRadius: 10, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, boxShadow: `0 8px 22px ${t.nova}40`, opacity: (loading || !valid) ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                {loading
+                  ? <><RefreshCw size={16} className="spin" /> {lang === "en" ? "Creating…" : "Creando…"}</>
+                  : (lang === "en" ? "Create administrator" : "Crear administrador")}
+              </button>
+            </>
+          )}
+        </Card>
+        <p style={{ marginTop: 22, fontSize: 11, color: t.textLo }}>
+          {lang === "en" ? "Sthenova platform · each client's logo is configured separately" : "Plataforma Sthenova · el logo de cada empresa cliente se configura por separado"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /* ============================ Sidebar ============================ */
 function Sidebar({ t, s, page, setPage, collapsed, setCollapsed, mobile, mobileOpen, setMobileOpen, allowedIds }) {
   const w = mobile ? 248 : (collapsed ? 72 : 248);
@@ -1396,6 +1512,7 @@ export default function App() {
   const [theme, setTheme] = useState("dark");
   const [lang, setLang] = useState("es");
   const [authed, setAuthed] = useState(() => !!localStorage.getItem("token"));
+  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   const [page, setPage] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
   const isMobile = useIsMobile();
@@ -1411,6 +1528,14 @@ export default function App() {
   useEffect(() => {
     if (!authed) { setPerms(null); return; }
     configService.getMyPermissions().then(setPerms).catch(() => setPerms(null));
+  }, [authed]);
+
+  // Si la base está vacía (sin usuarios, ej. tras un reset), mostramos la
+  // pantalla de "primer administrador" en vez del login normal. Si la
+  // consulta falla, asumimos que no hace falta (degradación segura: login).
+  useEffect(() => {
+    if (authed) return;
+    api.get("/auth/setup-status").then(r => setNeedsSetup(!!r.data?.needs_setup)).catch(() => setNeedsSetup(false));
   }, [authed]);
 
   const canView = (id) => {
@@ -1451,7 +1576,9 @@ export default function App() {
         .login-input-glow:focus-within{box-shadow:0 0 0 2px ${t.nova}, 0 0 24px ${t.nova}cc; animation:none}
         @media (prefers-reduced-motion:reduce){.nova-glow,.login-tri,.login-input-glow{animation:none}}
       `}</style>
-      <Login t={t} s={s} lang={lang} onEnter={() => setAuthed(true)} />
+      {needsSetup
+        ? <SetupScreen t={t} lang={lang} onDone={() => setNeedsSetup(false)} />
+        : <Login t={t} s={s} lang={lang} onEnter={() => setAuthed(true)} />}
     </>);
   }
 
