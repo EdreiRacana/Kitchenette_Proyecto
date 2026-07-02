@@ -247,6 +247,7 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
       if (res.pedidos_ya_existentes) partes.push(`${res.pedidos_ya_existentes} pedido(s) ya existían de una carga anterior y no se duplicaron.`);
       if (res.devoluciones_generadas) partes.push(`${res.devoluciones_generadas} se detectaron como devolución/reembolso y se registraron como tal.`);
       if (res.registros_omitidos) partes.push(`${res.registros_omitidos} registro(s) ya estaban vinculados.`);
+      if (!res.ordenes_creadas && res.registros_omitidos) partes.push("Las ventas de este archivo ya se habían generado antes — revísalas en la pestaña Lista.");
       alert(partes.join(" "));
       if (fuenteHistorial) await verHistorial(fuenteHistorial.id, fuenteHistorial.nombre);
     } catch (e: unknown) {
