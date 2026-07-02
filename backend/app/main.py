@@ -55,13 +55,20 @@ def health_check():
     return {"status": "ok", "app_name": settings.PROJECT_NAME}
 
 
-# Unhandled exceptions otherwise escape CORSMiddleware (Starlette quirk), which
-# makes the browser report a misleading "CORS blocked" instead of the real 500.
-# Catching them here keeps the CORS headers and logs the real traceback.
+# Unhandled exceptions escape CORSMiddleware: el handler de Exception corre en
+# ServerErrorMiddleware (la capa MÁS externa, por fuera de CORS), así que la
+# respuesta 500 salía SIN Access-Control-Allow-Origin. El navegador la
+# convertía en "Network Error" opaco y el frontend la reintentaba como si
+# fuera un fallo de red. Por eso aquí agregamos las cabeceras CORS a mano.
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error on %s %s", request.method, request.url)
-    return JSONResponse(status_code=500, content={"detail": "Error interno del servidor."})
+    headers = {}
+    origin = request.headers.get("origin")
+    if origin in ALLOWED_ORIGINS:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    return JSONResponse(status_code=500, content={"detail": "Error interno del servidor."}, headers=headers)
 
 
 # Auto-create tables on startup (for immediate local dev)
