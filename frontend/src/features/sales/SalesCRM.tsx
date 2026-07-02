@@ -135,6 +135,10 @@ interface ResultadoLote {
     venta_bruta: number;
     upc: string | null;
   }[];
+  // Presentes cuando la fuente genera ventas automáticamente al subir.
+  ordenes_creadas?: number | null;
+  pedidos_ya_existentes?: number | null;
+  devoluciones_generadas?: number | null;
 }
 
 function computeStats(orders: Order[]): SalesStats {
@@ -153,7 +157,7 @@ function computeStats(orders: Order[]): SalesStats {
 }
 
 // ── Módulo de Ingesta ────────────────────────────────────────────────────────
-function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => string }) {
+function IngestaModule({ tk, tr, onVerVentas }: { tk: Tokens; tr: (k: string, fb: string) => string; onVerVentas: () => void }) {
   const [modo, setModo] = useState<"lista" | "nueva" | "editar" | "subir" | "historial">("lista");
   const [fuenteEditar, setFuenteEditar] = useState<number | null>(null);
   const [fuenteHistorial, setFuenteHistorial] = useState<{ id: number; nombre: string } | null>(null);
@@ -277,19 +281,33 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
         <div style={{ fontSize: 13, color: tk.textLo, marginTop: 4 }}>{resultado.filas_ok} registros importados · {resultado.filas_error} errores · estado: {resultado.estado}</div>
       </div>
 
-      {ventasGeneradas ? (
-        <div style={{ ...card, textAlign: "center", borderColor: tk.good + "55" }}>
-          <CheckCircle size={28} color={tk.good} style={{ margin: "0 auto 10px", display: "block" }} />
-          <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>{ventasGeneradas.ordenes_creadas} pedido{ventasGeneradas.ordenes_creadas !== 1 ? "s" : ""} generado{ventasGeneradas.ordenes_creadas !== 1 ? "s" : ""} en Ventas</div>
-          <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>Ya puedes verlos en el listado de pedidos.</div>
-          {!!ventasGeneradas.pedidos_ya_existentes && (
-            <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>{ventasGeneradas.pedidos_ya_existentes} pedido(s) ya existían de una carga anterior y no se duplicaron.</div>
-          )}
-          {!!ventasGeneradas.devoluciones_generadas && (
-            <div style={{ fontSize: 12, color: tk.warn, marginTop: 4 }}>{ventasGeneradas.devoluciones_generadas} se detectaron como devolución/reembolso y se registraron como tal.</div>
-          )}
-        </div>
-      ) : (
+      {(ventasGeneradas || resultado.ordenes_creadas != null) ? (() => {
+        const gen = ventasGeneradas ?? {
+          ordenes_creadas: resultado.ordenes_creadas ?? 0,
+          pedidos_ya_existentes: resultado.pedidos_ya_existentes ?? 0,
+          devoluciones_generadas: resultado.devoluciones_generadas ?? 0,
+        };
+        return (
+          <div style={{ ...card, textAlign: "center", borderColor: tk.good + "55" }}>
+            <CheckCircle size={28} color={tk.good} style={{ margin: "0 auto 10px", display: "block" }} />
+            <div style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>
+              {gen.ordenes_creadas > 0
+                ? `${gen.ordenes_creadas} venta${gen.ordenes_creadas !== 1 ? "s" : ""} generada${gen.ordenes_creadas !== 1 ? "s" : ""} automáticamente`
+                : "Las ventas de este archivo ya estaban registradas — no se duplicó nada"}
+            </div>
+            {!!gen.pedidos_ya_existentes && (
+              <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>{gen.pedidos_ya_existentes} pedido(s) ya existían de una carga anterior y no se duplicaron.</div>
+            )}
+            {!!gen.devoluciones_generadas && (
+              <div style={{ fontSize: 12, color: tk.warn, marginTop: 4 }}>{gen.devoluciones_generadas} se detectaron como devolución/reembolso y se registraron como tal.</div>
+            )}
+            <button onClick={() => { setResultado(null); setVentasGeneradas(null); onVerVentas(); }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 14, padding: "10px 22px", borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${tk.nova}, ${tk.navy})`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+              Ver las ventas en la Lista →
+            </button>
+          </div>
+        );
+      })() : (
         <button onClick={generarVentas} disabled={generandoVentas}
           style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px", borderRadius: 9, border: `1px solid ${tk.nova}55`, background: tk.nova + "18", color: tk.nova, fontSize: 14, fontWeight: 600, cursor: generandoVentas ? "default" : "pointer", opacity: generandoVentas ? 0.6 : 1 }}>
           <Zap size={16} /> {generandoVentas ? "Generando pedidos..." : "Generar pedidos de venta a partir de este lote"}
@@ -476,8 +494,8 @@ function IngestaModule({ tk, tr }: { tk: Tokens; tr: (k: string, fb: string) => 
                 <button
                   onClick={() => { fuenteSubirRef.current = { id: f.id, nombre: f.nombre }; setFuenteSubir({ id: f.id, nombre: f.nombre }); fileRef.current?.click(); }}
                   disabled={subiendo}
-                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "none", background: tk.nova, color: "#06122B", fontSize: 13, fontWeight: 600, cursor: subiendo ? "default" : "pointer", opacity: subiendo ? 0.6 : 1 }}>
-                  <Upload size={14} /> Subir reporte
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 18px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${tk.nova}, ${tk.navy})`, color: "#fff", fontSize: 13, fontWeight: 700, cursor: subiendo ? "default" : "pointer", opacity: subiendo ? 0.6 : 1, boxShadow: `0 4px 14px ${tk.nova}40` }}>
+                  <Upload size={14} /> {subiendo ? "Procesando…" : "Subir ventas (Excel)"}
                 </button>
                 <button
                   onClick={() => verHistorial(f.id, f.nombre)}
@@ -877,7 +895,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
       </div>
 
       {view === "ingesta" ? (
-        <IngestaModule tk={tk} tr={tr} />
+        <IngestaModule tk={tk} tr={tr} onVerVentas={() => { setView("list"); refreshData(); }} />
       ) : view === "analytics" ? (
         analyticsLoading && !analyticsLoaded ? (
           <div style={{ display: "flex", justifyContent: "center", padding: 64 }}><Spinner tk={tk} size={28} /></div>

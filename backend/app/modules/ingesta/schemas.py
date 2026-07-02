@@ -262,6 +262,11 @@ class ProcesamientoResponse(BaseModel):
     filas_error: int
     error_detalle: Optional[str] = None
     registros_muestra: List[IngestaRegistro] = []  # primeras 5 filas para preview
+    # Si la fuente tiene auto_crear_ventas, el upload también genera las ventas
+    # y reporta aquí el resultado (None = la fuente no genera automáticamente).
+    ordenes_creadas: Optional[int] = None
+    pedidos_ya_existentes: Optional[int] = None
+    devoluciones_generadas: Optional[int] = None
 
 
 # ─────────────────────────────────────────────────────────────

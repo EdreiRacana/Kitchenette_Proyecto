@@ -282,7 +282,10 @@ async def upload_archivo(
         raise HTTPException(400, str(e))
 
     if fuente.auto_crear_ventas:
-        await service.generar_ordenes_de_lote(db, resultado.lote_id)
+        gen = await service.generar_ordenes_de_lote(db, resultado.lote_id)
+        resultado.ordenes_creadas = gen.ordenes_creadas
+        resultado.pedidos_ya_existentes = gen.pedidos_ya_existentes
+        resultado.devoluciones_generadas = gen.devoluciones_generadas
 
     return resultado
 
