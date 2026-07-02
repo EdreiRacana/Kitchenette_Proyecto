@@ -21,6 +21,7 @@ import HRModule from "./features/hr/HRModule";
 import BIModule from "./features/bi/BIModule";
 import ConfigModule from "./features/config/ConfigModule";
 import api from "./services/api";
+import { useServerRecovery } from "./hooks/useServerRecovery";
 import configService from "./features/config/service";
 
 // Mapa de id de módulo del menú → clave de permiso del backend (rbac.py).
@@ -466,6 +467,8 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
   const [error, setError] = useState(null);
 
   const [reloadKey, setReloadKey] = useState(0);
+  // Si falló la carga, recarga sola en cuanto el servidor vuelva a responder.
+  useServerRecovery(!!error, () => setReloadKey((k) => k + 1));
   useEffect(() => {
     if (preset === "custom" && (!rStart || !rEnd)) return;
     let active = true;
