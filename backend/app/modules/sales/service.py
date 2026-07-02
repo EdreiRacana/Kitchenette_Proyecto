@@ -375,8 +375,10 @@ async def create_order(db: AsyncSession, order_in: schemas.OrderCreate,
         await _apply_stock_for_items(db, order, items, "out", user_id)
         await _accounting_record_sale(db, order)
 
-    # If created already paid, register the full payment (finance + ledger)
-    if kind == "order" and status == "paid":
+    # If created already paid, register the full payment (finance + ledger).
+    # Un total de $0 (ej. filas de ingesta con precio vacío) no genera pago:
+    # un Payment de $0 no aporta nada y rompía la validación al listar.
+    if kind == "order" and status == "paid" and (order.total_amount or 0) > 0:
         await _settle_payment(db, order, order.total_amount,
                               method=order.payment_method, user_id=user_id,
                               reference="auto", note="Pago al crear")

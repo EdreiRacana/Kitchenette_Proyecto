@@ -41,9 +41,17 @@ class PaymentCreate(BaseModel):
     note: Optional[str] = None
 
 
-class PaymentInDB(PaymentCreate):
+class PaymentInDB(BaseModel):
+    # Esquema de LECTURA: no hereda el gt=0 de PaymentCreate a propósito.
+    # Si la BD llegara a tener un pago de $0 (datos históricos), listar
+    # pedidos no debe tronar con 500 — la validación estricta es solo
+    # para capturar pagos nuevos.
     id: int
     order_id: int
+    amount: float
+    method: Optional[str] = None
+    reference: Optional[str] = None
+    note: Optional[str] = None
     user_id: Optional[int] = None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
