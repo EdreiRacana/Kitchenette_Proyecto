@@ -23,6 +23,7 @@ import {
   type BulkImportResult, type CustomerReturn,
 } from "./service";
 import { resolveMediaUrl } from "../../services/api";
+import { useServerRecovery } from "../../hooks/useServerRecovery";
 import { openWhatsApp } from "../../utils/whatsapp";
 import ReturnModal from "./ReturnModal";
 
@@ -165,6 +166,8 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  // Si falló la carga, recarga sola en cuanto el servidor vuelva a responder.
+  useServerRecovery(loadError, load);
 
   // ── KPIs ────────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {

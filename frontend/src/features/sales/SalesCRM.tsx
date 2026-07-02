@@ -10,6 +10,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import api, { onServerWaking } from "../../services/api";
+import { useServerRecovery } from "../../hooks/useServerRecovery";
 import IngestaConfigurador from "./IngestaConfigurador";
 import { resolveTheme, makeTr, money, dateShort, statusColors, statusMeta, paymentLabel, ORDER_PIPELINE, PAYMENT_METHODS } from "./theme";
 import type { Tokens } from "./theme";
@@ -662,6 +663,9 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const refreshData = useCallback(async () => {
     await loadOrders(); loadStats(); setAnalyticsLoaded(false);
   }, [loadOrders, loadStats]);
+
+  // Si falló la carga, recarga sola en cuanto el servidor vuelva a responder.
+  useServerRecovery(loadError, refreshData);
 
   // Legado del modo demo (nunca se llena — demo ya no se activa).
   const demoStore = useMemo(() => ({ list: [] as Order[] }), []);

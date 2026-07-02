@@ -14,6 +14,7 @@ import {
   Wallet, FileText, History, Paperclip, CalendarClock, Ban, Mail,
 } from "lucide-react";
 import { financeService, downloadCSV } from "./service";
+import { useServerRecovery } from "../../hooks/useServerRecovery";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Transaction {
@@ -132,6 +133,8 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  // Si falló la carga, recarga sola en cuanto el servidor vuelva a responder.
+  useServerRecovery(loadError, load);
 
   // ── KPIs ────────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
