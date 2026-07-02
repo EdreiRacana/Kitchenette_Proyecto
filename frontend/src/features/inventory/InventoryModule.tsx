@@ -28,30 +28,6 @@ import ReturnModal from "./ReturnModal";
 
 type Warehouse_ = WarehouseT;
 
-// ── Demo Data ─────────────────────────────────────────────────────────────
-const DEMO_PRODUCTS: Product[] = [
-  { id: 1, name: "Cemento gris CPC 30R", description: "Bolsa 50kg", category: "Construcción", is_active: true, created_at: "2026-06-01", variants: [{ id: 1, sku: "CEM-GR-50", price: 215, cost_price: 160, is_active: true, stock_levels: [{ variant_id: 1, warehouse_id: 1, quantity: 480, warehouse: { name: "Almacén Principal" } }, { variant_id: 1, warehouse_id: 2, quantity: 120, warehouse: { name: "Sucursal Norte" } }] }] },
-  { id: 2, name: "Varilla corrugada 3/8\"", description: "Barra 6m", category: "Acero", is_active: true, created_at: "2026-06-01", variants: [{ id: 2, sku: "VAR-38-6M", price: 178, cost_price: 130, is_active: true, stock_levels: [{ variant_id: 2, warehouse_id: 1, quantity: 1320, warehouse: { name: "Almacén Principal" } }] }] },
-  { id: 3, name: "Pintura vinílica blanca 19L", description: "Cubeta 19 litros", category: "Pinturas", is_active: true, created_at: "2026-06-01", variants: [{ id: 3, sku: "PIN-VB-19L", price: 1290, cost_price: 890, is_active: true, stock_levels: [{ variant_id: 3, warehouse_id: 1, quantity: 96, warehouse: { name: "Almacén Principal" } }, { variant_id: 3, warehouse_id: 3, quantity: 24, warehouse: { name: "MercadoLibre" } }] }] },
-  { id: 4, name: "Tubo PVC hidráulico 4\"", description: "Tubo 6m", category: "Plomería", is_active: true, created_at: "2026-06-01", variants: [{ id: 4, sku: "TUB-PVC-4", price: 340, cost_price: 240, is_active: true, stock_levels: [{ variant_id: 4, warehouse_id: 1, quantity: 12, warehouse: { name: "Almacén Principal" } }] }] },
-  { id: 5, name: "Block hueco 15x20x40", description: "Pieza unitaria", category: "Construcción", is_active: true, created_at: "2026-06-01", variants: [{ id: 5, sku: "BLK-15-20", price: 18, cost_price: 12, is_active: true, stock_levels: [{ variant_id: 5, warehouse_id: 1, quantity: 0, warehouse: { name: "Almacén Principal" } }] }] },
-  { id: 6, name: "Cable THW cal. 12", description: "Rollo 100m", category: "Eléctrico", is_active: true, created_at: "2026-06-02", variants: [{ id: 6, sku: "CAB-THW-12", price: 28, cost_price: 19, is_active: true, stock_levels: [{ variant_id: 6, warehouse_id: 1, quantity: 220, warehouse: { name: "Almacén Principal" } }] }] },
-  { id: 7, name: "Impermeabilizante 5 años 19L", description: "Cubeta 19 litros", category: "Pinturas", is_active: true, created_at: "2026-06-03", variants: [{ id: 7, sku: "IMP-5A-19L", price: 1490, cost_price: 1050, is_active: true, stock_levels: [{ variant_id: 7, warehouse_id: 1, quantity: 64, warehouse: { name: "Almacén Principal" } }, { variant_id: 7, warehouse_id: 3, quantity: 8, warehouse: { name: "MercadoLibre" } }] }] },
-];
-const DEMO_WAREHOUSES: Warehouse_[] = [
-  { id: 1, name: "Almacén Principal", location: "CDMX - Bodega Central", is_active: true, type: "own" },
-  { id: 2, name: "Sucursal Norte", location: "Monterrey", is_active: true, type: "own" },
-  { id: 3, name: "MercadoLibre", location: "Fulfillment ML", is_active: true, type: "marketplace" },
-  { id: 4, name: "Consignación Robles", location: "Constructora Robles - Obra Norte", is_active: true, type: "consignment" },
-];
-const DEMO_MOVEMENTS: Movement[] = [
-  { id: 1, variant_id: 1, warehouse_id: 1, quantity: 200, movement_type: "in", reference: "OC-2041", notes: "Compra proveedor", created_at: "2026-06-10T09:00:00Z", product_name: "Cemento gris CPC 30R", sku: "CEM-GR-50", warehouse_name: "Almacén Principal" },
-  { id: 2, variant_id: 3, warehouse_id: 3, quantity: 24, movement_type: "in", reference: "ENV-ML-001", notes: "Envío a Fulfillment MercadoLibre", created_at: "2026-06-09T14:30:00Z", product_name: "Pintura vinílica blanca 19L", sku: "PIN-VB-19L", warehouse_name: "MercadoLibre" },
-  { id: 3, variant_id: 2, warehouse_id: 1, quantity: -80, movement_type: "out", reference: "VTA-2041", notes: "Venta pedido", created_at: "2026-06-09T11:00:00Z", product_name: "Varilla corrugada 3/8\"", sku: "VAR-38-6M", warehouse_name: "Almacén Principal" },
-  { id: 4, variant_id: 5, warehouse_id: 1, quantity: -50, movement_type: "out", reference: "VTA-2039", notes: "Venta pedido", created_at: "2026-06-08T16:00:00Z", product_name: "Block hueco 15x20x40", sku: "BLK-15-20", warehouse_name: "Almacén Principal" },
-  { id: 5, variant_id: 6, warehouse_id: 1, quantity: 5, movement_type: "adjustment", reference: "AJU-001", notes: "Corrección conteo físico", created_at: "2026-06-07T10:00:00Z", product_name: "Cable THW cal. 12", sku: "CAB-THW-12", warehouse_name: "Almacén Principal" },
-];
-
 const WAREHOUSE_TYPES = { own: { label: "Propio", color: "#33B2F5" }, marketplace: { label: "Marketplace", color: "#FBBF24" }, consignment: { label: "Consignación", color: "#A78BFA" }, transit: { label: "Tránsito", color: "#34D399" } };
 const MOVEMENT_TYPES = { in: { label: "Entrada", color: "#34D399", icon: ArrowDownToLine }, out: { label: "Salida", color: "#F87171", icon: ArrowUpFromLine }, adjustment: { label: "Ajuste", color: "#FBBF24", icon: SlidersHorizontal } };
 const PO_STATUS = { draft: { label: "Borrador", color: "#94A3B8" }, ordered: { label: "Enviada", color: "#33B2F5" }, received: { label: "Recibida", color: "#34D399" }, cancelled: { label: "Cancelada", color: "#F87171" } };
@@ -69,7 +45,6 @@ const glass = (t: any): React.CSSProperties =>
     ? { background: "rgba(20,32,68,0.55)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", border: `1px solid ${t.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.22)" }
     : { background: t.panel, border: `1px solid ${t.border}` };
 
-const isNetworkError = (err: any) => !err?.response;
 
 const csvEscape = (v: any) => {
   const s = v == null ? "" : String(v);
@@ -104,7 +79,8 @@ type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any; initialQuery?: string }) {
   const [tab, setTab] = useState<Tab>(initialQuery ? "products" : "dashboard");
-  const [demo, setDemo] = useState(false);
+  const [demo, setDemo] = useState(false); // legado: ya nunca se activa (sin datos ficticios)
+  const [loadError, setLoadError] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse_[]>([]);
   const [branches, setBranches] = useState<{ id: number; name: string; is_primary: boolean }[]>([]);
@@ -178,18 +154,13 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       setReorderAlerts(alerts); setPurchaseOrders(pos); setRecipes(recs); setProductionOrders(prods);
       inventoryService.getBranches().then(setBranches).catch(() => setBranches([]));
       inventoryService.getReturns().then(setReturns).catch(() => setReturns([]));
-      setDemo(false);
+      setDemo(false); setLoadError(false);
     } catch (err) {
-      if (isNetworkError(err)) {
-        setDemo(true);
-        setProducts(DEMO_PRODUCTS);
-        setWarehouses(DEMO_WAREHOUSES);
-        setMovements(DEMO_MOVEMENTS);
-        setSuppliers([]); setReorderAlerts([]); setPurchaseOrders([]); setRecipes([]); setProductionOrders([]);
-      } else {
-        setDemo(false);
-        console.error("Error cargando inventario:", err);
-      }
+      // NUNCA mostrar datos ficticios: si el backend no responde, se dice la
+      // verdad y se ofrece reintentar (el interceptor de api.ts ya reintentó
+      // varias veces antes de llegar aquí).
+      console.error("Error cargando inventario:", err);
+      setLoadError(true);
     } finally { setLoading(false); }
   }, []);
 
@@ -306,10 +277,14 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-      {/* Demo banner */}
-      {demo && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, background: t.warn + "18", border: `1px solid ${t.warn}44`, color: t.warn, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 16 }}>
-          <Info size={16} /> {lang === "es" ? "Modo demo: backend no disponible. Los cambios no se guardan." : "Demo mode: backend unavailable. Changes won't be saved."}
+      {/* Error de conexión: sin datos ficticios, se dice la verdad y se reintenta */}
+      {loadError && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: t.bad + "18", border: `1px solid ${t.bad}44`, color: t.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 16, flexWrap: "wrap" }}>
+          <Info size={16} />
+          {lang === "es" ? "No se pudo conectar con el servidor. Los datos no se cargaron." : "Could not reach the server. Data was not loaded."}
+          <button onClick={load} style={{ marginLeft: "auto", padding: "6px 14px", borderRadius: 8, border: `1px solid ${t.bad}66`, background: "transparent", color: t.bad, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+            {lang === "es" ? "Reintentar" : "Retry"}
+          </button>
         </div>
       )}
 

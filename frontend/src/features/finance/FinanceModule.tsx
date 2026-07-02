@@ -54,33 +54,6 @@ interface FlowPoint {
   net: number;
 }
 
-// ── Demo Data (sólo se usa si el backend no responde) ───────────────────────
-const DEMO_TRANSACTIONS: Transaction[] = [
-  { id: 1, type: "income", amount: 84200, category: "sales", description: "Pago pedido VTA-2041", reference: "order:2041", created_at: "2026-06-11T10:00:00Z" },
-  { id: 2, type: "income", amount: 196400, category: "sales", description: "Abono parcial VTA-2039", reference: "order:2039", created_at: "2026-06-10T14:00:00Z" },
-  { id: 3, type: "expense", amount: 45000, category: "payroll", description: "Nómina quincenal", reference: "nom:jun-1", created_at: "2026-06-09T09:00:00Z" },
-  { id: 4, type: "expense", amount: 28500, category: "supplies", description: "Compra material proveedor Aceros SA", reference: "OC-112", created_at: "2026-06-08T11:00:00Z" },
-];
-const DEMO_CXC: AgingItem[] = [
-  { id: 1, name: "Mantenimiento Industrial GZ", reference: "VTA-2039", total: 196400, paid: 98200, balance: 98200, due_date: "2026-06-30", aging: "current", status: "partial" },
-  { id: 2, name: "Obras del Bajío SA", reference: "VTA-2037", total: 57300, paid: 0, balance: 57300, due_date: "2026-06-25", aging: "current", status: "pending" },
-];
-const DEMO_CXP: AgingItem[] = [
-  { id: 1, name: "Aceros del Norte SA", reference: "OC-00112", total: 85000, paid: 42500, balance: 42500, due_date: "2026-06-28", aging: "current", status: "partial" },
-];
-const DEMO_BANKS: BankAccount[] = [
-  { id: 1, name: "Cuenta Principal", bank: "BBVA", account_number: "****4821", type: "checking", balance: 1840200, currency: "MXN" },
-  { id: 2, name: "Tarjeta Corporativa", bank: "HSBC", account_number: "****6612", type: "credit", balance: -48200, currency: "MXN" },
-];
-const DEMO_FLOW: FlowPoint[] = [
-  { period: "Ene", income: 820000, expenses: 580000, net: 240000 },
-  { period: "Feb", income: 932000, expenses: 620000, net: 312000 },
-  { period: "Mar", income: 901000, expenses: 650000, net: 251000 },
-  { period: "Abr", income: 1034000, expenses: 710000, net: 324000 },
-  { period: "May", income: 1190000, expenses: 780000, net: 410000 },
-  { period: "Jun", income: 1284000, expenses: 830000, net: 454000 },
-];
-
 // ── Helpers ────────────────────────────────────────────────────────────────
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const mxnShort = (n: number) => n >= 1000000 ? "$" + (n / 1000000).toFixed(1) + "M" : n >= 1000 ? "$" + Math.round(n / 1000) + "k" : "$" + n;
@@ -113,7 +86,8 @@ const CATEGORIES: Record<string, { label: string; color: string }> = {
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function FinanceModule({ t, s }: { t: any; s: any }) {
   const [tab, setTab] = useState<"dashboard" | "cxc" | "cxp" | "banks" | "transactions" | "flow" | "advanced">("dashboard");
-  const [demo, setDemo] = useState(false);
+  const [demo, setDemo] = useState(false); // legado: ya nunca se activa (sin datos ficticios)
+  const [loadError, setLoadError] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [cxc, setCxc] = useState<AgingItem[]>([]);
   const [cxp, setCxp] = useState<AgingItem[]>([]);
@@ -147,11 +121,12 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
       setCxp(cxpRes);
       setBanks(bankRes);
       setFlow(flowRes);
-      setDemo(false);
-    } catch {
-      setDemo(true);
-      setTransactions(DEMO_TRANSACTIONS);
-      setCxc(DEMO_CXC); setCxp(DEMO_CXP); setBanks(DEMO_BANKS); setFlow(DEMO_FLOW);
+      setDemo(false); setLoadError(false);
+    } catch (err) {
+      // NUNCA mostrar datos ficticios: si el backend no responde, se dice la
+      // verdad y se ofrece reintentar.
+      console.error("Error cargando finanzas:", err);
+      setLoadError(true);
       setDash(null);
     } finally { setLoading(false); }
   }, []);
@@ -250,9 +225,12 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-      {demo && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, background: t.warn + "18", border: `1px solid ${t.warn}44`, color: t.warn, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 16 }}>
-          <Info size={16} /> Modo demo: backend no disponible. Los cambios no se guardan.
+      {loadError && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: t.bad + "18", border: `1px solid ${t.bad}44`, color: t.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 16, flexWrap: "wrap" }}>
+          <Info size={16} /> No se pudo conectar con el servidor. Los datos no se cargaron.
+          <button onClick={load} style={{ marginLeft: "auto", padding: "6px 14px", borderRadius: 8, border: `1px solid ${t.bad}66`, background: "transparent", color: t.bad, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+            Reintentar
+          </button>
         </div>
       )}
 

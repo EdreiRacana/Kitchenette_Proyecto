@@ -42,14 +42,16 @@ interface Integration {
 }
 
 
-const DEMO_INTEGRATIONS: Integration[] = [
-  { id: "mercadolibre", name: "MercadoLibre", category: "Marketplace", icon: ShoppingBag, color: "#FFE600", connected: true, last_sync: "Hace 5 min", description: "Sincroniza stock y órdenes con tu tienda de MercadoLibre" },
+// Catálogo de integraciones futuras (ninguna conectada — es una hoja de ruta,
+// no estado real; el correo SMTP de arriba sí es una integración funcional).
+const AVAILABLE_INTEGRATIONS: Integration[] = [
+  { id: "mercadolibre", name: "MercadoLibre", category: "Marketplace", icon: ShoppingBag, color: "#FFE600", connected: false, description: "Sincroniza stock y órdenes con tu tienda de MercadoLibre" },
   { id: "amazon", name: "Amazon Seller", category: "Marketplace", icon: ShoppingBag, color: "#FF9900", connected: false, description: "Conecta tu cuenta de vendedor de Amazon" },
-  { id: "shopify", name: "Shopify", category: "Marketplace", icon: ShoppingBag, color: "#96BF48", connected: true, last_sync: "Hace 12 min", description: "Sincroniza productos, stock y pedidos con Shopify" },
-  { id: "bbva", name: "BBVA", category: "Banco", icon: Banknote, color: "#004481", connected: true, last_sync: "Hace 1 hora", description: "Dispersión de nómina y conciliación bancaria" },
+  { id: "shopify", name: "Shopify", category: "Marketplace", icon: ShoppingBag, color: "#96BF48", connected: false, description: "Sincroniza productos, stock y pedidos con Shopify" },
+  { id: "bbva", name: "BBVA", category: "Banco", icon: Banknote, color: "#004481", connected: false, description: "Dispersión de nómina y conciliación bancaria" },
   { id: "fedex", name: "FedEx", category: "Paquetería", icon: Truck, color: "#4D148C", connected: false, description: "Generación de guías de envío y rastreo" },
   { id: "estafeta", name: "Estafeta", category: "Paquetería", icon: Truck, color: "#EE3124", connected: false, description: "Generación de guías y rastreo de paquetes" },
-  { id: "finkok", name: "Finkok", category: "Facturación", icon: Receipt, color: "#33B2F5", connected: true, last_sync: "Activo", description: "PAC para timbrado de CFDI 4.0" },
+  { id: "finkok", name: "Finkok", category: "Facturación", icon: Receipt, color: "#33B2F5", connected: false, description: "PAC para timbrado de CFDI 4.0" },
   { id: "zkteco", name: "ZKTeco", category: "Checador", icon: Fingerprint, color: "#34D399", connected: false, description: "Checador biométrico de huella y rostro" },
 ];
 
@@ -73,7 +75,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const [permList, setPermList] = useState<PermissionDef[]>([]);
   const [rbacLoading, setRbacLoading] = useState(false);
   const [rbacError, setRbacError] = useState("");
-  const [integrations, setIntegrations] = useState<Integration[]>(DEMO_INTEGRATIONS);
+  const integrations = AVAILABLE_INTEGRATIONS;
   const [userForm, setUserForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [roleForm, setRoleForm] = useState(false);
@@ -770,9 +772,9 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                           <RefreshCw size={12} /> Última sync: {intg.last_sync}
                         </div>
                       )}
-                      <button onClick={() => setIntegrations(prev => prev.map(p => p.id === intg.id ? { ...p, connected: !p.connected, last_sync: !p.connected ? "Hace un momento" : undefined } : p))}
-                        style={{ width: "100%", padding: "9px", borderRadius: 8, border: intg.connected ? `1px solid ${t.border}` : "none", background: intg.connected ? t.panel2 : `linear-gradient(135deg, ${intg.color}, ${intg.color}cc)`, color: intg.connected ? t.textMid : "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
-                        {intg.connected ? "⚙ Configurar" : "Conectar"}
+                      <button onClick={() => alert(`La integración con ${intg.name} estará disponible próximamente. Contáctanos para priorizarla.`)}
+                        style={{ width: "100%", padding: "9px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+                        Próximamente
                       </button>
                     </div>
                   ))}
@@ -787,7 +789,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
       {tab === "automation" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-            <p style={{ margin: 0, fontSize: 13, color: t.textLo }}>Crea reglas automáticas: aprobaciones, notificaciones y alertas sin escribir código.</p>
+            <p style={{ margin: 0, fontSize: 13, color: t.textLo }}>Crea reglas automáticas: aprobaciones, notificaciones y alertas sin escribir código. <b style={{ color: t.warn }}>Próximamente — los ejemplos de abajo son ilustrativos y aún no se ejecutan.</b></p>
             <button style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               <Plus size={15} /> Nueva regla
             </button>
@@ -823,6 +825,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
             <div style={card}>
               {sectionTitle(Lock, "Política de contraseñas", t.nova)}
+              <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 8 }}>Próximamente configurable — hoy el sistema exige mínimo 6 caracteres.</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {[
                   { label: "Mínimo 8 caracteres", on: true },
@@ -840,30 +843,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
             </div>
             <TwoFactorCard t={t} card={card} sectionTitle={sectionTitle} />
           </div>
-          <div style={card}>
-            {sectionTitle(Activity, "Registro de auditoría", "#A78BFA")}
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              {[
-                { user: "Edrei Racana", action: "Modificó permisos del rol 'Ventas'", time: "Hace 12 min", icon: Shield, color: t.nova },
-                { user: "Ana Torres", action: "Generó nómina de la quincena Jun 16-30", time: "Hace 2 horas", icon: Receipt, color: t.good },
-                { user: "Carlos Mendoza", action: "Aprobó pedido VTA-2041 por $84,200", time: "Hace 3 horas", icon: CheckCircle, color: t.good },
-                { user: "Sistema", action: "Sincronización automática con MercadoLibre", time: "Hace 5 horas", icon: RefreshCw, color: "#FFE600" },
-                { user: "Miguel Sánchez", action: "Ajuste de inventario: Block hueco -50 uds", time: "Hace 1 día", icon: Edit2, color: t.warn },
-              ].map((log, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: i < 4 ? `1px solid ${t.borderSoft}` : "none" }}>
-                  <div style={{ background: log.color + "22", color: log.color, borderRadius: 8, padding: 7, display: "flex" }}><log.icon size={14} /></div>
-                  <div style={{ flex: 1 }}>
-                    <span style={{ fontSize: 13, color: t.textHi, fontWeight: 600 }}>{log.user}</span>
-                    <span style={{ fontSize: 13, color: t.textMid }}> — {log.action}</span>
-                  </div>
-                  <span style={{ fontSize: 11.5, color: t.textLo, whiteSpace: "nowrap" }}>{log.time}</span>
-                </div>
-              ))}
-            </div>
-            <button style={{ marginTop: 14, padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-              <Download size={14} /> Exportar registro completo
-            </button>
-          </div>
+          <AuditLogCard t={t} card={card} sectionTitle={sectionTitle} />
           <DangerZoneCard t={t} card={card} lbl={lbl} inp={inp} sectionTitle={sectionTitle} />
         </div>
       )}
@@ -1136,6 +1116,47 @@ function TwoFactorCard({ t, card, sectionTitle }: any) {
           <button onClick={startSetup} disabled={busy} style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
             {busy ? "…" : "Activar 2FA"}
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Tarjeta: registro de auditoría (datos reales del backend) ──────────────
+function AuditLogCard({ t, card, sectionTitle }: any) {
+  const [logs, setLogs] = useState<any[] | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    configService.getAuditLogs(20).then(setLogs).catch(() => { setLogs([]); setError(true); });
+  }, []);
+
+  const fmtTime = (iso: string) => {
+    try { return new Date(iso).toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); }
+    catch { return iso; }
+  };
+
+  return (
+    <div style={card}>
+      {sectionTitle(Activity, "Registro de auditoría", "#A78BFA")}
+      {logs === null ? (
+        <div style={{ fontSize: 12.5, color: t.textLo }}>Cargando…</div>
+      ) : error ? (
+        <div style={{ fontSize: 12.5, color: t.textLo }}>No se pudo cargar el registro (requiere permisos de superusuario).</div>
+      ) : logs.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: t.textLo }}>Aún no hay actividad registrada.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {logs.map((log, i) => (
+            <div key={log.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: i < logs.length - 1 ? `1px solid ${t.borderSoft}` : "none" }}>
+              <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 8, padding: 7, display: "flex" }}><Shield size={14} /></div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ fontSize: 13, color: t.textHi, fontWeight: 600 }}>{log.action}</span>
+                <span style={{ fontSize: 13, color: t.textMid }}> — {log.description || log.module}</span>
+              </div>
+              <span style={{ fontSize: 11.5, color: t.textLo, whiteSpace: "nowrap" }}>{fmtTime(log.timestamp)}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>

@@ -106,6 +106,10 @@ const configService = {
     // ── Zona de peligro: reset total de datos (solo superusuario) ──
     resetAllData: async (password: string, confirm: string) =>
         (await api.post<{ wiped_tables: string[]; message: string }>('/config/danger/reset-data', { password, confirm })).data,
+
+    // ── Auditoría (solo superusuario) ──
+    getAuditLogs: async (limit = 50) =>
+        (await api.get<{ id: string; action: string; module: string; description?: string; user_id?: number; timestamp: string }[]>(`/config/audit-logs?limit=${limit}`)).data,
 };
 
 export default configService;

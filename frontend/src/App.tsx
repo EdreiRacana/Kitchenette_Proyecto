@@ -465,6 +465,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     if (preset === "custom" && (!rStart || !rEnd)) return;
     let active = true;
@@ -474,7 +475,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
       .then((d) => { if (active) { setData(d); setLoading(false); } })
       .catch((e) => { if (active) { setError(e?.message || "Error"); setLoading(false); } });
     return () => { active = false; };
-  }, [preset, rStart, rEnd]);
+  }, [preset, rStart, rEnd, reloadKey]);
 
   const choose = (id) => {
     setPreset(id);
@@ -490,8 +491,17 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
 
   if (loading || !data) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 320, gap: 10 }}>
-        <div style={{ fontSize: 14, color: t.textLo }}>{error ? `${s.dash.loadError} (${error})` : s.dash.loading}</div>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 320, gap: 14 }}>
+        <div style={{ fontSize: 14, color: error ? t.bad : t.textLo }}>
+          {error
+            ? (lang === "en" ? "Could not reach the server. Dashboard data was not loaded." : "No se pudo conectar con el servidor. El tablero no se cargó.")
+            : s.dash.loading}
+        </div>
+        {error && (
+          <button onClick={() => setReloadKey((k) => k + 1)} style={{ padding: "9px 20px", borderRadius: 10, border: `1px solid ${t.bad}66`, background: "transparent", color: t.bad, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            {lang === "en" ? "Retry" : "Reintentar"}
+          </button>
+        )}
       </div>
     );
   }
@@ -1036,7 +1046,7 @@ function Sidebar({ t, s, page, setPage, collapsed, setCollapsed, mobile, mobileO
         )}
 
         <div style={{ borderTop: `1px solid ${t.border}`, padding: !showLabels ? 12 : "14px 16px", display: "flex", alignItems: "center", justifyContent: !showLabels ? "center" : "space-between" }}>
-          {showLabels ? (<div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}><NovaMark size={20} /><div style={{ lineHeight: 1.1 }}><div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: t.textLo }}>STHENOVA®</div><div style={{ fontSize: 8, letterSpacing: 1, color: t.textLo }}>v0.1 · demo</div></div></div>) : <NovaMark size={20} />}
+          {showLabels ? (<div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}><NovaMark size={20} /><div style={{ lineHeight: 1.1 }}><div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: t.textLo }}>STHENOVA®</div><div style={{ fontSize: 8, letterSpacing: 1, color: t.textLo }}>v1.0</div></div></div>) : <NovaMark size={20} />}
           {!mobile && showLabels && <button onClick={() => setCollapsed(true)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><ChevronLeft size={18} /></button>}
         </div>
         {!mobile && collapsed && <button onClick={() => setCollapsed(false)} style={{ position: "absolute", top: 76, right: -12, width: 24, height: 24, borderRadius: 999, background: t.panel2, border: `1px solid ${t.border}`, cursor: "pointer", color: t.textMid, display: "grid", placeItems: "center" }}><ChevronRight size={14} /></button>}
@@ -1471,42 +1481,6 @@ function Finance({ t, s }) {
     </div>
   );
 }
-function Soon({ t, s, title, sub, icon: Icon }) {
-  return (
-    <div>
-      <PageHead t={t} title={title} sub={sub} />
-      <Card t={t} style={{ padding: 64, textAlign: "center", borderStyle: "dashed" }}>
-        <div style={{ display: "inline-grid", placeItems: "center", width: 64, height: 64, borderRadius: 16, background: t.nova + "18", marginBottom: 16 }}><Icon size={28} color={t.nova} /></div>
-        <div style={{ fontSize: 17, fontWeight: 600, color: t.textHi }}>{s.soon.title}</div>
-        <p style={{ color: t.textLo, fontSize: 13.5, maxWidth: 420, margin: "8px auto 0" }}>{s.soon.body}</p>
-      </Card>
-    </div>
-  );
-}
-function Config({ t, s, company }) {
-  return (
-    <div>
-      <PageHead t={t} title={s.nav.config} sub={s.cfg.sub} />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 14 }}>
-        <Card t={t} style={{ padding: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 16 }}>{s.cfg.identity}</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
-            <span style={{ width: 56, height: 56, borderRadius: 14, background: company.color + "26", color: company.color, fontWeight: 700, fontSize: 20, display: "grid", placeItems: "center" }}>{company.initials}</span>
-            <div><div style={{ fontSize: 15, fontWeight: 600, color: t.textHi }}>{company.name}</div><button style={{ marginTop: 6, fontSize: 12, color: t.nova, background: "transparent", border: "none", cursor: "pointer", padding: 0, fontWeight: 600 }}>{s.cfg.changeLogo}</button></div>
-          </div>
-          <p style={{ fontSize: 12.5, color: t.textLo, lineHeight: 1.6, margin: 0 }}>{s.cfg.note1}<b style={{ color: t.textMid }}>Sthenova</b>{s.cfg.note2}</p>
-        </Card>
-        <Card t={t} style={{ padding: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 16 }}>{s.cfg.users}</div>
-          {[["EDREI", "Administrador", t.nova], ["Almacén 01", "Inventario", t.good], ["Caja Toreo", "Ventas", t.warn]].map(([n, r, c]) => (
-            <div key={n} style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 0", borderBottom: `1px solid ${t.borderSoft}` }}><span style={{ width: 32, height: 32, borderRadius: 999, background: c + "26", color: c, fontWeight: 700, fontSize: 12, display: "grid", placeItems: "center" }}>{n[0]}</span><div style={{ flex: 1 }}><div style={{ fontSize: 13.5, color: t.textHi, fontWeight: 600 }}>{n}</div><div style={{ fontSize: 11.5, color: t.textLo }}>{s.roles[r]}</div></div><CircleDot size={15} color={t.good} /></div>
-          ))}
-        </Card>
-      </div>
-    </div>
-  );
-}
-
 /* ============================ App ============================ */
 export default function App() {
   const [theme, setTheme] = useState("dark");

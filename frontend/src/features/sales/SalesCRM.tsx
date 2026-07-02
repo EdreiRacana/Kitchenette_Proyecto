@@ -21,7 +21,6 @@ import { OrderForm } from "./OrderForm";
 import { PaymentModal } from "./PaymentModal";
 import { OrderDrawer } from "./OrderDrawer";
 import { Analytics } from "./Analytics";
-import { DEMO_ORDERS, DEMO_CUSTOMERS, DEMO_VARIANTS } from "./demo";
 
 type ViewMode = "list" | "pipeline" | "analytics" | "ingesta" | "returns";
 const PAGE = 20;
@@ -522,7 +521,8 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
 
-  const [demo, setDemo] = useState(false);
+  const [demo, setDemo] = useState(false); // legado: ya nunca se activa (sin datos ficticios)
+  const [loadError, setLoadError] = useState(false);
   const [view, setView] = useState<ViewMode>("list");
   const [saving, setSaving] = useState(false);
 
@@ -622,14 +622,15 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
     setOrdersLoading(true);
     try {
       const page1 = await salesApi.list(filters);
-      setOrders(page1.items); setTotal(page1.total); setDemo(false);
-    } catch {
-      setDemo(true); setCustomers(DEMO_CUSTOMERS); setVariants(DEMO_VARIANTS);
-      const filtered = applyDemoFilters(DEMO_ORDERS);
-      setOrders(filtered.slice(page * PAGE, page * PAGE + PAGE)); setTotal(filtered.length);
-      refreshDemoAnalytics(DEMO_ORDERS, analyticsCustomer); setStatsLoading(false); setAnalyticsLoaded(true);
+      setOrders(page1.items); setTotal(page1.total); setDemo(false); setLoadError(false);
+    } catch (err) {
+      // NUNCA mostrar pedidos ficticios: si el backend no responde, se dice la
+      // verdad y se ofrece reintentar (api.ts ya reintentó varias veces antes).
+      console.error("Error cargando pedidos:", err);
+      setLoadError(true);
+      setOrders([]); setTotal(0); setStatsLoading(false);
     } finally { setOrdersLoading(false); }
-  }, [filters, applyDemoFilters, refreshDemoAnalytics, page, analyticsCustomer]);
+  }, [filters]);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -662,7 +663,8 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
     await loadOrders(); loadStats(); setAnalyticsLoaded(false);
   }, [loadOrders, loadStats]);
 
-  const demoStore = useMemo(() => ({ list: [...DEMO_ORDERS] }), []);
+  // Legado del modo demo (nunca se llena — demo ya no se activa).
+  const demoStore = useMemo(() => ({ list: [] as Order[] }), []);
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
   useEffect(() => { loadStats(); loadCatalogs(); }, [loadStats, loadCatalogs]);
@@ -685,70 +687,48 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const handleSubmit = useCallback(async (draft: OrderDraft) => {
     setSaving(true);
     try {
-      if (demo) {
-        const subtotal = draft.items.reduce((a, it) => a + Math.max(it.unit_price * it.quantity - it.discount_amount, 0), 0);
-        const disc = draft.discount_type === "percent" ? subtotal * draft.discount_value / 100 : draft.discount_value;
-        const taxable = Math.max(subtotal - disc, 0); const tax = taxable * draft.tax_rate / 100;
-        const totalv = Math.round((taxable + tax + draft.shipping_amount) * 100) / 100;
-        if (editing) {
-          const idx = demoStore.list.findIndex((x) => x.id === editing.id);
-          if (idx >= 0) demoStore.list[idx] = { ...editing, subtotal, discount_amount: disc, tax_amount: tax, total_amount: totalv, balance: totalv - editing.paid_amount, notes: draft.notes || null };
-        } else {
-          const id = Math.max(0, ...demoStore.list.map((x) => x.id)) + 1;
-          const folio = `${draft.kind === "quote" ? "COT" : "ORD"}-${String(id).padStart(6, "0")}`;
-          demoStore.list.unshift({ id, folio, kind: draft.kind, customer_id: draft.customer_id, user_id: 1, warehouse_id: 1, status: draft.kind === "quote" ? "sent" : "pending", payment_method: draft.payment_method, channel: draft.channel, currency: "MXN", subtotal, discount_type: draft.discount_type, discount_value: draft.discount_value, discount_amount: disc, tax_rate: draft.tax_rate, tax_amount: tax, shipping_amount: draft.shipping_amount, total_amount: totalv, paid_amount: 0, balance: totalv, due_date: null, valid_until: null, notes: draft.notes || null, bill_rfc: draft.bill_rfc || null, bill_name: draft.bill_name || null, bill_use: draft.bill_use || null, bill_regime: draft.bill_regime || null, bill_zip: draft.bill_zip || null, cfdi_uuid: null, cfdi_status: "none", invoiced_at: null, created_at: new Date().toISOString(), updated_at: null, items: draft.items.map((it, i) => ({ id: i, variant_id: it.variant_id, product_name: it.product_name, sku: it.sku, quantity: it.quantity, unit_price: it.unit_price, discount_amount: it.discount_amount, tax_rate: it.tax_rate, subtotal: it.unit_price * it.quantity, total: it.unit_price * it.quantity * (1 + it.tax_rate / 100) })), payments: [], events: [{ id: 1, event_type: "created", from_status: null, to_status: "pending", message: "Creado", created_at: new Date().toISOString() }], customer: draft.customer_id ? (DEMO_CUSTOMERS.find((c) => c.id === draft.customer_id) ?? null) : null, seller: { id: 1, full_name: "Vendedor Demo" } });
-        }
-        commitDemo();
-      } else {
-        if (editing) await salesApi.update(editing.id, draft);
-        else await salesApi.create(draft);
-        await refreshData();
-      }
+      // Siempre contra el backend real: si falla, el error llega al usuario
+      // (nada de "guardados simulados" que se pierden).
+      if (editing) await salesApi.update(editing.id, draft);
+      else await salesApi.create(draft);
+      await refreshData();
       setFormOpen(false); setEditing(null);
     } finally { setSaving(false); }
-  }, [demo, editing, demoStore, commitDemo, refreshData]);
+  }, [editing, refreshData]);
 
   const handlePay = useCallback(async (amount: number, method: string, reference: string, note: string) => {
     if (!payTarget) return;
     setSaving(true);
     try {
-      if (demo) {
-        const idx = demoStore.list.findIndex((x) => x.id === payTarget.id);
-        if (idx >= 0) { const o = demoStore.list[idx]; const paid = o.paid_amount + amount; demoStore.list[idx] = { ...o, paid_amount: paid, balance: Math.round((o.total_amount - paid) * 100) / 100, status: paid + 0.001 >= o.total_amount ? "paid" : "partial", payments: [...o.payments, { id: o.payments.length + 1, order_id: o.id, amount, method, reference: reference || null, note: note || null, created_at: new Date().toISOString() }] }; }
-        commitDemo(); setSelected(null);
-      } else { await salesApi.addPayment(payTarget.id, amount, method, reference, note); await refreshData(); setSelected(null); }
+      await salesApi.addPayment(payTarget.id, amount, method, reference, note); await refreshData(); setSelected(null);
       setPayTarget(null);
     } catch (e) { alert(extractErr(e)); } finally { setSaving(false); }
-  }, [payTarget, demo, demoStore, commitDemo, refreshData]);
+  }, [payTarget, refreshData]);
 
   const changeStatus = useCallback(async (o: Order, newStatus: string) => {
     if (o.status === newStatus) return;
-    if (demo) { const idx = demoStore.list.findIndex((x) => x.id === o.id); if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: newStatus as Order["status"] }; commitDemo(); return; }
     try { await salesApi.changeStatus(o.id, newStatus); await refreshData(); } catch (e) { alert(extractErr(e)); }
-  }, [demo, demoStore, commitDemo, refreshData]);
+  }, [refreshData]);
 
   const markPaid = useCallback((o: Order) => { setPayTarget(o); }, []);
   const convert = useCallback(async (o: Order) => {
-    if (demo) { const idx = demoStore.list.findIndex((x) => x.id === o.id); if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: "converted" }; commitDemo(); setSelected(null); return; }
     try { await salesApi.convert(o.id); await refreshData(); setSelected(null); } catch (e) { alert(extractErr(e)); }
-  }, [demo, demoStore, commitDemo, refreshData]);
+  }, [refreshData]);
 
   const cancel = useCallback(async (o: Order) => {
     if (!window.confirm(tr("sales_confirm_cancel", `¿Cancelar la venta completa ${o.folio ?? ""}? Esto NO cancela un ticket o recibo individual: anula todo el pedido del cliente y no se puede revertir.`))) return;
-    if (demo) { const idx = demoStore.list.findIndex((x) => x.id === o.id); if (idx >= 0) demoStore.list[idx] = { ...demoStore.list[idx], status: "cancelled", balance: 0 }; commitDemo(); setSelected(null); return; }
     try { await salesApi.cancel(o.id); await refreshData(); setSelected(null); } catch (e) { alert(extractErr(e)); }
-  }, [demo, demoStore, commitDemo, refreshData, tr]);
+  }, [refreshData, tr]);
 
   const invoice = useCallback(async (o: Order) => {
     if (!o.bill_rfc) { alert(tr("sales_need_rfc", "Agrega datos de facturación (RFC) al pedido para generar el CFDI.")); return; }
-    if (demo) { alert("CFDI (demo): se generaría el comprobante para timbrar con tu PAC."); return; }
     try {
       const { data } = await api.get(`/sales/${o.id}/invoice`);
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob); const a = document.createElement("a");
       a.href = url; a.download = `cfdi-${o.folio}.json`; a.click(); URL.revokeObjectURL(url);
     } catch (e) { alert(extractErr(e)); }
-  }, [demo, tr]);
+  }, [tr]);
 
   const openEdit = useCallback((o: Order) => { setEditing(o); setSelected(null); setFormOpen(true); }, []);
   const openNew = useCallback(() => { setEditing(null); setFormOpen(true); }, []);
@@ -756,7 +736,6 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const [exporting, setExporting] = useState(false);
   const exportFile = useCallback(async (formato: "csv" | "xlsx") => {
     setExportMenuOpen(false);
-    if (demo) { alert("La exportación requiere conexión con el servidor."); return; }
     setExporting(true);
     try {
       const blob = await salesApi.exportFile(filters, formato);
@@ -769,7 +748,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
     } finally {
       setExporting(false);
     }
-  }, [demo, filters]);
+  }, [filters]);
 
   const toggleSort = (col: string) => {
     if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -806,9 +785,12 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
       <Spinkeyframes />
       <ShimmerKeyframes />
 
-      {demo && view !== "ingesta" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.warn + "18", border: `1px solid ${tk.warn}44`, color: tk.warn, borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
-          <Info size={16} /> {tr("sales_demo_mode", "Modo demo: backend no disponible. Mostrando datos de ejemplo; las acciones no se guardan.")}
+      {loadError && view !== "ingesta" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, background: tk.bad + "18", border: `1px solid ${tk.bad}44`, color: tk.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13, flexWrap: "wrap" }}>
+          <Info size={16} /> {tr("sales_load_error", "No se pudo conectar con el servidor. Los datos no se cargaron.")}
+          <button onClick={refreshData} style={{ marginLeft: "auto", padding: "6px 14px", borderRadius: 8, border: `1px solid ${tk.bad}66`, background: "transparent", color: tk.bad, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+            {tr("sales_retry", "Reintentar")}
+          </button>
         </div>
       )}
 
