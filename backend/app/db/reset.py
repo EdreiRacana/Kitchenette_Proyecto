@@ -37,7 +37,12 @@ async def wipe_operational_data(engine: AsyncEngine) -> list[str]:
 async def reseed_after_wipe() -> None:
     from app.db.session import AsyncSessionLocal
     from app.modules.auth.rbac import seed_rbac
+    from app.modules.accounting import service as acc
 
     async with AsyncSessionLocal() as db:
         await seed_rbac(db)
+        # Catálogo de cuentas + mapeo, para que las ventas generen póliza
+        # contable automática sin tener que configurar contabilidad a mano.
+        await acc.seed_default_chart(db)
+        await acc.ensure_default_map(db)
         await db.commit()

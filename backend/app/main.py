@@ -102,6 +102,18 @@ async def startup():
     except Exception as e:
         print(f"[startup] RBAC seed skipped: {e}")
 
+    # Seed Contabilidad (catálogo de cuentas + mapeo para pólizas automáticas).
+    # Sin esto, una venta no genera póliza contable (falla en silencio). Debe
+    # existir out-of-the-box tras un reset o instalación nueva. Idempotente.
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.modules.accounting import service as acc
+        async with AsyncSessionLocal() as session:
+            await acc.seed_default_chart(session)
+            await acc.ensure_default_map(session)
+    except Exception as e:
+        print(f"[startup] Accounting seed skipped: {e}")
+
     from app.core.scheduler import start_scheduler
     start_scheduler()
 
