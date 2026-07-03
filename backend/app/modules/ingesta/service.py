@@ -892,3 +892,49 @@ async def generar_ordenes_de_lote(
         devoluciones_generadas=devoluciones_generadas,
         order_ids=order_ids,
     )
+
+
+async def eliminar_lote_y_ventas(db: AsyncSession, lote_id: int) -> dict:
+    """Deshace una carga: borra los pedidos que generó (revirtiendo inventario,
+    finanzas y contabilidad), sus registros y el lote. NO toca clientes,
+    usuarios ni el catálogo de productos. Ideal para limpiar una carga de
+    prueba sin borrar toda la base."""
+    from app.modules.sales import models as sales_models, service as sales_service
+
+    lote = await db.get(models.IngestaLote, lote_id)
+    if not lote:
+        raise ValueError(f"Lote {lote_id} no encontrado.")
+
+    # IDs de pedidos generados por este lote (via order_id de sus registros).
+    rows = await db.execute(
+        select(models.IngestaRegistro.order_id)
+        .where(models.IngestaRegistro.lote_id == lote_id,
+               models.IngestaRegistro.order_id.isnot(None))
+    )
+    order_ids = {r[0] for r in rows.all() if r[0]}
+
+    borrados = 0
+    for oid in order_ids:
+        order = await db.get(sales_models.Order, oid)
+        if not order:
+            continue
+        # Revertir stock/finanzas/contabilidad si el pedido estaba activo.
+        if order.status != "cancelled":
+            try:
+                await sales_service.cancel_order(db, oid)
+                order = await db.get(sales_models.Order, oid)
+            except Exception as e:  # no bloquear el borrado por un fallo de reverso
+                print(f"[eliminar_lote] reverso pedido {oid} falló: {e}")
+        # Desvincular devoluciones que apunten a este pedido (evita FK colgante).
+        dres = await db.execute(
+            select(sales_models.CustomerReturn).where(sales_models.CustomerReturn.order_id == oid)
+        )
+        for ret in dres.scalars().all():
+            await db.delete(ret)
+        if order:
+            await db.delete(order)   # cascada borra items, pagos y eventos
+            borrados += 1
+
+    await db.delete(lote)            # cascada borra los registros del lote
+    await db.commit()
+    return {"lote_id": lote_id, "pedidos_eliminados": borrados}

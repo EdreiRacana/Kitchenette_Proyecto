@@ -44,6 +44,8 @@ const ingestaApi = {
     }).then((r) => r.data),
   generarVentas: (loteId: number) =>
     api.post(`/ingesta/lotes/${loteId}/generar-ventas`).then((r) => r.data),
+  eliminarLote: (loteId: number) =>
+    api.delete(`/ingesta/lotes/${loteId}`).then((r) => r.data),
   lotes: (fuenteId: number) =>
     api.get(`/ingesta/fuentes/${fuenteId}/lotes`).then((r) => r.data),
 };
@@ -164,6 +166,7 @@ function IngestaModule({ tk, tr, onVerVentas }: { tk: Tokens; tr: (k: string, fb
   const [lotes, setLotes] = useState<LoteHistorial[]>([]);
   const [lotesLoading, setLotesLoading] = useState(false);
   const [generandoLote, setGenerandoLote] = useState<number | null>(null);
+  const [eliminandoLote, setEliminandoLote] = useState<number | null>(null);
   const [fuentes, setFuentes] = useState<{ id: number; nombre: string; moneda: string; activa: boolean; customer_id?: number | null; auto_crear_ventas?: boolean }[]>([]);
   const [fuenteSubir, setFuenteSubir] = useState<{ id: number; nombre: string } | null>(null);
   const [borrando, setBorrando] = useState<number | null>(null);
@@ -258,6 +261,19 @@ function IngestaModule({ tk, tr, onVerVentas }: { tk: Tokens; tr: (k: string, fb
       const err = e as { response?: { data?: { detail?: string } } };
       alert(err?.response?.data?.detail ?? "No se pudieron generar las ventas de este lote.");
     } finally { setGenerandoLote(null); }
+  };
+
+  const eliminarLote = async (loteId: number) => {
+    if (!window.confirm("¿Eliminar esta carga? Se borrarán las ventas que generó (revirtiendo inventario y finanzas). No se tocan clientes, usuarios ni el catálogo de productos. Esta acción no se puede deshacer.")) return;
+    setEliminandoLote(loteId);
+    try {
+      const res = await ingestaApi.eliminarLote(loteId);
+      alert(`Carga eliminada. ${res.pedidos_eliminados} venta(s) borrada(s).`);
+      if (fuenteHistorial) await verHistorial(fuenteHistorial.id, fuenteHistorial.nombre);
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      alert(err?.response?.data?.detail ?? "No se pudo eliminar la carga.");
+    } finally { setEliminandoLote(null); }
   };
 
   const generarVentas = async () => {
@@ -386,9 +402,14 @@ function IngestaModule({ tk, tr, onVerVentas }: { tk: Tokens; tr: (k: string, fb
                 {new Date(l.created_at).toLocaleString("es-MX")} · {l.filas_ok} registros · estado: {l.estado}
               </div>
             </div>
-            <button onClick={() => generarVentasDeLote(l.id)} disabled={generandoLote === l.id}
+            <button onClick={() => generarVentasDeLote(l.id)} disabled={generandoLote === l.id || eliminandoLote === l.id}
               style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: `1px solid ${tk.nova}55`, background: tk.nova + "18", color: tk.nova, fontSize: 13, fontWeight: 600, cursor: generandoLote === l.id ? "default" : "pointer", opacity: generandoLote === l.id ? 0.6 : 1 }}>
               <Zap size={14} /> {generandoLote === l.id ? "Generando..." : "Generar / revisar ventas"}
+            </button>
+            <button onClick={() => eliminarLote(l.id)} disabled={eliminandoLote === l.id || generandoLote === l.id}
+              title="Deshacer esta carga: borra las ventas que generó (revierte inventario y finanzas). No toca clientes ni el catálogo."
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: `1px solid ${tk.bad}55`, background: tk.bad + "18", color: tk.bad, fontSize: 13, fontWeight: 600, cursor: eliminandoLote === l.id ? "default" : "pointer", opacity: eliminandoLote === l.id ? 0.6 : 1 }}>
+              <Trash2 size={14} /> {eliminandoLote === l.id ? "Eliminando..." : "Eliminar carga"}
             </button>
           </div>
         ))
