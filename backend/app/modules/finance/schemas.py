@@ -79,6 +79,16 @@ class BankAccountCreate(BankAccountBase):
     pass
 
 
+class BankAccountUpdate(BaseModel):
+    name: Optional[str] = None
+    bank: Optional[str] = None
+    account_number: Optional[str] = None
+    type: Optional[str] = None
+    balance: Optional[float] = None
+    currency: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 class BankAccountInDB(BankAccountBase):
     id: int
     created_at: datetime

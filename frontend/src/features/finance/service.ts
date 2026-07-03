@@ -182,6 +182,7 @@ export const financeService = {
 
     getBanks: async () => (await api.get<BankAccount[]>('/finance/banks')).data,
     createBank: async (data: any) => (await api.post<BankAccount>('/finance/banks', data)).data,
+    updateBank: async (id: number, data: any) => (await api.put<BankAccount>(`/finance/banks/${id}`, data)).data,
     deactivateBank: async (id: number) => (await api.delete<BankAccount>(`/finance/banks/${id}`)).data,
     getBankTransactions: async (id: number) => (await api.get<BankTransaction[]>(`/finance/banks/${id}/transactions`)).data,
     createBankTransaction: async (id: number, data: any) => (await api.post<BankAccount>(`/finance/banks/${id}/transactions`, data)).data,

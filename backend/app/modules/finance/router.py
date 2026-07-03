@@ -157,6 +157,14 @@ async def create_bank(bank_in: schemas.BankAccountCreate, db: DB, current_user: 
     return await service.create_bank(db, bank_in, branch_id=_finance_branch(current_user))
 
 
+@router.put("/banks/{bank_id}", response_model=schemas.BankAccountInDB)
+async def update_bank(bank_id: int, bank_in: schemas.BankAccountUpdate, db: DB, current_user: CurrentUser):
+    bank = await service.update_bank(db, bank_id, bank_in)
+    if not bank:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+    return bank
+
+
 @router.delete("/banks/{bank_id}", response_model=schemas.BankAccountInDB)
 async def deactivate_bank(bank_id: int, db: DB, current_user: CurrentUser):
     bank = await service.deactivate_bank(db, bank_id)

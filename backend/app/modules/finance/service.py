@@ -289,6 +289,18 @@ async def create_bank(db: AsyncSession, data: schemas.BankAccountCreate, branch_
     return bank
 
 
+async def update_bank(db: AsyncSession, bank_id: int, data: schemas.BankAccountUpdate) -> Optional[models.BankAccount]:
+    res = await db.execute(select(models.BankAccount).where(models.BankAccount.id == bank_id))
+    bank = res.scalars().first()
+    if not bank:
+        return None
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(bank, field, value)
+    await db.commit()
+    await db.refresh(bank)
+    return bank
+
+
 async def deactivate_bank(db: AsyncSession, bank_id: int) -> Optional[models.BankAccount]:
     res = await db.execute(select(models.BankAccount).where(models.BankAccount.id == bank_id))
     bank = res.scalars().first()

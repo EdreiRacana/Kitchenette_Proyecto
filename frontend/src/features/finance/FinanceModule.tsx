@@ -99,6 +99,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
   const [txForm, setTxForm] = useState<null | "new" | Transaction>(null);
   const [payTarget, setPayTarget] = useState<null | { kind: "cxc" | "cxp"; item: AgingItem }>(null);
   const [bankForm, setBankForm] = useState(false);
+  const [editingBank, setEditingBank] = useState<BankAccount | null>(null);
   const [bankView, setBankView] = useState<BankAccount | null>(null);
   const [transferFrom, setTransferFrom] = useState<BankAccount | null>(null);
   const [q, setQ] = useState("");
@@ -553,6 +554,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
                   <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 4 }}>{b.currency}</div>
                   <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
                     <button onClick={() => setBankView(b)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Ver movimientos</button>
+                    <button onClick={() => setEditingBank(b)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Editar</button>
                     <button onClick={() => setTransferFrom(b)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: color + "22", color, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Transferir</button>
                   </div>
                 </div>
@@ -756,16 +758,20 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
           onSave={handlePay}
         />
       )}
-      {bankForm && (
+      {(bankForm || editingBank) && (
         <BankFormModal
           t={t}
-          onClose={() => setBankForm(false)}
+          editing={editingBank}
+          onClose={() => { setBankForm(false); setEditingBank(null); }}
           onSave={async (data) => {
-            if (demo) { alert("Modo demo: cuenta simulada ✓"); setBankForm(false); return; }
-            try { await financeService.createBank(data); setBankForm(false); await load(); }
+            try {
+              if (editingBank) await financeService.updateBank(editingBank.id, data);
+              else await financeService.createBank(data);
+              setBankForm(false); setEditingBank(null); await load();
+            }
             catch (e: any) {
               const detail = e?.response?.data?.detail || e?.message || "Error desconocido";
-              alert(`No se pudo crear la cuenta: ${detail}`);
+              alert(`No se pudo guardar la cuenta: ${detail}`);
             }
           }}
         />
@@ -926,9 +932,12 @@ function PayDebtModal({ t, item, kind, onClose, onSave }: any) {
 }
 
 // ── Bank Account Form Modal ──────────────────────────────────────────────────
-function BankFormModal({ t, onClose, onSave }: any) {
+function BankFormModal({ t, onClose, onSave, editing }: any) {
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ name: "", bank: "", account_number: "", type: "checking", balance: "0", currency: "MXN" });
+  const [form, setForm] = useState({
+    name: editing?.name ?? "", bank: editing?.bank ?? "", account_number: editing?.account_number ?? "",
+    type: editing?.type ?? "checking", balance: String(editing?.balance ?? "0"), currency: editing?.currency ?? "MXN",
+  });
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const handleSave = async () => { if (!form.name) return; setSaving(true); try { await onSave({ ...form, balance: parseFloat(form.balance) || 0 }); } finally { setSaving(false); } };
@@ -936,7 +945,7 @@ function BankFormModal({ t, onClose, onSave }: any) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
       <div style={{ width: "100%", maxWidth: 420, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>Agregar cuenta bancaria</h2>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{editing ? "Editar cuenta bancaria" : "Agregar cuenta bancaria"}</h2>
           <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
         </div>
         <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
@@ -950,12 +959,12 @@ function BankFormModal({ t, onClose, onSave }: any) {
               <option value="credit">Tarjeta de crédito</option>
             </select>
           </div>
-          <div><label style={label}>Saldo inicial</label><input type="number" value={form.balance} onChange={e => setForm(f => ({ ...f, balance: e.target.value }))} style={inp} /></div>
+          <div><label style={label}>{editing ? "Saldo" : "Saldo inicial"}</label><input type="number" value={form.balance} onChange={e => setForm(f => ({ ...f, balance: e.target.value }))} style={inp} /></div>
         </div>
         <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
           <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
           <button onClick={handleSave} disabled={saving || !form.name} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: !form.name ? 0.5 : 1 }}>
-            {saving ? "…" : "Crear cuenta"}
+            {saving ? "…" : (editing ? "Guardar cambios" : "Crear cuenta")}
           </button>
         </div>
       </div>
@@ -1118,7 +1127,7 @@ function BankMovementsModal({ t, bank, demo, onClose, onChanged }: any) {
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 // ── Advanced Panel — Presupuestos, recurrentes, reportes y auditoría ────────
