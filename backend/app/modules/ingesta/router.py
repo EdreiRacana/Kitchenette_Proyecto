@@ -384,6 +384,17 @@ async def generar_ventas(
         raise HTTPException(404, str(e))
 
 
+@router.delete("/lotes/{lote_id}")
+async def eliminar_lote(lote_id: int, db: DB, _: CurrentUser):
+    """Deshace una carga: borra los pedidos que generó (revirtiendo inventario,
+    finanzas y contabilidad) y el lote. No toca clientes, usuarios ni el
+    catálogo. Sirve para limpiar una carga de prueba sin resetear la base."""
+    try:
+        return await service.eliminar_lote_y_ventas(db, lote_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
 @router.get("/lotes/{lote_id}/registros")
 async def registros_lote(
     lote_id: int,
