@@ -82,7 +82,7 @@ const STRINGS = {
     presets: { week: "Semana", month: "Mes", quarter: "Trimestre", year: "Año" },
     dash: {
       to: "al", custom: "Personalizado", marginLabel: "MARGEN", target: "obj.",
-      focos: { agotados: "agotados", cartera: "vencida", margen: "stock bajo" },
+      focos: { agotados: "agotados", cartera: "por cobrar", margen: "stock bajo" },
       vsPrev: "vs ant.", chartTitle: "Ventas del periodo", chartUnit: "(miles MXN)",
       legendCur: "Actual", legendPrev: "Periodo anterior",
       metaTitle: "Meta vs real", metaSub: "de la meta del periodo", real: "Real", meta: "Meta",
@@ -116,7 +116,7 @@ const STRINGS = {
     presets: { week: "Week", month: "Month", quarter: "Quarter", year: "Year" },
     dash: {
       to: "to", custom: "Custom", marginLabel: "MARGIN", target: "target",
-      focos: { agotados: "out of stock", cartera: "overdue", margen: "low stock" },
+      focos: { agotados: "out of stock", cartera: "receivable", margen: "low stock" },
       vsPrev: "vs prev.", chartTitle: "Period sales", chartUnit: "(thousands MXN)",
       legendCur: "Current", legendPrev: "Previous period",
       metaTitle: "Goal vs actual", metaSub: "of the period goal", real: "Actual", meta: "Goal",
