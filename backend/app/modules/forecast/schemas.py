@@ -167,3 +167,28 @@ class AttainmentResponse(BaseModel):
     goal_year: float
     real_year: float
     attainment_year_pct: float
+
+
+# ── Goal for range (usado por el tablero) ────────────────────────────────────
+
+class GoalForRangeResponse(BaseModel):
+    goal_amount: float
+    plan_id: Optional[int] = None
+    plan_name: Optional[str] = None
+    plan_year: Optional[int] = None
+    months_covered: List[str] = Field(default_factory=list)  # ["2026-01", "2026-02", ...]
+
+
+# ── Bulk import ─────────────────────────────────────────────────────────────
+
+class ImportRowError(BaseModel):
+    row: int
+    reason: str
+
+
+class ImportResponse(BaseModel):
+    plan_id: int
+    lines_created: int
+    lines_skipped: int
+    errors: List[ImportRowError] = Field(default_factory=list)
+    lines: List[ForecastLineInDB] = Field(default_factory=list)

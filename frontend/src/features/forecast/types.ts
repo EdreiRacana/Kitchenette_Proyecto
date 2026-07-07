@@ -96,3 +96,24 @@ export interface BaselineResponse {
   lines_deleted: number;
   lines: ForecastLine[];
 }
+
+export interface GoalForRangeResponse {
+  goal_amount: number;
+  plan_id: number | null;
+  plan_name: string | null;
+  plan_year: number | null;
+  months_covered: string[];
+}
+
+export interface ImportRowError {
+  row: number;
+  reason: string;
+}
+
+export interface ImportResponse {
+  plan_id: number;
+  lines_created: number;
+  lines_skipped: number;
+  errors: ImportRowError[];
+  lines: ForecastLine[];
+}

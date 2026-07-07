@@ -3,6 +3,7 @@ import api from "../../services/api";
 import type {
   ForecastPlan, ForecastPlanCreate, ForecastLine, ForecastLineDraft,
   RollupResponse, AttainmentResponse, BaselineRequest, BaselineResponse,
+  GoalForRangeResponse, ImportResponse,
 } from "./types";
 
 export const forecastApi = {
@@ -49,6 +50,40 @@ export const forecastApi = {
   },
   async attainment(planId: number): Promise<AttainmentResponse> {
     const { data } = await api.get<AttainmentResponse>(`/forecast/plans/${planId}/attainment`);
+    return data;
+  },
+
+  async goalForRange(start: string, end: string): Promise<GoalForRangeResponse> {
+    const { data } = await api.get<GoalForRangeResponse>(`/forecast/goal-for-range`, {
+      params: { start, end },
+    });
+    return data;
+  },
+
+  async downloadTemplate(format: "xlsx" | "csv", year?: number): Promise<Blob> {
+    const { data } = await api.get(`/forecast/template`, {
+      params: { format, year },
+      responseType: "blob",
+    });
+    return data as Blob;
+  },
+
+  async exportPlan(planId: number, format: "xlsx" | "csv"): Promise<Blob> {
+    const { data } = await api.get(`/forecast/plans/${planId}/export`, {
+      params: { format },
+      responseType: "blob",
+    });
+    return data as Blob;
+  },
+
+  async importPlan(planId: number, file: File): Promise<ImportResponse> {
+    const form = new FormData();
+    form.append("file", file);
+    const { data } = await api.post<ImportResponse>(
+      `/forecast/plans/${planId}/import`,
+      form,
+      { headers: { "Content-Type": "multipart/form-data" } },
+    );
     return data;
   },
 };
