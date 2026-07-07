@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Plus, Sparkles, Target, TrendingUp, Trash2, Save, X, RefreshCw,
   Users, Package, UserCircle2, ChevronDown, FileText, Download, Upload,
-  Info, AlertTriangle,
+  Info, AlertTriangle, Pencil,
 } from "lucide-react";
 
 import { forecastApi } from "./api";
@@ -68,6 +68,7 @@ export default function ForecastModule({ t, s }: Props) {
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
   const [showPlanDropdown, setShowPlanDropdown] = useState(false);
   const [showNewPlan, setShowNewPlan] = useState(false);
+  const [showEditPlan, setShowEditPlan] = useState(false);
   const [showAddLine, setShowAddLine] = useState(false);
 
   const [lines, setLines] = useState<ForecastLine[]>([]);
@@ -171,6 +172,23 @@ export default function ForecastModule({ t, s }: Props) {
     setShowNewPlan(false);
   };
 
+  const onUpdatePlan = async (patch: Partial<ForecastPlanCreate>) => {
+    if (selectedPlanId == null) return;
+    await forecastApi.updatePlan(selectedPlanId, patch);
+    await loadPlans();
+    setShowEditPlan(false);
+    void loadPlanData(selectedPlanId);
+  };
+
+  const onDeletePlan = async () => {
+    if (selectedPlanId == null) return;
+    if (!window.confirm("¿Eliminar este plan? Se borrarán todas sus líneas y no se puede deshacer.")) return;
+    await forecastApi.deletePlan(selectedPlanId);
+    setShowEditPlan(false);
+    setSelectedPlanId(null);
+    await loadPlans();
+  };
+
   const onAddLine = async (draft: ForecastLineDraft) => {
     if (selectedPlanId == null) return;
     const line = await forecastApi.createLine(selectedPlanId, draft);
@@ -214,6 +232,7 @@ export default function ForecastModule({ t, s }: Props) {
         selectedPlan={selectedPlan}
         onSelectPlan={(id) => { setSelectedPlanId(id); setShowPlanDropdown(false); }}
         onOpenNewPlan={() => setShowNewPlan(true)}
+        onOpenEditPlan={() => setShowEditPlan(true)}
         showDropdown={showPlanDropdown}
         setShowDropdown={setShowPlanDropdown}
       />
@@ -261,6 +280,15 @@ export default function ForecastModule({ t, s }: Props) {
         <NewPlanModal tk={tk} tr={tr} onClose={() => setShowNewPlan(false)} onCreate={onCreatePlan} />
       )}
 
+      {showEditPlan && selectedPlan && (
+        <EditPlanModal
+          tk={tk} tr={tr} plan={selectedPlan}
+          onClose={() => setShowEditPlan(false)}
+          onSave={onUpdatePlan}
+          onDelete={onDeletePlan}
+        />
+      )}
+
       {showAddLine && selectedPlan && (
         <AddLineModal
           tk={tk} tr={tr}
@@ -280,7 +308,7 @@ export default function ForecastModule({ t, s }: Props) {
 // ── Page head ────────────────────────────────────────────────────────────────
 
 function PageHead({
-  tk, tr, plans, selectedPlan, onSelectPlan, onOpenNewPlan,
+  tk, tr, plans, selectedPlan, onSelectPlan, onOpenNewPlan, onOpenEditPlan,
   showDropdown, setShowDropdown,
 }: {
   tk: Tokens;
@@ -289,6 +317,7 @@ function PageHead({
   selectedPlan: ForecastPlan | null;
   onSelectPlan: (id: number) => void;
   onOpenNewPlan: () => void;
+  onOpenEditPlan: () => void;
   showDropdown: boolean;
   setShowDropdown: (v: boolean) => void;
 }) {
@@ -319,28 +348,65 @@ function PageHead({
             </button>
             {showDropdown && (
               <div style={{
-                position: "absolute", top: "calc(100% + 6px)", right: 0, minWidth: 260,
+                position: "absolute", top: "calc(100% + 6px)", right: 0, minWidth: 320,
                 background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 10,
                 boxShadow: "0 16px 40px rgba(0,0,0,.35)", overflow: "hidden", zIndex: 40,
               }}>
-                {plans.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => onSelectPlan(p.id)}
-                    style={{
-                      display: "flex", justifyContent: "space-between", alignItems: "center",
-                      width: "100%", padding: "10px 14px", border: "none", cursor: "pointer",
-                      background: selectedPlan?.id === p.id ? tk.accent + "18" : "transparent",
-                      color: tk.textHi, fontSize: 13, textAlign: "left",
-                    }}
-                  >
-                    <span>{p.name}</span>
-                    <span style={{ color: tk.textLo, fontSize: 12 }}>{p.year}</span>
-                  </button>
-                ))}
+                {plans.map((p) => {
+                  const isActive = selectedPlan?.id === p.id;
+                  return (
+                    <div key={p.id} style={{
+                      display: "flex", alignItems: "center",
+                      background: isActive ? tk.accent + "18" : "transparent",
+                    }}>
+                      <button
+                        onClick={() => onSelectPlan(p.id)}
+                        style={{
+                          flex: 1, display: "flex", justifyContent: "space-between", alignItems: "center",
+                          padding: "10px 14px", border: "none", cursor: "pointer",
+                          background: "transparent", color: tk.textHi, fontSize: 13, textAlign: "left",
+                        }}
+                      >
+                        <span>
+                          {p.name}
+                          <span style={{ marginLeft: 8, fontSize: 10, color: tk.textLo, padding: "2px 6px", borderRadius: 999, border: `1px solid ${tk.border}` }}>
+                            {p.status}
+                          </span>
+                        </span>
+                        <span style={{ color: tk.textLo, fontSize: 12 }}>{p.year}</span>
+                      </button>
+                      {isActive && (
+                        <button
+                          onClick={onOpenEditPlan}
+                          title={tr("forecast.editPlan", "Editar plan")}
+                          style={{
+                            marginRight: 8, padding: 6, borderRadius: 6, border: "none",
+                            background: "transparent", color: tk.textMid, cursor: "pointer",
+                          }}
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
+        )}
+        {selectedPlan && (
+          <button
+            onClick={onOpenEditPlan}
+            title={tr("forecast.editPlan", "Editar plan")}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              background: tk.panel2, color: tk.textHi, border: `1px solid ${tk.border}`,
+              borderRadius: 10, padding: "9px 12px", cursor: "pointer", fontSize: 13.5, fontWeight: 600,
+            }}
+          >
+            <Pencil size={14} color={tk.accent} />
+            {tr("forecast.editPlan", "Editar plan")}
+          </button>
         )}
         <button
           onClick={onOpenNewPlan}
@@ -966,6 +1032,105 @@ function NewPlanModal({
         <button disabled={busy} onClick={submit} style={primaryBtn(tk)}>
           {busy ? tr("forecast.creating", "Creando…") : tr("forecast.create", "Crear")}
         </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+// ── Edit plan modal (rename, año, growth, status, delete) ───────────────────
+
+function EditPlanModal({
+  tk, tr, plan, onClose, onSave, onDelete,
+}: {
+  tk: Tokens;
+  tr: (k: string, fb: string) => string;
+  plan: ForecastPlan;
+  onClose: () => void;
+  onSave: (patch: Partial<ForecastPlanCreate>) => Promise<void>;
+  onDelete: () => Promise<void>;
+}) {
+  const [name, setName] = useState<string>(plan.name);
+  const [year, setYear] = useState<number>(plan.year);
+  const [growth, setGrowth] = useState<number>(plan.growth_pct);
+  const [status, setStatus] = useState<PlanStatus>(plan.status);
+  const [notes, setNotes] = useState<string>(plan.notes ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    if (!name.trim()) {
+      setErr(tr("forecast.err.needName", "El plan necesita un nombre."));
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await onSave({
+        name: name.trim(),
+        year,
+        growth_pct: growth,
+        status,
+        notes: notes.trim() || null,
+      });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Error");
+      setBusy(false);
+    }
+  };
+
+  const del = async () => {
+    setBusy(true);
+    try {
+      await onDelete();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Error");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell tk={tk} tr={tr} title={tr("forecast.editPlanTitle", "Editar plan de forecast")} onClose={onClose}>
+      <Field tk={tk} label={tr("forecast.planName", "Nombre del plan")}>
+        <input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle(tk)} />
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+        <Field tk={tk} label={tr("forecast.year", "Año")}>
+          <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} style={inputStyle(tk)} />
+        </Field>
+        <Field tk={tk} label={tr("forecast.growth", "% Crecimiento")}>
+          <input type="number" step={0.1} value={growth} onChange={(e) => setGrowth(Number(e.target.value))} style={inputStyle(tk)} />
+        </Field>
+        <Field tk={tk} label={tr("forecast.status", "Estado")}>
+          <select value={status} onChange={(e) => setStatus(e.target.value as PlanStatus)} style={inputStyle(tk)}>
+            <option value="draft">{tr("forecast.status.draft", "Borrador")}</option>
+            <option value="active">{tr("forecast.status.active", "Activo")}</option>
+            <option value="closed">{tr("forecast.status.closed", "Cerrado")}</option>
+          </select>
+        </Field>
+      </div>
+      <Field tk={tk} label={tr("forecast.notes", "Notas (opcional)")}>
+        <textarea
+          value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
+          style={{ ...inputStyle(tk), resize: "vertical", fontFamily: "inherit" }}
+          placeholder={tr("forecast.notesPh", "Ej. Meta anual definida con dirección comercial")}
+        />
+      </Field>
+      <div style={{ fontSize: 12, color: tk.textLo, marginTop: 8, background: tk.panel2, padding: "8px 10px", borderRadius: 8, border: `1px solid ${tk.border}` }}>
+        <b style={{ color: tk.textMid }}>{tr("forecast.statusHelp", "Estados")}:</b> {tr("forecast.statusHelpBody", "Borrador = en preparación, no afecta el tablero. Activo = alimenta la meta del tablero. Cerrado = archivado, no se toma en cuenta.")}
+      </div>
+      {err && <div style={{ color: tk.bad, fontSize: 12, marginTop: 8 }}>{err}</div>}
+      <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 16, flexWrap: "wrap" }}>
+        <button onClick={del} disabled={busy}
+                style={{ ...secondaryBtn(tk), color: tk.bad, borderColor: tk.bad + "55" }}>
+          <Trash2 size={13} style={{ marginRight: 6, verticalAlign: -2 }} />
+          {tr("forecast.deletePlan", "Eliminar plan")}
+        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={onClose} style={secondaryBtn(tk)}>{tr("forecast.cancel", "Cancelar")}</button>
+          <button disabled={busy} onClick={save} style={primaryBtn(tk)}>
+            {busy ? tr("forecast.saving", "Guardando…") : tr("forecast.saveChanges", "Guardar cambios")}
+          </button>
+        </div>
       </div>
     </ModalShell>
   );
