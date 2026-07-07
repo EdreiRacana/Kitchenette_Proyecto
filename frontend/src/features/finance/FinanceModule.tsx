@@ -463,42 +463,67 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
 
       {/* ── TAB: CXP (bills con vencimiento + pago consolidado) ── */}
       {tab === "cxp" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, flex: 1 }}>
-              {[
-                { label: "Total por pagar", value: mxn(billsStats?.total_open ?? bills.reduce((a, b) => a + b.balance, 0)), color: t.bad },
-                { label: "Vencido", value: mxn(billsStats?.overdue ?? bills.filter(b => b.status === "overdue").reduce((a, b) => a + b.balance, 0)), color: "#DC2626" },
-                { label: "Por vencer 7 días", value: mxn(billsStats?.upcoming_7d ?? 0), color: t.warn },
-                { label: "Proveedores activos", value: String(billsStats?.active_suppliers ?? new Set(bills.map(b => b.supplier_id).filter(Boolean)).size), color: t.nova },
-                { label: "Próximo vencimiento", value: billsStats?.next_due_date ? fmtDate(billsStats.next_due_date) : "—", color: t.warn, sub: billsStats?.next_due_bill_supplier || undefined },
-              ].map(k => (
-                <div key={k.label} style={{ ...glass(t), borderRadius: 10, padding: "14px 16px" }}>
-                  <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 4 }}>{k.label}</div>
-                  <div style={{ fontSize: k.label === "Próximo vencimiento" ? 14 : 20, fontWeight: 800, color: k.color }}>{k.value}</div>
-                  {k.sub && <div style={{ fontSize: 11, color: t.textLo, marginTop: 4 }}>{k.sub}</div>}
-                </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button onClick={() => setBillForm("new")} style={{ background: `linear-gradient(135deg, ${t.nova}, ${t.navy || t.panel2})`, color: "#fff", border: "none", padding: "10px 16px", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <Plus size={14} /> Nueva factura por pagar
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* Toolbar compacta: acciones principales a la izquierda, utilidades a la derecha */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <button
+                onClick={() => setBillForm("new")}
+                style={{
+                  background: `linear-gradient(135deg, ${t.nova}, ${t.navy || t.panel2})`,
+                  color: "#fff", border: "none", padding: "8px 14px", borderRadius: 8,
+                  cursor: "pointer", fontSize: 13, fontWeight: 600,
+                  display: "inline-flex", alignItems: "center", gap: 6, boxShadow: `0 4px 12px ${t.nova}33`,
+                }}
+              >
+                <Plus size={14} /> Nueva factura
               </button>
               <button
                 disabled={selectedBillIds.length === 0}
                 onClick={() => setMultiPayOpen(true)}
-                style={{ ...ghostBtn, opacity: selectedBillIds.length === 0 ? 0.5 : 1, cursor: selectedBillIds.length === 0 ? "not-allowed" : "pointer" }}
+                style={{
+                  ...ghostBtn, padding: "8px 12px",
+                  opacity: selectedBillIds.length === 0 ? 0.5 : 1,
+                  cursor: selectedBillIds.length === 0 ? "not-allowed" : "pointer",
+                  color: selectedBillIds.length > 0 ? t.good : t.textMid,
+                  borderColor: selectedBillIds.length > 0 ? t.good + "55" : t.border,
+                }}
               >
-                <DollarSign size={14} /> Pagar seleccionadas ({selectedBillIds.length})
+                <DollarSign size={14} /> Pagar seleccionadas{selectedBillIds.length > 0 ? ` (${selectedBillIds.length})` : ""}
               </button>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button onClick={async () => {
                 try {
                   const r = await financeService.sendPaymentReminders();
                   alert(r.sent > 0 ? `Se enviaron ${r.sent} recordatorio(s) de pago al correo de la empresa.` : "No hay recordatorios pendientes por enviar, o no hay correo configurado (Configuración > Integraciones).");
                 } catch { alert("No se pudieron enviar los recordatorios."); }
-              }} style={ghostBtn}><Mail size={14} /> Enviar recordatorios de pago</button>
-              <button onClick={exportCXP} style={ghostBtn}><Download size={14} /> Descargar</button>
+              }} style={{ ...ghostBtn, padding: "8px 12px" }} title="Enviar recordatorios por email"><Mail size={14} /> Recordatorios</button>
+              <button onClick={exportCXP} style={{ ...ghostBtn, padding: "8px 12px" }} title="Descargar CSV"><Download size={14} /> Descargar</button>
             </div>
+          </div>
+
+          {/* KPIs compactos en fila pareja */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+            {[
+              { label: "Total por pagar", value: mxn(billsStats?.total_open ?? bills.reduce((a, b) => a + b.balance, 0)), color: t.bad, icon: TrendingDown },
+              { label: "Vencido", value: mxn(billsStats?.overdue ?? bills.filter(b => b.status === "overdue").reduce((a, b) => a + b.balance, 0)), color: "#DC2626", icon: AlertCircle },
+              { label: "Por vencer 7 días", value: mxn(billsStats?.upcoming_7d ?? 0), color: t.warn, icon: Clock },
+              { label: "Proveedores activos", value: String(billsStats?.active_suppliers ?? new Set(bills.map(b => b.supplier_id).filter(Boolean)).size), color: t.nova, icon: Building2 },
+              { label: "Próximo vencimiento", value: billsStats?.next_due_date ? fmtDate(billsStats.next_due_date) : "—", color: t.textHi, icon: CalendarClock, sub: billsStats?.next_due_bill_supplier || undefined },
+            ].map(k => {
+              const Icon = k.icon;
+              return (
+                <div key={k.label} style={{ ...glass(t), borderRadius: 10, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 4, minHeight: 76 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <Icon size={13} color={k.color} />
+                    <span style={{ fontSize: 11, color: t.textLo, fontWeight: 600, letterSpacing: 0.3, textTransform: "uppercase" }}>{k.label}</span>
+                  </div>
+                  <div style={{ fontSize: k.label === "Próximo vencimiento" ? 15 : 18, fontWeight: 800, color: k.color, fontVariantNumeric: "tabular-nums", lineHeight: 1.15 }}>{k.value}</div>
+                  {k.sub && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={k.sub}>{k.sub}</div>}
+                </div>
+              );
+            })}
           </div>
 
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
