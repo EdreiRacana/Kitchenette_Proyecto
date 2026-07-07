@@ -32,6 +32,7 @@ const NAV_PERM = {
 };
 import { salesApi } from "./features/sales/api";
 import { inventoryService } from "./features/inventory/service";
+import { forecastApi } from "./features/forecast/api";
 
 /* ============================ Responsive ============================ */
 function useIsMobile(breakpoint = 880) {
@@ -227,7 +228,7 @@ async function loadDashboardData(preset, customStart, customEnd) {
   const prevStartISO = prevStart.toISOString(), prevEndISO = prevEnd.toISOString();
   const { granularity, days } = dashTrendParams(preset);
 
-  const [statsCur, statsPrev, trendCur, trendPrev, finComparison, invStats, finDashboard, budgets] = await Promise.all([
+  const [statsCur, statsPrev, trendCur, trendPrev, finComparison, invStats, finDashboard, budgets, forecastGoal] = await Promise.all([
     salesApi.stats(curStartISO, curEndISO),
     salesApi.stats(prevStartISO, prevEndISO),
     salesApi.trend(granularity, days, curEndISO),
@@ -236,6 +237,8 @@ async function loadDashboardData(preset, customStart, customEnd) {
     inventoryService.getStats(),
     financeService.getDashboard(),
     financeService.getBudgets(),
+    // Forecast tiene prioridad; si no hay plan activo cae a los presupuestos de Finanzas.
+    forecastApi.goalForRange(curStartISO, curEndISO).catch(() => ({ goal_amount: 0, plan_id: null, plan_name: null, plan_year: null, months_covered: [] })),
   ]);
 
   const n = Math.max(trendCur.length, trendPrev.length);
@@ -244,7 +247,13 @@ async function loadDashboardData(preset, customStart, customEnd) {
   const xlabels = Array.from({ length: n }, (_, i) => (trendCur[i]?.period ?? trendPrev[i]?.period ?? "").slice(5));
 
   const months = monthsInRange(curStart, curEnd);
-  const goalTarget = budgets.filter((b) => b.type === "income" && months.includes(b.period)).reduce((a, b) => a + b.amount, 0);
+  const budgetTarget = budgets.filter((b) => b.type === "income" && months.includes(b.period)).reduce((a, b) => a + b.amount, 0);
+  // Forecast tiene prioridad; Finanzas es fallback si no hay meta de forecast.
+  const forecastTarget = forecastGoal.goal_amount || 0;
+  const goalTarget = forecastTarget > 0 ? forecastTarget : budgetTarget;
+  const goalSource = forecastTarget > 0
+    ? { kind: "forecast", planName: forecastGoal.plan_name || null, planYear: forecastGoal.plan_year || null }
+    : (budgetTarget > 0 ? { kind: "budget", planName: null, planYear: null } : { kind: "none", planName: null, planYear: null });
 
   const kpis = [
     { label: "Ventas", value: statsCur.total_sold, money: true, delta: pctDelta(statsCur.total_sold, statsPrev.total_sold), spark: trendCur.map((p) => p.total) },
@@ -260,7 +269,7 @@ async function loadDashboardData(preset, customStart, customEnd) {
     range: [curStart, curEnd],
     kpis,
     margin, marginTarget: 35,
-    goal: { actual: statsCur.total_sold, target: goalTarget, configured: goalTarget > 0 },
+    goal: { actual: statsCur.total_sold, target: goalTarget, configured: goalTarget > 0, source: goalSource },
     attention: { agotados: invStats.out_of_stock, cartera: finDashboard.cxc_balance ?? 0, stockBajo: invStats.low_stock },
     series: { cur: seriesCur, prev: seriesPrev },
     xlabels,
@@ -626,7 +635,27 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
           {xlabels.length > 0 ? <ComparisonChart t={t} series={data.series} xlabels={xlabels} /> : <div style={{ fontSize: 13, color: t.textLo, padding: "40px 0", textAlign: "center" }}>{s.dash.loadError}</div>}
         </Card>
         <Card t={t} style={{ padding: 14, display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}><Target size={17} color={t.nova} /><span style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>{s.dash.metaTitle}</span></div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+            <Target size={17} color={t.nova} />
+            <span style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>{s.dash.metaTitle}</span>
+            {data.goal.source?.kind === "forecast" && (
+              <span
+                title={data.goal.source.planName ? `Plan: ${data.goal.source.planName} · ${data.goal.source.planYear}` : ""}
+                onClick={() => setPage("forecast")}
+                style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 700, color: t.nova, background: t.nova + "1e", border: `1px solid ${t.nova}44`, padding: "3px 8px", borderRadius: 999, cursor: "pointer" }}
+              >
+                FORECAST
+              </span>
+            )}
+            {data.goal.source?.kind === "budget" && (
+              <span
+                onClick={() => setPage("finanzas")}
+                style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 700, color: t.textMid, background: t.panel3, border: `1px solid ${t.border}`, padding: "3px 8px", borderRadius: 999, cursor: "pointer" }}
+              >
+                FINANZAS
+              </span>
+            )}
+          </div>
           {data.goal.configured ? (
             <>
               <div style={{ fontSize: 24, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{goalPct}%</div>
@@ -639,7 +668,17 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
               <div style={{ marginTop: "auto", paddingTop: 12, fontSize: 12.5, color: t.textMid, borderTop: `1px solid ${t.borderSoft}` }}>{s.dash.remaining(mxn(Math.max(0, data.goal.target - data.goal.actual)))}</div>
             </>
           ) : (
-            <div style={{ marginTop: 6, fontSize: 13, color: t.textLo, lineHeight: 1.5 }}>{s.dash.noGoal}</div>
+            <div style={{ marginTop: 6, fontSize: 13, color: t.textLo, lineHeight: 1.5 }}>
+              {s.dash.noGoal}
+              <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                <button onClick={() => setPage("forecast")} style={{ background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                  {lang === "en" ? "Create forecast plan" : "Crear plan de forecast"}
+                </button>
+                <button onClick={() => setPage("finanzas")} style={{ background: t.panel2, color: t.textHi, border: `1px solid ${t.border}`, borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                  {lang === "en" ? "Or set a budget" : "O crear presupuesto"}
+                </button>
+              </div>
+            </div>
           )}
         </Card>
       </div>

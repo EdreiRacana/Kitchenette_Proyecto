@@ -12,13 +12,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Plus, Sparkles, Target, TrendingUp, Trash2, Save, X, RefreshCw,
-  Users, Package, UserCircle2, ChevronDown, FileText,
+  Users, Package, UserCircle2, ChevronDown, FileText, Download, Upload,
+  Info, AlertTriangle,
 } from "lucide-react";
 
 import { forecastApi } from "./api";
 import type {
   AttainmentResponse, ForecastLine, ForecastLineDraft, ForecastPlan,
-  ForecastPlanCreate, PlanStatus, RollupResponse,
+  ForecastPlanCreate, ImportResponse, PlanStatus, RollupResponse,
 } from "./types";
 import { customersApi } from "../customers/api";
 import { salesApi } from "../sales/api";
@@ -111,7 +112,7 @@ export default function ForecastModule({ t, s }: Props) {
     (async () => {
       try {
         const [custRes, sellersRes, varsRes] = await Promise.all([
-          customersApi.search({ limit: 500 }).catch(() => ({ items: [] as unknown[] })),
+          customersApi.search({ limit: 200, sort_by: "name", sort_dir: "asc" }).catch(() => ({ items: [] as unknown[] })),
           salesApi.listSellers().catch(() => [] as SellerLite[]),
           salesApi.variantOptions().catch(() => [] as VariantOption[]),
         ]);
@@ -250,6 +251,8 @@ export default function ForecastModule({ t, s }: Props) {
             onUpdateLine={onUpdateLine}
             onDeleteLine={onDeleteLine}
             plan={selectedPlan}
+            hasCustomers={customers.length > 0}
+            onImported={() => selectedPlanId != null && loadPlanData(selectedPlanId)}
           />
         </>
       )}
@@ -581,6 +584,7 @@ function ByDimensionCard({
 
 function LineGrid({
   tk, tr, lines, loading, error, onAdd, onGenerateBaseline, onUpdateLine, onDeleteLine, plan,
+  hasCustomers, onImported,
 }: {
   tk: Tokens;
   tr: (k: string, fb: string) => string;
@@ -592,8 +596,12 @@ function LineGrid({
   onUpdateLine: (id: number, patch: Partial<ForecastLineDraft>) => Promise<void>;
   onDeleteLine: (id: number) => Promise<void>;
   plan: ForecastPlan;
+  hasCustomers: boolean;
+  onImported: () => void;
 }) {
   const [busyBaseline, setBusyBaseline] = useState(false);
+  const [busyExport, setBusyExport] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   const grandUnits = lines.reduce((a, l) => a + l.total_units, 0);
   const grandAmount = lines.reduce((a, l) => a + l.total_amount, 0);
@@ -604,6 +612,27 @@ function LineGrid({
       await onGenerateBaseline(replace);
     } finally {
       setBusyBaseline(false);
+    }
+  };
+
+  const download = async (format: "xlsx" | "csv", mode: "template" | "export") => {
+    setBusyExport(true);
+    try {
+      const blob = mode === "template"
+        ? await forecastApi.downloadTemplate(format, plan.year)
+        : await forecastApi.exportPlan(plan.id, format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = mode === "template"
+        ? `forecast_plantilla_${plan.year}.${format}`
+        : `forecast_${plan.name.replace(/\s+/g, "_")}_${plan.year}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } finally {
+      setBusyExport(false);
     }
   };
 
@@ -623,7 +652,23 @@ function LineGrid({
             {tr("forecast.gridSub", "Edita las unidades directamente. Los totales y el % de avance se recalculan al guardar.")}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <DownloadMenu
+            tk={tk} tr={tr} disabled={busyExport}
+            onPick={(fmt, mode) => download(fmt, mode)}
+            hasLines={lines.length > 0}
+          />
+          <button
+            onClick={() => setShowImport(true)}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6, background: tk.panel2, color: tk.textHi,
+              border: `1px solid ${tk.border}`, borderRadius: 8, padding: "8px 12px", cursor: "pointer",
+              fontSize: 12.5, fontWeight: 600,
+            }}
+          >
+            <Upload size={14} color={tk.accent} />
+            {tr("forecast.import", "Cargar Excel/CSV")}
+          </button>
           <button
             onClick={() => runBaseline(false)}
             disabled={busyBaseline}
@@ -649,6 +694,29 @@ function LineGrid({
           </button>
         </div>
       </div>
+
+      {!hasCustomers && (
+        <div style={{
+          padding: "10px 16px", background: tk.warn + "18", color: tk.textHi, fontSize: 12.5,
+          display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${tk.border}`,
+        }}>
+          <Info size={14} color={tk.warn} />
+          <span>
+            {tr(
+              "forecast.noCustomersHint",
+              "Aún no tienes clientes en el catálogo. Ve al módulo Clientes para dar de alta el primero — luego aparecerán en el selector.",
+            )}
+          </span>
+        </div>
+      )}
+
+      {showImport && (
+        <ImportModal
+          tk={tk} tr={tr} planId={plan.id}
+          onClose={() => setShowImport(false)}
+          onImported={(res) => { onImported(); if (res.errors.length === 0) setShowImport(false); }}
+        />
+      )}
 
       {loading && (
         <div style={{ padding: 40, textAlign: "center", color: tk.textLo }}>
@@ -1104,4 +1172,167 @@ function secondaryBtn(tk: Tokens): React.CSSProperties {
     background: tk.panel2, color: tk.textHi, border: `1px solid ${tk.border}`,
     borderRadius: 8, padding: "8px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600,
   };
+}
+
+// ── Download menu (plantilla / export en XLSX o CSV) ────────────────────────
+
+function DownloadMenu({
+  tk, tr, disabled, hasLines, onPick,
+}: {
+  tk: Tokens;
+  tr: (k: string, fb: string) => string;
+  disabled: boolean;
+  hasLines: boolean;
+  onPick: (fmt: "xlsx" | "csv", mode: "template" | "export") => void;
+}) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest("[data-forecast-download]")) setOpen(false);
+    };
+    if (open) document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  return (
+    <div data-forecast-download style={{ position: "relative" }}>
+      <button
+        disabled={disabled}
+        onClick={() => setOpen(!open)}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 6, background: tk.panel2, color: tk.textHi,
+          border: `1px solid ${tk.border}`, borderRadius: 8, padding: "8px 12px", cursor: "pointer",
+          fontSize: 12.5, fontWeight: 600, opacity: disabled ? 0.6 : 1,
+        }}
+      >
+        <Download size={14} color={tk.accent} />
+        {tr("forecast.download", "Descargar")}
+        <ChevronDown size={12} color={tk.textLo} />
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 6px)", right: 0, minWidth: 240, zIndex: 30,
+          background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 10,
+          boxShadow: "0 16px 40px rgba(0,0,0,.35)", overflow: "hidden",
+        }}>
+          <MenuItem tk={tk} label={tr("forecast.tplXlsx", "Plantilla Excel (.xlsx)")} onClick={() => { setOpen(false); onPick("xlsx", "template"); }} />
+          <MenuItem tk={tk} label={tr("forecast.tplCsv", "Plantilla CSV")} onClick={() => { setOpen(false); onPick("csv", "template"); }} />
+          <div style={{ borderTop: `1px solid ${tk.border}` }} />
+          <MenuItem tk={tk} disabled={!hasLines} label={tr("forecast.exportXlsx", "Este plan · Excel (.xlsx)")} onClick={() => { setOpen(false); onPick("xlsx", "export"); }} />
+          <MenuItem tk={tk} disabled={!hasLines} label={tr("forecast.exportCsv", "Este plan · CSV")} onClick={() => { setOpen(false); onPick("csv", "export"); }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ tk, label, disabled, onClick }: { tk: Tokens; label: string; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        display: "block", width: "100%", textAlign: "left", padding: "10px 14px",
+        border: "none", cursor: disabled ? "not-allowed" : "pointer",
+        background: "transparent", color: disabled ? tk.textLo : tk.textHi, fontSize: 13,
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+// ── Import modal ────────────────────────────────────────────────────────────
+
+function ImportModal({
+  tk, tr, planId, onClose, onImported,
+}: {
+  tk: Tokens;
+  tr: (k: string, fb: string) => string;
+  planId: number;
+  onClose: () => void;
+  onImported: (res: ImportResponse) => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [result, setResult] = useState<ImportResponse | null>(null);
+
+  const submit = async () => {
+    if (!file) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await forecastApi.importPlan(planId, file);
+      setResult(res);
+      onImported(res);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell tk={tk} tr={tr} title={tr("forecast.importTitle", "Cargar forecast desde archivo")} onClose={onClose}>
+      <div style={{ fontSize: 12.5, color: tk.textMid, lineHeight: 1.5, marginBottom: 12 }}>
+        {tr(
+          "forecast.importHelp",
+          "Sube el Excel o CSV que preparaste. El sistema matchea cliente por RFC, producto por SKU y vendedor por email. Si algún dato no está en el catálogo, la línea igual se guarda como texto libre.",
+        )}
+      </div>
+
+      <div style={{
+        padding: 20, border: `2px dashed ${tk.border}`, borderRadius: 10, background: tk.panel2,
+        textAlign: "center",
+      }}>
+        <Upload size={22} color={tk.accent} />
+        <div style={{ marginTop: 8, color: tk.textMid, fontSize: 13 }}>
+          {file ? file.name : tr("forecast.pickFile", "Selecciona un archivo .xlsx, .xlsm o .csv")}
+        </div>
+        <label style={{
+          display: "inline-block", marginTop: 10, padding: "6px 12px", borderRadius: 8,
+          background: tk.accent, color: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600,
+        }}>
+          {tr("forecast.pickFileBtn", "Elegir archivo")}
+          <input type="file" accept=".xlsx,.xlsm,.csv" style={{ display: "none" }}
+                 onChange={(e) => { setFile(e.target.files?.[0] ?? null); setResult(null); }} />
+        </label>
+      </div>
+
+      {result && (
+        <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: tk.good + "18", color: tk.textHi }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700 }}>
+            {tr("forecast.importDone", "Importación completada")}
+          </div>
+          <div style={{ fontSize: 12.5, color: tk.textMid, marginTop: 4 }}>
+            {tr("forecast.linesCreated", "Líneas creadas")}: <b style={{ color: tk.textHi }}>{result.lines_created}</b> ·{" "}
+            {tr("forecast.linesSkipped", "Omitidas")}: {result.lines_skipped}
+          </div>
+          {result.errors.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12, color: tk.warn, display: "flex", alignItems: "center", gap: 6 }}>
+                <AlertTriangle size={14} /> {tr("forecast.rowsWithError", "Filas con problema")}: {result.errors.length}
+              </div>
+              <ul style={{ marginTop: 6, padding: "0 0 0 18px", color: tk.textMid, fontSize: 12 }}>
+                {result.errors.slice(0, 8).map((e, i) => (
+                  <li key={i}>{tr("forecast.rowLbl", "Fila")} {e.row}: {e.reason}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {err && <div style={{ color: tk.bad, fontSize: 12, marginTop: 8 }}>{err}</div>}
+
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+        <button onClick={onClose} style={secondaryBtn(tk)}>{tr("forecast.close", "Cerrar")}</button>
+        <button disabled={busy || !file} onClick={submit} style={primaryBtn(tk)}>
+          {busy ? tr("forecast.uploading", "Subiendo…") : tr("forecast.upload", "Subir")}
+        </button>
+      </div>
+    </ModalShell>
+  );
 }
