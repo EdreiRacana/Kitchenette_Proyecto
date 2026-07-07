@@ -16,6 +16,7 @@ from app.modules.ingesta.router import router as ingesta_router
 from app.modules.hr.router import router as hr_router
 from app.modules.search.router import router as search_router
 from app.modules.notifications.router import router as notifications_router
+from app.modules.forecast.router import router as forecast_router
 
 # Defensa en profundidad: las escrituras (POST/PUT/PATCH/DELETE) a cada módulo
 # operativo exigen el permiso del rol (las lecturas quedan abiertas; el menú ya
@@ -27,6 +28,7 @@ api_router.include_router(customers_router, prefix="/customers",  tags=["custome
 # Devoluciones: ANTES de /sales para que /sales/returns no choque con /sales/{order_id}
 api_router.include_router(returns_router,    prefix="/sales/returns", tags=["sales"], dependencies=[Depends(module_write_guard("sales"))])
 api_router.include_router(sales_router,     prefix="/sales",      tags=["sales"], dependencies=[Depends(module_write_guard("sales"))])
+api_router.include_router(forecast_router,  prefix="/forecast",   tags=["forecast"], dependencies=[Depends(module_write_guard("sales"))])
 api_router.include_router(finance_router,   prefix="/finance",    tags=["finance"], dependencies=[Depends(module_write_guard("finance"))])
 api_router.include_router(accounting_router, prefix="/accounting", tags=["accounting"], dependencies=[Depends(module_write_guard("accounting"))])
 api_router.include_router(config_router,    prefix="/config",     tags=["configuration"])
