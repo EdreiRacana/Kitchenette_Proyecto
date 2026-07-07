@@ -11,9 +11,10 @@ import {
   X, DollarSign, CreditCard, BarChart3,
   Clock, CheckCircle, XCircle, AlertCircle, ArrowLeftRight,
   PiggyBank, Receipt, Edit2, Trash2, ArrowRightLeft, Upload,
-  Wallet, FileText, History, Paperclip, CalendarClock, Ban, Mail,
+  Wallet, FileText, History, Paperclip, CalendarClock, Ban, Mail, Bell,
 } from "lucide-react";
 import { financeService, downloadCSV } from "./service";
+import type { SupplierBill, SupplierBillDraft, BillsStats as BillsStatsData } from "./service";
 import { useServerRecovery } from "../../hooks/useServerRecovery";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -105,17 +106,25 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
   const [q, setQ] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [catFilter, setCatFilter] = useState("");
+  // Bills (CxP moderna) ─────────────────────────────
+  const [bills, setBills] = useState<SupplierBill[]>([]);
+  const [billsStats, setBillsStats] = useState<BillsStatsData | null>(null);
+  const [billForm, setBillForm] = useState<null | "new" | SupplierBill>(null);
+  const [selectedBillIds, setSelectedBillIds] = useState<number[]>([]);
+  const [multiPayOpen, setMultiPayOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [dash, tx, cxcRes, cxpRes, bankRes, flowRes] = await Promise.all([
+      const [dash, tx, cxcRes, cxpRes, bankRes, flowRes, billsRes, billsStatsRes] = await Promise.all([
         financeService.getDashboard(),
         financeService.getTransactions({ limit: 200 }),
         financeService.getCXC(),
         financeService.getCXP(),
         financeService.getBanks(),
         financeService.getCashFlow(6),
+        financeService.listBills().catch(() => [] as SupplierBill[]),
+        financeService.billsStats().catch(() => null as BillsStatsData | null),
       ]);
       setDash(dash);
       setTransactions(tx);
@@ -123,6 +132,8 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
       setCxp(cxpRes);
       setBanks(bankRes);
       setFlow(flowRes);
+      setBills(billsRes);
+      setBillsStats(billsStatsRes);
       setDemo(false); setLoadError(false);
     } catch (err) {
       // NUNCA mostrar datos ficticios: si el backend no responde, se dice la
@@ -450,24 +461,36 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
         </div>
       )}
 
-      {/* ── TAB: CXP ── */}
+      {/* ── TAB: CXP (bills con vencimiento + pago consolidado) ── */}
       {tab === "cxp" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, flex: 1 }}>
               {[
-                { label: "Total por pagar", value: mxn(kpis.totalCXP), color: t.bad },
-                { label: "Vencido", value: mxn(cxp.filter(c => c.status === "overdue").reduce((a, c) => a + c.balance, 0)), color: "#DC2626" },
-                { label: "Proveedores activos", value: String(cxp.length), color: t.nova },
-                { label: "Próximo vencimiento", value: cxp.length ? fmtDate(cxp.slice().sort((a, b) => new Date(a.due_date || 0).getTime() - new Date(b.due_date || 0).getTime())[0]?.due_date) : "—", color: t.warn },
+                { label: "Total por pagar", value: mxn(billsStats?.total_open ?? bills.reduce((a, b) => a + b.balance, 0)), color: t.bad },
+                { label: "Vencido", value: mxn(billsStats?.overdue ?? bills.filter(b => b.status === "overdue").reduce((a, b) => a + b.balance, 0)), color: "#DC2626" },
+                { label: "Por vencer 7 días", value: mxn(billsStats?.upcoming_7d ?? 0), color: t.warn },
+                { label: "Proveedores activos", value: String(billsStats?.active_suppliers ?? new Set(bills.map(b => b.supplier_id).filter(Boolean)).size), color: t.nova },
+                { label: "Próximo vencimiento", value: billsStats?.next_due_date ? fmtDate(billsStats.next_due_date) : "—", color: t.warn, sub: billsStats?.next_due_bill_supplier || undefined },
               ].map(k => (
                 <div key={k.label} style={{ ...glass(t), borderRadius: 10, padding: "14px 16px" }}>
                   <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 4 }}>{k.label}</div>
                   <div style={{ fontSize: k.label === "Próximo vencimiento" ? 14 : 20, fontWeight: 800, color: k.color }}>{k.value}</div>
+                  {k.sub && <div style={{ fontSize: 11, color: t.textLo, marginTop: 4 }}>{k.sub}</div>}
                 </div>
               ))}
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={() => setBillForm("new")} style={{ background: `linear-gradient(135deg, ${t.nova}, ${t.navy || t.panel2})`, color: "#fff", border: "none", padding: "10px 16px", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <Plus size={14} /> Nueva factura por pagar
+              </button>
+              <button
+                disabled={selectedBillIds.length === 0}
+                onClick={() => setMultiPayOpen(true)}
+                style={{ ...ghostBtn, opacity: selectedBillIds.length === 0 ? 0.5 : 1, cursor: selectedBillIds.length === 0 ? "not-allowed" : "pointer" }}
+              >
+                <DollarSign size={14} /> Pagar seleccionadas ({selectedBillIds.length})
+              </button>
               <button onClick={async () => {
                 try {
                   const r = await financeService.sendPaymentReminders();
@@ -480,44 +503,81 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
 
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1050 }}>
                 <thead>
                   <tr style={{ background: t.panel2 }}>
-                    {["Proveedor", "Folio", "Total", "Pagado", "Saldo", "Recargo", "Vencimiento", "Antigüedad", "Estado", ""].map((h, i) => (
-                      <th key={i} style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>
+                    <th style={{ padding: "12px 12px", width: 32 }}>
+                      <input
+                        type="checkbox"
+                        checked={bills.length > 0 && selectedBillIds.length === bills.filter(b => b.status !== "paid" && b.status !== "cancelled").length}
+                        onChange={(e) => setSelectedBillIds(e.target.checked ? bills.filter(b => b.status !== "paid" && b.status !== "cancelled").map(b => b.id) : [])}
+                      />
+                    </th>
+                    {["Proveedor", "Factura prov.", "Categoría", "Emisión", "Vencimiento", "Días", "Total", "Saldo", "Antigüedad", "Estado", ""].map((h, i) => (
+                      <th key={i} style={{ padding: "12px 14px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {cxp.length === 0 ? (
-                    <tr><td colSpan={10} style={{ textAlign: "center", padding: 48, color: t.textLo }}>Sin cuentas por pagar pendientes.</td></tr>
-                  ) : cxp.map((c, i) => {
-                    const sm = STATUS_META[c.status];
-                    const ac = AGING_COLORS[c.aging];
+                  {bills.length === 0 ? (
+                    <tr><td colSpan={12} style={{ textAlign: "center", padding: 48, color: t.textLo }}>Sin facturas por pagar. Da clic en "Nueva factura por pagar" para registrar la primera.</td></tr>
+                  ) : bills.map((b, i) => {
+                    const sm = STATUS_META[b.status === "open" ? "pending" : b.status === "cancelled" ? "paid" : b.status];
+                    const ac = AGING_COLORS[b.aging] || t.textLo;
+                    const cancelled = b.status === "cancelled";
+                    const disabled = b.status === "paid" || cancelled;
+                    const daysColor = (b.days_to_due ?? 999) < 0 ? t.bad : (b.days_to_due ?? 999) <= 7 ? t.warn : t.textMid;
+                    const daysText = b.days_to_due == null ? "—" : b.days_to_due < 0 ? `${-b.days_to_due} d. vencida` : b.days_to_due === 0 ? "Vence hoy" : `en ${b.days_to_due} d.`;
                     return (
-                      <tr key={c.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
-                        <td style={{ padding: "13px 16px", fontSize: 13.5, color: t.textHi, fontWeight: 600 }}>{c.name}</td>
-                        <td style={{ padding: "13px 16px", fontSize: 13, color: t.textMid }}>{c.reference}</td>
-                        <td style={{ padding: "13px 16px", fontSize: 13.5, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(c.total)}</td>
-                        <td style={{ padding: "13px 16px", fontSize: 13, color: t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(c.paid)}</td>
-                        <td style={{ padding: "13px 16px", fontSize: 14, fontWeight: 700, color: c.balance > 0 ? t.bad : t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(c.balance)}</td>
-                        <td style={{ padding: "13px 16px", fontSize: 12.5, color: (c.late_fee || 0) > 0 ? t.bad : t.textLo, fontVariantNumeric: "tabular-nums" }}>{(c.late_fee || 0) > 0 ? mxn(c.late_fee!) : "—"}</td>
-                        <td style={{ padding: "13px 16px", fontSize: 12.5, color: t.textMid, whiteSpace: "nowrap" }}>{fmtDate(c.due_date)}</td>
-                        <td style={{ padding: "13px 16px" }}>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: ac, background: ac + "18", padding: "3px 8px", borderRadius: 20 }}>
-                            {c.aging === "current" ? "Corriente" : c.aging + " días"}
+                      <tr key={b.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2, opacity: cancelled ? 0.55 : 1 }}>
+                        <td style={{ padding: "10px 12px" }}>
+                          <input
+                            type="checkbox"
+                            disabled={disabled}
+                            checked={selectedBillIds.includes(b.id)}
+                            onChange={(e) => setSelectedBillIds(e.target.checked ? [...selectedBillIds, b.id] : selectedBillIds.filter(id => id !== b.id))}
+                          />
+                        </td>
+                        <td style={{ padding: "11px 14px", fontSize: 13.5, color: t.textHi, fontWeight: 600 }}>
+                          {b.supplier_name || "—"}
+                          <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2 }}>{b.folio}</div>
+                        </td>
+                        <td style={{ padding: "11px 14px", fontSize: 12.5, color: t.textMid }}>{b.supplier_folio || "—"}</td>
+                        <td style={{ padding: "11px 14px", fontSize: 12, color: t.textLo }}>{b.category || "—"}</td>
+                        <td style={{ padding: "11px 14px", fontSize: 12.5, color: t.textMid, whiteSpace: "nowrap" }}>{fmtDate(b.issue_date)}</td>
+                        <td style={{ padding: "11px 14px", fontSize: 12.5, color: t.textHi, whiteSpace: "nowrap", fontWeight: 600 }}>{fmtDate(b.due_date)}</td>
+                        <td style={{ padding: "11px 14px", fontSize: 12, color: daysColor, whiteSpace: "nowrap", fontWeight: 600 }}>{daysText}</td>
+                        <td style={{ padding: "11px 14px", fontSize: 13, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(b.total_amount)}</td>
+                        <td style={{ padding: "11px 14px", fontSize: 14, fontWeight: 700, color: b.balance > 0 ? t.bad : t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(b.balance)}</td>
+                        <td style={{ padding: "11px 14px" }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: ac, background: ac + "18", padding: "3px 8px", borderRadius: 20 }}>
+                            {b.aging === "current" ? "Corriente" : b.aging + " d."}
                           </span>
                         </td>
-                        <td style={{ padding: "13px 16px" }}>
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: sm.color, background: sm.color + "18", padding: "4px 10px", borderRadius: 20 }}>
-                            <sm.icon size={12} />{sm.label}
+                        <td style={{ padding: "11px 14px" }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: cancelled ? t.textLo : sm.color, background: (cancelled ? t.textLo : sm.color) + "18", padding: "3px 9px", borderRadius: 20 }}>
+                            {cancelled ? "Cancelada" : sm.label}
                           </span>
                         </td>
-                        <td style={{ padding: "13px 16px" }}>
-                          {c.status !== "paid" && (
-                            <button onClick={() => setPayTarget({ kind: "cxp", item: c })} style={{ fontSize: 12, color: t.bad, background: "transparent", border: `1px solid ${t.bad}44`, padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" }}>
-                              Pagar
-                            </button>
+                        <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                          {!disabled && (
+                            <>
+                              <button onClick={() => setSelectedBillIds([b.id]) && setMultiPayOpen(true)} title="Pagar" style={{ fontSize: 11.5, color: t.bad, background: "transparent", border: `1px solid ${t.bad}44`, padding: "3px 8px", borderRadius: 6, cursor: "pointer", fontWeight: 600, marginRight: 4 }}>
+                                Pagar
+                              </button>
+                              <button onClick={() => setBillForm(b)} title="Editar" style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textMid, padding: 4 }}>
+                                <Edit2 size={13} />
+                              </button>
+                              <button onClick={async () => {
+                                try {
+                                  const r = await financeService.remindBill(b.id);
+                                  alert(r.notified ? "Recordatorio registrado — aparecerá en la campanita." : "No se pudo registrar el recordatorio.");
+                                  load();
+                                } catch { alert("No se pudo enviar el recordatorio."); }
+                              }} title="Enviar recordatorio" style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textMid, padding: 4 }}>
+                                <Bell size={13} />
+                              </button>
+                            </>
                           )}
                         </td>
                       </tr>
@@ -528,6 +588,25 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
             </div>
           </div>
         </div>
+      )}
+
+      {billForm && (
+        <BillFormModal
+          t={t}
+          bill={billForm === "new" ? null : billForm}
+          onClose={() => setBillForm(null)}
+          onSaved={async () => { setBillForm(null); await load(); }}
+        />
+      )}
+
+      {multiPayOpen && selectedBillIds.length > 0 && (
+        <BillMultiPayModal
+          t={t}
+          bills={bills.filter(b => selectedBillIds.includes(b.id))}
+          banks={banks}
+          onClose={() => setMultiPayOpen(false)}
+          onSaved={async () => { setMultiPayOpen(false); setSelectedBillIds([]); await load(); }}
+        />
       )}
 
       {/* ── TAB: Banks ── */}
@@ -1432,6 +1511,325 @@ function TransferModal({ t, from, banks, onClose, onSave }: any) {
           <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
           <button onClick={handleSave} disabled={saving || !toId || !amount} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: (!toId || !amount) ? 0.5 : 1 }}>
             {saving ? "…" : "Transferir"}
+          </button>
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
+// ── Bill Form Modal (crear/editar factura de proveedor) ─────────────────────
+function BillFormModal({ t, bill, onClose, onSaved }: { t: any; bill: SupplierBill | null; onClose: () => void; onSaved: () => void }) {
+  const isEdit = bill !== null;
+  const [suppliers, setSuppliers] = useState<{ id: number; name: string; rfc?: string }[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const isoDate = (v?: string) => (v ? v.slice(0, 10) : "");
+
+  const [form, setForm] = useState<SupplierBillDraft & { supplier_id?: number | null }>(() => ({
+    supplier_id: bill?.supplier_id ?? null,
+    supplier_name: bill?.supplier_name ?? "",
+    supplier_folio: bill?.supplier_folio ?? "",
+    issue_date: isoDate(bill?.issue_date),
+    due_date: isoDate(bill?.due_date),
+    payment_terms: bill?.payment_terms ?? "net_30",
+    category: bill?.category ?? "compras",
+    description: bill?.description ?? "",
+    currency: bill?.currency ?? "MXN",
+    subtotal: bill?.subtotal ?? 0,
+    tax_amount: bill?.tax_amount ?? 0,
+    total_amount: bill?.total_amount ?? 0,
+  }));
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await (await import("../../services/api")).default.get<{ id: number; name: string; rfc?: string }[]>("/inventory/suppliers", { params: { limit: 200 } });
+        setSuppliers(Array.isArray(data) ? data : []);
+      } catch { setSuppliers([]); }
+    })();
+  }, []);
+
+  const setF = <K extends keyof typeof form>(k: K, v: any) => setForm(f => ({ ...f, [k]: v }));
+
+  const submit = async () => {
+    if (!form.due_date) { setErr("La fecha de vencimiento es obligatoria."); return; }
+    if (!form.total_amount || form.total_amount <= 0) { setErr("El total debe ser mayor a cero."); return; }
+    setSaving(true); setErr(null);
+    try {
+      const payload: SupplierBillDraft = {
+        ...form,
+        issue_date: form.issue_date ? new Date(form.issue_date + "T00:00:00").toISOString() : null,
+        due_date: form.due_date ? new Date(form.due_date + "T00:00:00").toISOString() : null,
+        supplier_id: form.supplier_id ?? null,
+        supplier_name: form.supplier_name || null,
+        supplier_folio: form.supplier_folio || null,
+        payment_terms: form.payment_terms || null,
+        category: form.category || null,
+        description: form.description || null,
+      };
+      if (isEdit) await financeService.updateBill(bill!.id, payload);
+      else await financeService.createBill(payload);
+      onSaved();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || e?.message || "Error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, outline: "none", width: "100%", boxSizing: "border-box" };
+  const label: React.CSSProperties = { fontSize: 11.5, fontWeight: 600, color: t.textLo, marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: 0.4 };
+
+  return createPortal(
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 620, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>
+              {isEdit ? `Editar factura ${bill?.folio || ""}` : "Nueva factura por pagar"}
+            </h2>
+            <p style={{ margin: "3px 0 0", fontSize: 12, color: t.textLo }}>
+              Registra la factura del proveedor con su fecha de vencimiento; luego podrás liquidarla con un pago (o consolidar varias en uno solo).
+            </p>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+        <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={label}>Proveedor</label>
+              <select value={form.supplier_id ?? ""} onChange={e => {
+                const id = e.target.value ? Number(e.target.value) : null;
+                const sup = suppliers.find(s => s.id === id);
+                setF("supplier_id", id);
+                if (sup) setF("supplier_name", sup.name);
+              }} style={{ ...inp, cursor: "pointer" }}>
+                <option value="">— Selecciona proveedor —</option>
+                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}{s.rfc ? ` · ${s.rfc}` : ""}</option>)}
+              </select>
+              {form.supplier_id == null && (
+                <input value={form.supplier_name ?? ""} onChange={e => setF("supplier_name", e.target.value)} placeholder="…o escribe el nombre" style={{ ...inp, marginTop: 6 }} />
+              )}
+            </div>
+            <div>
+              <label style={label}>Folio del proveedor</label>
+              <input value={form.supplier_folio ?? ""} onChange={e => setF("supplier_folio", e.target.value)} placeholder="Ej. FAC-937" style={inp} />
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={label}>Fecha de emisión</label>
+              <input type="date" value={form.issue_date ?? ""} onChange={e => setF("issue_date", e.target.value)} style={inp} />
+            </div>
+            <div>
+              <label style={label}>Vencimiento *</label>
+              <input type="date" value={form.due_date ?? ""} onChange={e => setF("due_date", e.target.value)} style={inp} />
+            </div>
+            <div>
+              <label style={label}>Condiciones</label>
+              <select value={form.payment_terms ?? ""} onChange={e => setF("payment_terms", e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="cash">Contado</option>
+                <option value="net_15">Net 15</option>
+                <option value="net_30">Net 30</option>
+                <option value="net_60">Net 60</option>
+                <option value="net_90">Net 90</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={label}>Categoría</label>
+              <select value={form.category ?? ""} onChange={e => setF("category", e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="compras">Compras / mercancía</option>
+                <option value="renta">Renta</option>
+                <option value="servicios">Servicios</option>
+                <option value="transporte">Transporte</option>
+                <option value="marketing">Marketing</option>
+                <option value="otros">Otros</option>
+              </select>
+            </div>
+            <div>
+              <label style={label}>Moneda</label>
+              <select value={form.currency ?? "MXN"} onChange={e => setF("currency", e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="MXN">MXN</option>
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label style={label}>Descripción</label>
+            <input value={form.description ?? ""} onChange={e => setF("description", e.target.value)} placeholder="Renta CEDIS 1 · junio" style={inp} />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={label}>Subtotal</label>
+              <input type="number" step={0.01} value={form.subtotal ?? 0} onChange={e => {
+                const v = parseFloat(e.target.value) || 0;
+                setF("subtotal", v);
+                if (!form.total_amount || form.total_amount === (form.subtotal || 0) + (form.tax_amount || 0)) {
+                  setF("total_amount", v + (form.tax_amount || 0));
+                }
+              }} style={inp} />
+            </div>
+            <div>
+              <label style={label}>IVA / Impuesto</label>
+              <input type="number" step={0.01} value={form.tax_amount ?? 0} onChange={e => {
+                const v = parseFloat(e.target.value) || 0;
+                setF("tax_amount", v);
+                setF("total_amount", (form.subtotal || 0) + v);
+              }} style={inp} />
+            </div>
+            <div>
+              <label style={label}>Total *</label>
+              <input type="number" step={0.01} value={form.total_amount ?? 0} onChange={e => setF("total_amount", parseFloat(e.target.value) || 0)} style={{ ...inp, color: t.textHi, fontWeight: 700 }} />
+            </div>
+          </div>
+
+          {err && <div style={{ color: t.bad, fontSize: 12.5, background: t.bad + "15", padding: "8px 12px", borderRadius: 8 }}>{err}</div>}
+        </div>
+
+        <div style={{ padding: "16px 22px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+          <button onClick={submit} disabled={saving} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: saving ? 0.6 : 1 }}>
+            {saving ? "Guardando…" : (isEdit ? "Guardar cambios" : "Crear factura")}
+          </button>
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
+
+// ── Bill Multi-Pay Modal (pago consolidado 1 → N facturas) ──────────────────
+function BillMultiPayModal({ t, bills, banks, onClose, onSaved }: { t: any; bills: SupplierBill[]; banks: any[]; onClose: () => void; onSaved: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [method, setMethod] = useState<string>("transfer");
+  const [reference, setReference] = useState("");
+  const [note, setNote] = useState("");
+  const [bankAccountId, setBankAccountId] = useState<number | "">("");
+  const [alloc, setAlloc] = useState<Record<number, number>>(() => {
+    const a: Record<number, number> = {};
+    for (const b of bills) a[b.id] = b.balance;
+    return a;
+  });
+
+  const total = Object.values(alloc).reduce((a, b) => a + (b || 0), 0);
+
+  const submit = async () => {
+    if (total <= 0) { setErr("El monto a pagar debe ser mayor a cero."); return; }
+    for (const b of bills) {
+      const v = alloc[b.id] || 0;
+      if (v < 0) { setErr(`El pago a ${b.folio} no puede ser negativo.`); return; }
+      if (v > b.balance + 0.01) { setErr(`El pago a ${b.folio} excede el saldo ($${b.balance.toFixed(2)}).`); return; }
+    }
+    setSaving(true); setErr(null);
+    try {
+      await financeService.payBills({
+        amount: total,
+        method,
+        reference: reference || undefined,
+        note: note || undefined,
+        bank_account_id: bankAccountId ? Number(bankAccountId) : undefined,
+        allocations: bills.map(b => ({ bill_id: b.id, amount: alloc[b.id] || 0 })).filter(a => a.amount > 0),
+      });
+      onSaved();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || e?.message || "Error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inp: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, outline: "none", width: "100%", boxSizing: "border-box" };
+  const label: React.CSSProperties = { fontSize: 11.5, fontWeight: 600, color: t.textLo, marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: 0.4 };
+
+  return createPortal(
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 640, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", justifyContent: "space-between" }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>
+              {bills.length === 1 ? "Pagar factura" : `Pagar ${bills.length} facturas`}
+            </h2>
+            <p style={{ margin: "3px 0 0", fontSize: 12, color: t.textLo }}>
+              Se crea UNA transacción de egreso y se aplica a las facturas seleccionadas. Si eliges cuenta bancaria, se descuenta del saldo.
+            </p>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+
+        <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+          <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden" }}>
+            <div style={{ padding: "10px 14px", background: t.panel2, fontSize: 11.5, color: t.textLo, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>
+              Facturas seleccionadas
+            </div>
+            {bills.map(b => (
+              <div key={b.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderTop: `1px solid ${t.border}`, gap: 10, flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: t.textHi, fontWeight: 600 }}>{b.supplier_name} · {b.folio}</div>
+                  <div style={{ fontSize: 11.5, color: t.textLo }}>Saldo: ${b.balance.toFixed(2)} · Vence {b.due_date ? new Date(b.due_date).toLocaleDateString("es-MX") : "—"}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <label style={{ fontSize: 11, color: t.textLo }}>Aplicar:</label>
+                  <input type="number" step={0.01} value={alloc[b.id] || 0} onChange={e => setAlloc(a => ({ ...a, [b.id]: parseFloat(e.target.value) || 0 }))} style={{ ...inp, width: 130 }} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={label}>Método de pago</label>
+              <select value={method} onChange={e => setMethod(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="transfer">Transferencia</option>
+                <option value="cash">Efectivo</option>
+                <option value="card">Tarjeta</option>
+                <option value="check">Cheque</option>
+                <option value="other">Otro</option>
+              </select>
+            </div>
+            <div>
+              <label style={label}>Cuenta bancaria (opcional)</label>
+              <select value={bankAccountId} onChange={e => setBankAccountId(e.target.value ? Number(e.target.value) : "")} style={{ ...inp, cursor: "pointer" }}>
+                <option value="">— No descontar de banco —</option>
+                {banks.map((b: any) => <option key={b.id} value={b.id}>{b.name} · ${b.balance.toFixed(2)}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={label}>Referencia (opcional)</label>
+              <input value={reference} onChange={e => setReference(e.target.value)} placeholder="TRF-9911" style={inp} />
+            </div>
+            <div>
+              <label style={label}>Nota (opcional)</label>
+              <input value={note} onChange={e => setNote(e.target.value)} placeholder="Pago viernes" style={inp} />
+            </div>
+          </div>
+
+          <div style={{ padding: "12px 14px", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 12.5, color: t.textLo, fontWeight: 600 }}>Total a pagar</span>
+            <span style={{ fontSize: 20, color: t.textHi, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+              ${total.toFixed(2)}
+            </span>
+          </div>
+
+          {err && <div style={{ color: t.bad, fontSize: 12.5, background: t.bad + "15", padding: "8px 12px", borderRadius: 8 }}>{err}</div>}
+        </div>
+
+        <div style={{ padding: "16px 22px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+          <button onClick={submit} disabled={saving || total <= 0} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.good || "#34D399"}, ${t.nova || "#33B2F5"})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700, opacity: total <= 0 || saving ? 0.5 : 1 }}>
+            {saving ? "Procesando…" : `Pagar $${total.toFixed(2)}`}
           </button>
         </div>
       </div>

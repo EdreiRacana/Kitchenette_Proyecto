@@ -23,6 +23,88 @@ export interface FinanceDashboard {
     cxp_balance?: number;
 }
 
+export interface BillPayment {
+    id: number;
+    bill_id: number;
+    transaction_id?: number;
+    amount: number;
+    method?: string;
+    reference?: string;
+    note?: string;
+    bank_account_id?: number;
+    created_at: string;
+}
+
+export interface SupplierBill {
+    id: number;
+    folio?: string;
+    supplier_id?: number;
+    supplier_name?: string;
+    supplier_folio?: string;
+    issue_date?: string;
+    due_date?: string;
+    payment_terms?: string;
+    category?: string;
+    description?: string;
+    currency: string;
+    subtotal: number;
+    tax_amount: number;
+    total_amount: number;
+    paid_amount: number;
+    balance: number;
+    status: 'open' | 'partial' | 'overdue' | 'paid' | 'cancelled';
+    aging: 'current' | '1-30' | '31-60' | '61-90' | '90+';
+    days_to_due?: number;
+    late_fee: number;
+    attachment_url?: string;
+    reminder_sent_at?: string;
+    created_at: string;
+    paid_at?: string;
+    payments: BillPayment[];
+}
+
+export interface SupplierBillDraft {
+    supplier_id?: number | null;
+    supplier_name?: string | null;
+    supplier_folio?: string | null;
+    issue_date?: string | null;
+    due_date?: string | null;
+    payment_terms?: string | null;
+    category?: string | null;
+    description?: string | null;
+    currency?: string;
+    subtotal?: number;
+    tax_amount?: number;
+    total_amount?: number;
+    attachment_url?: string | null;
+}
+
+export interface BillPayPayload {
+    amount: number;
+    method?: string;
+    reference?: string;
+    note?: string;
+    bank_account_id?: number;
+    payment_date?: string;
+    allocations: { bill_id: number; amount: number }[];
+}
+
+export interface BillPayResponse {
+    transaction_id?: number;
+    total_paid: number;
+    bills: SupplierBill[];
+}
+
+export interface BillsStats {
+    total_open: number;
+    overdue: number;
+    upcoming_7d: number;
+    active_suppliers: number;
+    next_due_date?: string;
+    next_due_bill_id?: number;
+    next_due_bill_supplier?: string;
+}
+
 export interface AgingItem {
     id: number;
     name: string;
@@ -170,6 +252,18 @@ export const financeService = {
 
     getCXP: async () => (await api.get<AgingItem[]>('/finance/cxp')).data,
     payCXP: async (poId: number, data: any) => (await api.post(`/finance/cxp/${poId}/pay`, data)).data,
+
+    // Facturas de proveedor (modelo moderno con due_date y pago consolidado)
+    listBills: async (params?: { supplier_id?: number; status?: string; aging?: string; due_before?: string; due_after?: string }) =>
+        (await api.get<SupplierBill[]>('/finance/bills', { params })).data,
+    getBill: async (id: number) => (await api.get<SupplierBill>(`/finance/bills/${id}`)).data,
+    createBill: async (data: SupplierBillDraft) => (await api.post<SupplierBill>('/finance/bills', data)).data,
+    updateBill: async (id: number, data: Partial<SupplierBillDraft> & { status?: string }) =>
+        (await api.put<SupplierBill>(`/finance/bills/${id}`, data)).data,
+    deleteBill: async (id: number) => (await api.delete(`/finance/bills/${id}`)).data,
+    payBills: async (payload: BillPayPayload) => (await api.post<BillPayResponse>(`/finance/bills/pay`, payload)).data,
+    billsStats: async () => (await api.get<BillsStats>(`/finance/bills/stats`)).data,
+    remindBill: async (id: number) => (await api.post<{ bill_id: number; notified: boolean; reminder_sent_at?: string }>(`/finance/bills/${id}/remind`)).data,
 
     getScheduledPayments: async (status?: string) =>
         (await api.get<ScheduledPayment[]>('/finance/scheduled-payments', { params: { status } })).data,

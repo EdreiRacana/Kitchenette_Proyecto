@@ -261,6 +261,115 @@ class PeriodComparison(BaseModel):
     net_change_pct: Optional[float] = None
 
 
+# --- Cuentas por Pagar / SupplierBill ---
+
+class SupplierBillBase(BaseModel):
+    supplier_id: Optional[int] = None
+    supplier_name: Optional[str] = None
+    supplier_folio: Optional[str] = None
+    issue_date: Optional[datetime] = None
+    due_date: Optional[datetime] = None
+    payment_terms: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    currency: str = "MXN"
+    subtotal: float = 0.0
+    tax_amount: float = 0.0
+    total_amount: float = 0.0
+    attachment_url: Optional[str] = None
+
+
+class SupplierBillCreate(SupplierBillBase):
+    pass
+
+
+class SupplierBillUpdate(BaseModel):
+    supplier_id: Optional[int] = None
+    supplier_name: Optional[str] = None
+    supplier_folio: Optional[str] = None
+    issue_date: Optional[datetime] = None
+    due_date: Optional[datetime] = None
+    payment_terms: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    subtotal: Optional[float] = None
+    tax_amount: Optional[float] = None
+    total_amount: Optional[float] = None
+    attachment_url: Optional[str] = None
+    status: Optional[str] = None
+
+
+class BillPaymentInDB(BaseModel):
+    id: int
+    bill_id: int
+    transaction_id: Optional[int] = None
+    amount: float
+    method: Optional[str] = None
+    reference: Optional[str] = None
+    note: Optional[str] = None
+    bank_account_id: Optional[int] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SupplierBillInDB(SupplierBillBase):
+    id: int
+    folio: Optional[str] = None
+    paid_amount: float
+    balance: float
+    status: str
+    aging: str                # current | 1-30 | 31-60 | 61-90 | 90+
+    days_to_due: Optional[int] = None  # negativo si ya venció
+    late_fee: float = 0.0
+    reminder_sent_at: Optional[datetime] = None
+    created_at: datetime
+    paid_at: Optional[datetime] = None
+    payments: List[BillPaymentInDB] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BillAllocation(BaseModel):
+    bill_id: int
+    amount: float
+
+
+class BillPayRequest(BaseModel):
+    """Un pago consolidado: se crea UNA Transaction de egreso y se reparte
+    entre varias bills mediante `allocations`. Si el total de allocations es
+    menor al `amount`, el remanente queda como egreso 'directo' sin bill."""
+    amount: float
+    method: Optional[str] = None
+    reference: Optional[str] = None
+    note: Optional[str] = None
+    bank_account_id: Optional[int] = None
+    payment_date: Optional[datetime] = None
+    allocations: List[BillAllocation]
+
+
+class BillPayResponse(BaseModel):
+    transaction_id: Optional[int]
+    total_paid: float
+    bills: List[SupplierBillInDB]
+
+
+class BillsStats(BaseModel):
+    total_open: float          # saldo total abierto
+    overdue: float             # saldo vencido
+    upcoming_7d: float          # saldo que vence en <= 7 dias
+    active_suppliers: int
+    next_due_date: Optional[datetime] = None
+    next_due_bill_id: Optional[int] = None
+    next_due_bill_supplier: Optional[str] = None
+
+
+class BillReminderResult(BaseModel):
+    bill_id: int
+    notified: bool
+    reminder_sent_at: Optional[datetime] = None
+
+
 # --- Auditoría ---
 class AuditLogItem(BaseModel):
     id: str
