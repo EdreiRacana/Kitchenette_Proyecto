@@ -1016,3 +1016,435 @@ def generate_pnl_pdf(report: schemas.PnLReport) -> bytes:
     c.showPage()
     c.save()
     return buf.getvalue()
+
+
+# ── SupplierBill (CxP moderna: factura de proveedor con vencimiento) ─────────
+# Coexiste con PurchaseOrder: get_cxp() ahora suma ambos origenes para que la
+# campanita y el KPI del tablero cubran cualquier obligacion pendiente.
+
+
+def _bill_status(paid: float, total: float, due_date, today=None) -> str:
+    balance = round(total - paid, 2)
+    if balance <= 0.001:
+        return "paid"
+    today = today or datetime.now(timezone.utc)
+    if due_date:
+        d = due_date if due_date.tzinfo else due_date.replace(tzinfo=timezone.utc)
+        if d < today:
+            return "overdue"
+    return "partial" if paid > 0 else "open"
+
+
+def _days_to_due(due_date, today=None) -> Optional[int]:
+    if not due_date:
+        return None
+    today = today or datetime.now(timezone.utc)
+    d = due_date if due_date.tzinfo else due_date.replace(tzinfo=timezone.utc)
+    return (d.date() - today.date()).days
+
+
+def _r(x: float) -> float:  # helper (algunas partes del modulo ya lo definen)
+    return round(float(x or 0.0), 2)
+
+
+async def _generate_bill_folio(db: AsyncSession) -> str:
+    result = await db.execute(select(func.count(models.SupplierBill.id)))
+    n = (result.scalar() or 0) + 1
+    return f"FAC-{n:06d}"
+
+
+def _bill_to_schema(bill: models.SupplierBill) -> schemas.SupplierBillInDB:
+    total = bill.total_amount or 0.0
+    paid = bill.paid_amount or 0.0
+    balance = _r(total - paid)
+    return schemas.SupplierBillInDB(
+        id=bill.id,
+        folio=bill.folio,
+        supplier_id=bill.supplier_id,
+        supplier_name=bill.supplier_name or (bill.supplier.name if bill.supplier else None),
+        supplier_folio=bill.supplier_folio,
+        issue_date=bill.issue_date,
+        due_date=bill.due_date,
+        payment_terms=bill.payment_terms,
+        category=bill.category,
+        description=bill.description,
+        currency=bill.currency,
+        subtotal=_r(bill.subtotal),
+        tax_amount=_r(bill.tax_amount),
+        total_amount=_r(total),
+        paid_amount=_r(paid),
+        balance=balance,
+        # "cancelled" es un estado explicito del usuario y no se recomputa.
+        # Los demas si (paid, overdue, partial, open) para reflejar el paso del tiempo.
+        status="cancelled" if bill.status == "cancelled" else _bill_status(paid, total, bill.due_date),
+        aging=_aging_bucket(bill.due_date, balance),
+        days_to_due=_days_to_due(bill.due_date),
+        late_fee=_late_fee(balance, bill.due_date),
+        attachment_url=bill.attachment_url,
+        reminder_sent_at=bill.reminder_sent_at,
+        created_at=bill.created_at,
+        paid_at=bill.paid_at,
+        payments=[
+            schemas.BillPaymentInDB.model_validate(p) for p in (bill.payments or [])
+        ],
+    )
+
+
+async def list_bills(
+    db: AsyncSession,
+    supplier_id: Optional[int] = None,
+    status: Optional[str] = None,
+    aging: Optional[str] = None,
+    due_before: Optional[datetime] = None,
+    due_after: Optional[datetime] = None,
+    branch_warehouse_ids: Optional[List[int]] = None,
+) -> List[schemas.SupplierBillInDB]:
+    B = models.SupplierBill
+    conds = []
+    if supplier_id is not None:
+        conds.append(B.supplier_id == supplier_id)
+    if status:
+        conds.append(B.status == status)
+    if due_before is not None:
+        conds.append(B.due_date <= due_before)
+    if due_after is not None:
+        conds.append(B.due_date >= due_after)
+    stmt = select(B).options(selectinload(B.supplier), selectinload(B.payments))
+    if conds:
+        stmt = stmt.where(*conds)
+    stmt = stmt.order_by(B.due_date.asc().nulls_last(), B.id.desc())
+    res = await db.execute(stmt)
+    bills = res.scalars().unique().all()
+
+    out = [_bill_to_schema(b) for b in bills]
+    if aging:
+        out = [b for b in out if b.aging == aging]
+    return out
+
+
+async def get_bill(db: AsyncSession, bill_id: int) -> Optional[schemas.SupplierBillInDB]:
+    B = models.SupplierBill
+    res = await db.execute(
+        select(B).options(selectinload(B.supplier), selectinload(B.payments))
+        .where(B.id == bill_id)
+    )
+    bill = res.scalars().first()
+    if bill is None:
+        return None
+    return _bill_to_schema(bill)
+
+
+async def create_bill(
+    db: AsyncSession, data: schemas.SupplierBillCreate,
+    user_id: Optional[int] = None, branch_id: Optional[int] = None,
+) -> schemas.SupplierBillInDB:
+    payload = data.model_dump()
+    # Snapshot del nombre del proveedor
+    if payload.get("supplier_id") and not payload.get("supplier_name"):
+        from app.modules.inventory import models as inv_models
+        sup = await db.get(inv_models.Supplier, payload["supplier_id"])
+        if sup:
+            payload["supplier_name"] = sup.name
+
+    total = payload.get("total_amount") or 0.0
+    due = payload.get("due_date")
+    status = _bill_status(0.0, total, due)
+
+    bill = models.SupplierBill(
+        **payload,
+        paid_amount=0.0,
+        status=status,
+        created_by_id=user_id,
+        branch_id=branch_id,
+    )
+    bill.folio = await _generate_bill_folio(db)
+    db.add(bill)
+    await db.commit()
+    # Re-cargar con relaciones para el schema
+    await db.refresh(bill)
+    result = await db.execute(
+        select(models.SupplierBill)
+        .options(selectinload(models.SupplierBill.supplier), selectinload(models.SupplierBill.payments))
+        .where(models.SupplierBill.id == bill.id)
+    )
+    bill = result.scalars().first()
+    await _log_audit(db, user_id, "CREATE_BILL", f"Factura {bill.folio} · {bill.supplier_name or ''} · {_money_str(bill.total_amount)}", {"bill_id": bill.id})
+    return _bill_to_schema(bill)
+
+
+def _money_str(v: float) -> str:
+    return f"${(v or 0):,.2f}"
+
+
+async def update_bill(
+    db: AsyncSession, bill_id: int, data: schemas.SupplierBillUpdate,
+    user_id: Optional[int] = None,
+) -> Optional[schemas.SupplierBillInDB]:
+    res = await db.execute(select(models.SupplierBill).where(models.SupplierBill.id == bill_id))
+    bill = res.scalars().first()
+    if bill is None:
+        return None
+    for k, v in data.model_dump(exclude_unset=True).items():
+        setattr(bill, k, v)
+    # Si actualizan total, recomputar status
+    bill.status = _bill_status(bill.paid_amount, bill.total_amount, bill.due_date)
+    await db.commit()
+    await db.refresh(bill)
+    result = await db.execute(
+        select(models.SupplierBill)
+        .options(selectinload(models.SupplierBill.supplier), selectinload(models.SupplierBill.payments))
+        .where(models.SupplierBill.id == bill_id)
+    )
+    bill = result.scalars().first()
+    await _log_audit(db, user_id, "UPDATE_BILL", f"Factura {bill.folio} actualizada", {"bill_id": bill_id})
+    return _bill_to_schema(bill)
+
+
+async def delete_bill(db: AsyncSession, bill_id: int, user_id: Optional[int] = None) -> bool:
+    res = await db.execute(select(models.SupplierBill).where(models.SupplierBill.id == bill_id))
+    bill = res.scalars().first()
+    if bill is None:
+        return False
+    if bill.paid_amount > 0:
+        # Nunca borrar una bill con pagos; se cancela.
+        bill.status = "cancelled"
+        await db.commit()
+        await _log_audit(db, user_id, "CANCEL_BILL", f"Factura {bill.folio} cancelada (tenia pagos)", {"bill_id": bill_id})
+        return True
+    await db.delete(bill)
+    await db.commit()
+    await _log_audit(db, user_id, "DELETE_BILL", f"Factura eliminada #{bill_id}", {"bill_id": bill_id})
+    return True
+
+
+async def pay_bills(
+    db: AsyncSession, req: schemas.BillPayRequest,
+    user_id: Optional[int] = None, branch_id: Optional[int] = None,
+) -> schemas.BillPayResponse:
+    """Pago consolidado. Un pago → varias bills.
+
+    Flow:
+      1. Valida las allocations (suma no puede exceder amount; cada bill existe y esta abierta).
+      2. Crea UNA Transaction de egreso con el monto total.
+      3. Crea BillPayment por cada allocation, aumenta paid_amount de la bill y
+         actualiza su status.
+      4. Registra evento en auditoria por cada bill.
+    """
+    # Validar
+    total_alloc = sum(a.amount for a in req.allocations)
+    if total_alloc > req.amount + 0.01:
+        raise ValueError("La suma de los pagos aplicados no puede exceder el monto del pago.")
+
+    B = models.SupplierBill
+    bills_by_id: dict[int, models.SupplierBill] = {}
+    for a in req.allocations:
+        r = await db.execute(select(B).where(B.id == a.bill_id))
+        bill = r.scalars().first()
+        if bill is None:
+            raise ValueError(f"Factura #{a.bill_id} no encontrada.")
+        if bill.status == "cancelled":
+            raise ValueError(f"Factura {bill.folio} está cancelada.")
+        remaining = (bill.total_amount or 0.0) - (bill.paid_amount or 0.0)
+        if a.amount > remaining + 0.01:
+            raise ValueError(
+                f"El pago a {bill.folio} ({_money_str(a.amount)}) excede su saldo ({_money_str(remaining)})."
+            )
+        bills_by_id[bill.id] = bill
+
+    # Descripcion consolidada
+    if len(req.allocations) == 1:
+        b = bills_by_id[req.allocations[0].bill_id]
+        desc = f"Pago factura {b.folio} · {b.supplier_name or ''}"
+    else:
+        folios = ", ".join(bills_by_id[a.bill_id].folio for a in req.allocations)
+        desc = f"Pago consolidado facturas: {folios}"
+
+    tx = models.Transaction(
+        type="expense",
+        amount=req.amount,
+        category="cxp",
+        description=desc,
+        reference=req.reference,
+        created_by_id=user_id,
+        branch_id=branch_id,
+    )
+    if req.payment_date:
+        tx.created_at = req.payment_date
+    db.add(tx)
+    await db.flush()  # obtenemos tx.id sin commit para atomicidad
+
+    # Aplicar pagos + actualizar bills
+    now = req.payment_date or datetime.now(timezone.utc)
+    for a in req.allocations:
+        bill = bills_by_id[a.bill_id]
+        db.add(models.BillPayment(
+            bill_id=bill.id,
+            transaction_id=tx.id,
+            amount=a.amount,
+            method=req.method,
+            reference=req.reference,
+            note=req.note,
+            bank_account_id=req.bank_account_id,
+            created_by_id=user_id,
+        ))
+        bill.paid_amount = _r((bill.paid_amount or 0.0) + a.amount)
+        bill.status = _bill_status(bill.paid_amount, bill.total_amount, bill.due_date, now)
+        if bill.status == "paid":
+            bill.paid_at = now
+
+    # Movimiento bancario opcional (si viene bank_account_id)
+    if req.bank_account_id:
+        acc = await db.get(models.BankAccount, req.bank_account_id)
+        if acc:
+            acc.balance = _r((acc.balance or 0.0) - req.amount)
+            db.add(models.BankTransaction(
+                bank_account_id=acc.id,
+                type="withdrawal",
+                amount=req.amount,
+                description=desc,
+                reference=req.reference,
+                reconciled=False,
+            ))
+
+    await db.commit()
+
+    # Reload bills con payments para respuesta
+    result = await db.execute(
+        select(B).options(selectinload(B.supplier), selectinload(B.payments))
+        .where(B.id.in_(list(bills_by_id.keys())))
+    )
+    fresh = result.scalars().unique().all()
+
+    await _log_audit(db, user_id, "PAY_BILLS", desc, {
+        "transaction_id": tx.id, "amount": req.amount,
+        "bill_ids": [a.bill_id for a in req.allocations],
+    })
+
+    return schemas.BillPayResponse(
+        transaction_id=tx.id,
+        total_paid=_r(req.amount),
+        bills=[_bill_to_schema(b) for b in fresh],
+    )
+
+
+async def bills_stats(db: AsyncSession) -> schemas.BillsStats:
+    B = models.SupplierBill
+    now = datetime.now(timezone.utc)
+    horizon = now + timedelta(days=7)
+
+    res = await db.execute(
+        select(B).where(B.status != "cancelled")
+        .options(selectinload(B.supplier))
+    )
+    bills = res.scalars().unique().all()
+
+    total_open = 0.0
+    overdue = 0.0
+    upcoming = 0.0
+    active_suppliers = set()
+    next_due: Optional[models.SupplierBill] = None
+    for b in bills:
+        balance = (b.total_amount or 0.0) - (b.paid_amount or 0.0)
+        if balance <= 0.001:
+            continue
+        total_open += balance
+        if b.supplier_id:
+            active_suppliers.add(b.supplier_id)
+        if b.due_date:
+            d = b.due_date if b.due_date.tzinfo else b.due_date.replace(tzinfo=timezone.utc)
+            if d < now:
+                overdue += balance
+            elif d <= horizon:
+                upcoming += balance
+            # candidato a "proximo vencimiento" (bills abiertas, futuras)
+            if d >= now and (next_due is None or (next_due.due_date and d < (next_due.due_date if next_due.due_date.tzinfo else next_due.due_date.replace(tzinfo=timezone.utc)))):
+                next_due = b
+
+    return schemas.BillsStats(
+        total_open=_r(total_open),
+        overdue=_r(overdue),
+        upcoming_7d=_r(upcoming),
+        active_suppliers=len(active_suppliers),
+        next_due_date=next_due.due_date if next_due else None,
+        next_due_bill_id=next_due.id if next_due else None,
+        next_due_bill_supplier=(next_due.supplier_name if next_due else None) or (next_due.supplier.name if next_due and next_due.supplier else None),
+    )
+
+
+async def remind_bill(db: AsyncSession, bill_id: int, user_id: Optional[int] = None) -> schemas.BillReminderResult:
+    """Marca la bill como recordada. La campanita ya la considera 'overdue/soon'
+    en la proxima consulta al notifications digest — este endpoint deja constancia
+    del ultimo aviso y podria disparar mail en el futuro."""
+    res = await db.execute(select(models.SupplierBill).where(models.SupplierBill.id == bill_id))
+    bill = res.scalars().first()
+    if bill is None:
+        return schemas.BillReminderResult(bill_id=bill_id, notified=False)
+    bill.reminder_sent_at = datetime.now(timezone.utc)
+    await db.commit()
+    await _log_audit(db, user_id, "REMIND_BILL", f"Recordatorio de factura {bill.folio}", {"bill_id": bill_id})
+    return schemas.BillReminderResult(bill_id=bill_id, notified=True, reminder_sent_at=bill.reminder_sent_at)
+
+
+# ── Sobrescribir get_cxp para incluir bills ─────────────────────────────────
+# La funcion original solo lee PurchaseOrder. Ahora combinamos ambas fuentes
+# para que la campanita, el KPI del tablero y el listado de "Por pagar"
+# reflejen la realidad (facturas sueltas + OCs con saldo).
+
+_get_cxp_purchase_orders_only = get_cxp  # backup por si alguien lo necesita
+
+
+async def get_cxp(db: AsyncSession, branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.AgingItem]:  # type: ignore[no-redef]
+    from app.modules.inventory import models as inv_models
+
+    today = datetime.now(timezone.utc)
+    out: List[schemas.AgingItem] = []
+
+    # 1) Ordenes de compra (comportamiento original)
+    PO = inv_models.PurchaseOrder
+    po_conds = [PO.status.notin_(["cancelled", "draft"])]
+    if branch_warehouse_ids is not None:
+        po_conds.append(or_(PO.warehouse_id.in_(branch_warehouse_ids), PO.warehouse_id.is_(None)))
+    res = await db.execute(select(PO).where(*po_conds).options(selectinload(PO.supplier)))
+    for po in res.scalars().unique().all():
+        balance = _r((po.total_amount or 0.0) - (po.paid_amount or 0.0))
+        if balance <= 0.001:
+            continue
+        out.append(schemas.AgingItem(
+            id=po.id,
+            name=(po.supplier.name if po.supplier else "Proveedor"),
+            reference=po.folio or f"OC #{po.id}",
+            total=_r(po.total_amount), paid=_r(po.paid_amount), balance=balance,
+            due_date=po.due_date,
+            aging=_aging_bucket(po.due_date, balance, today),
+            status=_status_for(po.paid_amount, balance, po.due_date, today),
+            late_fee=_late_fee(balance, po.due_date, today),
+        ))
+
+    # 2) SupplierBill (facturas sueltas)
+    B = models.SupplierBill
+    b_conds = [B.status != "cancelled"]
+    if branch_warehouse_ids is not None:
+        b_conds.append(or_(B.branch_id.in_(branch_warehouse_ids), B.branch_id.is_(None)))
+    res = await db.execute(select(B).where(*b_conds).options(selectinload(B.supplier)))
+    for b in res.scalars().unique().all():
+        balance = _r((b.total_amount or 0.0) - (b.paid_amount or 0.0))
+        if balance <= 0.001:
+            continue
+        name = b.supplier_name or (b.supplier.name if b.supplier else "Proveedor")
+        out.append(schemas.AgingItem(
+            id=-b.id,  # id negativo para distinguirlos de OCs en la lista combinada
+            name=name,
+            reference=b.folio or f"FAC #{b.id}",
+            total=_r(b.total_amount), paid=_r(b.paid_amount), balance=balance,
+            due_date=b.due_date,
+            aging=_aging_bucket(b.due_date, balance, today),
+            status=_bill_status(b.paid_amount, b.total_amount, b.due_date, today),
+            late_fee=_late_fee(balance, b.due_date, today),
+        ))
+
+    # Orden: vencidos primero, luego por fecha de vencimiento
+    def sort_key(i: schemas.AgingItem):
+        return (0 if i.status == "overdue" else 1,
+                i.due_date or datetime.max.replace(tzinfo=timezone.utc))
+    out.sort(key=sort_key)
+    return out

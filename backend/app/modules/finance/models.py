@@ -77,6 +77,76 @@ class RecurringTransaction(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class SupplierBill(Base):
+    """Factura de proveedor (Accounts Payable / CxP).
+
+    Diseño alineado con SAP/NetSuite: la Bill es la obligacion con vencimiento;
+    los pagos (Transaction de egreso) se aplican mediante BillPayment y pueden
+    ser 1:N (un pago liquida varias bills del mismo proveedor).
+    """
+    __tablename__ = "supplier_bills"
+
+    id = Column(Integer, primary_key=True, index=True)
+    folio = Column(String, unique=True, index=True, nullable=True)  # folio interno FAC-000001
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True, index=True)
+    supplier_name = Column(String, nullable=True)  # snapshot para que la fila siga legible
+
+    supplier_folio = Column(String, nullable=True, index=True)  # folio de la factura del proveedor
+    issue_date = Column(DateTime(timezone=True), nullable=True)
+    due_date = Column(DateTime(timezone=True), nullable=True, index=True)
+    payment_terms = Column(String, nullable=True)  # "net_15", "net_30", "cash", "credit_60"...
+
+    category = Column(String, nullable=True, index=True)  # renta, servicios, compras, otros
+    description = Column(Text, nullable=True)
+
+    currency = Column(String, default="MXN", nullable=False)
+    subtotal = Column(Float, default=0.0, nullable=False)
+    tax_amount = Column(Float, default=0.0, nullable=False)
+    total_amount = Column(Float, default=0.0, nullable=False)
+    paid_amount = Column(Float, default=0.0, nullable=False)
+
+    status = Column(String, default="open", nullable=False, index=True)  # open, partial, paid, cancelled
+    attachment_url = Column(Text, nullable=True)  # PDF/imagen de la factura
+
+    reminder_sent_at = Column(DateTime(timezone=True), nullable=True)
+
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+
+    supplier = relationship("Supplier")
+    payments = relationship(
+        "BillPayment", back_populates="bill", cascade="all, delete-orphan",
+        order_by="BillPayment.created_at",
+    )
+
+
+class BillPayment(Base):
+    """Aplicación de un pago (Transaction egreso) a una factura de proveedor.
+
+    Permite pagos consolidados (una transaccion aplicada a varias bills). El
+    monto que se resta al saldo de la bill es `amount` — no confundir con el
+    monto total de la Transaction, que puede repartirse entre varias.
+    """
+    __tablename__ = "bill_payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bill_id = Column(Integer, ForeignKey("supplier_bills.id", ondelete="CASCADE"), nullable=False, index=True)
+    transaction_id = Column(Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True, index=True)
+    amount = Column(Float, nullable=False)
+    method = Column(String, nullable=True)  # cash, transfer, card, check
+    reference = Column(String, nullable=True)  # numero de transferencia, cheque, etc.
+    note = Column(Text, nullable=True)
+    bank_account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=True)
+
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    bill = relationship("SupplierBill", back_populates="payments")
+
+
 class ScheduledPayment(Base):
     __tablename__ = "scheduled_payments"
 

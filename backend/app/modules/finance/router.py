@@ -146,6 +146,79 @@ async def pay_cxp(po_id: int, pay_in: schemas.PayDebtRequest, db: DB, current_us
     return {"ok": True, "balance": po.balance}
 
 
+# --- Facturas de proveedor (CxP moderna) -----------------------------------
+# Coexiste con /cxp (que combina bills + OCs). Estos endpoints permiten CRUD
+# directo sobre la tabla de facturas.
+
+@router.get("/bills", response_model=List[schemas.SupplierBillInDB])
+async def list_bills(
+    db: DB, current_user: CurrentUser,
+    supplier_id: Optional[int] = None,
+    status: Optional[str] = None,
+    aging: Optional[str] = None,
+    due_before: Optional[datetime] = None,
+    due_after: Optional[datetime] = None,
+):
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.list_bills(
+        db, supplier_id=supplier_id, status=status, aging=aging,
+        due_before=due_before, due_after=due_after,
+        branch_warehouse_ids=ids,
+    )
+
+
+@router.get("/bills/stats", response_model=schemas.BillsStats)
+async def bills_stats(db: DB, _: CurrentUser):
+    return await service.bills_stats(db)
+
+
+@router.get("/bills/{bill_id}", response_model=schemas.SupplierBillInDB)
+async def read_bill(bill_id: int, db: DB, _: CurrentUser):
+    bill = await service.get_bill(db, bill_id)
+    if bill is None:
+        raise HTTPException(404, "Factura no encontrada")
+    return bill
+
+
+@router.post("/bills", response_model=schemas.SupplierBillInDB, status_code=201)
+async def create_bill(data: schemas.SupplierBillCreate, db: DB, current_user: CurrentUser):
+    return await service.create_bill(db, data, user_id=current_user.id, branch_id=_finance_branch(current_user))
+
+
+@router.put("/bills/{bill_id}", response_model=schemas.SupplierBillInDB)
+async def update_bill(bill_id: int, data: schemas.SupplierBillUpdate, db: DB, current_user: CurrentUser):
+    bill = await service.update_bill(db, bill_id, data, user_id=current_user.id)
+    if bill is None:
+        raise HTTPException(404, "Factura no encontrada")
+    return bill
+
+
+@router.delete("/bills/{bill_id}", status_code=204)
+async def delete_bill(bill_id: int, db: DB, current_user: CurrentUser):
+    ok = await service.delete_bill(db, bill_id, user_id=current_user.id)
+    if not ok:
+        raise HTTPException(404, "Factura no encontrada")
+
+
+@router.post("/bills/pay", response_model=schemas.BillPayResponse)
+async def pay_bills(req: schemas.BillPayRequest, db: DB, current_user: CurrentUser):
+    """Pago consolidado. Un pago liquida una o varias bills del mismo proveedor
+    (o de distintos proveedores si viene en el payload). Crea la Transaction y
+    los BillPayment atomicamente."""
+    if req.amount >= LARGE_PAYMENT_THRESHOLD:
+        _require_manager(current_user)
+    try:
+        return await service.pay_bills(db, req, user_id=current_user.id, branch_id=_finance_branch(current_user))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/bills/{bill_id}/remind", response_model=schemas.BillReminderResult)
+async def remind_bill(bill_id: int, db: DB, current_user: CurrentUser):
+    return await service.remind_bill(db, bill_id, user_id=current_user.id)
+
+
 # --- Bancos ---
 @router.get("/banks", response_model=List[schemas.BankAccountInDB])
 async def read_banks(db: DB, current_user: CurrentUser):
