@@ -19,8 +19,13 @@ export const hrApi = {
   approvePeriod: (id: number) => api.post(`/hr/payroll/periods/${id}/approve`).then(r => r.data),
   dispersePeriod: (id: number) => api.post(`/hr/payroll/periods/${id}/disperse`).then(r => r.data),
 
-  downloadBankLayout: (periodId: number, bank?: string) =>
-    api.get(`/hr/payroll/periods/${periodId}/bank-layout`, { params: bank ? { bank } : {}, responseType: "blob" }),
+  downloadBankLayout: (periodId: number, bank: string, originAccount?: string, loteNumber?: string) =>
+    api.get(`/hr/payroll/periods/${periodId}/bank-layout`, {
+      params: { bank, origin_account: originAccount || undefined, lote_number: loteNumber || undefined },
+      responseType: "blob",
+    }),
+  dispersionSummary: (periodId: number) =>
+    api.get(`/hr/payroll/periods/${periodId}/dispersion-summary`).then(r => r.data),
   downloadHeadcountReport: () => api.get("/hr/reports/headcount", { responseType: "blob" }),
   downloadVacationReport: () => api.get("/hr/reports/vacations", { responseType: "blob" }),
   downloadOvertimeReport: (startDate: string, endDate: string) =>
