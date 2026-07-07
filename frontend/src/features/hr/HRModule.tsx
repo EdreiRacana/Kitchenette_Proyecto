@@ -844,93 +844,13 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
 
       {/* ── TAB: Dispersion ── */}
       {tab === "dispersion" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>Dispersión de pagos</div>
-            <div style={{ fontSize: 13, color: t.textLo, marginBottom: 20 }}>Genera el archivo bancario para dispersar el pago de nómina directamente a las cuentas CLABE de tus empleados.</div>
-
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>Período</label>
-              <select value={selectedPeriod?.id || ""} onChange={e => setSelectedPeriod(periods.find(p => p.id === Number(e.target.value)) || null)} style={{ ...inp, cursor: "pointer", maxWidth: 360 }}>
-                <option value="">Seleccionar período…</option>
-                {periods.filter(p => p.status !== "draft").map(p => <option key={p.id} value={p.id}>{p.name} — {PERIOD_STATUS[p.status].label}</option>)}
-              </select>
-            </div>
-
-            {!selectedPeriod ? (
-              <div style={{ textAlign: "center", padding: 40, color: t.textLo, fontSize: 13 }}>Selecciona un período calculado, aprobado o dispersado para ver su detalle.</div>
-            ) : !periodDetail ? (
-              <div style={{ textAlign: "center", padding: 40, color: t.textLo, fontSize: 13 }}>Cargando detalle…</div>
-            ) : (
-              <>
-                {/* Bank layout downloads */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12, marginBottom: 20 }}>
-                  {["Todos", ...BANKS].map(bank => (
-                    <button key={bank} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: "14px 16px", cursor: "pointer", textAlign: "left", transition: "all .15s" }}
-                      onMouseEnter={e => { (e.currentTarget as any).style.borderColor = t.nova + "66"; (e.currentTarget as any).style.background = t.panel3; }}
-                      onMouseLeave={e => { (e.currentTarget as any).style.borderColor = t.border; (e.currentTarget as any).style.background = t.panel2; }}
-                      onClick={async () => {
-                        try {
-                          const res = await hrApi.downloadBankLayout(selectedPeriod.id, bank === "Todos" ? undefined : bank);
-                          downloadBlob(res.data, `layout_${bank}_${selectedPeriod.id}.csv`);
-                        } catch { alert("Error al generar el layout bancario"); }
-                      }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>{bank}</div>
-                      <div style={{ fontSize: 11.5, color: t.textLo }}>Layout bancario</div>
-                      <div style={{ marginTop: 10, fontSize: 12, color: t.nova, display: "flex", alignItems: "center", gap: 4 }}>
-                        <Download size={12} /> Descargar CSV
-                      </div>
-                    </button>
-                  ))}
-                </div>
-
-                {/* Dispersion table */}
-                <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 12 }}>Detalle de dispersión — {selectedPeriod.name}</div>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
-                    <thead>
-                      <tr style={{ background: t.panel2 }}>
-                        {["Empleado", "Banco", "CLABE", "Importe neto", "Estado"].map((h, i) => (
-                          <th key={i} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.4 }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(periodDetail.details || []).length === 0 ? (
-                        <tr><td colSpan={5} style={{ textAlign: "center", padding: 30, color: t.textLo }}>Sin detalle disponible.</td></tr>
-                      ) : (periodDetail.details || []).map((d: any, i: number) => {
-                        const emp = employees.find(e => e.id === d.employee_id);
-                        const dispersed = d.dispersion_status === "confirmado";
-                        const stColor = dispersed ? t.good : t.warn;
-                        return (
-                          <tr key={d.employee_id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
-                            <td style={{ padding: "12px 16px", fontSize: 13.5, color: t.textHi, fontWeight: 600 }}>{d.employee_name}</td>
-                            <td style={{ padding: "12px 16px", fontSize: 13, color: t.textMid }}>{emp?.bank || "—"}</td>
-                            <td style={{ padding: "12px 16px", fontSize: 12, color: t.textLo, fontFamily: "monospace" }}>{emp?.clabe || "—"}</td>
-                            <td style={{ padding: "12px 16px", fontSize: 14, fontWeight: 700, color: t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(d.total_net)}</td>
-                            <td style={{ padding: "12px 16px" }}>
-                              <span style={{ fontSize: 12, fontWeight: 700, color: stColor, background: stColor + "18", padding: "3px 9px", borderRadius: 20 }}>{dispersed ? "Confirmado" : "Pendiente"}</span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                {selectedPeriod.status === "approved" && (
-                  <div style={{ display: "flex", gap: 10, marginTop: 16, justifyContent: "flex-end" }}>
-                    <button onClick={async () => {
-                      try { await hrApi.dispersePeriod(selectedPeriod.id); await load(); const detail = await hrApi.periodDetail(selectedPeriod.id); setPeriodDetail(detail); } catch (err: any) { alert(err?.response?.data?.detail || "Error al dispersar"); }
-                    }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-                      <Banknote size={15} /> Dispersar pagos
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
+        <DispersionTab
+          t={t}
+          periods={periods}
+          selectedPeriod={selectedPeriod}
+          setSelectedPeriod={setSelectedPeriod}
+          onDispersed={async () => { await load(); if (selectedPeriod) { const d = await hrApi.periodDetail(selectedPeriod.id); setPeriodDetail(d); } }}
+        />
       )}
 
       {/* ── TAB: Reports ── */}
@@ -1487,5 +1407,292 @@ function PeriodFormModal({ t, onClose, onSave }: any) {
       </div>
     </div>,
     document.body
+  );
+}
+
+// ── Dispersion Tab (rediseñada) ─────────────────────────────────────────────
+// Prepara el archivo listo para subir a la banca en línea:
+//   1) resumen por banco con desglose (# empleados × total)
+//   2) validación previa (CLABE inválida, RFC faltante, importe cero)
+//   3) descarga del layout oficial (BBVA/Banorte/Santander/HSBC/Banamex/SPEI)
+//   4) botón "Marcar como dispersado" solo tras confirmar la subida al banco
+function DispersionTab({
+  t, periods, selectedPeriod, setSelectedPeriod, onDispersed,
+}: {
+  t: any;
+  periods: any[];
+  selectedPeriod: any | null;
+  setSelectedPeriod: (p: any | null) => void;
+  onDispersed: () => Promise<void> | void;
+}) {
+  const [summary, setSummary] = useState<any | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [originAccount, setOriginAccount] = useState("");
+  const [showIssues, setShowIssues] = useState(false);
+  const [confirmDispersed, setConfirmDispersed] = useState(false);
+  const [dispersing, setDispersing] = useState(false);
+  const [downloading, setDownloading] = useState<string | null>(null);
+
+  const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const fetchSummary = useCallback(async (id: number) => {
+    setLoading(true); setErr(null);
+    try {
+      const s = await hrApi.dispersionSummary(id);
+      setSummary(s);
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "No se pudo cargar el resumen de dispersión.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedPeriod?.id) fetchSummary(selectedPeriod.id);
+    else setSummary(null);
+  }, [selectedPeriod?.id, fetchSummary]);
+
+  const eligible = periods.filter((p: any) => p.status === "approved" || p.status === "dispersed" || p.status === "calculated");
+
+  const clabeOk = originAccount.length === 0 || /^\d{18}$/.test(originAccount);
+
+  const download = async (bank: string) => {
+    if (!selectedPeriod) return;
+    setDownloading(bank);
+    try {
+      const res = await hrApi.downloadBankLayout(selectedPeriod.id, bank, originAccount || undefined);
+      const disposition = res.headers?.["content-disposition"] || "";
+      const match = /filename="?([^";]+)"?/.exec(disposition);
+      const filename = match ? match[1] : `dispersion_${bank.toLowerCase()}_${selectedPeriod.id}.txt`;
+      downloadBlob(res.data, filename);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "Error al generar el layout bancario");
+    } finally {
+      setDownloading(null);
+    }
+  };
+
+  const disperse = async () => {
+    if (!selectedPeriod) return;
+    if (!confirmDispersed) {
+      alert("Marca la casilla de confirmación antes de dispersar.");
+      return;
+    }
+    setDispersing(true);
+    try {
+      await hrApi.dispersePeriod(selectedPeriod.id);
+      await onDispersed();
+      await fetchSummary(selectedPeriod.id);
+      setConfirmDispersed(false);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "Error al dispersar");
+    } finally {
+      setDispersing(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Header: selector de periodo + estado + cuenta origen */}
+      <div style={{ ...glass(t), borderRadius: 12, padding: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: t.textHi }}>Dispersión de nómina</div>
+            <div style={{ fontSize: 12.5, color: t.textLo, marginTop: 4, maxWidth: 620, lineHeight: 1.5 }}>
+              Prepara el archivo listo para subir a la banca en línea. Cada banco tiene su formato oficial; validamos CLABE, RFC y monto antes de generarlo para evitar rechazos.
+            </div>
+          </div>
+          {selectedPeriod && summary && (
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+              <StatBlock t={t} label="Empleados" value={String(summary.total_employees)} sub={`${summary.ready_count} listos${summary.error_count ? ` · ${summary.error_count} con error` : ""}`} />
+              <StatBlock t={t} label="Total a dispersar" value={mxn(summary.total_amount)} sub={`Fecha pago: ${summary.payment_date || "—"}`} valueColor={t.good} />
+              <StatBlock t={t} label="Estado" value={PERIOD_STATUS[summary.period_status].label} valueColor={PERIOD_STATUS[summary.period_status].color} />
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 340px) minmax(240px, 1fr)", gap: 12, marginTop: 16 }}>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: t.textLo, letterSpacing: 0.4, textTransform: "uppercase", display: "block", marginBottom: 5 }}>Período</label>
+            <select value={selectedPeriod?.id || ""} onChange={e => setSelectedPeriod(periods.find((p: any) => p.id === Number(e.target.value)) || null)}
+                    style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, cursor: "pointer" }}>
+              <option value="">— Elige un período —</option>
+              {eligible.map((p: any) => <option key={p.id} value={p.id}>{p.name} — {PERIOD_STATUS[p.status].label}</option>)}
+            </select>
+            {eligible.length === 0 && (
+              <div style={{ fontSize: 11.5, color: t.warn, marginTop: 6 }}>Aún no hay períodos calculados o aprobados. Ve a Nómina para crear uno.</div>
+            )}
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: t.textLo, letterSpacing: 0.4, textTransform: "uppercase", display: "block", marginBottom: 5 }}>
+              Cuenta cargo (CLABE de la empresa)
+            </label>
+            <input value={originAccount} onChange={e => setOriginAccount(e.target.value.replace(/\D/g, "").slice(0, 18))} maxLength={18}
+                   placeholder="18 dígitos — se usa como cuenta origen en el archivo"
+                   style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${clabeOk ? t.border : t.bad}`, background: t.inputBg, color: t.textHi, fontSize: 13, fontFamily: "monospace", boxSizing: "border-box" }} />
+            <div style={{ fontSize: 10.5, color: clabeOk ? t.textLo : t.bad, marginTop: 4 }}>
+              {clabeOk ? "Si la dejas vacía, el archivo llevará 18 ceros y deberás editarlo antes de subirlo al banco." : "Debe ser 18 dígitos."}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: t.textLo, fontSize: 13 }}>Cargando resumen de dispersión…</div>}
+      {err && <div style={{ background: t.bad + "18", color: t.bad, padding: 14, borderRadius: 10, fontSize: 13 }}>{err}</div>}
+
+      {!loading && !err && !selectedPeriod && (
+        <div style={{ ...glass(t), borderRadius: 12, padding: 40, textAlign: "center", color: t.textLo, fontSize: 13 }}>
+          Elige un período arriba para preparar la dispersión.
+        </div>
+      )}
+
+      {summary && !loading && (
+        <>
+          {/* Warnings */}
+          {summary.error_count > 0 && (
+            <div style={{ background: t.warn + "16", border: `1px solid ${t.warn}55`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <AlertTriangle size={16} color={t.warn} />
+                  <span style={{ fontSize: 13, color: t.textHi, fontWeight: 600 }}>
+                    {summary.error_count} empleado{summary.error_count !== 1 ? "s" : ""} con datos incompletos — no se incluirán en el archivo.
+                  </span>
+                </div>
+                <button onClick={() => setShowIssues(!showIssues)} style={{ background: "transparent", color: t.warn, border: `1px solid ${t.warn}55`, padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                  {showIssues ? "Ocultar" : "Ver detalle"}
+                </button>
+              </div>
+              {showIssues && (
+                <div style={{ marginTop: 10, borderTop: `1px solid ${t.warn}33`, paddingTop: 10 }}>
+                  {summary.issues.map((issue: any, i: number) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 12.5, borderBottom: i < summary.issues.length - 1 ? `1px solid ${t.warn}22` : "none" }}>
+                      <span style={{ color: t.textMid }}><b style={{ color: t.textHi }}>{issue.employee_name}</b> ({issue.bank || "sin banco"}) · {mxn(issue.amount)}</span>
+                      <span style={{ color: t.warn, textAlign: "right" }}>{issue.reasons.join(" · ")}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tabla de bancos con desglose y descarga */}
+          <div style={{ ...glass(t), borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ padding: "12px 18px", borderBottom: `1px solid ${t.border}`, background: t.panel2, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi }}>Archivos por banco</div>
+                <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 2 }}>
+                  Cada archivo trae solo a los empleados con cuenta en ese banco. El SPEI incluye a todos y sirve como archivo universal.
+                </div>
+              </div>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+                <thead>
+                  <tr style={{ background: t.panel }}>
+                    <th style={{ padding: "10px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: t.textLo, letterSpacing: 0.4, textTransform: "uppercase" }}>Banco</th>
+                    <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 700, color: t.textLo, letterSpacing: 0.4, textTransform: "uppercase" }}>Empleados</th>
+                    <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 700, color: t.textLo, letterSpacing: 0.4, textTransform: "uppercase" }}>Total</th>
+                    <th style={{ padding: "10px 16px", textAlign: "center", fontSize: 11, fontWeight: 700, color: t.textLo, letterSpacing: 0.4, textTransform: "uppercase" }}>Layout</th>
+                    <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 11, fontWeight: 700, color: t.textLo, letterSpacing: 0.4, textTransform: "uppercase" }}>Archivo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.banks.map((b: any, i: number) => (
+                    <tr key={b.bank} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
+                      <td style={{ padding: "12px 16px", fontSize: 13.5, color: t.textHi, fontWeight: 600 }}>{b.bank}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: t.textMid, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                        {b.employees}
+                        {b.with_errors > 0 && <span style={{ marginLeft: 6, fontSize: 11, color: t.warn }}>({b.with_errors} c/error)</span>}
+                      </td>
+                      <td style={{ padding: "12px 16px", fontSize: 13.5, fontWeight: 700, color: t.good, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(b.amount)}</td>
+                      <td style={{ padding: "12px 16px", textAlign: "center" }}>
+                        {b.layout_supported ? (
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: t.good, background: t.good + "18", padding: "3px 8px", borderRadius: 20 }}>Oficial (.txt)</span>
+                        ) : (
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: t.warn, background: t.warn + "18", padding: "3px 8px", borderRadius: 20 }}>SPEI genérico</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "10px 16px", textAlign: "right" }}>
+                        {b.ready === 0 ? (
+                          <span style={{ fontSize: 11.5, color: t.textLo }}>Sin empleados listos</span>
+                        ) : (
+                          <button onClick={() => download(b.layout_supported ? b.bank : "SPEI")} disabled={downloading === b.bank}
+                                  style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.nova}66`, background: t.nova + "18", color: t.nova, cursor: "pointer", fontSize: 12, fontWeight: 700, opacity: downloading === b.bank ? 0.6 : 1 }}>
+                            <Download size={13} /> Descargar
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {/* Fila SPEI universal (todos los empleados válidos) */}
+                  <tr style={{ background: t.panel3, borderTop: `2px solid ${t.border}` }}>
+                    <td style={{ padding: "12px 16px", fontSize: 13.5, color: t.textHi, fontWeight: 700 }}>
+                      SPEI universal <span style={{ fontSize: 10.5, color: t.textLo, fontWeight: 400, marginLeft: 6 }}>(todos los bancos)</span>
+                    </td>
+                    <td style={{ padding: "12px 16px", fontSize: 13, color: t.textMid, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{summary.ready_count}</td>
+                    <td style={{ padding: "12px 16px", fontSize: 13.5, fontWeight: 700, color: t.good, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(summary.total_amount)}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "center" }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: t.nova, background: t.nova + "18", padding: "3px 8px", borderRadius: 20 }}>SPEI (.csv)</span>
+                    </td>
+                    <td style={{ padding: "10px 16px", textAlign: "right" }}>
+                      <button onClick={() => download("SPEI")} disabled={downloading === "SPEI"}
+                              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                        <Download size={13} /> Descargar
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Confirmación tras subir al banco */}
+          {summary.period_status === "approved" && (
+            <div style={{ ...glass(t), borderRadius: 12, padding: 16, border: `1px solid ${t.good}44`, background: t.good + "08" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>
+                ¿Ya subiste el archivo a la banca en línea?
+              </div>
+              <div style={{ fontSize: 12, color: t.textLo, marginBottom: 12, lineHeight: 1.5 }}>
+                Descarga el layout arriba, súbelo en tu portal empresarial (BBVA Net Cash, Banorte Empresarial, Santander SuperNet, HSBCnet, BancaNet Empresarial). Cuando el banco te confirme la operación, marca la nómina como dispersada para dejar constancia y actualizar el estado.
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12.5, color: t.textMid }}>
+                <input type="checkbox" checked={confirmDispersed} onChange={e => setConfirmDispersed(e.target.checked)} />
+                Confirmo que subí el archivo al banco y la operación fue aceptada.
+              </label>
+              <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+                <button onClick={disperse} disabled={!confirmDispersed || dispersing}
+                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", borderRadius: 10, border: "none",
+                                  background: confirmDispersed ? `linear-gradient(135deg, ${t.good}, #059669)` : t.panel3,
+                                  color: confirmDispersed ? "#fff" : t.textLo, cursor: confirmDispersed ? "pointer" : "not-allowed",
+                                  fontSize: 13, fontWeight: 700, opacity: dispersing ? 0.6 : 1 }}>
+                  <Banknote size={14} /> {dispersing ? "Guardando…" : "Marcar como dispersada"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {summary.period_status === "dispersed" && (
+            <div style={{ ...glass(t), borderRadius: 12, padding: 16, border: `1px solid ${t.good}66`, display: "flex", gap: 10, alignItems: "center" }}>
+              <CheckCircle size={20} color={t.good} />
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi }}>Nómina dispersada</div>
+                <div style={{ fontSize: 12, color: t.textLo }}>Registrada como pagada. Puedes volver a descargar el archivo si necesitas revalidar.</div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function StatBlock({ t, label, value, sub, valueColor }: { t: any; label: string; value: string; sub?: string; valueColor?: string }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10.5, fontWeight: 700, color: t.textLo, letterSpacing: 0.4, textTransform: "uppercase" }}>{label}</div>
+      <div style={{ fontSize: 17, fontWeight: 800, color: valueColor || t.textHi, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: t.textLo, marginTop: 2 }}>{sub}</div>}
+    </div>
   );
 }

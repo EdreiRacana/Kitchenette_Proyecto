@@ -323,23 +323,154 @@ async def disperse_period(db: AsyncSession, period_id: int, user_id: Optional[in
     return await get_period_detail(db, period_id)
 
 
-async def generate_bank_layout_csv(db: AsyncSession, period_id: int, bank: Optional[str] = None) -> str:
-    detail = await get_period_detail(db, period_id)
-    if not detail:
+async def _dispersion_rows_for_period(
+    db: AsyncSession, period_id: int, bank: Optional[str] = None
+):
+    """Regresa (rows, employee_map, payment_date) listos para pasarse al
+    generador de layouts bancarios."""
+    from app.modules.hr.bank_layouts import DispersionRow
+
+    res_p = await db.execute(select(models.PayrollPeriod).where(models.PayrollPeriod.id == period_id))
+    period = res_p.scalars().first()
+    if not period:
         raise ValueError("Período no encontrado")
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(["No. empleado", "Nombre", "Banco", "CLABE", "Importe neto"])
+
     res = await db.execute(
         select(models.PayrollDetail, models.Employee)
         .join(models.Employee, models.PayrollDetail.employee_id == models.Employee.id)
         .where(models.PayrollDetail.period_id == period_id)
     )
+
+    rows = []
     for d, emp in res.all():
-        if bank and emp.bank != bank:
+        if bank and (emp.bank or "").strip().lower() != bank.strip().lower():
             continue
-        writer.writerow([emp.employee_number, _full_name(emp), emp.bank or "", emp.clabe or "", f"{d.total_net:.2f}"])
-    return buf.getvalue()
+        rows.append(DispersionRow(
+            employee_number=str(emp.employee_number or emp.id),
+            full_name=_full_name(emp),
+            rfc=emp.rfc or "",
+            clabe=emp.clabe or "",
+            amount=float(d.total_net or 0.0),
+            reference=str(emp.employee_number or emp.id),
+            concept=f"NOMINA {period.name}",
+            bank=emp.bank or "",
+        ))
+
+    payment_date = None
+    if period.payment_date:
+        try:
+            payment_date = date.fromisoformat(period.payment_date)
+        except ValueError:
+            payment_date = None
+
+    return rows, period, payment_date
+
+
+async def dispersion_summary(db: AsyncSession, period_id: int) -> dict:
+    """Resumen de dispersión: totales por banco + validación de datos."""
+    from app.modules.hr.bank_layouts import (
+        SUPPORTED_BANKS, validate_rows, LAYOUT_META,
+    )
+
+    rows, period, _pd = await _dispersion_rows_for_period(db, period_id)
+    validated = validate_rows(rows)
+
+    # Totales por banco (agrupando bancos no soportados en "Otros")
+    by_bank: dict = {}
+    for v in validated:
+        b = v.row.bank.strip() if v.row.bank else ""
+        bucket = b if b in SUPPORTED_BANKS or b in ("Citibanamex",) else "Otros"
+        if bucket == "Citibanamex":
+            bucket = "Banamex"
+        g = by_bank.setdefault(bucket, {
+            "bank": bucket, "employees": 0, "amount": 0.0,
+            "ready": 0, "with_errors": 0, "layout_supported": bucket in SUPPORTED_BANKS,
+        })
+        g["employees"] += 1
+        g["amount"] += v.row.amount
+        if v.ok:
+            g["ready"] += 1
+        else:
+            g["with_errors"] += 1
+
+    banks_out = sorted(by_bank.values(), key=lambda b: -b["amount"])
+    for b in banks_out:
+        b["amount"] = round(b["amount"], 2)
+
+    return {
+        "period_id": period.id,
+        "period_name": period.name,
+        "period_status": period.status,
+        "payment_date": period.payment_date,
+        "total_employees": len(validated),
+        "total_amount": round(sum(v.row.amount for v in validated), 2),
+        "ready_count": sum(1 for v in validated if v.ok),
+        "error_count": sum(1 for v in validated if not v.ok),
+        "banks": banks_out,
+        "supported_banks": SUPPORTED_BANKS,
+        "issues": [
+            {
+                "employee_name": v.row.full_name,
+                "employee_number": v.row.employee_number,
+                "bank": v.row.bank,
+                "reasons": v.reasons,
+                "amount": v.row.amount,
+            }
+            for v in validated if not v.ok
+        ],
+    }
+
+
+async def generate_bank_layout(
+    db: AsyncSession, period_id: int, bank: str,
+    origin_account: str = "", lote_number: str = "1",
+    skip_invalid: bool = True,
+) -> tuple[str, str, str]:
+    """Genera el layout del banco elegido. Devuelve (contenido, filename, mime).
+
+    - `bank` puede ser "BBVA", "Banorte", "Santander", "HSBC", "Banamex", "SPEI"
+      o "CSV" (fallback genérico).
+    - `origin_account` es la CLABE de la cuenta cargo del cliente. Si el banco
+      lo requiere y no viene, se usa un placeholder de 18 ceros que el operador
+      debe reemplazar antes de subir (o corregirlo en el archivo).
+    - `skip_invalid=True` excluye del layout las filas con CLABE inválida o
+      datos faltantes; devuelve el archivo con solo las filas listas.
+    """
+    from app.modules.hr.bank_layouts import (
+        generate_layout, validate_rows, LAYOUT_META, SUPPORTED_BANKS,
+    )
+
+    bank_key = (bank or "").strip()
+    # Si el usuario pide un banco no soportado, cae a CSV
+    if bank_key not in SUPPORTED_BANKS and bank_key.title() not in ("Banamex", "Citibanamex"):
+        bank_key = "CSV"
+
+    filter_bank = None if bank_key in ("SPEI", "CSV") else bank_key
+    # Para 'Banamex' hay que filtrar tambien las cuentas marcadas 'Citibanamex'
+    rows, period, payment_date = await _dispersion_rows_for_period(db, period_id, filter_bank)
+    if bank_key.lower() == "banamex":
+        rows_extra, _, _ = await _dispersion_rows_for_period(db, period_id, "Citibanamex")
+        rows.extend(rows_extra)
+
+    if skip_invalid:
+        valid = validate_rows(rows)
+        rows = [v.row for v in valid if v.ok]
+
+    if not origin_account:
+        origin_account = "0" * 18
+
+    content = generate_layout(bank_key, rows, origin_account, lote_number, payment_date)
+
+    meta = LAYOUT_META.get(bank_key, LAYOUT_META["CSV"])
+    safe_bank = bank_key.replace(" ", "_").lower()
+    filename = f"dispersion_{safe_bank}_periodo_{period_id}.{meta['extension']}"
+    return content, filename, meta["content_type"]
+
+
+# Compatibilidad hacia atrás: la implementación anterior devolvía CSV genérico.
+async def generate_bank_layout_csv(db: AsyncSession, period_id: int, bank: Optional[str] = None) -> str:
+    content, _fn, _mime = await generate_bank_layout(db, period_id, bank or "CSV")
+    return content
 
 
 async def generate_headcount_csv(db: AsyncSession) -> str:

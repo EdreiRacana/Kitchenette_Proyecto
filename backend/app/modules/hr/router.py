@@ -127,13 +127,46 @@ async def disperse_period(period_id: int, db: DB, current_user: CurrentUser):
 
 
 @router.get("/payroll/periods/{period_id}/bank-layout")
-async def bank_layout(period_id: int, db: DB, current_user: CurrentUser, bank: Optional[str] = None):
+async def bank_layout(
+    period_id: int, db: DB, current_user: CurrentUser,
+    bank: Optional[str] = None,
+    origin_account: Optional[str] = None,
+    lote_number: str = "1",
+    skip_invalid: bool = True,
+):
+    """Genera el archivo de dispersión listo para subir a la banca en línea.
+
+    Parámetros:
+      - bank: BBVA | Banorte | Santander | HSBC | Banamex | SPEI | CSV
+      - origin_account: CLABE de cargo del cliente (18 dígitos). Si viene
+        vacía, se rellena con ceros que el operador debe editar en el archivo.
+      - skip_invalid: si es True (default), excluye del layout las filas con
+        CLABE inválida, RFC faltante o importe cero.
+    """
     try:
-        csv_text = await service.generate_bank_layout_csv(db, period_id, bank=bank)
+        content, filename, mime = await service.generate_bank_layout(
+            db, period_id, bank or "CSV",
+            origin_account=origin_account or "",
+            lote_number=lote_number,
+            skip_invalid=skip_invalid,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    filename = f"layout_{bank or 'todos'}_{period_id}.csv"
-    return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    return Response(
+        content=content,
+        media_type=mime,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/payroll/periods/{period_id}/dispersion-summary")
+async def dispersion_summary(period_id: int, db: DB, current_user: CurrentUser):
+    """Resumen previo a la dispersión: totales por banco, validación de datos,
+    lista de empleados con problemas (CLABE inválida, RFC faltante, etc.)."""
+    try:
+        return await service.dispersion_summary(db, period_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # ── Reports ────────────────────────────────────────────────────────────
