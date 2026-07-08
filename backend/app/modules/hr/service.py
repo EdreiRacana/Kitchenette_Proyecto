@@ -1355,3 +1355,130 @@ async def update_payroll_detail(
         {"period_id": period_id, "employee_id": employee_id},
     )
     return await get_period_detail(db, period_id)
+
+
+# ── Carga a granel de bonos/vales/ahorro/préstamos/notas ────────────────────
+
+async def _bulk_current_rows(db: AsyncSession, period_id: int) -> tuple[List[dict], str]:
+    """Regresa los renglones actuales del período para pre-llenar la plantilla."""
+    res = await db.execute(
+        select(models.PayrollPeriod).where(models.PayrollPeriod.id == period_id)
+    )
+    period = res.scalars().first()
+    if period is None:
+        raise ValueError("Período no encontrado")
+
+    res2 = await db.execute(
+        select(models.PayrollDetail, models.Employee)
+        .join(models.Employee, models.PayrollDetail.employee_id == models.Employee.id)
+        .where(models.PayrollDetail.period_id == period_id)
+        .order_by(models.Employee.employee_number.asc())
+    )
+    rows = []
+    for d, emp in res2.all():
+        rows.append({
+            "no_empleado": emp.employee_number or f"#{emp.id}",
+            "rfc": emp.rfc or "",
+            "nombre": _full_name(emp),
+            "bono": d.bonus or 0.0,
+            "vales": d.food_vouchers or 0.0,
+            "ahorro": d.savings_fund or 0.0,
+            "prestamo": d.loan_deduction or 0.0,
+            "notas": d.notes or "",
+        })
+    return rows, period.name
+
+
+async def build_bulk_template(db: AsyncSession, period_id: int, fmt: str) -> tuple[bytes, str, str]:
+    """Devuelve (contenido, filename, mime) para la plantilla del período."""
+    from app.modules.hr.bulk_detail import build_template_xlsx, build_template_csv
+    rows, period_name = await _bulk_current_rows(db, period_id)
+    safe = period_name.replace(" ", "_")
+    if fmt == "csv":
+        return (
+            build_template_csv(rows),
+            f"detalle_{safe}.csv",
+            "text/csv; charset=utf-8",
+        )
+    return (
+        build_template_xlsx(period_name, rows),
+        f"detalle_{safe}.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+async def import_bulk_detail(
+    db: AsyncSession, period_id: int, content: bytes, filename: str,
+    user_id: Optional[int] = None,
+) -> dict:
+    """Aplica cambios en lote al PayrollDetail del período. Usa el mismo
+    update_payroll_detail() por fila para heredar el recomputo automático."""
+    from app.modules.hr.bulk_detail import parse_bulk_file, BulkImportError, BulkImportSummary
+
+    res = await db.execute(select(models.PayrollPeriod).where(models.PayrollPeriod.id == period_id))
+    period = res.scalars().first()
+    if period is None:
+        raise ValueError("Período no encontrado")
+    if period.status != "calculated":
+        raise ValueError("Solo se puede cargar en lote cuando la nómina está 'Calculada'")
+
+    parsed, parse_errors = parse_bulk_file(content, filename)
+    summary = BulkImportSummary(errors=list(parse_errors))
+
+    # Indexes para match rápido
+    emps = await get_employees(db)
+    by_num: dict[str, int] = {}
+    by_rfc: dict[str, int] = {}
+    for e in emps:
+        if e.employee_number:
+            by_num[e.employee_number.strip().upper()] = e.id
+        if e.rfc:
+            by_rfc[e.rfc.strip().upper()] = e.id
+
+    for row in parsed:
+        no_emp = (row.get("no_empleado") or "").strip().upper()
+        rfc = (row.get("rfc") or "").strip().upper()
+        emp_id = by_num.get(no_emp) or by_rfc.get(rfc)
+        if emp_id is None:
+            summary.errors.append(BulkImportError(
+                row=row["row"],
+                reason=f"No se encontró empleado con no_empleado='{row.get('no_empleado','')}' ni rfc='{row.get('rfc','')}'",
+            ))
+            continue
+
+        # Solo mandamos los campos que el operador realmente escribió
+        # (los None se ignoran en update_payroll_detail).
+        patch: dict = {}
+        for k_bulk, k_field in (
+            ("bono", "bonus"), ("vales", "food_vouchers"),
+            ("ahorro", "savings_fund"), ("prestamo", "loan_deduction"),
+        ):
+            v = row.get(k_bulk)
+            if v is not None:
+                patch[k_field] = v
+        if row.get("notas") is not None:
+            patch["notes"] = row["notas"]
+
+        if not patch:
+            summary.skipped += 1
+            continue
+
+        try:
+            await update_payroll_detail(db, period_id, emp_id, patch, user_id=user_id)
+            summary.applied += 1
+        except ValueError as e:
+            summary.errors.append(BulkImportError(row=row["row"], reason=str(e)))
+
+    await _log_audit(
+        db, user_id, "BULK_PAYROLL_DETAIL",
+        f"Carga a granel en '{period.name}': {summary.applied} aplicados, "
+        f"{summary.skipped} omitidos, {len(summary.errors)} errores",
+        {"period_id": period_id, "applied": summary.applied,
+         "skipped": summary.skipped, "errors": len(summary.errors)},
+    )
+
+    return {
+        "applied": summary.applied,
+        "skipped": summary.skipped,
+        "errors": [{"row": e.row, "reason": e.reason} for e in summary.errors],
+    }

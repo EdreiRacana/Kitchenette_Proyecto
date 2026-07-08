@@ -1,5 +1,5 @@
 from typing import List, Annotated, Optional
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
@@ -259,6 +259,44 @@ async def create_aguinaldo(data: schemas.AguinaldoRequest, db: DB, current_user:
     _require_manager(current_user)
     period = await service.create_aguinaldo_period(db, data.year, data.payment_date, user_id=current_user.id)
     return {"id": period.id}
+
+
+@router.get("/payroll/periods/{period_id}/bulk-template")
+async def download_bulk_template(
+    period_id: int, db: DB, current_user: CurrentUser,
+    format: str = "xlsx",
+):
+    """Descarga la plantilla de carga en lote (bonos/vales/ahorro/préstamos/notas)
+    pre-llenada con los empleados actuales del período."""
+    fmt = "csv" if format.lower() == "csv" else "xlsx"
+    try:
+        content, filename, mime = await service.build_bulk_template(db, period_id, fmt)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return Response(
+        content=content, media_type=mime,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/payroll/periods/{period_id}/bulk-import")
+async def upload_bulk_detail(
+    period_id: int, db: DB, current_user: CurrentUser,
+    file: UploadFile = File(...),
+):
+    """Carga a granel bonos/vales/ahorro/préstamos/notas desde XLSX o CSV.
+    Reutiliza update_payroll_detail para heredar el recomputo de ISR/ISN/neto."""
+    _require_manager(current_user)
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
+    try:
+        return await service.import_bulk_detail(
+            db, period_id, content, file.filename or "",
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.patch("/payroll/periods/{period_id}/details/{employee_id}")

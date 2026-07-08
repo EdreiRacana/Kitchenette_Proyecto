@@ -231,6 +231,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
     kind: "overtime" | "annual" | "ptu" | "sua" | "aguinaldo";
   }>(null);
   const [detailEditor, setDetailEditor] = useState<null | { period: any; row: any }>(null);
+  const [bulkUpload, setBulkUpload] = useState<null | { period: any }>(null);
 
   // Filters
   const [q, setQ] = useState("");
@@ -869,9 +870,27 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                   </div>
                 </div>
                 {selectedPeriod.status === "calculated" && (
-                  <span style={{ fontSize: 11.5, color: t.warn, background: t.warn + "18", padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>
-                    Puedes editar bonos, vales, ahorro y préstamos antes de aprobar.
-                  </span>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await hrApi.downloadBulkTemplate(selectedPeriod.id, "xlsx");
+                          downloadBlob(res.data, `detalle_${selectedPeriod.name.replace(/\s+/g, "_")}.xlsx`);
+                        } catch { alert("Error al descargar la plantilla"); }
+                      }}
+                      title="Descarga XLSX pre-llenado con los empleados del período"
+                      style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+                    >
+                      <Download size={12} /> Plantilla
+                    </button>
+                    <button
+                      onClick={() => setBulkUpload({ period: selectedPeriod })}
+                      title="Sube el XLSX/CSV con bonos, vales, ahorro, préstamos y notas"
+                      style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.nova}66`, background: t.nova + "18", color: t.nova, cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+                    >
+                      <Upload size={12} /> Cargar bonos/vales
+                    </button>
+                  </div>
                 )}
               </div>
               <div style={{ overflowX: "auto" }}>
@@ -1007,6 +1026,18 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           onSaved={async (fresh) => {
             setPeriodDetail(fresh);
             setDetailEditor(null);
+          }}
+        />
+      )}
+
+      {bulkUpload && (
+        <BulkDetailUploadModal
+          t={t}
+          period={bulkUpload.period}
+          onClose={() => setBulkUpload(null)}
+          onDone={async () => {
+            const fresh = await hrApi.periodDetail(bulkUpload.period.id);
+            setPeriodDetail(fresh);
           }}
         />
       )}
@@ -2171,4 +2202,90 @@ function EmployeeAttendancePanel({ t, employee }: { t: any; employee: any }) {
       )}
     </div>
   );
+}
+
+
+// ── BulkDetailUploadModal ──────────────────────────────────────────────────
+// Sube XLSX/CSV con bonos/vales/ahorro/préstamos/notas. Reporta aplicados,
+// omitidos y errores por fila con línea del archivo original.
+function BulkDetailUploadModal({
+  t, period, onClose, onDone,
+}: {
+  t: any; period: any; onClose: () => void; onDone: () => Promise<void>;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [result, setResult] = useState<null | { applied: number; skipped: number; errors: { row: number; reason: string }[] }>(null);
+
+  const submit = async () => {
+    if (!file) return;
+    setBusy(true); setErr(null);
+    try {
+      const res = await hrApi.bulkImportDetail(period.id, file);
+      setResult(res);
+      await onDone();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al procesar el archivo");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return createPortal(
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: "5vh 20px" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, padding: 22, maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>Cargar bonos, vales y préstamos</h3>
+            <p style={{ margin: "3px 0 0", fontSize: 12.5, color: t.textLo, lineHeight: 1.5 }}>
+              Sube el XLSX o CSV que descargaste con la plantilla. El sistema matchea empleados por número (primario) o RFC (fallback), aplica los cambios y recalcula ISR, ISN y neto.
+            </p>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={18} /></button>
+        </div>
+
+        <div style={{ padding: 20, border: `2px dashed ${t.border}`, borderRadius: 10, background: t.panel2, textAlign: "center", marginTop: 12 }}>
+          <Upload size={22} color={t.nova} />
+          <div style={{ marginTop: 8, color: t.textMid, fontSize: 13 }}>
+            {file ? file.name : "Selecciona un archivo .xlsx, .xlsm o .csv"}
+          </div>
+          <label style={{ display: "inline-block", marginTop: 10, padding: "6px 14px", borderRadius: 8, background: t.nova, color: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+            Elegir archivo
+            <input type="file" accept=".xlsx,.xlsm,.csv" style={{ display: "none" }}
+                   onChange={e => { setFile(e.target.files?.[0] ?? null); setResult(null); }} />
+          </label>
+        </div>
+
+        {result && (
+          <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: t.good + "18" }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi }}>Carga completada</div>
+            <div style={{ fontSize: 12.5, color: t.textMid, marginTop: 4 }}>
+              <b style={{ color: t.textHi }}>{result.applied}</b> empleados actualizados
+              {result.skipped > 0 && ` · ${result.skipped} sin cambios`}
+              {result.errors.length > 0 && ` · ${result.errors.length} con problema`}
+            </div>
+            {result.errors.length > 0 && (
+              <ul style={{ margin: "8px 0 0", padding: "0 0 0 18px", fontSize: 12, color: t.warn }}>
+                {result.errors.slice(0, 6).map((e, i) => (
+                  <li key={i}>Fila {e.row}: {e.reason}</li>
+                ))}
+                {result.errors.length > 6 && <li>… y {result.errors.length - 6} más</li>}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {err && <div style={{ marginTop: 12, color: t.bad, fontSize: 12.5, background: t.bad + "15", padding: "8px 12px", borderRadius: 8 }}>{err}</div>}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button onClick={onClose} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cerrar</button>
+          <button onClick={submit} disabled={!file || busy}
+                  style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.good}, ${t.nova})`, color: "#fff", cursor: !file ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, opacity: (!file || busy) ? 0.6 : 1 }}>
+            {busy ? "Procesando…" : "Subir y aplicar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  , document.body);
 }
