@@ -44,6 +44,18 @@ export const hrApi = {
     api.get(`/hr/employees/${employeeId}/attendance`, {
       params: { start_date: startDate, end_date: endDate },
     }).then(r => r.data),
+
+  downloadBulkTemplate: (periodId: number, format: "xlsx" | "csv" = "xlsx") =>
+    api.get(`/hr/payroll/periods/${periodId}/bulk-template`, {
+      params: { format }, responseType: "blob",
+    }),
+  bulkImportDetail: (periodId: number, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post(`/hr/payroll/periods/${periodId}/bulk-import`, form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }).then(r => r.data);
+  },
   downloadHeadcountReport: () => api.get("/hr/reports/headcount", { responseType: "blob" }),
   downloadVacationReport: () => api.get("/hr/reports/vacations", { responseType: "blob" }),
   downloadOvertimeReport: (startDate: string, endDate: string) =>
