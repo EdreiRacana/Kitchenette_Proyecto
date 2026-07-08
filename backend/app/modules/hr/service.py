@@ -17,36 +17,157 @@ async def _log_audit(db: AsyncSession, user_id: Optional[int], action: str, desc
         pass
 
 
-# ── Cálculo fiscal mexicano (ISR / IMSS) ───────────────────────────────────
-# Tabla ISR 2026 quincenal (misma tabla usada en el frontend, fuente única de verdad)
-_ISR_TABLE = [
-    {"li": 0, "ls": 1768.96, "fi": 0, "pct": 0.0192},
-    {"li": 1768.97, "ls": 15009.06, "fi": 33.96, "pct": 0.0640},
-    {"li": 15009.07, "ls": 26385.47, "fi": 881.68, "pct": 0.1088},
-    {"li": 26385.48, "ls": 30674.03, "fi": 2118.73, "pct": 0.1600},
-    {"li": 30674.04, "ls": 36732.23, "fi": 2804.44, "pct": 0.1792},
-    {"li": 36732.24, "ls": 74049.45, "fi": 3890.39, "pct": 0.2136},
-    {"li": 74049.46, "ls": 116829.20, "fi": 11870.05, "pct": 0.2352},
-    {"li": 116829.21, "ls": 999999999, "fi": 21927.38, "pct": 0.3000},
+# ── Cálculo fiscal mexicano (ISR / IMSS / SAE) ──────────────────────────────
+# Tablas MENSUALES (Anexo 8 RMF). Se prorratean a la frecuencia del período
+# mediante la fracción `dias_periodo / 30` para respetar la ley fiscal.
+# Fuente única de verdad — el frontend replica estos valores para vista previa.
+
+_ISR_TABLE_MONTHLY = [
+    {"li": 0.01,       "ls": 8952.49,     "fi": 0.00,      "pct": 0.0192},
+    {"li": 8952.50,    "ls": 75984.55,    "fi": 171.88,    "pct": 0.0640},
+    {"li": 75984.56,   "ls": 133536.07,   "fi": 4461.94,   "pct": 0.1088},
+    {"li": 133536.08,  "ls": 155229.80,   "fi": 10723.55,  "pct": 0.1600},
+    {"li": 155229.81,  "ls": 185852.57,   "fi": 14194.54,  "pct": 0.1792},
+    {"li": 185852.58,  "ls": 374837.88,   "fi": 19682.13,  "pct": 0.2136},
+    {"li": 374837.89,  "ls": 591492.85,   "fi": 60049.40,  "pct": 0.2352},
+    {"li": 591492.86,  "ls": 1e12,        "fi": 110842.74, "pct": 0.3000},
+]
+
+# Subsidio al empleo mensual (Anexo 8 RMF 2026)
+# Se aplica cuando el ISR calculado es menor que el subsidio: el remanente
+# se entrega al empleado como "subsidio al empleo pagado" (crédito al salario).
+_SAE_TABLE_MONTHLY = [
+    {"li": 0.01,     "ls": 872.86,    "subsidio": 407.02},
+    {"li": 872.87,   "ls": 1309.20,   "subsidio": 406.83},
+    {"li": 1309.21,  "ls": 1713.60,   "subsidio": 406.62},
+    {"li": 1713.61,  "ls": 1745.70,   "subsidio": 392.77},
+    {"li": 1745.71,  "ls": 2193.75,   "subsidio": 382.46},
+    {"li": 2193.76,  "ls": 2327.55,   "subsidio": 354.23},
+    {"li": 2327.56,  "ls": 2632.65,   "subsidio": 324.87},
+    {"li": 2632.66,  "ls": 3071.40,   "subsidio": 294.63},
+    {"li": 3071.41,  "ls": 3510.15,   "subsidio": 253.54},
+    {"li": 3510.16,  "ls": 3703.65,   "subsidio": 217.61},
+    {"li": 3703.66,  "ls": 1e12,      "subsidio": 0.00},
 ]
 
 UMA_2026 = 113.14
+UMA_2026_MONTHLY = UMA_2026 * 30.4
 
 _FREQ_DAYS = {"semanal": 7, "catorcenal": 14, "quincenal": 15, "mensual": 30}
 
 
-def calc_isr(gravable: float) -> float:
-    row = next((r for r in _ISR_TABLE if r["li"] <= gravable <= r["ls"]), _ISR_TABLE[-1])
-    return round((gravable - row["li"]) * row["pct"] + row["fi"], 2)
+def _period_fraction(frequency: str) -> float:
+    """Fracción del mes cubierta por la frecuencia (para prorratear tablas mensuales)."""
+    return _FREQ_DAYS.get(frequency, 30) / 30.0
 
 
+def calc_isr(gravable: float, frequency: str = "quincenal") -> float:
+    """ISR aplicando tabla mensual prorrateada a la frecuencia del período.
+
+    Si no hay salario gravable (aguinaldo dentro de la exención de 30 UMAs,
+    empleado sin días trabajados, etc.) no hay ISR."""
+    if (gravable or 0.0) <= 0:
+        return 0.0
+    frac = _period_fraction(frequency)
+    monthly_gravable = gravable / frac if frac else gravable
+    row = next(
+        (r for r in _ISR_TABLE_MONTHLY if r["li"] <= monthly_gravable <= r["ls"]),
+        _ISR_TABLE_MONTHLY[-1],
+    )
+    monthly_isr = (monthly_gravable - row["li"]) * row["pct"] + row["fi"]
+    return round(max(monthly_isr, 0.0) * frac, 2)
+
+
+def calc_sae(gravable: float, frequency: str = "quincenal") -> float:
+    """Subsidio al empleo aplicable al salario gravable del período.
+
+    Sin salario gravable no aplica subsidio (el SAE es un crédito contra el
+    ISR sobre salarios; sin salario no hay derecho)."""
+    if (gravable or 0.0) <= 0:
+        return 0.0
+    frac = _period_fraction(frequency)
+    monthly_gravable = gravable / frac if frac else gravable
+    row = next(
+        (r for r in _SAE_TABLE_MONTHLY if r["li"] <= monthly_gravable <= r["ls"]),
+        _SAE_TABLE_MONTHLY[-1],
+    )
+    return round(row["subsidio"] * frac, 2)
+
+
+def calc_isr_net(gravable: float, frequency: str = "quincenal") -> tuple[float, float, float]:
+    """Devuelve (isr_retenido, subsidio_pagado, isr_bruto).
+
+    - Si SAE > ISR: no se retiene ISR; el patrón entrega la diferencia al
+      empleado como subsidio pagado (que se acredita contra ISR patronal
+      posteriormente).
+    - Si ISR > SAE: se retiene ISR - SAE.
+    """
+    isr_bruto = calc_isr(gravable, frequency)
+    sae = calc_sae(gravable, frequency)
+    if sae >= isr_bruto:
+        return 0.0, round(sae - isr_bruto, 2), isr_bruto
+    return round(isr_bruto - sae, 2), 0.0, isr_bruto
+
+
+def calc_imss_employee(sbc: float, dias: int) -> float:
+    """Cuota obrera IMSS.
+
+    - Enfermedad y maternidad (prestaciones en especie): 0.40% del SBC en
+      pensionados, 0.25% general.
+    - Invalidez y vida: 0.625%.
+    - Cesantía y vejez: 1.125%.
+    Estas son las cuotas del trabajador (Art. 25, 106, 147, 168 LSS).
+    """
+    # Tope SBC = 25 UMAs diarias
+    tope_sbc = 25 * UMA_2026
+    sbc_topado = min(sbc, tope_sbc)
+    diario = sbc_topado
+    return round(diario * dias * (0.0025 + 0.00625 + 0.01125), 2)
+
+
+def calc_imss_employer(sbc: float, dias: int) -> float:
+    """Cuota patronal IMSS (Art. 106, 168 LSS). Simplificada:
+
+    - Enfermedad y maternidad (prestaciones en especie):
+        · Cuota fija 20.40% del SMDF por cada trabajador
+        · Excedente: 1.10% sobre el SBC que exceda 3 SMDF
+    - Enfermedad y maternidad (prestaciones en dinero): 0.70%
+    - Invalidez y vida: 1.75%
+    - Cesantía y vejez: 3.150%
+    - Guarderías y prestaciones sociales: 1.00%
+    - Retiro: 2.00%
+    - Riesgo de trabajo: 0.54355% (prima media inicial de clase I; el
+      patrón real la determina por Anexo 5.9 IMSS)
+    """
+    tope_sbc = 25 * UMA_2026
+    sbc_topado = min(sbc, tope_sbc)
+    smdf = UMA_2026  # el "SMDF" está indexado a la UMA desde 2016
+
+    # E&M especie
+    cuota_fija = 0.2040 * smdf * dias
+    excedente_base = max(sbc_topado - 3 * smdf, 0)
+    em_especie_excedente = 0.0110 * excedente_base * dias
+    em_dinero = 0.0070 * sbc_topado * dias
+    inv_vida = 0.0175 * sbc_topado * dias
+    ces_vejez = 0.03150 * sbc_topado * dias
+    guarderias = 0.0100 * sbc_topado * dias
+    retiro = 0.0200 * sbc_topado * dias
+    rt = 0.0054355 * sbc_topado * dias
+
+    total = cuota_fija + em_especie_excedente + em_dinero + inv_vida + ces_vejez + guarderias + retiro + rt
+    return round(total, 2)
+
+
+def calc_infonavit_employer_amort(sbc: float, dias: int) -> float:
+    """Aportación patronal INFONAVIT (5% del SBC topado a 25 UMAs, Art. 29 LINFONAVIT)."""
+    tope_sbc = 25 * UMA_2026
+    return round(min(sbc, tope_sbc) * dias * 0.05, 2)
+
+
+# Backward-compat: la firma anterior era calc_imss(sbc, frequency). Mantengo el
+# alias para no romper llamadas externas.
 def calc_imss(sbc: float, frequency: str) -> float:
-    dias = _FREQ_DAYS.get(frequency, 30)
-    sbc_diario = sbc / 30
-    enfermedad_maternidad = sbc_diario * dias * 0.0025
-    invalidez_vida = sbc_diario * dias * 0.00625
-    cesantia_vejez = sbc_diario * dias * 0.01125
-    return round(enfermedad_maternidad + invalidez_vida + cesantia_vejez, 2)
+    return calc_imss_employee(sbc, _FREQ_DAYS.get(frequency, 30))
 
 
 def _full_name(e: models.Employee) -> str:
@@ -214,6 +335,7 @@ async def _period_summary(db: AsyncSession, p: models.PayrollPeriod) -> dict:
     return {
         "id": p.id, "name": p.name, "frequency": p.frequency, "start_date": p.start_date,
         "end_date": p.end_date, "payment_date": p.payment_date, "status": p.status,
+        "kind": p.kind,
         "total_employees": len(details),
         "total_gross": round(sum(d.total_gross for d in details), 2),
         "total_deductions": round(sum(d.total_deductions for d in details), 2),
@@ -237,18 +359,96 @@ async def get_period_detail(db: AsyncSession, period_id: int) -> Optional[dict]:
     for d, emp in rows:
         details.append({
             "employee_id": d.employee_id, "employee_name": _full_name(emp), "department": d.department,
-            "base_salary": d.base_salary, "days_worked": d.days_worked, "salary_earned": d.salary_earned,
+            "base_salary": d.base_salary, "days_worked": d.days_worked,
+            "days_absent": d.days_absent, "days_incapacity": d.days_incapacity,
+            "salary_earned": d.salary_earned,
             "overtime_double": d.overtime_double, "overtime_triple": d.overtime_triple, "bonus": d.bonus,
             "vacation_premium": d.vacation_premium, "food_vouchers": d.food_vouchers, "savings_fund": d.savings_fund,
+            "aguinaldo": d.aguinaldo, "subsidy_applied": d.subsidy_applied,
             "imss_employee": d.imss_employee, "isr": d.isr, "infonavit": d.infonavit, "fonacot": d.fonacot,
-            "loan_deduction": d.loan_deduction, "total_gross": d.total_gross, "total_deductions": d.total_deductions,
+            "loan_deduction": d.loan_deduction,
+            "imss_employer": d.imss_employer, "infonavit_employer": d.infonavit_employer,
+            "total_gross": d.total_gross, "total_deductions": d.total_deductions,
             "total_net": d.total_net, "dispersion_status": d.dispersion_status, "bank": emp.bank, "clabe": emp.clabe,
         })
     summary["details"] = details
+    summary["kind"] = p.kind
+    # Totales patronal (informativos)
+    res_det = await db.execute(select(models.PayrollDetail).where(models.PayrollDetail.period_id == period_id))
+    all_det = res_det.scalars().all()
+    summary["total_imss_employer"] = round(sum(d.imss_employer for d in all_det), 2)
+    summary["total_infonavit_employer"] = round(sum(d.infonavit_employer for d in all_det), 2)
+    summary["total_subsidy_applied"] = round(sum(d.subsidy_applied for d in all_det), 2)
     return summary
 
 
+async def _attendance_summary_for_period(
+    db: AsyncSession, employee_id: int, start: date, end: date
+) -> dict:
+    """Cuenta días de falta/incapacidad/vacación y horas extra por empleado
+    en el rango del período. Se usa para ajustar el cálculo del recibo."""
+    res = await db.execute(
+        select(models.Attendance).where(
+            models.Attendance.employee_id == employee_id,
+            models.Attendance.date >= start.isoformat(),
+            models.Attendance.date <= end.isoformat(),
+        )
+    )
+    rows = res.scalars().all()
+
+    days_absent = 0.0
+    days_incapacity = 0.0
+    days_vacation = 0.0
+    # Horas extra por semana ISO para aplicar el tope de 9h/sem dobles
+    extra_by_iso_week: dict = {}
+    for a in rows:
+        if a.type == "falta":
+            days_absent += 1
+        elif a.type == "incapacidad":
+            days_incapacity += 1
+        elif a.type == "vacacion":
+            days_vacation += 1
+        elif a.type == "extra" and a.hours:
+            d = date.fromisoformat(a.date)
+            iso = d.isocalendar()
+            key = (iso[0], iso[1])
+            extra_by_iso_week[key] = extra_by_iso_week.get(key, 0.0) + a.hours
+
+    double_hours = 0.0
+    triple_hours = 0.0
+    for hrs in extra_by_iso_week.values():
+        double_hours += min(hrs, 9)
+        triple_hours += max(hrs - 9, 0)
+
+    return {
+        "days_absent": days_absent,
+        "days_incapacity": days_incapacity,
+        "days_vacation": days_vacation,
+        "double_hours": double_hours,
+        "triple_hours": triple_hours,
+    }
+
+
+def _hourly_rate(base_salary: float) -> float:
+    """Salario por hora (jornada estándar 8h/día, 30 días/mes)."""
+    return (base_salary or 0.0) / 30.0 / 8.0
+
+
 async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[int] = None) -> Optional[dict]:
+    """Calcula el recibo de nómina de cada empleado del período.
+
+    Incluye (nivel mundial):
+      - Faltas (descuento proporcional del salario).
+      - Incapacidad: primeros 3 días descontados (Art. 42 LSS); a partir del
+        4to día el IMSS paga el subsidio y el patrón no descuenta salario.
+      - Horas extra tomadas de Asistencia (type=extra): dobles hasta 9h/sem,
+        triples excedente (Art. 66-68 LFT).
+      - Prima vacacional si hubo vacaciones tomadas en el período (25% Art. 80).
+      - ISR con subsidio al empleo (crédito al salario).
+      - IMSS obrero + patronal (para SUA y P&L de nómina).
+      - INFONAVIT obrero + patronal (5% amortización habitación).
+      - Aguinaldo si period.kind == 'aguinaldo' (proporcional 15 días LFT Art. 87).
+    """
     res = await db.execute(select(models.PayrollPeriod).where(models.PayrollPeriod.id == period_id))
     period = res.scalars().first()
     if not period:
@@ -266,22 +466,120 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
     period_days = (end - start).days + 1
 
     employees = await get_employees(db)
-    eligible = [e for e in employees if e.is_active and e.pay_frequency == period.frequency]
+    # Para aguinaldo se calcula independientemente de la frecuencia (una vez al año)
+    if period.kind == "aguinaldo":
+        eligible = [e for e in employees if e.is_active]
+    else:
+        eligible = [e for e in employees if e.is_active and e.pay_frequency == period.frequency]
 
     for e in eligible:
-        salary_earned = round((e.base_salary / 30) * period_days, 2)
-        imss = calc_imss(e.sbc, period.frequency)
-        infonavit = calc_infonavit(e, salary_earned)
-        fonacot = calc_fonacot(e)
-        isr = calc_isr(salary_earned - imss)
-        total_gross = salary_earned
-        total_deductions = round(imss + isr + infonavit + fonacot, 2)
-        total_net = round(total_gross - total_deductions, 2)
+        att = await _attendance_summary_for_period(db, e.id, start, end)
+
+        base_daily = (e.base_salary or 0.0) / 30.0
+
+        if period.kind == "aguinaldo":
+            # Aguinaldo proporcional (LFT Art. 87): mínimo 15 días de salario
+            # por año trabajado, proporcional para menos de un año.
+            try:
+                hire = date.fromisoformat(e.hire_date) if e.hire_date else start
+            except ValueError:
+                hire = start
+            year_start = date(start.year, 1, 1)
+            worked_from = max(hire, year_start)
+            worked_days = max((end - worked_from).days + 1, 0)
+            worked_days = min(worked_days, 365)
+            aguinaldo = round(base_daily * 15 * (worked_days / 365.0), 2)
+
+            imss_employee = 0.0  # aguinaldo exento hasta 30 UMAs (Art. 93 LISR)
+            imss_employer = 0.0
+            infonavit_amt = 0.0
+            infonavit_employer_amt = 0.0
+            fonacot_amt = 0.0
+
+            uma_exenta = 30 * UMA_2026
+            gravable = max(aguinaldo - uma_exenta, 0.0)
+            isr_ret, sae, _ = calc_isr_net(gravable, "mensual")
+
+            detail = models.PayrollDetail(
+                period_id=period.id, employee_id=e.id, department=e.department,
+                base_salary=e.base_salary,
+                days_worked=0, days_absent=0, days_incapacity=0,
+                salary_earned=0.0, aguinaldo=aguinaldo,
+                overtime_double=0.0, overtime_triple=0.0,
+                bonus=0.0, vacation_premium=0.0, food_vouchers=0.0, savings_fund=0.0,
+                subsidy_applied=sae,
+                imss_employee=imss_employee, isr=isr_ret,
+                infonavit=infonavit_amt, fonacot=fonacot_amt, loan_deduction=0.0,
+                imss_employer=imss_employer, infonavit_employer=infonavit_employer_amt,
+                total_gross=round(aguinaldo, 2),
+                total_deductions=round(isr_ret, 2),
+                total_net=round(aguinaldo - isr_ret + sae, 2),
+                dispersion_status="pendiente",
+            )
+            db.add(detail)
+            continue
+
+        # ── Nómina regular ──────────────────────────────────────────────────
+        # Faltas descontadas
+        days_absent = att["days_absent"]
+        # Incapacidad: primeros 3 días descontados, el resto lo paga IMSS
+        days_incapacity = att["days_incapacity"]
+        days_deducted_incap = min(days_incapacity, 3)
+        # Vacaciones tomadas se pagan (no se descuentan)
+        days_worked = max(period_days - days_absent - days_deducted_incap, 0)
+
+        salary_earned = round(base_daily * days_worked, 2)
+
+        # Horas extra
+        hourly = _hourly_rate(e.base_salary or 0.0)
+        overtime_double = round(att["double_hours"] * hourly * 2, 2)
+        overtime_triple = round(att["triple_hours"] * hourly * 3, 2)
+
+        # Prima vacacional (25% del salario correspondiente a los días de
+        # vacaciones tomados en el período)
+        vacation_premium = round(att["days_vacation"] * base_daily * 0.25, 2)
+
+        gross_taxable = salary_earned + overtime_double + overtime_triple + vacation_premium
+
+        # IMSS obrero + patronal sobre SBC × días cotizados (se restan
+        # ausencias del período de cotización)
+        dias_cotizados = max(_FREQ_DAYS.get(period.frequency, 30) - days_absent, 0)
+        imss_employee = calc_imss_employee(e.sbc or 0.0, int(round(dias_cotizados)))
+        imss_employer = calc_imss_employer(e.sbc or 0.0, int(round(dias_cotizados)))
+
+        # INFONAVIT obrero (crédito habitación configurado en el empleado)
+        infonavit_amt = calc_infonavit(e, salary_earned)
+        # INFONAVIT patronal (5% SBC amortización habitación)
+        infonavit_employer_amt = calc_infonavit_employer_amort(e.sbc or 0.0, int(round(dias_cotizados)))
+        # FONACOT
+        fonacot_amt = calc_fonacot(e)
+
+        # ISR sobre gravable (salario + h.extra gravable + prima vac gravable)
+        # Simplificación: aplicamos toda h.extra y prima vacacional como gravable
+        # (los exentos por ley se declaran en el CFDI 4.0, aquí calculamos ISR
+        # sobre el bruto para retención conservadora).
+        gravable = max(gross_taxable - imss_employee, 0.0)
+        isr_ret, sae, _ = calc_isr_net(gravable, period.frequency)
+
+        total_gross = round(gross_taxable, 2)
+        total_deductions = round(imss_employee + isr_ret + infonavit_amt + fonacot_amt, 2)
+        total_net = round(total_gross - total_deductions + sae, 2)
+
         detail = models.PayrollDetail(
             period_id=period.id, employee_id=e.id, department=e.department,
-            base_salary=e.base_salary, days_worked=period_days, salary_earned=salary_earned,
-            imss_employee=imss, isr=isr, infonavit=infonavit, fonacot=fonacot, total_gross=total_gross,
-            total_deductions=total_deductions, total_net=total_net, dispersion_status="pendiente",
+            base_salary=e.base_salary,
+            days_worked=days_worked, days_absent=days_absent, days_incapacity=days_incapacity,
+            salary_earned=salary_earned,
+            overtime_double=overtime_double, overtime_triple=overtime_triple,
+            bonus=0.0, vacation_premium=vacation_premium,
+            food_vouchers=0.0, savings_fund=0.0, aguinaldo=0.0,
+            subsidy_applied=sae,
+            imss_employee=imss_employee, isr=isr_ret,
+            infonavit=infonavit_amt, fonacot=fonacot_amt, loan_deduction=0.0,
+            imss_employer=imss_employer, infonavit_employer=infonavit_employer_amt,
+            total_gross=total_gross,
+            total_deductions=total_deductions, total_net=total_net,
+            dispersion_status="pendiente",
         )
         db.add(detail)
 
@@ -724,3 +1022,136 @@ async def generate_sua_csv(db: AsyncSession, period_id: int) -> str:
             "Archivo de apoyo - capturar/validar en programa SUA oficial del IMSS",
         ])
     return buf.getvalue()
+
+
+# ── Recibos PDF ─────────────────────────────────────────────────────────────
+
+async def _get_company_info(db: AsyncSession) -> tuple[str, Optional[str]]:
+    try:
+        from app.modules.core_config import models as cfg_models
+        res = await db.execute(select(cfg_models.CompanyProfile).limit(1))
+        cp = res.scalars().first()
+        if cp:
+            return (cp.name or "STHENOVA ERP", getattr(cp, "rfc", None))
+    except Exception:
+        pass
+    return "STHENOVA ERP", None
+
+
+def _employee_to_dict(emp: models.Employee) -> dict:
+    return {
+        "id": emp.id,
+        "employee_number": emp.employee_number,
+        "name": emp.name, "last_name": emp.last_name,
+        "position": emp.position, "department": emp.department,
+        "rfc": emp.rfc, "curp": emp.curp, "nss": emp.nss,
+        "bank": emp.bank, "clabe": emp.clabe,
+    }
+
+
+async def build_employee_receipt(
+    db: AsyncSession, period_id: int, employee_id: int
+) -> tuple[bytes, str]:
+    """Genera el PDF del recibo de un empleado en un período. Devuelve
+    (bytes, filename)."""
+    from app.modules.hr.receipts import build_receipt_pdf
+
+    res = await db.execute(
+        select(models.PayrollDetail, models.Employee, models.PayrollPeriod)
+        .join(models.Employee, models.PayrollDetail.employee_id == models.Employee.id)
+        .join(models.PayrollPeriod, models.PayrollDetail.period_id == models.PayrollPeriod.id)
+        .where(
+            models.PayrollDetail.period_id == period_id,
+            models.PayrollDetail.employee_id == employee_id,
+        )
+    )
+    row = res.first()
+    if not row:
+        raise ValueError("No hay recibo para ese empleado en este período")
+
+    d, emp, p = row
+    period_dict = {
+        "name": p.name, "frequency": p.frequency,
+        "start_date": p.start_date, "end_date": p.end_date,
+        "payment_date": p.payment_date, "kind": p.kind,
+    }
+    detail_dict = {
+        "days_worked": d.days_worked, "days_absent": d.days_absent, "days_incapacity": d.days_incapacity,
+        "salary_earned": d.salary_earned, "overtime_double": d.overtime_double, "overtime_triple": d.overtime_triple,
+        "bonus": d.bonus, "vacation_premium": d.vacation_premium, "food_vouchers": d.food_vouchers,
+        "savings_fund": d.savings_fund, "aguinaldo": d.aguinaldo, "subsidy_applied": d.subsidy_applied,
+        "imss_employee": d.imss_employee, "isr": d.isr, "infonavit": d.infonavit,
+        "fonacot": d.fonacot, "loan_deduction": d.loan_deduction,
+        "imss_employer": d.imss_employer, "infonavit_employer": d.infonavit_employer,
+        "total_net": d.total_net,
+    }
+    company_name, company_rfc = await _get_company_info(db)
+    pdf = build_receipt_pdf(
+        _employee_to_dict(emp), period_dict, detail_dict,
+        company_name=company_name, company_rfc=company_rfc,
+    )
+    safe = _full_name(emp).replace(" ", "_")
+    return pdf, f"recibo_{emp.employee_number}_{safe}_periodo_{period_id}.pdf"
+
+
+async def build_period_receipts_zip(db: AsyncSession, period_id: int) -> tuple[bytes, str]:
+    """Genera un ZIP con los recibos de todos los empleados del período."""
+    from app.modules.hr.receipts import build_receipt_pdf, build_receipts_zip
+
+    res = await db.execute(
+        select(models.PayrollDetail, models.Employee, models.PayrollPeriod)
+        .join(models.Employee, models.PayrollDetail.employee_id == models.Employee.id)
+        .join(models.PayrollPeriod, models.PayrollDetail.period_id == models.PayrollPeriod.id)
+        .where(models.PayrollDetail.period_id == period_id)
+    )
+    rows = res.all()
+    if not rows:
+        raise ValueError("El período no tiene recibos calculados")
+
+    company_name, company_rfc = await _get_company_info(db)
+    files: List[tuple[str, bytes]] = []
+    for d, emp, p in rows:
+        period_dict = {
+            "name": p.name, "frequency": p.frequency,
+            "start_date": p.start_date, "end_date": p.end_date,
+            "payment_date": p.payment_date, "kind": p.kind,
+        }
+        detail_dict = {
+            "days_worked": d.days_worked, "days_absent": d.days_absent, "days_incapacity": d.days_incapacity,
+            "salary_earned": d.salary_earned, "overtime_double": d.overtime_double, "overtime_triple": d.overtime_triple,
+            "bonus": d.bonus, "vacation_premium": d.vacation_premium, "food_vouchers": d.food_vouchers,
+            "savings_fund": d.savings_fund, "aguinaldo": d.aguinaldo, "subsidy_applied": d.subsidy_applied,
+            "imss_employee": d.imss_employee, "isr": d.isr, "infonavit": d.infonavit,
+            "fonacot": d.fonacot, "loan_deduction": d.loan_deduction,
+            "imss_employer": d.imss_employer, "infonavit_employer": d.infonavit_employer,
+            "total_net": d.total_net,
+        }
+        pdf = build_receipt_pdf(
+            _employee_to_dict(emp), period_dict, detail_dict,
+            company_name=company_name, company_rfc=company_rfc,
+        )
+        safe = _full_name(emp).replace(" ", "_")
+        files.append((f"recibo_{emp.employee_number}_{safe}.pdf", pdf))
+
+    zip_bytes = build_receipts_zip(files)
+    return zip_bytes, f"recibos_periodo_{period_id}.zip"
+
+
+async def create_aguinaldo_period(db: AsyncSession, year: int, payment_date: str, user_id: Optional[int] = None) -> models.PayrollPeriod:
+    """Crea un período tipo aguinaldo para el año dado. Al calcularlo, se usa la
+    fórmula proporcional (mínimo 15 días de salario) considerando los días
+    trabajados en el año."""
+    period = models.PayrollPeriod(
+        name=f"Aguinaldo {year}",
+        frequency="mensual",  # informativo; el cálculo del aguinaldo no usa la tabla mensual
+        start_date=f"{year}-01-01",
+        end_date=f"{year}-12-31",
+        payment_date=payment_date,
+        kind="aguinaldo",
+        status="draft",
+    )
+    db.add(period)
+    await db.commit()
+    await db.refresh(period)
+    await _log_audit(db, user_id, "CREATE_AGUINALDO_PERIOD", f"Aguinaldo {year} creado", {"id": period.id, "year": year})
+    return period

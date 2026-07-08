@@ -214,3 +214,38 @@ async def report_sua(period_id: int, db: DB, current_user: CurrentUser):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="sua_apoyo_{period_id}.csv"'})
+
+
+# ── Recibo PDF por empleado + descarga bulk (ZIP) ───────────────────────────
+
+@router.get("/payroll/periods/{period_id}/receipts/{employee_id}.pdf")
+async def receipt_pdf(period_id: int, employee_id: int, db: DB, current_user: CurrentUser):
+    try:
+        pdf, filename = await service.build_employee_receipt(db, period_id, employee_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/payroll/periods/{period_id}/receipts.zip")
+async def receipts_zip(period_id: int, db: DB, current_user: CurrentUser):
+    try:
+        content, filename = await service.build_period_receipts_zip(db, period_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return Response(
+        content=content, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── Aguinaldo helper (crea período tipo aguinaldo) ──────────────────────────
+
+@router.post("/payroll/aguinaldo")
+async def create_aguinaldo(data: schemas.AguinaldoRequest, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    period = await service.create_aguinaldo_period(db, data.year, data.payment_date, user_id=current_user.id)
+    return {"id": period.id}
