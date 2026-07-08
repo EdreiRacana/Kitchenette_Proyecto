@@ -63,6 +63,16 @@ async def read_attendance(db: DB, current_user: CurrentUser, date: Optional[str]
     return await service.get_attendance(db, date_filter=date)
 
 
+@router.get("/employees/{employee_id}/attendance")
+async def read_employee_attendance(
+    employee_id: int, db: DB, current_user: CurrentUser,
+    start_date: Optional[str] = None, end_date: Optional[str] = None,
+):
+    """Historial de asistencia de un empleado. Se usa en el drawer para mostrar
+    faltas, retardos, incapacidades y horas extra recientes de ese trabajador."""
+    return await service.get_employee_attendance(db, employee_id, start_date, end_date)
+
+
 @router.post("/attendance")
 async def create_attendance(data: schemas.AttendanceCreate, db: DB, current_user: CurrentUser):
     att = await service.create_attendance(db, data, user_id=current_user.id)

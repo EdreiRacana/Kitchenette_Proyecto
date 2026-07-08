@@ -39,6 +39,11 @@ export const hrApi = {
     bonus?: number; food_vouchers?: number; savings_fund?: number;
     loan_deduction?: number; notes?: string;
   }) => api.patch(`/hr/payroll/periods/${periodId}/details/${employeeId}`, data).then(r => r.data),
+
+  employeeAttendance: (employeeId: number, startDate?: string, endDate?: string) =>
+    api.get(`/hr/employees/${employeeId}/attendance`, {
+      params: { start_date: startDate, end_date: endDate },
+    }).then(r => r.data),
   downloadHeadcountReport: () => api.get("/hr/reports/headcount", { responseType: "blob" }),
   downloadVacationReport: () => api.get("/hr/reports/vacations", { responseType: "blob" }),
   downloadOvertimeReport: (startDate: string, endDate: string) =>

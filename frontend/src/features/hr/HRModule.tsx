@@ -787,6 +787,30 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                     )}
                     {p.status === "calculated" && (
                       <>
+                        <button
+                          onClick={async e => {
+                            e.stopPropagation();
+                            if (!window.confirm(
+                              "Recalcular reprocesa asistencia, incluye empleados nuevos y actualiza los importes.\n\n"
+                              + "Las ediciones manuales (bonos, vales, ahorro, préstamos, notas) SÍ se preservan.\n\n"
+                              + "¿Continuar?"
+                            )) return;
+                            try {
+                              await hrApi.calculatePeriod(p.id);
+                              await load();
+                              if (selectedPeriod?.id === p.id) {
+                                const d = await hrApi.periodDetail(p.id);
+                                setPeriodDetail(d);
+                              }
+                            } catch (err: any) {
+                              alert(err?.response?.data?.detail || "Error al recalcular");
+                            }
+                          }}
+                          title="Recalcular incluyendo empleados y asistencia nueva"
+                          style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+                        >
+                          <RefreshCw size={13} style={{ verticalAlign: -2, marginRight: 4 }} /> Recalcular
+                        </button>
                         <button onClick={async e => { e.stopPropagation(); try { await hrApi.approvePeriod(p.id); await load(); } catch (err: any) { alert(err?.response?.data?.detail || "Error al aprobar"); } }} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
                           Aprobar
                         </button>
@@ -851,93 +875,60 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                 )}
               </div>
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1150 }}>
                   <thead>
                     <tr style={{ background: t.panel2 }}>
-                      {["Empleado", "Bruto", "Bono", "Vales", "Ahorro", "Préstamo", "ISR", "Deducciones", "Neto", ""].map((h, i) => (
-                        <th key={i} style={{ padding: "10px 14px", textAlign: i === 0 ? "left" : i === 9 ? "center" : "right", fontSize: 10.5, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.3 }}>{h}</th>
+                      {["Empleado", "Días", "Faltas", "Incap.", "Salario", "H.Extra", "Prima vac.", "Bono", "Vales", "Ahorro", "Préstamo", "ISR", "Neto", ""].map((h, i) => (
+                        <th key={i} style={{ padding: "10px 12px", textAlign: i === 0 ? "left" : i === 13 ? "center" : "right", fontSize: 10.5, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap" }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {(periodDetail.details || []).map((row: any, i: number) => (
-                      <tr key={row.employee_id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
-                        <td style={{ padding: "11px 14px", fontSize: 13, color: t.textHi, fontWeight: 600 }}>
-                          {row.employee_name}
-                          {row.edited_manually && (
-                            <span title={row.notes || "Editado manualmente"}
-                                  style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 700, color: t.warn, background: t.warn + "18", padding: "1px 6px", borderRadius: 10 }}>
-                              EDITADO
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ padding: "11px 14px", fontSize: 13, color: t.textHi, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(row.total_gross)}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 12.5, color: row.bonus > 0 ? t.good : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.bonus > 0 ? mxn(row.bonus) : "—"}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 12.5, color: row.food_vouchers > 0 ? t.good : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.food_vouchers > 0 ? mxn(row.food_vouchers) : "—"}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 12.5, color: row.savings_fund > 0 ? t.good : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.savings_fund > 0 ? mxn(row.savings_fund) : "—"}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 12.5, color: row.loan_deduction > 0 ? t.bad : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.loan_deduction > 0 ? mxn(row.loan_deduction) : "—"}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 12.5, color: t.bad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(row.isr)}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 13, fontWeight: 600, color: t.bad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(row.total_deductions)}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 13.5, fontWeight: 800, color: t.good, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(row.total_net)}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "center" }}>
-                          {selectedPeriod.status === "calculated" && (
-                            <button
-                              onClick={() => setDetailEditor({ period: selectedPeriod, row })}
-                              title="Editar bonos, vales, ahorro, préstamo"
-                              style={{ background: t.panel3, border: `1px solid ${t.border}`, color: t.nova, padding: "4px 8px", borderRadius: 6, cursor: "pointer", fontSize: 11.5, fontWeight: 600 }}
-                            >
-                              <Edit2 size={12} style={{ verticalAlign: -1, marginRight: 4 }} /> Editar
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    {(periodDetail.details || []).map((row: any, i: number) => {
+                      const hExtraTotal = (row.overtime_double || 0) + (row.overtime_triple || 0);
+                      return (
+                        <tr key={row.employee_id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
+                          <td style={{ padding: "11px 12px", fontSize: 13, color: t.textHi, fontWeight: 600 }}>
+                            {row.employee_name}
+                            {row.edited_manually && (
+                              <span title={row.notes || "Editado manualmente"}
+                                    style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 700, color: t.warn, background: t.warn + "18", padding: "1px 6px", borderRadius: 10 }}>
+                                EDITADO
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: t.textMid, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.days_worked ?? 0}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: (row.days_absent || 0) > 0 ? t.warn : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: (row.days_absent || 0) > 0 ? 700 : 400 }}>{(row.days_absent || 0) > 0 ? row.days_absent : "—"}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: (row.days_incapacity || 0) > 0 ? t.nova : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: (row.days_incapacity || 0) > 0 ? 700 : 400 }}>{(row.days_incapacity || 0) > 0 ? row.days_incapacity : "—"}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: t.textMid, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(row.salary_earned)}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: hExtraTotal > 0 ? t.good : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: hExtraTotal > 0 ? 600 : 400 }}>{hExtraTotal > 0 ? mxn(hExtraTotal) : "—"}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: (row.vacation_premium || 0) > 0 ? t.good : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(row.vacation_premium || 0) > 0 ? mxn(row.vacation_premium) : "—"}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: row.bonus > 0 ? t.good : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.bonus > 0 ? mxn(row.bonus) : "—"}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: row.food_vouchers > 0 ? t.good : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.food_vouchers > 0 ? mxn(row.food_vouchers) : "—"}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: row.savings_fund > 0 ? t.good : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.savings_fund > 0 ? mxn(row.savings_fund) : "—"}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: row.loan_deduction > 0 ? t.bad : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.loan_deduction > 0 ? mxn(row.loan_deduction) : "—"}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: t.bad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(row.isr)}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 13.5, fontWeight: 800, color: t.good, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(row.total_net)}</td>
+                          <td style={{ padding: "8px 12px", textAlign: "center" }}>
+                            {selectedPeriod.status === "calculated" && (
+                              <button
+                                onClick={() => setDetailEditor({ period: selectedPeriod, row })}
+                                title="Editar bonos, vales, ahorro, préstamo"
+                                style={{ background: t.panel3, border: `1px solid ${t.border}`, color: t.nova, padding: "4px 8px", borderRadius: 6, cursor: "pointer", fontSize: 11.5, fontWeight: 600 }}
+                              >
+                                <Edit2 size={12} style={{ verticalAlign: -1, marginRight: 4 }} /> Editar
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
 
-          {/* Payroll calculator preview */}
-          <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi, marginBottom: 4 }}>Calculadora de nómina — Vista previa</div>
-            <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 16 }}>Percepciones y deducciones estimadas por empleado (quincena)</div>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
-                <thead>
-                  <tr style={{ background: t.panel2 }}>
-                    {["Empleado", "Días trab.", "Salario base", "H.Extra", "Total percep.", "IMSS obrg.", "ISR", "Total deduc.", "NETO"].map((h, i) => (
-                      <th key={i} style={{ padding: "10px 14px", textAlign: i > 1 ? "right" : "left", fontSize: 10.5, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {employees.filter(e => e.pay_frequency === "quincenal" && e.is_active).map((e, i) => {
-                    const diasPeriodo = 15;
-                    const salarioGanado = (e.base_salary / 30) * diasPeriodo;
-                    const imss = calcIMSS(e.sbc, "quincenal");
-                    const isr = calcISR(salarioGanado - imss);
-                    const totalPerc = salarioGanado;
-                    const totalDeduc = imss + isr;
-                    const neto = totalPerc - totalDeduc;
-                    return (
-                      <tr key={e.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
-                        <td style={{ padding: "11px 14px", fontSize: 13, color: t.textHi, fontWeight: 600 }}>{fullName(e)}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 13, color: t.textMid, textAlign: "right" }}>{diasPeriodo}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 13, color: t.textHi, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(salarioGanado)}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 13, color: t.textLo, textAlign: "right" }}>—</td>
-                        <td style={{ padding: "11px 14px", fontSize: 13, fontWeight: 600, color: t.good, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(totalPerc)}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 13, color: t.bad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(imss)}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 13, color: t.bad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(isr)}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 13, fontWeight: 600, color: t.bad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(totalDeduc)}</td>
-                        <td style={{ padding: "11px 14px", fontSize: 14, fontWeight: 800, color: t.good, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(neto)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
       )}
 
@@ -1054,6 +1045,9 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                   </div>
                 );
               })()}
+
+              {/* Asistencia reciente (últimos 30 días) */}
+              <EmployeeAttendancePanel t={t} employee={selectedEmployee} />
 
               {/* Personal info */}
               {[
@@ -2094,4 +2088,87 @@ function PayrollDetailEditor({
       </div>
     </div>
   , document.body);
+}
+
+
+// ── EmployeeAttendancePanel — asistencia últimos 30 días en el drawer ───────
+function EmployeeAttendancePanel({ t, employee }: { t: any; employee: any }) {
+  const [data, setData] = useState<{ items: any[]; summary: any } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!employee?.id) return;
+    setLoading(true); setErr(null);
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - 30);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    hrApi.employeeAttendance(employee.id, iso(start), iso(end))
+      .then((d: any) => setData(d))
+      .catch((e: any) => setErr(e?.response?.data?.detail || "Error"))
+      .finally(() => setLoading(false));
+  }, [employee?.id]);
+
+  const cards = data ? [
+    { label: "Faltas", value: data.summary.faltas ?? 0, color: t.bad },
+    { label: "Retardos", value: data.summary.retardos ?? 0, color: t.warn },
+    { label: "Incapacidad", value: data.summary.incapacidad ?? 0, color: t.nova },
+    { label: "Vacaciones", value: data.summary.vacacion ?? 0, color: t.good },
+    { label: "H. extra", value: `${data.summary.extra_hours ?? 0}h`, color: "#A78BFA" },
+  ] : [];
+
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: t.textLo, letterSpacing: 0.8, marginBottom: 10, textTransform: "uppercase" }}>
+        Asistencia (últimos 30 días)
+      </div>
+
+      {loading && <div style={{ fontSize: 12.5, color: t.textLo }}>Cargando…</div>}
+      {err && <div style={{ fontSize: 12.5, color: t.bad, background: t.bad + "15", padding: "8px 12px", borderRadius: 8 }}>{err}</div>}
+
+      {!loading && !err && data && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, marginBottom: 12 }}>
+            {cards.map(c => (
+              <div key={c.label} style={{ background: t.panel2, borderRadius: 8, padding: "8px 6px", textAlign: "center", border: `1px solid ${t.border}` }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: c.color, fontVariantNumeric: "tabular-nums" }}>{c.value}</div>
+                <div style={{ fontSize: 10, color: t.textLo, marginTop: 2 }}>{c.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {data.items.length === 0 ? (
+            <div style={{ fontSize: 12, color: t.textLo, background: t.panel2, borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
+              Sin incidencias registradas en los últimos 30 días.
+            </div>
+          ) : (
+            <div style={{ background: t.panel2, borderRadius: 8, overflow: "hidden", maxHeight: 200, overflowY: "auto" }}>
+              {data.items.slice(0, 15).map((a: any, i: number) => {
+                const meta = ATTENDANCE_META[a.type] || { label: a.type, color: t.textLo, icon: Info };
+                const Icon = meta.icon;
+                return (
+                  <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderBottom: i < Math.min(data.items.length, 15) - 1 ? `1px solid ${t.borderSoft}` : "none" }}>
+                    <div style={{ width: 24, height: 24, borderRadius: 99, background: meta.color + "22", color: meta.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <Icon size={11} />
+                    </div>
+                    <span style={{ fontSize: 12, color: t.textHi, fontWeight: 600 }}>{meta.label}</span>
+                    {a.hours != null && a.type === "extra" && (
+                      <span style={{ fontSize: 11, color: "#A78BFA", background: "#A78BFA22", padding: "1px 7px", borderRadius: 10, fontWeight: 600 }}>{a.hours}h</span>
+                    )}
+                    <span style={{ marginLeft: "auto", fontSize: 11.5, color: t.textLo, fontFamily: "monospace" }}>{a.date}</span>
+                  </div>
+                );
+              })}
+              {data.items.length > 15 && (
+                <div style={{ padding: "6px 12px", fontSize: 11, color: t.textLo, textAlign: "center", background: t.panel3 }}>
+                  … y {data.items.length - 15} más
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
 }

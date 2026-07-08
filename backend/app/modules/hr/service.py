@@ -257,6 +257,49 @@ async def create_attendance(db: AsyncSession, data: schemas.AttendanceCreate, us
     return att
 
 
+async def get_employee_attendance(
+    db: AsyncSession, employee_id: int,
+    start_date: Optional[str] = None, end_date: Optional[str] = None,
+) -> dict:
+    """Regresa las asistencias de un empleado en un rango + el resumen agregado
+    (faltas, retardos, incapacidades, vacaciones y horas extra)."""
+    stmt = select(models.Attendance).where(models.Attendance.employee_id == employee_id)
+    if start_date:
+        stmt = stmt.where(models.Attendance.date >= start_date)
+    if end_date:
+        stmt = stmt.where(models.Attendance.date <= end_date)
+    stmt = stmt.order_by(models.Attendance.date.desc(), models.Attendance.id.desc())
+    res = await db.execute(stmt)
+    rows = list(res.scalars().all())
+
+    # Los tipos guardados son singulares ("falta", "retardo"); el summary
+    # expone conteos con nombres consistentes que la UI reconoce.
+    _COUNT_KEY = {
+        "falta": "faltas",
+        "retardo": "retardos",
+        "incapacidad": "incapacidad",
+        "vacacion": "vacacion",
+        "permiso": "permiso",
+        "extra": "extra",
+    }
+    summary = {v: 0 for v in _COUNT_KEY.values()}
+    summary["extra_hours"] = 0.0
+    items = []
+    for a in rows:
+        key = _COUNT_KEY.get(a.type)
+        if key:
+            summary[key] = summary.get(key, 0) + 1
+        if a.type == "extra" and a.hours:
+            summary["extra_hours"] += float(a.hours)
+        items.append({
+            "id": a.id, "date": a.date, "type": a.type,
+            "time": a.time, "hours": a.hours, "notes": a.notes,
+            "approved": a.approved, "channel": a.channel,
+        })
+    summary["extra_hours"] = round(summary["extra_hours"], 2)
+    return {"items": items, "summary": summary}
+
+
 async def get_attendance(db: AsyncSession, date_filter: Optional[str] = None) -> List[dict]:
     stmt = select(models.Attendance, models.Employee).join(models.Employee, models.Attendance.employee_id == models.Employee.id)
     if date_filter:
@@ -479,12 +522,22 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
     period = res.scalars().first()
     if not period:
         return None
-    if period.status != "draft":
-        raise ValueError("Solo se pueden calcular períodos en borrador")
+    if period.status not in ("draft", "calculated"):
+        raise ValueError("Solo se pueden calcular períodos en borrador o ya calculados. Una nómina aprobada ya no se puede recalcular.")
 
-    # Limpia cálculo previo si existiera
+    # Recalcular: guarda las ediciones manuales previas (bonos, vales, ahorro,
+    # préstamos y notas) para reaplicarlas al final. Así el operador que agregó
+    # un empleado nuevo o corrigió una asistencia no pierde los ajustes hechos
+    # antes en otros empleados.
     res_old = await db.execute(select(models.PayrollDetail).where(models.PayrollDetail.period_id == period_id))
+    old_manual: dict[int, dict] = {}
     for old in res_old.scalars().all():
+        if old.edited_manually:
+            old_manual[old.employee_id] = {
+                "bonus": old.bonus, "food_vouchers": old.food_vouchers,
+                "savings_fund": old.savings_fund, "loan_deduction": old.loan_deduction,
+                "notes": old.notes,
+            }
         await db.delete(old)
 
     start = date.fromisoformat(period.start_date)
@@ -616,7 +669,27 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
 
     period.status = "calculated"
     await db.commit()
-    await _log_audit(db, user_id, "CALCULATE_PAYROLL", f"Nómina calculada para período '{period.name}' ({len(eligible)} empleados)", {"id": period_id})
+
+    # Reaplica ediciones manuales previas (bonos/vales/ahorro/préstamos/notas)
+    # sobre los empleados que las tenían y siguen elegibles. Esto hace que el
+    # botón "Recalcular" sea seguro: agrega empleados nuevos o reprocesa
+    # asistencias sin perder los ajustes que ya había hecho el operador.
+    reapplied = 0
+    for emp_id, patch in old_manual.items():
+        try:
+            await update_payroll_detail(db, period_id, emp_id, patch, user_id=user_id)
+            reapplied += 1
+        except ValueError:
+            # El empleado ya no está elegible (ej. se dio de baja). Se omite.
+            pass
+
+    await _log_audit(
+        db, user_id, "CALCULATE_PAYROLL",
+        f"Nómina calculada para período '{period.name}' ({len(eligible)} empleados"
+        + (f", {reapplied} ediciones manuales preservadas" if reapplied else "")
+        + ")",
+        {"id": period_id, "employees": len(eligible), "reapplied_manual_edits": reapplied},
+    )
     return await get_period_detail(db, period_id)
 
 
