@@ -72,6 +72,8 @@ class PayrollPeriod(Base):
     end_date = Column(String, nullable=False)
     payment_date = Column(String, nullable=False)
     status = Column(String, nullable=False, default="draft", index=True)  # draft, calculated, approved, dispersed
+    # Tipo de nomina: regular / aguinaldo / prima_vacacional / finiquito
+    kind = Column(String, nullable=False, default="regular", index=True)
     approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     approved_at = Column(DateTime(timezone=True), nullable=True)
     dispersed_at = Column(DateTime(timezone=True), nullable=True)
@@ -89,6 +91,8 @@ class PayrollDetail(Base):
     department = Column(String, nullable=True)
     base_salary = Column(Float, nullable=False, default=0.0)
     days_worked = Column(Float, nullable=False, default=0.0)
+    days_absent = Column(Float, nullable=False, default=0.0)          # faltas descontadas
+    days_incapacity = Column(Float, nullable=False, default=0.0)      # incapacidad total del período
     # Percepciones
     salary_earned = Column(Float, nullable=False, default=0.0)
     overtime_double = Column(Float, nullable=False, default=0.0)
@@ -97,12 +101,17 @@ class PayrollDetail(Base):
     vacation_premium = Column(Float, nullable=False, default=0.0)
     food_vouchers = Column(Float, nullable=False, default=0.0)
     savings_fund = Column(Float, nullable=False, default=0.0)
+    aguinaldo = Column(Float, nullable=False, default=0.0)             # solo en períodos tipo aguinaldo
+    subsidy_applied = Column(Float, nullable=False, default=0.0)      # subsidio al empleo pagado
     # Deducciones
     imss_employee = Column(Float, nullable=False, default=0.0)
     isr = Column(Float, nullable=False, default=0.0)
     infonavit = Column(Float, nullable=False, default=0.0)
     fonacot = Column(Float, nullable=False, default=0.0)
     loan_deduction = Column(Float, nullable=False, default=0.0)
+    # Cuota patronal (informativa, para SUA + P&L de nómina)
+    imss_employer = Column(Float, nullable=False, default=0.0)
+    infonavit_employer = Column(Float, nullable=False, default=0.0)   # 5% SBC amortización crédito habitación
     # Totales
     total_gross = Column(Float, nullable=False, default=0.0)
     total_deductions = Column(Float, nullable=False, default=0.0)

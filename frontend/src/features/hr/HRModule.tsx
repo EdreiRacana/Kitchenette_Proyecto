@@ -723,9 +723,27 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           {/* Periods */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>Períodos de nómina</div>
-            <button onClick={() => setPeriodForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-              <Plus size={15} /> Nuevo período
-            </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={async () => {
+                  const year = window.prompt("Año del aguinaldo:", String(new Date().getFullYear()));
+                  if (!year) return;
+                  const paymentDate = window.prompt("Fecha de pago (YYYY-MM-DD):", `${year}-12-19`);
+                  if (!paymentDate) return;
+                  try {
+                    await hrApi.createAguinaldo(Number(year), paymentDate);
+                    await load();
+                    alert("Período de aguinaldo creado. Ábrelo en la lista y presiona 'Calcular nómina' para generar los recibos.");
+                  } catch (err: any) { alert(err?.response?.data?.detail || "Error al crear el período de aguinaldo"); }
+                }}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+              >
+                <DollarSign size={14} /> Nuevo aguinaldo
+              </button>
+              <button onClick={() => setPeriodForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+                <Plus size={15} /> Nuevo período
+              </button>
+            </div>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
@@ -791,6 +809,21 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                     {p.status === "dispersed" && (
                       <button onClick={e => { e.stopPropagation(); setSelectedPeriod(p); setTab("dispersion"); }} style={{ flex: 1, padding: "8px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12 }}>
                         Ver detalle
+                      </button>
+                    )}
+                    {(p.status === "calculated" || p.status === "approved" || p.status === "dispersed") && (
+                      <button
+                        onClick={async e => {
+                          e.stopPropagation();
+                          try {
+                            const res = await hrApi.downloadReceiptsZip(p.id);
+                            downloadBlob(res.data, `recibos_${p.name.replace(/\s+/g, "_")}.zip`);
+                          } catch { alert("Error al generar los recibos PDF"); }
+                        }}
+                        title="Descargar recibos PDF (ZIP)"
+                        style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11 }}
+                      >
+                        <FileText size={13} />
                       </button>
                     )}
                   </div>
@@ -1425,6 +1458,13 @@ function DispersionTab({
   setSelectedPeriod: (p: any | null) => void;
   onDispersed: () => Promise<void> | void;
 }) {
+  const downloadAllReceipts = async () => {
+    if (!selectedPeriod) return;
+    try {
+      const res = await hrApi.downloadReceiptsZip(selectedPeriod.id);
+      downloadBlob(res.data, `recibos_${selectedPeriod.name.replace(/\s+/g, "_")}.zip`);
+    } catch { alert("Error al generar los recibos"); }
+  };
   const [summary, setSummary] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -1498,7 +1538,15 @@ function DispersionTab({
       <div style={{ ...glass(t), borderRadius: 12, padding: 18 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: t.textHi }}>Dispersión de nómina</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: t.textHi }}>Dispersión de nómina</div>
+              {selectedPeriod && (
+                <button onClick={downloadAllReceipts}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 6, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11.5, fontWeight: 600 }}>
+                  <FileText size={12} /> Recibos PDF (ZIP)
+                </button>
+              )}
+            </div>
             <div style={{ fontSize: 12.5, color: t.textLo, marginTop: 4, maxWidth: 620, lineHeight: 1.5 }}>
               Prepara el archivo listo para subir a la banca en línea. Cada banco tiene su formato oficial; validamos CLABE, RFC y monto antes de generarlo para evitar rechazos.
             </div>

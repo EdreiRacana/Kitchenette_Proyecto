@@ -26,6 +26,14 @@ export const hrApi = {
     }),
   dispersionSummary: (periodId: number) =>
     api.get(`/hr/payroll/periods/${periodId}/dispersion-summary`).then(r => r.data),
+
+  // Recibos PDF y aguinaldo
+  downloadReceipt: (periodId: number, employeeId: number) =>
+    api.get(`/hr/payroll/periods/${periodId}/receipts/${employeeId}.pdf`, { responseType: "blob" }),
+  downloadReceiptsZip: (periodId: number) =>
+    api.get(`/hr/payroll/periods/${periodId}/receipts.zip`, { responseType: "blob" }),
+  createAguinaldo: (year: number, paymentDate: string) =>
+    api.post(`/hr/payroll/aguinaldo`, { year, payment_date: paymentDate }).then(r => r.data),
   downloadHeadcountReport: () => api.get("/hr/reports/headcount", { responseType: "blob" }),
   downloadVacationReport: () => api.get("/hr/reports/vacations", { responseType: "blob" }),
   downloadOvertimeReport: (startDate: string, endDate: string) =>

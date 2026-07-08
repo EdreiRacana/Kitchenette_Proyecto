@@ -282,6 +282,15 @@ _HR_STATEMENTS = [
     "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS infonavit_discount_value DOUBLE PRECISION",
     "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS fonacot_discount_value   DOUBLE PRECISION",
     "ALTER TABLE hr_attendance ADD COLUMN IF NOT EXISTS hours DOUBLE PRECISION",
+    # Calidad de cálculo: tipo de nómina + nuevas percepciones/deducciones + patronal
+    "ALTER TABLE hr_payroll_periods ADD COLUMN IF NOT EXISTS kind VARCHAR DEFAULT 'regular'",
+    "UPDATE hr_payroll_periods SET kind = 'regular' WHERE kind IS NULL",
+    "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS days_absent        DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS days_incapacity    DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS aguinaldo          DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS subsidy_applied    DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS imss_employer      DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS infonavit_employer DOUBLE PRECISION DEFAULT 0",
 ]
 
 _AUTH_STATEMENTS = [

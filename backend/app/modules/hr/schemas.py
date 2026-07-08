@@ -111,6 +111,7 @@ class PayrollPeriodCreate(BaseModel):
     start_date: str
     end_date: str
     payment_date: str
+    kind: str = "regular"  # regular | aguinaldo | prima_vacacional | finiquito
 
 
 class PayrollDetailInDB(BaseModel):
@@ -175,6 +176,11 @@ class AlertOut(BaseModel):
 class PTURequest(BaseModel):
     year: int
     total_utilidad: float
+
+
+class AguinaldoRequest(BaseModel):
+    year: int
+    payment_date: str  # ISO YYYY-MM-DD, típicamente antes del 20 de diciembre
 
 
 class HRDashboard(BaseModel):
