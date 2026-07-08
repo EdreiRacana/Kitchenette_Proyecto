@@ -112,6 +112,11 @@ class PayrollDetail(Base):
     # Cuota patronal (informativa, para SUA + P&L de nómina)
     imss_employer = Column(Float, nullable=False, default=0.0)
     infonavit_employer = Column(Float, nullable=False, default=0.0)   # 5% SBC amortización crédito habitación
+    state_payroll_tax = Column(Float, nullable=False, default=0.0)    # ISN estatal patronal (2-4% según estado)
+    # Notas del capturista (justifica bonos, préstamos, etc.)
+    notes = Column(Text, nullable=True)
+    # Marca si el detalle fue editado a mano después de un cálculo automático
+    edited_manually = Column(Boolean, default=False, nullable=False)
     # Totales
     total_gross = Column(Float, nullable=False, default=0.0)
     total_deductions = Column(Float, nullable=False, default=0.0)

@@ -291,6 +291,11 @@ _HR_STATEMENTS = [
     "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS subsidy_applied    DOUBLE PRECISION DEFAULT 0",
     "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS imss_employer      DOUBLE PRECISION DEFAULT 0",
     "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS infonavit_employer DOUBLE PRECISION DEFAULT 0",
+    # ISN patronal + edición manual de la partida de nómina
+    "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS state_payroll_tax  DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS notes              TEXT",
+    "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS edited_manually    BOOLEAN DEFAULT FALSE",
+    "UPDATE hr_payroll_details SET edited_manually = FALSE WHERE edited_manually IS NULL",
 ]
 
 _AUTH_STATEMENTS = [
@@ -309,6 +314,8 @@ _BRANCH_STATEMENTS = [
     "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS branch_id INTEGER",
     "ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS branch_id INTEGER",
     "ALTER TABLE budgets ADD COLUMN IF NOT EXISTS branch_id INTEGER",
+    # Tasa ISN estatal (patronal) en el perfil de la empresa
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS state_payroll_tax_rate DOUBLE PRECISION DEFAULT 3.0",
 ]
 
 

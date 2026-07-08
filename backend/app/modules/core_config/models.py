@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, Enum, Integer, DateTime, ForeignKey, JSON, func
+from sqlalchemy import Column, String, Boolean, Enum, Integer, DateTime, ForeignKey, JSON, Float, func
 from sqlalchemy.orm import relationship
 import enum
 import uuid
@@ -35,6 +35,10 @@ class CompanyProfile(Base):
     base_currency = Column(String, default="MXN")
     timezone = Column(String, default="America/Mexico_City")
     logo_url = Column(String, nullable=True)
+    # Impuesto Sobre Nómina (ISN) estatal — patronal. Varía por entidad
+    # (CDMX 3%, Nuevo León 3%, Jalisco 2%, Estado de México 3%, etc.).
+    # Se guarda como % (ej. 3.0 = 3%). Default 3% para orientar.
+    state_payroll_tax_rate = Column(Float, default=3.0, nullable=True)
 
 
 class Branch(Base):
