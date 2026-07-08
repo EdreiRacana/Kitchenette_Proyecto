@@ -183,6 +183,16 @@ class AguinaldoRequest(BaseModel):
     payment_date: str  # ISO YYYY-MM-DD, típicamente antes del 20 de diciembre
 
 
+class PayrollDetailUpdate(BaseModel):
+    """Edición manual de la partida de un empleado (bonos, vales, préstamos, notas).
+    Solo aplicable en períodos con status = 'calculated' (antes de aprobar)."""
+    bonus: Optional[float] = None
+    food_vouchers: Optional[float] = None
+    savings_fund: Optional[float] = None
+    loan_deduction: Optional[float] = None
+    notes: Optional[str] = None
+
+
 class HRDashboard(BaseModel):
     total: int
     active: int

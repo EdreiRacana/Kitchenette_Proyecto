@@ -249,3 +249,24 @@ async def create_aguinaldo(data: schemas.AguinaldoRequest, db: DB, current_user:
     _require_manager(current_user)
     period = await service.create_aguinaldo_period(db, data.year, data.payment_date, user_id=current_user.id)
     return {"id": period.id}
+
+
+@router.patch("/payroll/periods/{period_id}/details/{employee_id}")
+async def edit_payroll_detail(
+    period_id: int, employee_id: int,
+    data: schemas.PayrollDetailUpdate,
+    db: DB, current_user: CurrentUser,
+):
+    """Edita bonos, vales, fondo de ahorro, préstamos y notas de un empleado
+    dentro de una nómina calculada. Recomputa totales automáticamente."""
+    _require_manager(current_user)
+    try:
+        detail = await service.update_payroll_detail(
+            db, period_id, employee_id, data.model_dump(exclude_unset=True),
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Recibo no encontrado")
+    return detail

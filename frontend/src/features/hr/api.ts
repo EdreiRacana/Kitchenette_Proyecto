@@ -34,6 +34,11 @@ export const hrApi = {
     api.get(`/hr/payroll/periods/${periodId}/receipts.zip`, { responseType: "blob" }),
   createAguinaldo: (year: number, paymentDate: string) =>
     api.post(`/hr/payroll/aguinaldo`, { year, payment_date: paymentDate }).then(r => r.data),
+
+  updatePayrollDetail: (periodId: number, employeeId: number, data: {
+    bonus?: number; food_vouchers?: number; savings_fund?: number;
+    loan_deduction?: number; notes?: string;
+  }) => api.patch(`/hr/payroll/periods/${periodId}/details/${employeeId}`, data).then(r => r.data),
   downloadHeadcountReport: () => api.get("/hr/reports/headcount", { responseType: "blob" }),
   downloadVacationReport: () => api.get("/hr/reports/vacations", { responseType: "blob" }),
   downloadOvertimeReport: (startDate: string, endDate: string) =>

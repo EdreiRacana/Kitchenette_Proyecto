@@ -164,6 +164,29 @@ def calc_infonavit_employer_amort(sbc: float, dias: int) -> float:
     return round(min(sbc, tope_sbc) * dias * 0.05, 2)
 
 
+def calc_state_payroll_tax(total_gross: float, rate_pct: float) -> float:
+    """Impuesto Sobre Nómina (ISN) estatal — patronal. Se aplica al total de
+    percepciones gravables por ISN de cada entidad. La tasa se lee del
+    perfil de la empresa (CompanyProfile.state_payroll_tax_rate) y varía
+    típicamente entre 2% y 4% según el estado (CDMX 3%, Jalisco 2%, etc.)."""
+    if not rate_pct or rate_pct <= 0 or total_gross <= 0:
+        return 0.0
+    return round(total_gross * (rate_pct / 100.0), 2)
+
+
+async def _get_state_payroll_tax_rate(db: AsyncSession) -> float:
+    """Lee la tasa del ISN configurada en el perfil de la empresa; default 3%."""
+    try:
+        from app.modules.core_config import models as cfg_models
+        res = await db.execute(select(cfg_models.CompanyProfile).limit(1))
+        cp = res.scalars().first()
+        if cp and cp.state_payroll_tax_rate is not None:
+            return float(cp.state_payroll_tax_rate)
+    except Exception:
+        pass
+    return 3.0
+
+
 # Backward-compat: la firma anterior era calc_imss(sbc, frequency). Mantengo el
 # alias para no romper llamadas externas.
 def calc_imss(sbc: float, frequency: str) -> float:
@@ -370,6 +393,8 @@ async def get_period_detail(db: AsyncSession, period_id: int) -> Optional[dict]:
             "imss_employer": d.imss_employer, "infonavit_employer": d.infonavit_employer,
             "total_gross": d.total_gross, "total_deductions": d.total_deductions,
             "total_net": d.total_net, "dispersion_status": d.dispersion_status, "bank": emp.bank, "clabe": emp.clabe,
+            "state_payroll_tax": d.state_payroll_tax,
+            "notes": d.notes, "edited_manually": d.edited_manually,
         })
     summary["details"] = details
     summary["kind"] = p.kind
@@ -378,6 +403,7 @@ async def get_period_detail(db: AsyncSession, period_id: int) -> Optional[dict]:
     all_det = res_det.scalars().all()
     summary["total_imss_employer"] = round(sum(d.imss_employer for d in all_det), 2)
     summary["total_infonavit_employer"] = round(sum(d.infonavit_employer for d in all_det), 2)
+    summary["total_state_payroll_tax"] = round(sum(d.state_payroll_tax for d in all_det), 2)
     summary["total_subsidy_applied"] = round(sum(d.subsidy_applied for d in all_det), 2)
     return summary
 
@@ -466,6 +492,7 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
     period_days = (end - start).days + 1
 
     employees = await get_employees(db)
+    isn_rate = await _get_state_payroll_tax_rate(db)
     # Para aguinaldo se calcula independientemente de la frecuencia (una vez al año)
     if period.kind == "aguinaldo":
         eligible = [e for e in employees if e.is_active]
@@ -500,6 +527,7 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
             gravable = max(aguinaldo - uma_exenta, 0.0)
             isr_ret, sae, _ = calc_isr_net(gravable, "mensual")
 
+            state_isn = calc_state_payroll_tax(aguinaldo, isn_rate)
             detail = models.PayrollDetail(
                 period_id=period.id, employee_id=e.id, department=e.department,
                 base_salary=e.base_salary,
@@ -511,6 +539,7 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
                 imss_employee=imss_employee, isr=isr_ret,
                 infonavit=infonavit_amt, fonacot=fonacot_amt, loan_deduction=0.0,
                 imss_employer=imss_employer, infonavit_employer=infonavit_employer_amt,
+                state_payroll_tax=state_isn,
                 total_gross=round(aguinaldo, 2),
                 total_deductions=round(isr_ret, 2),
                 total_net=round(aguinaldo - isr_ret + sae, 2),
@@ -564,6 +593,7 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
         total_gross = round(gross_taxable, 2)
         total_deductions = round(imss_employee + isr_ret + infonavit_amt + fonacot_amt, 2)
         total_net = round(total_gross - total_deductions + sae, 2)
+        state_isn = calc_state_payroll_tax(total_gross, isn_rate)
 
         detail = models.PayrollDetail(
             period_id=period.id, employee_id=e.id, department=e.department,
@@ -577,6 +607,7 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
             imss_employee=imss_employee, isr=isr_ret,
             infonavit=infonavit_amt, fonacot=fonacot_amt, loan_deduction=0.0,
             imss_employer=imss_employer, infonavit_employer=infonavit_employer_amt,
+            state_payroll_tax=state_isn,
             total_gross=total_gross,
             total_deductions=total_deductions, total_net=total_net,
             dispersion_status="pendiente",
@@ -1083,6 +1114,8 @@ async def build_employee_receipt(
         "imss_employee": d.imss_employee, "isr": d.isr, "infonavit": d.infonavit,
         "fonacot": d.fonacot, "loan_deduction": d.loan_deduction,
         "imss_employer": d.imss_employer, "infonavit_employer": d.infonavit_employer,
+        "state_payroll_tax": d.state_payroll_tax,
+        "notes": d.notes,
         "total_net": d.total_net,
     }
     company_name, company_rfc = await _get_company_info(db)
@@ -1155,3 +1188,97 @@ async def create_aguinaldo_period(db: AsyncSession, year: int, payment_date: str
     await db.refresh(period)
     await _log_audit(db, user_id, "CREATE_AGUINALDO_PERIOD", f"Aguinaldo {year} creado", {"id": period.id, "year": year})
     return period
+
+
+# ── Edición manual del detalle (bonos, vales, préstamos, notas) ────────────
+
+async def update_payroll_detail(
+    db: AsyncSession, period_id: int, employee_id: int,
+    data: dict, user_id: Optional[int] = None,
+) -> Optional[dict]:
+    """Permite editar la partida de un empleado antes de aprobar la nómina.
+
+    Campos editables (todos opcionales):
+      bonus, food_vouchers, savings_fund, loan_deduction, notes
+
+    Reglas:
+      - Solo se puede editar en status = 'calculated' (aún no aprobada).
+      - Al editar se recalculan los totales, ISR y SAE respetando los nuevos
+        montos gravables (bonos y vales suman al bruto; el fondo de ahorro
+        es exento hasta 13% SBC anual — aquí lo tratamos como no gravable
+        y el ISN estatal sí lo grava por default).
+      - El ISN patronal se recalcula sobre el nuevo total_gross.
+    """
+    res = await db.execute(
+        select(models.PayrollPeriod).where(models.PayrollPeriod.id == period_id)
+    )
+    period = res.scalars().first()
+    if period is None:
+        raise ValueError("Período no encontrado")
+    if period.status != "calculated":
+        raise ValueError("Solo se pueden editar períodos en estado 'calculated' (antes de aprobar)")
+
+    res2 = await db.execute(
+        select(models.PayrollDetail).where(
+            models.PayrollDetail.period_id == period_id,
+            models.PayrollDetail.employee_id == employee_id,
+        )
+    )
+    detail = res2.scalars().first()
+    if detail is None:
+        raise ValueError("No hay recibo para ese empleado en este período")
+
+    # Aplicar los cambios permitidos
+    for key in ("bonus", "food_vouchers", "savings_fund", "loan_deduction"):
+        if key in data and data[key] is not None:
+            v = float(data[key])
+            if v < 0:
+                raise ValueError(f"El monto de '{key}' no puede ser negativo")
+            setattr(detail, key, round(v, 2))
+    if "notes" in data:
+        detail.notes = (data["notes"] or "").strip() or None
+
+    # Recomputar totales manteniendo el resto de percepciones/deducciones
+    percepciones_gravables = (
+        (detail.salary_earned or 0.0)
+        + (detail.overtime_double or 0.0)
+        + (detail.overtime_triple or 0.0)
+        + (detail.vacation_premium or 0.0)
+        + (detail.bonus or 0.0)
+        + (detail.food_vouchers or 0.0)
+        + (detail.aguinaldo or 0.0)
+    )
+    # Fondo de ahorro exento (Art. 93 LISR fracc XI); no se grava para ISR.
+    total_gross = round(percepciones_gravables + (detail.savings_fund or 0.0), 2)
+
+    # ISR/SAE se recomputan sobre gravable — IMSS obrero se mantiene (SBC no cambia)
+    gravable = max(percepciones_gravables - (detail.imss_employee or 0.0), 0.0)
+    isr_ret, sae, _ = calc_isr_net(gravable, period.frequency)
+    detail.isr = isr_ret
+    detail.subsidy_applied = sae
+
+    total_deductions = round(
+        (detail.imss_employee or 0.0) + isr_ret
+        + (detail.infonavit or 0.0) + (detail.fonacot or 0.0)
+        + (detail.loan_deduction or 0.0),
+        2,
+    )
+    total_net = round(total_gross - total_deductions + sae, 2)
+
+    detail.total_gross = total_gross
+    detail.total_deductions = total_deductions
+    detail.total_net = total_net
+
+    isn_rate = await _get_state_payroll_tax_rate(db)
+    detail.state_payroll_tax = calc_state_payroll_tax(total_gross, isn_rate)
+
+    detail.edited_manually = True
+    await db.commit()
+
+    emp = await db.get(models.Employee, employee_id)
+    await _log_audit(
+        db, user_id, "EDIT_PAYROLL_DETAIL",
+        f"Recibo editado de {_full_name(emp) if emp else '#'+str(employee_id)} en período '{period.name}'",
+        {"period_id": period_id, "employee_id": employee_id},
+    )
+    return await get_period_detail(db, period_id)

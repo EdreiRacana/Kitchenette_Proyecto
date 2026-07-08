@@ -206,9 +206,27 @@ def build_receipt_pdf(
         f"IMSS patronal: {_money(detail.get('imss_employer', 0.0))}",
         f"INFONAVIT patronal (5% SBC): {_money(detail.get('infonavit_employer', 0.0))}",
     ]
+    isn = detail.get("state_payroll_tax", 0.0)
+    if isn:
+        patronal.append(f"Impuesto sobre nómina estatal (ISN): {_money(isn)}")
     for line in patronal:
         c.drawString(15 * mm, y, line)
         y -= 4 * mm
+
+    # Notas del capturista (justifica bonos, préstamos, etc.)
+    note = (detail.get("notes") or "").strip()
+    if note:
+        y -= 2 * mm
+        c.setFont("Helvetica-Bold", 8.5)
+        c.setFillColor(colors.HexColor("#0E1838"))
+        c.drawString(15 * mm, y, "Notas:")
+        y -= 4 * mm
+        c.setFont("Helvetica-Oblique", 8)
+        c.setFillColor(colors.HexColor("#475569"))
+        # Wrap sencillo a 100 chars
+        for line in [note[i:i + 100] for i in range(0, len(note), 100)][:3]:
+            c.drawString(15 * mm, y, line)
+            y -= 3.5 * mm
 
     # ── Banco y CLABE ─────────────────────────────────────────────────────
     y -= 4 * mm
