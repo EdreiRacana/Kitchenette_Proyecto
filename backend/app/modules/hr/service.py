@@ -759,6 +759,35 @@ async def approve_period(db: AsyncSession, period_id: int, user_id: Optional[int
     return await get_period_detail(db, period_id)
 
 
+async def reopen_period(db: AsyncSession, period_id: int, user_id: Optional[int] = None) -> Optional[dict]:
+    """Reabrir un período aprobado para volver a 'calculated' y permitir
+    recalcular. Se usa cuando el operador detecta que había datos incorrectos
+    en un empleado (créditos INFONAVIT viejos, salario mal capturado, etc.)
+    y necesita corregirlos antes de dispersar.
+
+    Reglas:
+      - Solo aplicable en status='approved'. Una nómina 'dispersed' NO se
+        reabre (el pago ya se envió al banco).
+      - Queda constancia en el audit log con quién y cuándo.
+      - No borra las ediciones manuales — al recalcular después se preservan
+        (misma lógica que ya existe en calculate_period).
+    """
+    res = await db.execute(select(models.PayrollPeriod).where(models.PayrollPeriod.id == period_id))
+    period = res.scalars().first()
+    if not period:
+        return None
+    if period.status == "dispersed":
+        raise ValueError("No se puede reabrir un período ya dispersado. El pago ya se envió al banco.")
+    if period.status != "approved":
+        raise ValueError("Solo se pueden reabrir períodos aprobados")
+    period.status = "calculated"
+    period.approved_by_id = None
+    period.approved_at = None
+    await db.commit()
+    await _log_audit(db, user_id, "REOPEN_PAYROLL", f"Período '{period.name}' reabierto (approved → calculated)", {"id": period_id})
+    return await get_period_detail(db, period_id)
+
+
 async def disperse_period(db: AsyncSession, period_id: int, user_id: Optional[int] = None) -> Optional[dict]:
     res = await db.execute(select(models.PayrollPeriod).where(models.PayrollPeriod.id == period_id))
     period = res.scalars().first()
