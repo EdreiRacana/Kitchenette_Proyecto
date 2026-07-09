@@ -226,6 +226,46 @@ async def report_sua(period_id: int, db: DB, current_user: CurrentUser):
     return Response(content=csv_text, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="sua_apoyo_{period_id}.csv"'})
 
 
+# ── Preview de reportes (JSON) para verlos en la UI antes de descargar ─────
+
+@router.get("/reports/headcount/data")
+async def report_headcount_data(db: DB, current_user: CurrentUser):
+    return await service.get_headcount_data(db)
+
+
+@router.get("/reports/vacations/data")
+async def report_vacations_data(db: DB, current_user: CurrentUser):
+    return await service.get_vacation_data(db)
+
+
+@router.get("/reports/overtime/data")
+async def report_overtime_data(db: DB, current_user: CurrentUser, start_date: str, end_date: str):
+    return await service.get_overtime_data(db, start_date, end_date)
+
+
+@router.get("/reports/annual-accumulated/data")
+async def report_annual_accumulated_data(db: DB, current_user: CurrentUser, year: int):
+    return await service.get_annual_accumulated(db, year)
+
+
+@router.post("/reports/ptu/data")
+async def report_ptu_data(data: schemas.PTURequest, db: DB, current_user: CurrentUser):
+    return await service.get_ptu_data(db, data.year, data.total_utilidad)
+
+
+@router.get("/reports/infonavit/data")
+async def report_infonavit_data(db: DB, current_user: CurrentUser):
+    return await service.get_infonavit_data(db)
+
+
+@router.get("/reports/sua/{period_id}/data")
+async def report_sua_data(period_id: int, db: DB, current_user: CurrentUser):
+    try:
+        return await service.get_sua_data(db, period_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 # ── Recibo PDF por empleado + descarga bulk (ZIP) ───────────────────────────
 
 @router.get("/payroll/periods/{period_id}/receipts/{employee_id}.pdf")

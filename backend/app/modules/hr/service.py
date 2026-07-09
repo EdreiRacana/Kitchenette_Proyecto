@@ -448,6 +448,39 @@ async def get_period_detail(db: AsyncSession, period_id: int) -> Optional[dict]:
     summary["total_infonavit_employer"] = round(sum(d.infonavit_employer for d in all_det), 2)
     summary["total_state_payroll_tax"] = round(sum(d.state_payroll_tax for d in all_det), 2)
     summary["total_subsidy_applied"] = round(sum(d.subsidy_applied for d in all_det), 2)
+
+    # Detección de empleados activos que quedaron fuera del cálculo (mismo
+    # motivo que en calculate_period). Se muestra como aviso en la UI sin
+    # bloquear — el operador puede recalcular con ellos si corrige la
+    # frecuencia en el empleado. Aguinaldo NO filtra por frecuencia.
+    included_ids = {d.employee_id for d in all_det}
+    all_employees = await get_employees(db)
+    excluded_active: List[dict] = []
+    for e in all_employees:
+        if e.id in included_ids or not e.is_active:
+            continue
+        if p.kind == "aguinaldo":
+            # En aguinaldo un activo NO debería quedar fuera; si quedó es
+            # porque se dio de alta después. Se avisa.
+            excluded_active.append({
+                "employee_id": e.id, "employee_name": _full_name(e),
+                "reason": "Dado de alta después de calcular la nómina — presiona Recalcular",
+            })
+        elif e.pay_frequency != p.frequency:
+            excluded_active.append({
+                "employee_id": e.id, "employee_name": _full_name(e),
+                "reason": (
+                    f"Frecuencia de pago del empleado ({e.pay_frequency or 'sin definir'}) "
+                    f"no coincide con la del período ({p.frequency}). "
+                    f"Edita el empleado y presiona Recalcular."
+                ),
+            })
+        else:
+            excluded_active.append({
+                "employee_id": e.id, "employee_name": _full_name(e),
+                "reason": "Dado de alta después de calcular la nómina — presiona Recalcular",
+            })
+    summary["excluded_active_employees"] = excluded_active
     return summary
 
 
@@ -546,11 +579,29 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
 
     employees = await get_employees(db)
     isn_rate = await _get_state_payroll_tax_rate(db)
-    # Para aguinaldo se calcula independientemente de la frecuencia (una vez al año)
-    if period.kind == "aguinaldo":
-        eligible = [e for e in employees if e.is_active]
-    else:
-        eligible = [e for e in employees if e.is_active and e.pay_frequency == period.frequency]
+    # Empleados incluidos y excluidos con motivo — se guarda como aviso en el
+    # response para que la UI muestre por qué alguien quedó fuera (antes era
+    # silencioso y el operador se enteraba solo al notar que faltaba en la
+    # tabla de detalle).
+    eligible: List[models.Employee] = []
+    excluded: List[dict] = []
+    for e in employees:
+        if not e.is_active:
+            excluded.append({
+                "employee_id": e.id, "employee_name": _full_name(e),
+                "reason": "Empleado inactivo (dado de baja)",
+            })
+            continue
+        if period.kind != "aguinaldo" and e.pay_frequency != period.frequency:
+            excluded.append({
+                "employee_id": e.id, "employee_name": _full_name(e),
+                "reason": (
+                    f"Frecuencia de pago del empleado ({e.pay_frequency or 'sin definir'}) "
+                    f"no coincide con la del período ({period.frequency})"
+                ),
+            })
+            continue
+        eligible.append(e)
 
     for e in eligible:
         att = await _attendance_summary_for_period(db, e.id, start, end)
@@ -1482,3 +1533,92 @@ async def import_bulk_detail(
         "skipped": summary.skipped,
         "errors": [{"row": e.row, "reason": e.reason} for e in summary.errors],
     }
+
+
+# ── Datos crudos (JSON) para preview en la UI + descarga CSV ──────────────
+
+async def get_headcount_data(db: AsyncSession) -> List[dict]:
+    employees = await get_employees(db)
+    return [
+        {
+            "employee_number": e.employee_number,
+            "name": _full_name(e),
+            "department": e.department,
+            "position": e.position,
+            "contract_type": e.contract_type,
+            "status": e.status,
+            "hire_date": e.hire_date,
+            "base_salary": e.base_salary,
+            "pay_frequency": e.pay_frequency,
+        }
+        for e in employees
+    ]
+
+
+async def get_vacation_data(db: AsyncSession) -> List[dict]:
+    employees = await get_employees(db)
+    return [
+        {
+            "employee_number": e.employee_number,
+            "name": _full_name(e),
+            "department": e.department,
+            "days_available": e.vacation_days or 0,
+            "days_used": e.vacation_used or 0,
+            "days_remaining": (e.vacation_days or 0) - (e.vacation_used or 0),
+        }
+        for e in employees
+    ]
+
+
+async def get_infonavit_data(db: AsyncSession) -> List[dict]:
+    employees = await get_employees(db)
+    rows = []
+    for e in employees:
+        if not e.infonavit_credit and not e.fonacot_credit:
+            continue
+        salary_period = (e.base_salary / 30) * _FREQ_DAYS.get(e.pay_frequency, 30)
+        infonavit_amount = calc_infonavit(e, salary_period)
+        fonacot_amount = calc_fonacot(e)
+        rows.append({
+            "employee_number": e.employee_number,
+            "name": _full_name(e),
+            "infonavit_credit": e.infonavit_credit or "",
+            "infonavit_discount_type": e.infonavit_discount_type or "",
+            "infonavit_discount_value": e.infonavit_discount_value,
+            "infonavit_estimated": infonavit_amount,
+            "fonacot_credit": e.fonacot_credit or "",
+            "fonacot_estimated": fonacot_amount,
+        })
+    return rows
+
+
+async def get_overtime_data(db: AsyncSession, start_date: str, end_date: str) -> List[dict]:
+    return await _overtime_by_employee(db, start_date, end_date)
+
+
+async def get_ptu_data(db: AsyncSession, year: int, total_utilidad: float) -> List[dict]:
+    return await calculate_ptu(db, year, total_utilidad)
+
+
+async def get_sua_data(db: AsyncSession, period_id: int) -> List[dict]:
+    detail = await get_period_detail(db, period_id)
+    if not detail:
+        raise ValueError("Período no encontrado")
+    res = await db.execute(
+        select(models.PayrollDetail, models.Employee)
+        .join(models.Employee, models.PayrollDetail.employee_id == models.Employee.id)
+        .where(models.PayrollDetail.period_id == period_id)
+    )
+    return [
+        {
+            "employee_number": emp.employee_number,
+            "name": _full_name(emp),
+            "nss": emp.nss or "",
+            "sbc": emp.sbc,
+            "days_worked": d.days_worked,
+            "imss_employee": d.imss_employee,
+            "imss_employer": d.imss_employer,
+            "base_salary": d.base_salary,
+        }
+        for d, emp in res.all()
+    ]

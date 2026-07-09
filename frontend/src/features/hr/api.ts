@@ -49,6 +49,19 @@ export const hrApi = {
     api.get(`/hr/payroll/periods/${periodId}/bulk-template`, {
       params: { format }, responseType: "blob",
     }),
+  // JSON preview de reportes (sin descargar)
+  reportHeadcountData: () => api.get("/hr/reports/headcount/data").then(r => r.data),
+  reportVacationsData: () => api.get("/hr/reports/vacations/data").then(r => r.data),
+  reportOvertimeData: (start: string, end: string) =>
+    api.get("/hr/reports/overtime/data", { params: { start_date: start, end_date: end } }).then(r => r.data),
+  reportAnnualData: (year: number) =>
+    api.get("/hr/reports/annual-accumulated/data", { params: { year } }).then(r => r.data),
+  reportPTUData: (year: number, totalUtilidad: number) =>
+    api.post("/hr/reports/ptu/data", { year, total_utilidad: totalUtilidad }).then(r => r.data),
+  reportInfonavitData: () => api.get("/hr/reports/infonavit/data").then(r => r.data),
+  reportSUAData: (periodId: number) =>
+    api.get(`/hr/reports/sua/${periodId}/data`).then(r => r.data),
+
   bulkImportDetail: (periodId: number, file: File) => {
     const form = new FormData();
     form.append("file", file);
