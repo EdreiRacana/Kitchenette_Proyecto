@@ -17,6 +17,7 @@ export const hrApi = {
   periodDetail: (id: number) => api.get(`/hr/payroll/periods/${id}`).then(r => r.data),
   calculatePeriod: (id: number) => api.post(`/hr/payroll/periods/${id}/calculate`).then(r => r.data),
   approvePeriod: (id: number) => api.post(`/hr/payroll/periods/${id}/approve`).then(r => r.data),
+  reopenPeriod: (id: number) => api.post(`/hr/payroll/periods/${id}/reopen`).then(r => r.data),
   dispersePeriod: (id: number) => api.post(`/hr/payroll/periods/${id}/disperse`).then(r => r.data),
 
   downloadBankLayout: (periodId: number, bank: string, originAccount?: string, loteNumber?: string) =>

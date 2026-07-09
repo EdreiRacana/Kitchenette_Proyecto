@@ -183,32 +183,6 @@ const glass = (t: any): React.CSSProperties =>
     ? { background: "rgba(20,32,68,0.55)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", border: `1px solid ${t.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.22)" }
     : { background: t.panel, border: `1px solid ${t.border}` };
 
-// ISR 2026 quincenal (tabla simplificada)
-const calcISR = (gravable: number): number => {
-  const tables = [
-    { li: 0, ls: 1768.96, fi: 0, porcentaje: 0.0192 },
-    { li: 1768.97, ls: 15009.06, fi: 33.96, porcentaje: 0.0640 },
-    { li: 15009.07, ls: 26385.47, fi: 881.68, porcentaje: 0.1088 },
-    { li: 26385.48, ls: 30674.03, fi: 2118.73, porcentaje: 0.1600 },
-    { li: 30674.04, ls: 36732.23, fi: 2804.44, porcentaje: 0.1792 },
-    { li: 36732.24, ls: 74049.45, fi: 3890.39, porcentaje: 0.2136 },
-    { li: 74049.46, ls: 116829.20, fi: 11870.05, porcentaje: 0.2352 },
-    { li: 116829.21, ls: 999999999, fi: 21927.38, porcentaje: 0.3000 },
-  ];
-  const row = tables.find(r => gravable >= r.li && gravable <= r.ls) || tables[tables.length - 1];
-  return Math.round(((gravable - row.li) * row.porcentaje + row.fi) * 100) / 100;
-};
-
-const calcIMSS = (sbc: number, freq: PayFrequency): number => {
-  const uma2026 = 113.14;
-  const diasPeriodo = freq === "semanal" ? 7 : freq === "catorcenal" ? 14 : freq === "quincenal" ? 15 : 30;
-  const sbcDiario = sbc / 30;
-  const enfermedadMaternidad = sbcDiario * diasPeriodo * 0.0025;
-  const invalidezVida = sbcDiario * diasPeriodo * 0.00625;
-  const cesantiaVejez = sbcDiario * diasPeriodo * 0.01125;
-  return Math.round((enfermedadMaternidad + invalidezVida + cesantiaVejez) * 100) / 100;
-};
-
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function HRModule({ t, s }: { t: any; s: any }) {
   const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports">("dashboard");
@@ -824,9 +798,38 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                       </>
                     )}
                     {p.status === "approved" && (
-                      <button onClick={e => { e.stopPropagation(); setSelectedPeriod(p); setTab("dispersion"); }} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-                        Ir a dispersión →
-                      </button>
+                      <>
+                        <button
+                          onClick={async e => {
+                            e.stopPropagation();
+                            if (!confirm(
+                              "¿Reabrir esta nómina aprobada?\n\n"
+                              + "La regresará a estado 'Calculada' para que puedas recalcularla "
+                              + "con los datos corregidos (por ejemplo si actualizaste créditos "
+                              + "INFONAVIT / FONACOT o salarios de empleados).\n\n"
+                              + "Las ediciones manuales previas se conservan al recalcular.\n\n"
+                              + "¿Continuar?"
+                            )) return;
+                            try {
+                              await hrApi.reopenPeriod(p.id);
+                              await load();
+                              if (selectedPeriod?.id === p.id) {
+                                const d = await hrApi.periodDetail(p.id);
+                                setPeriodDetail(d);
+                              }
+                            } catch (err: any) {
+                              alert(err?.response?.data?.detail || "Error al reabrir");
+                            }
+                          }}
+                          title="Regresar a 'Calculada' para poder recalcular con datos corregidos"
+                          style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+                        >
+                          <RefreshCw size={13} style={{ verticalAlign: -2, marginRight: 4 }} /> Reabrir
+                        </button>
+                        <button onClick={e => { e.stopPropagation(); setSelectedPeriod(p); setTab("dispersion"); }} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                          Ir a dispersión →
+                        </button>
+                      </>
                     )}
                     {p.status === "dispersed" && (
                       <button onClick={e => { e.stopPropagation(); setSelectedPeriod(p); setTab("dispersion"); }} style={{ flex: 1, padding: "8px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12 }}>
@@ -1399,31 +1402,34 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
                 {form.fonacot_credit && <div><label style={lbl}>Descuento FONACOT por período</label><input type="number" value={form.fonacot_discount_value} onChange={e => setForm(f => ({ ...f, fonacot_discount_value: e.target.value }))} placeholder="Monto fijo" style={inp} /></div>}
               </div>
 
-              {/* ISR Preview */}
+              {/* Resumen fiscal (referencia rápida) */}
               {form.base_salary && (
                 <div style={{ background: t.panel2, borderRadius: 10, padding: 16 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textLo, marginBottom: 10 }}>VISTA PREVIA — NÓMINA QUINCENAL ESTIMADA</div>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textLo, marginBottom: 10 }}>RESUMEN FISCAL</div>
                   {(() => {
-                    const sal = Number(form.base_salary);
-                    const sbc = Number(form.sbc) || sal * 1.05;
-                    const salQ = (sal / 30) * 15;
-                    const imss = calcIMSS(sbc, "quincenal");
-                    const isr = calcISR(salQ - imss);
-                    const neto = salQ - imss - isr;
+                    const sal = Number(form.base_salary) || 0;
+                    const sbc = Number(form.sbc) || 0;
+                    const items = [
+                      { l: "Salario base mensual", v: mxn(sal), c: t.textHi },
+                      { l: "SBC (para IMSS/INFONAVIT)", v: sbc ? mxn(sbc) : "—", c: t.textHi },
+                      { l: "Régimen fiscal (SAT)", v: form.tax_regime || "—", c: t.textMid },
+                      { l: "Frecuencia de pago", v: form.pay_frequency || "—", c: t.textMid },
+                    ];
                     return (
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
-                        {[
-                          { l: "Salario quincenal", v: mxn(salQ), c: t.textHi },
-                          { l: "IMSS obrero", v: mxn(imss), c: t.bad },
-                          { l: "ISR", v: mxn(isr), c: t.bad },
-                          { l: "NETO", v: mxn(neto), c: t.good },
-                        ].map(item => (
-                          <div key={item.l} style={{ background: t.panel3, borderRadius: 8, padding: "10px 12px" }}>
-                            <div style={{ fontSize: 10.5, color: t.textLo, marginBottom: 4 }}>{item.l}</div>
-                            <div style={{ fontSize: 14, fontWeight: 700, color: item.c }}>{item.v}</div>
-                          </div>
-                        ))}
-                      </div>
+                      <>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                          {items.map(item => (
+                            <div key={item.l} style={{ background: t.panel3, borderRadius: 8, padding: "10px 12px" }}>
+                              <div style={{ fontSize: 10.5, color: t.textLo, marginBottom: 4 }}>{item.l}</div>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: item.c }}>{item.v}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ fontSize: 11, color: t.textLo, marginTop: 10, lineHeight: 1.5 }}>
+                          Los cálculos de ISR, IMSS obrero/patronal, INFONAVIT/FONACOT, subsidio al empleo e ISN se realizan en el servidor
+                          con las tablas oficiales al momento de calcular cada período de nómina.
+                        </div>
+                      </>
                     );
                   })()}
                 </div>

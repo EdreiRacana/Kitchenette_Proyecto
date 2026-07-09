@@ -124,6 +124,21 @@ async def approve_period(period_id: int, db: DB, current_user: CurrentUser):
     return detail
 
 
+@router.post("/payroll/periods/{period_id}/reopen")
+async def reopen_period(period_id: int, db: DB, current_user: CurrentUser):
+    """Regresa un período aprobado a 'calculated' para permitir recalcular con
+    datos corregidos (por ejemplo si se detectó un crédito INFONAVIT viejo,
+    un salario mal capturado, etc.). No aplicable a nóminas ya dispersadas."""
+    _require_manager(current_user)
+    try:
+        detail = await service.reopen_period(db, period_id, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not detail:
+        raise HTTPException(status_code=404, detail="Período no encontrado")
+    return detail
+
+
 @router.post("/payroll/periods/{period_id}/disperse")
 async def disperse_period(period_id: int, db: DB, current_user: CurrentUser):
     _require_manager(current_user)
