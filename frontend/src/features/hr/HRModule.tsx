@@ -230,6 +230,9 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
   const [reportModal, setReportModal] = useState<null | {
     kind: "overtime" | "annual" | "ptu" | "sua" | "aguinaldo";
   }>(null);
+  const [simpleReport, setSimpleReport] = useState<null | {
+    kind: "headcount" | "vacations" | "infonavit";
+  }>(null);
   const [detailEditor, setDetailEditor] = useState<null | { period: any; row: any }>(null);
   const [bulkUpload, setBulkUpload] = useState<null | { period: any }>(null);
 
@@ -852,6 +855,24 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           </div>
 
           {/* Detalle del período seleccionado */}
+          {selectedPeriod && periodDetail && Array.isArray(periodDetail.excluded_active_employees) && periodDetail.excluded_active_employees.length > 0 && (
+            <div style={{ background: t.warn + "16", border: `1px solid ${t.warn}55`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <AlertTriangle size={16} color={t.warn} />
+                <span style={{ fontSize: 13, color: t.textHi, fontWeight: 700 }}>
+                  {periodDetail.excluded_active_employees.length} empleado{periodDetail.excluded_active_employees.length !== 1 ? "s" : ""} activo{periodDetail.excluded_active_employees.length !== 1 ? "s" : ""} quedó fuera de este período
+                </span>
+              </div>
+              <div style={{ paddingLeft: 24 }}>
+                {periodDetail.excluded_active_employees.map((e: any, i: number) => (
+                  <div key={i} style={{ fontSize: 12.5, color: t.textMid, padding: "3px 0" }}>
+                    · <b style={{ color: t.textHi }}>{e.employee_name}</b>: {e.reason}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {selectedPeriod && periodDetail && (
             <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
@@ -893,21 +914,47 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                   </div>
                 )}
               </div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1150 }}>
+              <div style={{ overflowX: "auto", maxWidth: "100%", borderRadius: 8, border: `1px solid ${t.borderSoft || t.border}` }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1050, fontSize: 12.5 }}>
                   <thead>
                     <tr style={{ background: t.panel2 }}>
-                      {["Empleado", "Días", "Faltas", "Incap.", "Salario", "H.Extra", "Prima vac.", "Bono", "Vales", "Ahorro", "Préstamo", "ISR", "Neto", ""].map((h, i) => (
-                        <th key={i} style={{ padding: "10px 12px", textAlign: i === 0 ? "left" : i === 13 ? "center" : "right", fontSize: 10.5, fontWeight: 600, color: t.textLo, borderBottom: `1px solid ${t.border}`, textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap" }}>{h}</th>
+                      {[
+                        { label: "Empleado", align: "left", sticky: true },
+                        { label: "Días", align: "right" },
+                        { label: "Faltas", align: "right" },
+                        { label: "Incap.", align: "right" },
+                        { label: "Salario", align: "right" },
+                        { label: "H.Extra", align: "right" },
+                        { label: "Prima vac.", align: "right" },
+                        { label: "Bono", align: "right" },
+                        { label: "Vales", align: "right" },
+                        { label: "Ahorro", align: "right" },
+                        { label: "Préstamo", align: "right" },
+                        { label: "ISR", align: "right" },
+                        { label: "Neto", align: "right", strong: true },
+                        { label: "", align: "center" },
+                      ].map((h, i) => (
+                        <th key={i} style={{
+                          padding: "10px 10px",
+                          textAlign: h.align as any,
+                          fontSize: 10.5, fontWeight: 700, color: t.textLo,
+                          borderBottom: `1px solid ${t.border}`,
+                          textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap",
+                          position: h.sticky ? "sticky" : undefined,
+                          left: h.sticky ? 0 : undefined,
+                          background: h.sticky ? t.panel2 : undefined,
+                          zIndex: h.sticky ? 2 : undefined,
+                        }}>{h.label}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {(periodDetail.details || []).map((row: any, i: number) => {
                       const hExtraTotal = (row.overtime_double || 0) + (row.overtime_triple || 0);
+                      const bg = i % 2 === 0 ? t.panel : t.panel2;
                       return (
-                        <tr key={row.employee_id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
-                          <td style={{ padding: "11px 12px", fontSize: 13, color: t.textHi, fontWeight: 600 }}>
+                        <tr key={row.employee_id} style={{ background: bg }}>
+                          <td style={{ padding: "11px 12px", fontSize: 13, color: t.textHi, fontWeight: 600, position: "sticky", left: 0, background: bg, zIndex: 1, borderRight: `1px solid ${t.borderSoft || t.border}`, minWidth: 200 }}>
                             {row.employee_name}
                             {row.edited_manually && (
                               <span title={row.notes || "Editado manualmente"}
@@ -967,14 +1014,12 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
             {[
-              { icon: Users, title: "Plantilla STPS", desc: "Reporte de personal activo para registro STPS. Incluye tipos de contrato y jornada.", color: t.bad, tag: "STPS", action: async () => { const res = await hrApi.downloadHeadcountReport(); downloadBlob(res.data, "plantilla_stps.csv"); } },
-              { icon: Calendar, title: "Control de vacaciones", desc: "Días generados, tomados y pendientes por empleado y período.", color: t.nova, tag: "RH", action: async () => { const res = await hrApi.downloadVacationReport(); downloadBlob(res.data, "control_vacaciones.csv"); } },
+              { icon: Users, title: "Plantilla STPS", desc: "Reporte de personal activo para registro STPS. Incluye tipos de contrato y jornada.", color: t.bad, tag: "STPS", action: async () => setSimpleReport({ kind: "headcount" }) },
+              { icon: Calendar, title: "Control de vacaciones", desc: "Días generados, tomados y pendientes por empleado y período.", color: t.nova, tag: "RH", action: async () => setSimpleReport({ kind: "vacations" }) },
               { icon: Clock, title: "Horas extra LFT 2026", desc: "Clasifica horas extra dobles (hasta 9/semana) y triples (excedente) por empleado, en un rango de fechas.", color: t.warn, tag: "LFT", action: async () => setReportModal({ kind: "overtime" }) },
               { icon: BarChart3, title: "Acumulado anual", desc: "Suma de percepciones y deducciones por empleado a lo largo del año, de períodos ya calculados.", color: t.good, tag: "ISR", action: async () => setReportModal({ kind: "annual" }) },
               { icon: DollarSign, title: "PTU — Participación de utilidades", desc: "Reparte la utilidad declarada 50% por días trabajados y 50% por salario percibido en el año.", color: t.nova, tag: "LFT", action: async () => setReportModal({ kind: "ptu" }) },
-              { icon: TrendingDown, title: "Reporte INFONAVIT / FONACOT", desc: "Créditos vigentes, tipo de descuento configurado y monto estimado por período de cada empleado.", color: t.bad, tag: "INFONAVIT", action: async () => {
-                const res = await hrApi.downloadInfonavitReport(); downloadBlob(res.data, "infonavit_fonacot.csv");
-              } },
+              { icon: TrendingDown, title: "Reporte INFONAVIT / FONACOT", desc: "Créditos vigentes, tipo de descuento configurado y monto estimado por período de cada empleado.", color: t.bad, tag: "INFONAVIT", action: async () => setSimpleReport({ kind: "infonavit" }) },
               { icon: FileText, title: "SUA — IMSS (apoyo)", desc: "Cuotas obrero-patronales por empleado de un período calculado, como apoyo para captura/validación en el programa oficial del IMSS.", color: t.textMid, tag: "IMSS", action: async () => setReportModal({ kind: "sua" }) },
             ].map(r => (
               <button key={r.title} style={{ ...glass(t), borderRadius: 12, padding: 20, textAlign: "left", cursor: "pointer" }}
@@ -1014,6 +1059,13 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           t={t} kind={reportModal.kind} periods={periods}
           onClose={() => setReportModal(null)}
           onDone={async () => { setReportModal(null); await load(); }}
+        />
+      )}
+
+      {simpleReport && (
+        <SimpleReportModal
+          t={t} kind={simpleReport.kind}
+          onClose={() => setSimpleReport(null)}
         />
       )}
 
@@ -1864,26 +1916,28 @@ function ReportRunnerModal({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const [preview, setPreview] = useState<any[] | null>(null);
+
   const meta: Record<typeof kind, { title: string; sub: string; cta: string }> = {
     overtime: {
       title: "Horas extra LFT 2026",
       sub: "Elige el rango de fechas. El reporte clasifica dobles (hasta 9/sem ISO) y triples (excedente).",
-      cta: "Descargar CSV",
+      cta: "Generar preview",
     },
     annual: {
       title: "Acumulado anual",
       sub: "Suma percepciones y deducciones de los períodos calculados del año.",
-      cta: "Descargar CSV",
+      cta: "Generar preview",
     },
     ptu: {
       title: "PTU — Participación de utilidades",
       sub: "Reparte la utilidad declarada 50 % por días trabajados y 50 % por salario percibido.",
-      cta: "Calcular y descargar",
+      cta: "Generar preview",
     },
     sua: {
       title: "SUA (apoyo IMSS)",
       sub: "Cuotas obrero-patronales del período seleccionado. Formato CSV para captura en SUA.",
-      cta: "Descargar CSV",
+      cta: "Generar preview",
     },
     aguinaldo: {
       title: "Nuevo período de aguinaldo",
@@ -1901,8 +1955,24 @@ function ReportRunnerModal({
     return false;
   })();
 
-  const run = async () => {
+  const generatePreview = async () => {
     if (!isValid) return;
+    setBusy(true); setErr(null);
+    try {
+      let data: any[] = [];
+      if (kind === "overtime") data = await hrApi.reportOvertimeData(start, end);
+      else if (kind === "annual") data = await hrApi.reportAnnualData(Number(year));
+      else if (kind === "ptu") data = await hrApi.reportPTUData(Number(year), Number(utilidad));
+      else if (kind === "sua") data = await hrApi.reportSUAData(Number(periodId));
+      setPreview(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al generar el reporte");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const downloadCsv = async () => {
     setBusy(true); setErr(null);
     try {
       if (kind === "overtime") {
@@ -1917,14 +1987,22 @@ function ReportRunnerModal({
       } else if (kind === "sua") {
         const res = await hrApi.downloadSUAReport(Number(periodId));
         downloadBlob(res.data, `sua_apoyo_${periodId}.csv`);
-      } else if (kind === "aguinaldo") {
-        await hrApi.createAguinaldo(Number(year), paymentDate);
-        await onDone();
-        return;
       }
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al descargar el CSV");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createAguinaldo = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await hrApi.createAguinaldo(Number(year), paymentDate);
+      await onDone();
       onClose();
     } catch (e: any) {
-      setErr(e?.response?.data?.detail || "Error al generar el reporte");
+      setErr(e?.response?.data?.detail || "Error al crear período de aguinaldo");
     } finally {
       setBusy(false);
     }
@@ -1937,8 +2015,8 @@ function ReportRunnerModal({
   const eligible = periods.filter((p: any) => p.status === "calculated" || p.status === "approved" || p.status === "dispersed");
 
   return createPortal(
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: "5vh 20px" }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 500, background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, padding: 22 }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "3vh 20px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: preview ? 1080 : 520, background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, padding: 22, maxHeight: "94vh", display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
           <div>
             <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{m.title}</h3>
@@ -1947,61 +2025,156 @@ function ReportRunnerModal({
           <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={18} /></button>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 14 }}>
-          {kind === "overtime" && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div><label style={lbl}>Fecha inicial</label><input type="date" value={start} onChange={e => setStart(e.target.value)} style={inp} /></div>
-              <div><label style={lbl}>Fecha final</label><input type="date" value={end} onChange={e => setEnd(e.target.value)} style={inp} /></div>
-            </div>
-          )}
-          {kind === "annual" && (
-            <div><label style={lbl}>Año a consultar</label><input type="number" value={year} onChange={e => setYear(e.target.value)} min={2020} max={2100} style={inp} /></div>
-          )}
-          {kind === "ptu" && (
-            <>
-              <div><label style={lbl}>Año del ejercicio</label><input type="number" value={year} onChange={e => setYear(e.target.value)} min={2020} max={2100} style={inp} /></div>
-              <div>
-                <label style={lbl}>Utilidad repartible (MXN)</label>
-                <input type="number" step={0.01} value={utilidad} onChange={e => setUtilidad(e.target.value)} placeholder="Ej. 250000.00" style={inp} />
-                <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 3 }}>Monto neto declarado a los trabajadores.</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 14, overflowY: "auto" }}>
+          {/* Formulario de parámetros */}
+          <div style={{ display: "grid", gridTemplateColumns: kind === "overtime" || kind === "aguinaldo" ? "1fr 1fr" : "1fr", gap: 10 }}>
+            {kind === "overtime" && (
+              <>
+                <div><label style={lbl}>Fecha inicial</label><input type="date" value={start} onChange={e => { setStart(e.target.value); setPreview(null); }} style={inp} /></div>
+                <div><label style={lbl}>Fecha final</label><input type="date" value={end} onChange={e => { setEnd(e.target.value); setPreview(null); }} style={inp} /></div>
+              </>
+            )}
+            {kind === "annual" && (
+              <div><label style={lbl}>Año a consultar</label><input type="number" value={year} onChange={e => { setYear(e.target.value); setPreview(null); }} min={2020} max={2100} style={inp} /></div>
+            )}
+            {kind === "ptu" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div><label style={lbl}>Año del ejercicio</label><input type="number" value={year} onChange={e => { setYear(e.target.value); setPreview(null); }} min={2020} max={2100} style={inp} /></div>
+                <div>
+                  <label style={lbl}>Utilidad repartible (MXN)</label>
+                  <input type="number" step={0.01} value={utilidad} onChange={e => { setUtilidad(e.target.value); setPreview(null); }} placeholder="Ej. 250000.00" style={inp} />
+                </div>
               </div>
-            </>
-          )}
-          {kind === "sua" && (
-            <div>
-              <label style={lbl}>Período</label>
-              <select value={periodId} onChange={e => setPeriodId(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
-                <option value="">— Elige uno —</option>
-                {eligible.map((p: any) => <option key={p.id} value={p.id}>{p.name} · {p.status}</option>)}
-              </select>
-              {eligible.length === 0 && (
-                <div style={{ fontSize: 11.5, color: t.warn, marginTop: 6 }}>Aún no hay períodos calculados.</div>
-              )}
-            </div>
-          )}
-          {kind === "aguinaldo" && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div><label style={lbl}>Año</label><input type="number" value={year} onChange={e => setYear(e.target.value)} min={2020} max={2100} style={inp} /></div>
-              <div><label style={lbl}>Fecha de pago</label><input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} style={inp} /></div>
-            </div>
-          )}
+            )}
+            {kind === "sua" && (
+              <div>
+                <label style={lbl}>Período</label>
+                <select value={periodId} onChange={e => { setPeriodId(e.target.value); setPreview(null); }} style={{ ...inp, cursor: "pointer" }}>
+                  <option value="">— Elige uno —</option>
+                  {eligible.map((p: any) => <option key={p.id} value={p.id}>{p.name} · {p.status}</option>)}
+                </select>
+                {eligible.length === 0 && (
+                  <div style={{ fontSize: 11.5, color: t.warn, marginTop: 6 }}>Aún no hay períodos calculados.</div>
+                )}
+              </div>
+            )}
+            {kind === "aguinaldo" && (
+              <>
+                <div><label style={lbl}>Año</label><input type="number" value={year} onChange={e => setYear(e.target.value)} min={2020} max={2100} style={inp} /></div>
+                <div><label style={lbl}>Fecha de pago</label><input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} style={inp} /></div>
+              </>
+            )}
+          </div>
 
           {err && <div style={{ color: t.bad, fontSize: 12, background: t.bad + "15", padding: "8px 12px", borderRadius: 8 }}>{err}</div>}
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
-            <button onClick={onClose} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
-            <button onClick={run} disabled={busy || !isValid}
-                    style={{ padding: "9px 18px", borderRadius: 8, border: "none",
-                      background: isValid ? `linear-gradient(135deg, ${t.nova}, ${t.navy})` : t.panel3,
-                      color: isValid ? "#fff" : t.textLo, cursor: isValid ? "pointer" : "not-allowed",
-                      fontSize: 13, fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
-              {busy ? "Generando…" : m.cta}
-            </button>
+          {/* Preview de datos */}
+          {preview !== null && kind !== "aguinaldo" && (
+            <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ padding: "10px 14px", borderBottom: `1px solid ${t.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>Preview — {preview.length} {preview.length === 1 ? "registro" : "registros"}</span>
+                {preview.length === 0 && <span style={{ fontSize: 11.5, color: t.textLo }}>Sin datos para los parámetros elegidos</span>}
+              </div>
+              {preview.length > 0 && (
+                <div style={{ maxHeight: 380, overflow: "auto" }}>
+                  <ReportTable rows={preview} t={t} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Botones */}
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+            <button onClick={onClose} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cerrar</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              {kind === "aguinaldo" ? (
+                <button onClick={createAguinaldo} disabled={busy || !isValid}
+                        style={{ padding: "9px 18px", borderRadius: 8, border: "none",
+                          background: isValid ? `linear-gradient(135deg, ${t.nova}, ${t.navy})` : t.panel3,
+                          color: isValid ? "#fff" : t.textLo, cursor: isValid ? "pointer" : "not-allowed",
+                          fontSize: 13, fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
+                  {busy ? "Creando…" : "Crear período"}
+                </button>
+              ) : (
+                <>
+                  {preview !== null && preview.length > 0 && (
+                    <button onClick={downloadCsv} disabled={busy}
+                            style={{ padding: "9px 18px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textHi, cursor: "pointer", fontSize: 13, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                      <Download size={14} /> Descargar CSV
+                    </button>
+                  )}
+                  <button onClick={generatePreview} disabled={busy || !isValid}
+                          style={{ padding: "9px 18px", borderRadius: 8, border: "none",
+                            background: isValid ? `linear-gradient(135deg, ${t.nova}, ${t.navy})` : t.panel3,
+                            color: isValid ? "#fff" : t.textLo, cursor: isValid ? "pointer" : "not-allowed",
+                            fontSize: 13, fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
+                    {busy ? "Generando…" : preview === null ? m.cta : "Regenerar"}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
     </div>
   , document.body);
+}
+
+
+// ── ReportTable ─────────────────────────────────────────────────────────────
+// Tabla genérica que renderiza cualquier lista de objetos. Detecta valores
+// numéricos y les da formato dinero cuando la clave sugiere importe.
+function ReportTable({ rows, t }: { rows: any[]; t: any }) {
+  const columns = useMemo(() => {
+    if (!rows.length) return [];
+    // Toma las llaves de la primera fila
+    return Object.keys(rows[0]);
+  }, [rows]);
+
+  const isMoneyKey = (k: string) => /amount|total|salary|earned|net|gross|premium|imss|isr|infonavit|fonacot|bonus|voucher|fund|loan|pay|ptu/i.test(k) && !/count|days|hours/i.test(k);
+  const isNumericKey = (k: string) => /count|days|hours|year|month|number|id/i.test(k);
+  const fmtValue = (k: string, v: any) => {
+    if (v == null || v === "") return "—";
+    if (typeof v === "number") {
+      if (isMoneyKey(k)) return "$" + v.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (Number.isInteger(v)) return v.toLocaleString("es-MX");
+      return v.toLocaleString("es-MX", { maximumFractionDigits: 2 });
+    }
+    return String(v);
+  };
+  const humanize = (k: string) => k
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, ch => ch.toUpperCase());
+
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+      <thead>
+        <tr style={{ background: t.panel3 }}>
+          {columns.map(c => (
+            <th key={c} style={{ padding: "8px 10px", textAlign: (isMoneyKey(c) || isNumericKey(c)) ? "right" : "left", fontSize: 10.5, fontWeight: 700, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap", position: "sticky", top: 0, background: t.panel3 }}>
+              {humanize(c)}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, i) => (
+          <tr key={i} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
+            {columns.map(c => (
+              <td key={c} style={{
+                padding: "8px 10px",
+                textAlign: (isMoneyKey(c) || isNumericKey(c)) ? "right" : "left",
+                color: t.textMid, fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
+              }}>
+                {fmtValue(c, row[c])}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 }
 
 
@@ -2283,6 +2456,93 @@ function BulkDetailUploadModal({
           <button onClick={submit} disabled={!file || busy}
                   style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.good}, ${t.nova})`, color: "#fff", cursor: !file ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, opacity: (!file || busy) ? 0.6 : 1 }}>
             {busy ? "Procesando…" : "Subir y aplicar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  , document.body);
+}
+
+
+// ── SimpleReportModal ──────────────────────────────────────────────────────
+// Modal para reportes que NO requieren parámetros: STPS, Vacaciones, INFONAVIT.
+// Se abre, carga el JSON automáticamente, muestra la tabla y ofrece descarga CSV.
+function SimpleReportModal({
+  t, kind, onClose,
+}: {
+  t: any;
+  kind: "headcount" | "vacations" | "infonavit";
+  onClose: () => void;
+}) {
+  const [data, setData] = useState<any[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const meta = {
+    headcount: { title: "Plantilla STPS", sub: "Personal activo con tipo de contrato y frecuencia de pago.", filename: "plantilla_stps.csv", dl: hrApi.downloadHeadcountReport },
+    vacations: { title: "Control de vacaciones", sub: "Días generados, tomados y disponibles por empleado.", filename: "control_vacaciones.csv", dl: hrApi.downloadVacationReport },
+    infonavit: { title: "INFONAVIT / FONACOT", sub: "Créditos vigentes y descuento estimado por período.", filename: "infonavit_fonacot.csv", dl: hrApi.downloadInfonavitReport },
+  }[kind];
+
+  useEffect(() => {
+    setLoading(true); setErr(null);
+    const fetcher = kind === "headcount" ? hrApi.reportHeadcountData
+      : kind === "vacations" ? hrApi.reportVacationsData
+      : hrApi.reportInfonavitData;
+    fetcher()
+      .then((d: any) => setData(Array.isArray(d) ? d : []))
+      .catch((e: any) => setErr(e?.response?.data?.detail || "Error al cargar el reporte"))
+      .finally(() => setLoading(false));
+  }, [kind]);
+
+  const downloadCsv = async () => {
+    setBusy(true);
+    try {
+      const res = await meta.dl();
+      downloadBlob(res.data, meta.filename);
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al descargar el CSV");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return createPortal(
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "3vh 20px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 1080, background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, padding: 22, maxHeight: "94vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>{meta.title}</h3>
+            <p style={{ margin: "3px 0 0", fontSize: 12.5, color: t.textLo, lineHeight: 1.5 }}>{meta.sub}</p>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={18} /></button>
+        </div>
+
+        {err && <div style={{ color: t.bad, fontSize: 12, background: t.bad + "15", padding: "8px 12px", borderRadius: 8, marginBottom: 10 }}>{err}</div>}
+
+        <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden", flex: 1, minHeight: 200 }}>
+          <div style={{ padding: "10px 14px", borderBottom: `1px solid ${t.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>
+              {loading ? "Cargando…" : `${data?.length || 0} registros`}
+            </span>
+            {!loading && data && data.length === 0 && (
+              <span style={{ fontSize: 11.5, color: t.textLo }}>Sin datos para este reporte</span>
+            )}
+          </div>
+          {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo, fontSize: 13 }}>Cargando reporte…</div>}
+          {!loading && data && data.length > 0 && (
+            <div style={{ maxHeight: 500, overflow: "auto" }}>
+              <ReportTable rows={data} t={t} />
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 14 }}>
+          <button onClick={onClose} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cerrar</button>
+          <button onClick={downloadCsv} disabled={loading || busy || !data || data.length === 0}
+                  style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: (loading || busy || !data) ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6, opacity: (loading || busy || !data || data.length === 0) ? 0.5 : 1 }}>
+            <Download size={14} /> Descargar CSV
           </button>
         </div>
       </div>
