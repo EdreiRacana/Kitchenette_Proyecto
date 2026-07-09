@@ -876,15 +876,50 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
             </div>
           )}
 
+          {/* Alertas de integridad de datos (SBC mal capturado, sin banco, etc.) */}
+          {selectedPeriod && periodDetail && Array.isArray(periodDetail.data_integrity_warnings) && periodDetail.data_integrity_warnings.length > 0 && (() => {
+            const errs = periodDetail.data_integrity_warnings.filter((w: any) => w.severity === "error");
+            const warns = periodDetail.data_integrity_warnings.filter((w: any) => w.severity !== "error");
+            const showList = [...errs, ...warns];
+            const color = errs.length > 0 ? t.bad : t.warn;
+            return (
+              <div style={{ background: color + "14", border: `1px solid ${color}55`, borderRadius: 10, padding: "12px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <AlertTriangle size={16} color={color} />
+                  <span style={{ fontSize: 13, color: t.textHi, fontWeight: 700 }}>
+                    {errs.length > 0
+                      ? `${errs.length} error${errs.length !== 1 ? "es" : ""} de datos que afectan el cálculo`
+                      : `${warns.length} advertencia${warns.length !== 1 ? "s" : ""} de datos`}
+                  </span>
+                </div>
+                <div style={{ paddingLeft: 24 }}>
+                  {showList.map((w: any, i: number) => (
+                    <div key={i} style={{ fontSize: 12.5, color: t.textMid, padding: "3px 0" }}>
+                      · <b style={{ color: w.severity === "error" ? t.bad : t.textHi }}>{w.employee_name}</b>: {w.message}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           {selectedPeriod && periodDetail && (
             <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi }}>
                     Detalle · {selectedPeriod.name}
-                    <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: PERIOD_STATUS[selectedPeriod.status].color, background: PERIOD_STATUS[selectedPeriod.status].color + "18", padding: "2px 8px", borderRadius: 20 }}>
-                      {PERIOD_STATUS[selectedPeriod.status].label}
-                    </span>
+                    {(() => {
+                      // periodDetail.status es la fuente de verdad tras reopen/recalcular
+                      const st = (periodDetail?.status || selectedPeriod.status) as keyof typeof PERIOD_STATUS;
+                      const meta = PERIOD_STATUS[st];
+                      if (!meta) return null;
+                      return (
+                        <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: meta.color, background: meta.color + "18", padding: "2px 8px", borderRadius: 20 }}>
+                          {meta.label}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div style={{ fontSize: 12, color: t.textLo, marginTop: 3 }}>
                     Bruto {mxn(periodDetail.total_gross)} · Deducciones {mxn(periodDetail.total_deductions)} · Neto {mxn(periodDetail.total_net)}
@@ -918,7 +953,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                 )}
               </div>
               <div style={{ overflowX: "auto", maxWidth: "100%", borderRadius: 8, border: `1px solid ${t.borderSoft || t.border}` }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1050, fontSize: 12.5 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1350, fontSize: 12.5 }}>
                   <thead>
                     <tr style={{ background: t.panel2 }}>
                       {[
@@ -933,6 +968,9 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                         { label: "Vales", align: "right" },
                         { label: "Ahorro", align: "right" },
                         { label: "Préstamo", align: "right" },
+                        { label: "IMSS", align: "right" },
+                        { label: "INFONAVIT", align: "right" },
+                        { label: "FONACOT", align: "right" },
                         { label: "ISR", align: "right" },
                         { label: "Neto", align: "right", strong: true },
                         { label: "", align: "center" },
@@ -976,7 +1014,10 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                           <td style={{ padding: "11px 12px", fontSize: 12.5, color: row.food_vouchers > 0 ? t.good : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.food_vouchers > 0 ? mxn(row.food_vouchers) : "—"}</td>
                           <td style={{ padding: "11px 12px", fontSize: 12.5, color: row.savings_fund > 0 ? t.good : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.savings_fund > 0 ? mxn(row.savings_fund) : "—"}</td>
                           <td style={{ padding: "11px 12px", fontSize: 12.5, color: row.loan_deduction > 0 ? t.bad : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.loan_deduction > 0 ? mxn(row.loan_deduction) : "—"}</td>
-                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: t.bad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(row.isr)}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: (row.imss_employee || 0) > 0 ? t.bad : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(row.imss_employee || 0) > 0 ? mxn(row.imss_employee) : "—"}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: (row.infonavit || 0) > 0 ? t.bad : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(row.infonavit || 0) > 0 ? mxn(row.infonavit) : "—"}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: (row.fonacot || 0) > 0 ? t.bad : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(row.fonacot || 0) > 0 ? mxn(row.fonacot) : "—"}</td>
+                          <td style={{ padding: "11px 12px", fontSize: 12.5, color: (row.isr || 0) > 0 ? t.bad : t.textLo, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(row.isr || 0) > 0 ? mxn(row.isr) : "—"}</td>
                           <td style={{ padding: "11px 12px", fontSize: 13.5, fontWeight: 800, color: t.good, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(row.total_net)}</td>
                           <td style={{ padding: "8px 12px", textAlign: "center" }}>
                             {selectedPeriod.status === "calculated" && (
@@ -1314,14 +1355,43 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
                 <div><label style={lbl}>Salario base mensual *</label>
                   <div style={{ position: "relative" }}>
                     <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: t.textLo }}>$</span>
-                    <input type="number" value={form.base_salary} onChange={e => setForm(f => ({ ...f, base_salary: e.target.value, sbc: String(Number(e.target.value) * 1.05) }))} style={{ ...inp, paddingLeft: 24 }} />
+                    <input type="number" value={form.base_salary}
+                      onChange={e => {
+                        const sal = Number(e.target.value) || 0;
+                        // SBC DIARIO = (mensual / 30) × factor integración (Art. 27 LSS, 1.0452 con 1 año antigüedad)
+                        const sbcDiarioSugerido = sal > 0 ? (sal / 30) * 1.0452 : 0;
+                        setForm(f => ({ ...f, base_salary: e.target.value, sbc: sbcDiarioSugerido ? sbcDiarioSugerido.toFixed(2) : "" }));
+                      }}
+                      style={{ ...inp, paddingLeft: 24 }} />
                   </div>
+                  <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4 }}>Total mensual bruto</div>
                 </div>
-                <div><label style={lbl}>SBC (Salario Base Cotización) *</label>
+                <div><label style={lbl}>SBC diario (Salario Base Cotización) *</label>
                   <div style={{ position: "relative" }}>
                     <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: t.textLo }}>$</span>
-                    <input type="number" value={form.sbc} onChange={e => setForm(f => ({ ...f, sbc: e.target.value }))} style={{ ...inp, paddingLeft: 24 }} />
+                    <input type="number" step={0.01} value={form.sbc} onChange={e => setForm(f => ({ ...f, sbc: e.target.value }))} style={{ ...inp, paddingLeft: 24 }} />
                   </div>
+                  {(() => {
+                    const sal = Number(form.base_salary) || 0;
+                    const sbc = Number(form.sbc) || 0;
+                    const sugerido = sal > 0 ? (sal / 30) * 1.0452 : 0;
+                    // Warning si SBC parece capturado como mensual (mucho más alto que el sugerido)
+                    if (sal > 0 && sbc > sugerido * 3) {
+                      return (
+                        <div style={{ fontSize: 10.5, color: t.bad, marginTop: 4, fontWeight: 600 }}>
+                          ⚠ SBC muy alto. Debe ser DIARIO (~${sugerido.toFixed(2)}), no mensual. Corrige antes de calcular nómina.
+                        </div>
+                      );
+                    }
+                    if (sal > 0 && sbc > 0 && sbc < sugerido * 0.5) {
+                      return (
+                        <div style={{ fontSize: 10.5, color: t.warn, marginTop: 4 }}>
+                          SBC bajo (sugerido ~${sugerido.toFixed(2)}/día). Verifica que sea el correcto.
+                        </div>
+                      );
+                    }
+                    return <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4 }}>DIARIO — Art. 27 LSS. Tope 25 UMAs ($2,828.50).</div>;
+                  })()}
                 </div>
               </div>
               <div><label style={lbl}>Frecuencia de pago *</label>

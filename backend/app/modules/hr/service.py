@@ -481,6 +481,39 @@ async def get_period_detail(db: AsyncSession, period_id: int) -> Optional[dict]:
                 "reason": "Dado de alta después de calcular la nómina — presiona Recalcular",
             })
     summary["excluded_active_employees"] = excluded_active
+
+    # Alertas de integridad de datos por empleado — SBC obviamente mal capturado
+    # (mensual en lugar de diario), CLABE inválida, banco vacío, etc. Se muestran
+    # como banner sin bloquear el cálculo — el operador decide corregir y recalcular.
+    warnings: List[dict] = []
+    for d, emp in rows:
+        sal = float(emp.base_salary or 0.0)
+        sbc = float(emp.sbc or 0.0)
+        # SBC sugerido: (mensual/30) * factor integración
+        sbc_esperado = (sal / 30.0) * 1.0452 if sal > 0 else 0.0
+        if sal > 0 and sbc > sbc_esperado * 3:
+            warnings.append({
+                "employee_id": emp.id, "employee_name": _full_name(emp),
+                "field": "sbc", "severity": "error",
+                "message": (
+                    f"SBC = ${sbc:,.2f} parece capturado como MENSUAL en lugar de DIARIO. "
+                    f"El SBC diario esperado para su salario es ~${sbc_esperado:,.2f}. "
+                    f"Corrige la ficha del empleado y presiona Recalcular."
+                ),
+            })
+        elif sal > 0 and sbc == 0:
+            warnings.append({
+                "employee_id": emp.id, "employee_name": _full_name(emp),
+                "field": "sbc", "severity": "warning",
+                "message": "SBC = $0. No se calculó IMSS ni INFONAVIT patronal. Captura el SBC diario.",
+            })
+        if not emp.bank or not (emp.clabe or "").strip():
+            warnings.append({
+                "employee_id": emp.id, "employee_name": _full_name(emp),
+                "field": "bank", "severity": "warning",
+                "message": "Sin banco o CLABE — la dispersión bancaria no lo incluirá.",
+            })
+    summary["data_integrity_warnings"] = warnings
     return summary
 
 
