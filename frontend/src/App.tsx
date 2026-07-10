@@ -230,7 +230,7 @@ async function loadDashboardData(preset, customStart, customEnd) {
   const { granularity, days } = dashTrendParams(preset);
 
   const [statsCur, statsPrev, trendCur, trendPrev, finComparison, invStats, finDashboard, budgets, forecastGoal,
-         topCustomers, byChannel, cashFlow, reorderAlerts, hrAlerts] = await Promise.all([
+         topCustomers, topCustomersPrev, byChannel, cashFlow, reorderAlerts, hrAlerts] = await Promise.all([
     salesApi.stats(curStartISO, curEndISO),
     salesApi.stats(prevStartISO, prevEndISO),
     salesApi.trend(granularity, days, curEndISO),
@@ -242,6 +242,7 @@ async function loadDashboardData(preset, customStart, customEnd) {
     // Forecast tiene prioridad; si no hay plan activo cae a los presupuestos de Finanzas.
     forecastApi.goalForRange(curStartISO, curEndISO).catch(() => ({ goal_amount: 0, plan_id: null, plan_name: null, plan_year: null, months_covered: [] })),
     salesApi.topCustomers(5, curStartISO, curEndISO).catch(() => []),
+    salesApi.topCustomers(20, prevStartISO, prevEndISO).catch(() => []),
     salesApi.byChannel(curStartISO, curEndISO).catch(() => []),
     financeService.getCashFlow(12).catch(() => []),
     inventoryService.getReorderAlerts().catch(() => []),
@@ -341,7 +342,12 @@ async function loadDashboardData(preset, customStart, customEnd) {
     attention: { agotados: invStats.out_of_stock, cartera: finDashboard.cxc_balance ?? 0, stockBajo: invStats.low_stock },
     series: { cur: seriesCur, prev: seriesPrev },
     xlabels,
-    topCustomers: (topCustomers || []).slice(0, 5),
+    topCustomers: (topCustomers || []).slice(0, 5).map((c: any) => {
+      const prev = (topCustomersPrev || []).find((p: any) => p.customer_id === c.customer_id);
+      const prevTotal = prev ? prev.total : 0;
+      const delta = prevTotal > 0 ? Math.round(((c.total - prevTotal) / prevTotal) * 1000) / 10 : null;
+      return { ...c, delta };
+    }),
     byChannel: (byChannel || []),
     cashFlow: (cashFlow || []).slice(-12),
     topAlerts,
@@ -508,7 +514,7 @@ function ComparisonChart({ t, series, xlabels }) {
     </div>
   );
 }
-function MiniCalendar({ t, s, start, end, onPick }) {
+function MiniCalendar({ t, s, start, end, onPick, anchor, onClose }) {
   const [view, setView] = useState(new Date((start || TODAY).getFullYear(), (start || TODAY).getMonth(), 1));
   const firstDow = (new Date(view.getFullYear(), view.getMonth(), 1).getDay() + 6) % 7;
   const dim = new Date(view.getFullYear(), view.getMonth() + 1, 0).getDate();
@@ -518,8 +524,20 @@ function MiniCalendar({ t, s, start, end, onPick }) {
   const inRange = (d) => d && start && end && d >= start && d <= end;
   const isEdge = (d) => sameDay(d, start) || sameDay(d, end);
   const move = (n) => setView(new Date(view.getFullYear(), view.getMonth() + n, 1));
-  return (
-    <div style={{ position: "absolute", top: 44, right: 0, width: 264, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 12, boxShadow: "0 18px 44px rgba(0,0,0,0.4)", zIndex: 60 }}>
+  // Portal + posición fija anclada al botón — evita que backdrop-filter de las
+  // cards padres cree un stacking context y clipee el calendario abajo del KPI.
+  const W = 264;
+  const gap = 8;
+  const top = anchor ? anchor.bottom + gap : 100;
+  // Alinea el borde derecho del calendario con el borde derecho del botón; si
+  // se sale por la izquierda del viewport, lo pega al margen.
+  const rightEdge = anchor ? anchor.right : window.innerWidth - 20;
+  const left = Math.max(12, rightEdge - W);
+  const calendarBody = (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 998, background: "transparent" }} />
+      <div style={{ position: "fixed", top, left, width: W, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 12, boxShadow: "0 18px 44px rgba(0,0,0,0.55)", zIndex: 999 }}
+        onClick={(e) => e.stopPropagation()}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
         <button onClick={() => move(-1)} style={calNav(t)}><ChevronLeft size={16} /></button>
         <span style={{ fontSize: 13, fontWeight: 600, color: t.textHi, textTransform: "capitalize" }}>{s.cal.months[view.getMonth()]} {view.getFullYear()}</span>
@@ -533,8 +551,10 @@ function MiniCalendar({ t, s, start, end, onPick }) {
           return <button key={i} onClick={() => onPick(d)} style={{ border: "none", cursor: "pointer", fontSize: 12.5, padding: "7px 0", borderRadius: 7, background: edge ? t.nova : range ? t.nova + "22" : "transparent", color: edge ? "#fff" : t.textMid, fontWeight: edge || today ? 700 : 500, outline: today && !edge ? `1px solid ${t.nova}66` : "none" }}>{d.getDate()}</button>;
         })}
       </div>
-    </div>
+      </div>
+    </>
   );
+  return createPortal(calendarBody, document.body);
 }
 const calNav = (t) => ({ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", display: "grid", placeItems: "center" });
 
@@ -563,15 +583,15 @@ function IncomeExpenseArea({ t, data }: any) {
         onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover(near((e.clientX - r.left) / r.width * W)); }}
         onMouseLeave={() => setHover(null)}>
         <defs>
-          <linearGradient id="ingFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.nova} stopOpacity="0.35" /><stop offset="100%" stopColor={t.nova} stopOpacity="0" /></linearGradient>
-          <linearGradient id="gasFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.good} stopOpacity="0.28" /><stop offset="100%" stopColor={t.good} stopOpacity="0" /></linearGradient>
+          <linearGradient id="ingFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.nova} stopOpacity="0.18" /><stop offset="100%" stopColor={t.nova} stopOpacity="0" /></linearGradient>
+          <linearGradient id="gasFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.good} stopOpacity="0.12" /><stop offset="100%" stopColor={t.good} stopOpacity="0" /></linearGradient>
         </defs>
-        {grid.map((g, i) => <line key={i} x1={P.l} x2={W - P.r} y1={g} y2={g} stroke={t.gridLine} strokeWidth="1" />)}
+        {grid.map((g, i) => <line key={i} x1={P.l} x2={W - P.r} y1={g} y2={g} stroke={t.gridLine} strokeWidth="1" strokeOpacity="0.5" />)}
         <path d={areaGas} fill="url(#gasFill)" />
-        <path d={linePath(gastos)} fill="none" stroke={t.good} strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" />
+        <path d={linePath(gastos)} fill="none" stroke={t.good} strokeWidth="1.6" strokeOpacity="0.75" strokeLinejoin="round" strokeLinecap="round" />
         <path d={areaIng} fill="url(#ingFill)" />
-        <path d={linePath(ingresos)} fill="none" stroke={t.nova} strokeWidth="2.6" strokeLinejoin="round" strokeLinecap="round" />
-        {ingresos.map((v: number, i: number) => <circle key={i} cx={x(i)} cy={y(v)} r="2.5" fill={t.panel} stroke={t.nova} strokeWidth="1.6" />)}
+        <path d={linePath(ingresos)} fill="none" stroke={t.nova} strokeWidth="1.8" strokeOpacity="0.85" strokeLinejoin="round" strokeLinecap="round" />
+        {ingresos.map((v: number, i: number) => <circle key={i} cx={x(i)} cy={y(v)} r="2" fill={t.panel} stroke={t.nova} strokeWidth="1.2" strokeOpacity="0.7" />)}
         {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={P.t} y2={P.t + ih} stroke={t.nova} strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />}
         {data.map((d: any, i: number) => <text key={i} x={x(i)} y={H - 9} fill={t.textLo} fontSize="11" textAnchor="middle">{(d.period || "").slice(-5)}</text>)}
       </svg>
@@ -595,26 +615,49 @@ function IncomeExpenseArea({ t, data }: any) {
   );
 }
 
-/* ── Chart: Top clientes (barras horizontales con gradiente) ────────── */
-function TopBarsHorizontal({ t, items, onClick }: any) {
+/* ── Top clientes: ranked leaderboard (estilo Stripe/Linear/Notion) ─── */
+function TopCustomersRanked({ t, items, onClick }: any) {
   if (!items || items.length === 0) {
     return <div style={{ padding: "60px 0", textAlign: "center", color: t.textLo, fontSize: 12.5 }}>Sin ventas registradas en el período.</div>;
   }
-  const max = Math.max(1, ...items.map((it: any) => it.total || 0));
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div style={{ display: "flex", flexDirection: "column" }}>
       {items.map((c: any, i: number) => {
-        const pct = Math.max(4, Math.round(((c.total || 0) / max) * 100));
+        const hasDelta = typeof c.delta === "number";
+        const up = hasDelta && c.delta >= 0;
+        const deltaColor = !hasDelta ? t.textLo : up ? t.good : t.bad;
         return (
-          <div key={c.customer_id ?? i} onClick={() => onClick?.(c)} style={{ cursor: onClick ? "pointer" : "default" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, gap: 8 }}>
-              <span style={{ fontSize: 12.5, color: t.textHi, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }} title={c.name}>{c.name}</span>
-              <span style={{ fontSize: 12, color: t.textLo, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{mxnShort(c.total || 0)}</span>
+          <div key={c.customer_id ?? i}
+            onClick={() => onClick?.(c)}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "28px minmax(0, 1fr) auto",
+              gap: 12,
+              alignItems: "center",
+              padding: "12px 0",
+              borderTop: i === 0 ? "none" : `1px solid ${t.border}55`,
+              cursor: onClick ? "pointer" : "default",
+            }}>
+            {/* Rank chip */}
+            <div style={{
+              width: 24, height: 24, borderRadius: 8, display: "grid", placeItems: "center",
+              background: i === 0 ? t.nova + "22" : t.panel2,
+              color: i === 0 ? t.nova : t.textLo,
+              fontSize: 12, fontWeight: 700, fontVariantNumeric: "tabular-nums",
+              border: `1px solid ${i === 0 ? t.nova + "55" : t.border}`,
+            }}>{i + 1}</div>
+            {/* Cliente + pedidos */}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, color: t.textHi, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={c.name}>{c.name}</div>
+              <div style={{ fontSize: 11, color: t.textLo, marginTop: 2 }}>{c.orders} pedido{c.orders === 1 ? "" : "s"}</div>
             </div>
-            <div style={{ height: 10, background: t.panel3, borderRadius: 999, overflow: "hidden" }}>
-              <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${t.nova}, ${t.good})`, boxShadow: `0 0 8px ${t.nova}66` }} />
+            {/* Monto + delta */}
+            <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+              <div style={{ fontSize: 14, color: t.textHi, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{mxnShort(c.total || 0)}</div>
+              <div style={{ fontSize: 10.5, color: deltaColor, marginTop: 2, fontWeight: 600 }}>
+                {hasDelta ? (up ? "↑" : "↓") + " " + Math.abs(c.delta) + "%" : "nuevo"}
+              </div>
             </div>
-            <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 3 }}>{c.orders} pedido{c.orders === 1 ? "" : "s"}</div>
           </div>
         );
       })}
@@ -647,7 +690,7 @@ function DonutChart({ t, items, colors }: any) {
       <div style={{ position: "relative", display: "flex", justifyContent: "center" }}>
         <svg viewBox="0 0 200 200" width="180" height="180">
           {arcs.map((a: any, i: number) => (
-            <path key={i} d={a.d} fill="none" stroke={a.color} strokeWidth={sw} strokeLinecap="butt" />
+            <path key={i} d={a.d} fill="none" stroke={a.color} strokeOpacity="0.8" strokeWidth={sw} strokeLinecap="butt" />
           ))}
         </svg>
         <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center" }}>
@@ -682,8 +725,8 @@ function OperationalBars({ t, bars }: any) {
               <span style={{ fontSize: 12, color: t.textMid }}>{b.label}</span>
               <span style={{ fontSize: 13, fontWeight: 700, color, fontVariantNumeric: "tabular-nums" }}>{b.value}</span>
             </div>
-            <div style={{ height: 8, background: t.panel3, borderRadius: 999, overflow: "hidden" }}>
-              <div style={{ width: `${Math.max(0, Math.min(100, b.pct))}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${color}, ${color}bb)`, boxShadow: `0 0 6px ${color}55` }} />
+            <div style={{ height: 6, background: t.panel3, borderRadius: 999, overflow: "hidden" }}>
+              <div style={{ width: `${Math.max(0, Math.min(100, b.pct))}%`, height: "100%", borderRadius: 999, background: color, opacity: 0.75 }} />
             </div>
           </div>
         );
@@ -733,6 +776,8 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
   void lang;
   const [preset, setPreset] = useState("month");
   const [calOpen, setCalOpen] = useState(false);
+  const [calAnchor, setCalAnchor] = useState<DOMRect | null>(null);
+  const calBtnRef = useRef<HTMLButtonElement | null>(null);
   const [rStart, setRStart] = useState(null);
   const [rEnd, setREnd] = useState(null);
   const [kpiDrill, setKpiDrill] = useState(null);
@@ -831,12 +876,18 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
             })}
           </div>
           <div style={{ position: "relative" }}>
-            <button onClick={() => setCalOpen(!calOpen)} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", background: preset === "custom" ? t.nova + "1a" : t.inputBg, border: `1px solid ${preset === "custom" ? t.nova + "55" : t.border}`, borderRadius: 9, padding: "7px 12px", color: t.textHi, fontSize: 12.5, fontWeight: 500 }}>
+            <button
+              ref={calBtnRef}
+              onClick={() => {
+                if (calBtnRef.current) setCalAnchor(calBtnRef.current.getBoundingClientRect());
+                setCalOpen(!calOpen);
+              }}
+              style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", background: preset === "custom" ? t.nova + "1a" : t.inputBg, border: `1px solid ${preset === "custom" ? t.nova + "55" : t.border}`, borderRadius: 9, padding: "7px 12px", color: t.textHi, fontSize: 12.5, fontWeight: 500 }}>
               <CalIcon size={14} color={preset === "custom" ? t.nova : t.textLo} />
               {preset === "custom" ? `${fmtDate(r0, s)} – ${fmtDate(r1, s)}` : s.dash.custom}
               <ChevronDown size={13} color={t.textLo} />
             </button>
-            {calOpen && <MiniCalendar t={t} s={s} start={rStart} end={rEnd} onPick={pick} />}
+            {calOpen && <MiniCalendar t={t} s={s} start={rStart} end={rEnd} onPick={pick} anchor={calAnchor} onClose={() => setCalOpen(false)} />}
           </div>
         </Card>
         <Card t={t} style={{ flex: "0 0 auto", padding: "8px 20px", display: "flex", alignItems: "center", gap: 14, minWidth: 220 }}>
@@ -903,7 +954,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Top 5 clientes</div>
             <span style={{ fontSize: 11, color: t.textLo }}>del período</span>
           </div>
-          <TopBarsHorizontal t={t} items={data.topCustomers} onClick={() => setPage("clientes")} />
+          <TopCustomersRanked t={t} items={data.topCustomers} onClick={() => setPage("clientes")} />
         </Card>
       </div>
 
