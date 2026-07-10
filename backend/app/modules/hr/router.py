@@ -33,6 +33,17 @@ async def read_employees(db: DB, current_user: CurrentUser):
     return await service.get_employees(db)
 
 
+@router.post("/employees/fix-sbc")
+async def fix_all_employees_sbc(db: DB, current_user: CurrentUser):
+    """Auto-corrige el SBC diario de todos los empleados cuyo SBC parece
+    haberse capturado como MENSUAL en lugar de diario (bug anterior del form).
+
+    Detecta cuando `sbc > 3 × ((salary/30) × 1.0452)` y lo reemplaza por
+    el diario correcto. Regresa la lista de cambios aplicados."""
+    _require_manager(current_user)
+    return await service.fix_all_employees_sbc(db, user_id=current_user.id)
+
+
 @router.post("/employees", response_model=schemas.EmployeeInDB)
 async def create_employee(emp_in: schemas.EmployeeCreate, db: DB, current_user: CurrentUser):
     _require_manager(current_user)

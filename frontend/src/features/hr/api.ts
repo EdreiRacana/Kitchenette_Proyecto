@@ -8,6 +8,7 @@ export const hrApi = {
   createEmployee: (data: any) => api.post("/hr/employees", data).then(r => r.data),
   updateEmployee: (id: number, data: any) => api.patch(`/hr/employees/${id}`, data).then(r => r.data),
   deleteEmployee: (id: number) => api.delete(`/hr/employees/${id}`).then(r => r.data),
+  fixAllSBC: () => api.post("/hr/employees/fix-sbc").then(r => r.data),
 
   attendance: (date?: string) => api.get("/hr/attendance", { params: date ? { date } : {} }).then(r => r.data),
   createAttendance: (data: any) => api.post("/hr/attendance", data).then(r => r.data),
