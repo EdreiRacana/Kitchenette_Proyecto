@@ -882,15 +882,52 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
             const warns = periodDetail.data_integrity_warnings.filter((w: any) => w.severity !== "error");
             const showList = [...errs, ...warns];
             const color = errs.length > 0 ? t.bad : t.warn;
+            const sbcErrors = errs.filter((w: any) => w.field === "sbc");
             return (
               <div style={{ background: color + "14", border: `1px solid ${color}55`, borderRadius: 10, padding: "12px 14px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <AlertTriangle size={16} color={color} />
-                  <span style={{ fontSize: 13, color: t.textHi, fontWeight: 700 }}>
-                    {errs.length > 0
-                      ? `${errs.length} error${errs.length !== 1 ? "es" : ""} de datos que afectan el cálculo`
-                      : `${warns.length} advertencia${warns.length !== 1 ? "s" : ""} de datos`}
-                  </span>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <AlertTriangle size={16} color={color} />
+                    <span style={{ fontSize: 13, color: t.textHi, fontWeight: 700 }}>
+                      {errs.length > 0
+                        ? `${errs.length} error${errs.length !== 1 ? "es" : ""} de datos que afectan el cálculo`
+                        : `${warns.length} advertencia${warns.length !== 1 ? "s" : ""} de datos`}
+                    </span>
+                  </div>
+                  {sbcErrors.length > 0 && (
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(
+                          `Corregir automáticamente el SBC diario de ${sbcErrors.length} empleado${sbcErrors.length !== 1 ? "s" : ""}.\n\n`
+                          + "El nuevo SBC diario se calculará como (salario mensual / 30) × 1.0452 "
+                          + "(factor de integración LSS art. 27).\n\n"
+                          + "Después se recalculará la nómina automáticamente.\n\n¿Continuar?"
+                        )) return;
+                        try {
+                          const res = await hrApi.fixAllSBC();
+                          if (selectedPeriod && (selectedPeriod.status === "calculated" || selectedPeriod.status === "draft")) {
+                            await hrApi.calculatePeriod(selectedPeriod.id);
+                          }
+                          await load();
+                          if (selectedPeriod) {
+                            const d = await hrApi.periodDetail(selectedPeriod.id);
+                            setPeriodDetail(d);
+                          }
+                          alert(`${res.updated_count} empleado(s) corregido(s) y nómina recalculada.`);
+                        } catch (err: any) {
+                          alert(err?.response?.data?.detail || "Error al corregir los SBC");
+                        }
+                      }}
+                      style={{
+                        background: `linear-gradient(135deg, ${t.good}, #059669)`,
+                        color: "#fff", border: "none", padding: "8px 14px",
+                        borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700,
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                      }}
+                    >
+                      <RefreshCw size={13} /> Corregir SBC automáticamente ({sbcErrors.length})
+                    </button>
+                  )}
                 </div>
                 <div style={{ paddingLeft: 24 }}>
                   {showList.map((w: any, i: number) => (

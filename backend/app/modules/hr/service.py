@@ -247,6 +247,44 @@ async def delete_employee(db: AsyncSession, employee_id: int, user_id: Optional[
     return True
 
 
+async def fix_all_employees_sbc(db: AsyncSession, user_id: Optional[int] = None) -> dict:
+    """Auto-corrige el SBC de empleados cuyo valor parece haberse capturado
+    como mensual (bug del form previo). Para cada empleado con salario > 0:
+
+      - Calcula el SBC diario esperado: (mensual / 30) × 1.0452 (factor
+        integración LSS con antigüedad promedio).
+      - Si el SBC actual > 3× el esperado, lo actualiza al esperado.
+
+    Regresa la lista de cambios aplicados con antes/después.
+    """
+    res = await db.execute(select(models.Employee))
+    employees = res.scalars().all()
+    updated: List[dict] = []
+    for e in employees:
+        sal = float(e.base_salary or 0.0)
+        if sal <= 0:
+            continue
+        sbc_actual = float(e.sbc or 0.0)
+        sbc_esperado = round((sal / 30.0) * 1.0452, 2)
+        if sbc_actual > sbc_esperado * 3:
+            updated.append({
+                "employee_id": e.id,
+                "employee_name": _full_name(e),
+                "base_salary": sal,
+                "sbc_before": sbc_actual,
+                "sbc_after": sbc_esperado,
+            })
+            e.sbc = sbc_esperado
+    if updated:
+        await db.commit()
+        await _log_audit(
+            db, user_id, "FIX_SBC_BULK",
+            f"Auto-corrección de SBC en {len(updated)} empleados",
+            {"updated_count": len(updated), "employees": [u["employee_id"] for u in updated]},
+        )
+    return {"updated_count": len(updated), "changes": updated}
+
+
 # ── Attendance ──────────────────────────────────────────────────────────
 async def create_attendance(db: AsyncSession, data: schemas.AttendanceCreate, user_id: Optional[int] = None) -> models.Attendance:
     att = models.Attendance(**data.model_dump())
