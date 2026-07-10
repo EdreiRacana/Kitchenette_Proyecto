@@ -87,6 +87,14 @@ async def by_channel(db: DB, current_user: CurrentUser, start: Optional[datetime
     return await service.sales_by_channel(db, start=start, end=end, branch_warehouse_ids=ids)
 
 
+@router.get("/analytics/heatmap", response_model=List[schemas.HeatmapCell])
+async def sales_heatmap(db: DB, current_user: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
+    """Actividad de ventas por día-de-semana × hora. Devuelve solo las
+    celdas con al menos 1 pedido; el frontend completa el grid 7×24."""
+    ids = await _branch_ids(db, current_user)
+    return await service.sales_heatmap(db, start=start, end=end, branch_warehouse_ids=ids)
+
+
 @router.get("/customers/{customer_id}/360", response_model=schemas.Customer360)
 async def customer_360(customer_id: int, db: DB, _: CurrentUser):
     data = await service.customer_360(db, customer_id)
