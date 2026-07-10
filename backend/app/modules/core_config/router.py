@@ -100,6 +100,50 @@ async def update_company_profile(
     
     return await service.update_company_profile(db=db, db_obj=profile, obj_in=profile_in)
 
+
+# -- Company Logo Upload --
+import os
+import uuid as _uuid
+from fastapi import UploadFile, File
+UPLOAD_DIR = os.path.join(os.getcwd(), "uploads", "company")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+@router.post("/company/logo")
+async def upload_company_logo(
+    *, db: AsyncSession = Depends(deps.get_db),
+    file: UploadFile = File(...),
+    current_user: User = Depends(deps.get_current_superuser),
+):
+    """Sube el logo de la empresa. Se usa en headers de PDFs (cotización,
+    remisión, factura) y en el sidebar del sistema. Acepta PNG/JPG/SVG."""
+    allowed = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp"}
+    if file.content_type not in allowed:
+        raise HTTPException(400, f"Formato no soportado: {file.content_type}. Usa PNG, JPG, SVG o WebP.")
+    ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg",
+           "image/svg+xml": ".svg", "image/webp": ".webp"}.get(file.content_type, ".bin")
+    filename = f"logo_{_uuid.uuid4().hex[:8]}{ext}"
+    path = os.path.join(UPLOAD_DIR, filename)
+    contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(400, "El logo excede 5MB")
+    with open(path, "wb") as f:
+        f.write(contents)
+
+    profile = await service.get_company_profile(db)
+    if profile:
+        profile.logo_url = f"/static/company/{filename}"
+        await db.commit()
+        await db.refresh(profile)
+
+    await service.create_audit_log(
+        db, user_id=current_user.id, action="UPLOAD_COMPANY_LOGO",
+        module="config", description=f"Logo actualizado: {filename}",
+        details={"filename": filename, "size": len(contents)},
+    )
+    return {"logo_url": f"/static/company/{filename}", "size": len(contents)}
+
+
 # -- System Integrations Endpoints --
 
 @router.get("/integrations", response_model=List[schemas.SystemIntegrationResponse])

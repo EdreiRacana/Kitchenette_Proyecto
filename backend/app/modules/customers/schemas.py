@@ -106,6 +106,21 @@ class CustomerBase(BaseModel):
     referencia: Optional[str] = None
     address: Optional[str] = None
 
+    # ── Perfil comercial universal ─────────────────────────────
+    relationship_type: Optional[str] = "retail"  # retail | b2b_firm | b2b_consignment | marketplace | chain_physical
+    commission_base_pct: Optional[float] = 0.0
+    logistics_pct: Optional[float] = 0.0
+    logistics_fixed: Optional[float] = 0.0
+    cedis_pct: Optional[float] = 0.0
+    portal_pct: Optional[float] = 0.0
+    withholding_scheme: Optional[str] = "none"
+    withholding_isr_pct: Optional[float] = 0.0
+    withholding_iva_pct: Optional[float] = 0.0
+    commercial_discount_pct: Optional[float] = 0.0
+    marketplace_platform: Optional[str] = None
+    seller_id_external: Optional[str] = None
+    consignment_settlement_days: Optional[int] = 30
+
     is_active: Optional[bool] = True
     notes: Optional[str] = None
 

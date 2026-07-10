@@ -22,6 +22,11 @@ export interface CompanyProfile {
     base_currency?: string;
     timezone?: string;
     logo_url?: string;
+    commercial_name?: string;
+    brand_color?: string;
+    document_footer?: string;
+    business_mode?: "product" | "service" | "mixed";
+    state_payroll_tax_rate?: number;
 }
 
 export interface PermissionDef { id: number; module: string; action: string; description?: string; }
@@ -76,6 +81,15 @@ const configService = {
     deleteBranch: async (id: number) => { await api.delete(`/config/branches/${id}`); },
     createCompanyProfile: async (data: CompanyProfile) => (await api.post<CompanyProfile>('/config/company', data)).data,
     updateCompanyProfile: async (data: Partial<CompanyProfile>) => (await api.put<CompanyProfile>('/config/company', data)).data,
+    uploadCompanyLogo: async (file: File) => {
+        const form = new FormData();
+        form.append("file", file);
+        const { data } = await api.post<{ logo_url: string; size: number }>(
+            '/config/company/logo', form,
+            { headers: { "Content-Type": "multipart/form-data" } },
+        );
+        return data;
+    },
 
     // ── Usuarios, roles y permisos (RBAC) ──
     getUsers: async () => (await api.get<ApiUser[]>('/auth/users')).data,

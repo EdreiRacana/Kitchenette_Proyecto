@@ -7,6 +7,7 @@ import { Plus, Trash2, Building2, FileText, CreditCard, Users, Phone, MapPin, Up
 import type { Tokens, Translator } from "../sales/theme";
 import { Modal, Field, TextInput, NumberInput, Select, Button } from "../sales/ui";
 import type { Customer, CustomerDraft, CustomerDocument } from "./types";
+import { WITHHOLDING_SCHEMES, RELATIONSHIP_TYPES } from "./types";
 import { customersApi } from "./api";
 
 const DOC_TYPES = ["INE/Identificación", "Constancia de situación fiscal", "Comprobante de domicilio", "Contrato", "Otro"];
@@ -47,6 +48,11 @@ function emptyDraft(): CustomerDraft {
     codigo_postal: "", no_exterior: "", no_interior: "", codigo_colonia: "",
     codigo_localidad: "", referencia: "", address: "",
     is_active: true, notes: "",
+    relationship_type: "retail",
+    commission_base_pct: 0, logistics_pct: 0, logistics_fixed: 0, cedis_pct: 0, portal_pct: 0,
+    withholding_scheme: "none", withholding_isr_pct: 0, withholding_iva_pct: 0,
+    commercial_discount_pct: 0, marketplace_platform: "", seller_id_external: "",
+    consignment_settlement_days: 30,
   };
 }
 
@@ -234,6 +240,81 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
         <Field tk={tk} label={tr("cust_how_heard", "¿Cómo se enteró de nosotros?")}>
           <Select tk={tk} value={d.how_heard || ""} onChange={(v) => set("how_heard", v)} options={toOpts(HOW_HEARD)} placeholder={tr("select", "Selecciona…")} />
         </Field>
+      </Section>
+
+      {/* ── Perfil comercial universal ─── */}
+      <Section tk={tk} icon={<CreditCard size={16} />} title={tr("cust_sec_universal", "Perfil comercial (Universal ERP)")}>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <Field tk={tk} label={tr("cust_relationship_type", "Modelo comercial")}>
+            <Select tk={tk} value={d.relationship_type || "retail"}
+                    onChange={(v) => set("relationship_type" as any, v)}
+                    options={RELATIONSHIP_TYPES.map(r => ({ value: r.key, label: `${r.icon}  ${r.label}` }))} />
+          </Field>
+          <div style={{ fontSize: 11, color: tk.textLo, marginTop: 6, marginBottom: 4, fontStyle: "italic" }}>
+            {RELATIONSHIP_TYPES.find(r => r.key === (d.relationship_type || "retail"))?.desc}
+          </div>
+        </div>
+
+        {(d.relationship_type === "marketplace" || d.relationship_type === "chain_physical") && (
+          <>
+            <Field tk={tk} label={tr("cust_platform", "Plataforma / Cadena")}>
+              <TextInput tk={tk} value={d.marketplace_platform || ""} onChange={(v) => set("marketplace_platform" as any, v)}
+                         placeholder="liverpool, amazon, mercadolibre, sears…" />
+            </Field>
+            <Field tk={tk} label={tr("cust_external_id", "ID del vendedor en la plataforma")}>
+              <TextInput tk={tk} value={d.seller_id_external || ""} onChange={(v) => set("seller_id_external" as any, v)}
+                         placeholder="Número de proveedor / Seller ID" />
+            </Field>
+          </>
+        )}
+
+        <Field tk={tk} label={tr("cust_commission", "Comisión base (%)")}>
+          <NumberInput tk={tk} value={d.commission_base_pct ?? 0} onChange={(v) => set("commission_base_pct" as any, v)} min={0} max={100} step={0.5} />
+        </Field>
+        <Field tk={tk} label={tr("cust_logistics", "Gastos logísticos (%)")}>
+          <NumberInput tk={tk} value={d.logistics_pct ?? 0} onChange={(v) => set("logistics_pct" as any, v)} min={0} max={100} step={0.5} />
+        </Field>
+        <Field tk={tk} label={tr("cust_logistics_fixed", "Gastos logísticos ($ fijo por pedido)")}>
+          <NumberInput tk={tk} value={d.logistics_fixed ?? 0} onChange={(v) => set("logistics_fixed" as any, v)} min={0} step={1} />
+        </Field>
+        <Field tk={tk} label={tr("cust_portal", "Cuota de portal (%)")}>
+          <NumberInput tk={tk} value={d.portal_pct ?? 0} onChange={(v) => set("portal_pct" as any, v)} min={0} max={100} step={0.5} />
+        </Field>
+
+        {d.relationship_type === "chain_physical" && (
+          <Field tk={tk} label={tr("cust_cedis", "CEDIS de la cadena (%)")}>
+            <NumberInput tk={tk} value={d.cedis_pct ?? 0} onChange={(v) => set("cedis_pct" as any, v)} min={0} max={100} step={0.5} />
+          </Field>
+        )}
+
+        {d.relationship_type === "b2b_consignment" && (
+          <Field tk={tk} label={tr("cust_settlement", "Frecuencia de liquidación (días)")}>
+            <NumberInput tk={tk} value={d.consignment_settlement_days ?? 30} onChange={(v) => set("consignment_settlement_days" as any, Math.round(v))} min={1} step={1} />
+          </Field>
+        )}
+
+        <Field tk={tk} label={tr("cust_commercial_discount", "Descuento comercial adicional (%)")}>
+          <NumberInput tk={tk} value={d.commercial_discount_pct ?? 0} onChange={(v) => set("commercial_discount_pct" as any, v)} min={0} max={100} step={0.5} />
+        </Field>
+
+        <div style={{ gridColumn: "1 / -1" }}>
+          <Field tk={tk} label={tr("cust_withholding", "Esquema de retenciones fiscales")}>
+            <Select tk={tk} value={d.withholding_scheme || "none"}
+                    onChange={(v) => set("withholding_scheme" as any, v)}
+                    options={WITHHOLDING_SCHEMES.map(s => ({ value: s.key, label: `${s.label} — ISR ${s.isr}% · IVA ${s.iva}%` }))} />
+          </Field>
+        </div>
+
+        {d.withholding_scheme === "custom" && (
+          <>
+            <Field tk={tk} label={tr("cust_wh_isr", "ISR retenido (%)")}>
+              <NumberInput tk={tk} value={d.withholding_isr_pct ?? 0} onChange={(v) => set("withholding_isr_pct" as any, v)} min={0} max={100} step={0.1} />
+            </Field>
+            <Field tk={tk} label={tr("cust_wh_iva", "IVA retenido (%)")}>
+              <NumberInput tk={tk} value={d.withholding_iva_pct ?? 0} onChange={(v) => set("withholding_iva_pct" as any, v)} min={0} max={100} step={0.1} />
+            </Field>
+          </>
+        )}
       </Section>
 
       <Section tk={tk} icon={<Phone size={16} />} title={tr("cust_sec_contact", "Contacto")}>

@@ -218,6 +218,16 @@ export function OrderDrawer({
             !closed && (
               <>
                 <Button tk={tk} variant="primary" icon={<ArrowRightLeft size={16} />} onClick={() => onConvert(order)}>{tr("sales_convert", "Convertir a pedido")}</Button>
+                <Button tk={tk} variant="ghost" icon={<FileText size={16} />} onClick={async () => {
+                  try {
+                    const blob = await (await import("./api")).salesApi.downloadDocument(order.id, "quote");
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url; a.download = `cotizacion_${order.folio || order.id}.pdf`;
+                    document.body.appendChild(a); a.click(); a.remove();
+                    window.URL.revokeObjectURL(url);
+                  } catch (e: any) { alert(e?.response?.data?.detail || "Error al descargar PDF"); }
+                }}>PDF cotización</Button>
                 <Button tk={tk} variant="ghost" icon={<Pencil size={16} />} onClick={() => onEdit(order)}>{tr("sales_edit", "Editar")}</Button>
                 <Button tk={tk} variant="danger" icon={<XCircle size={16} />} onClick={() => onCancel(order)}>{tr("sales_btn_cancel_quote", "Cancelar cotización")}</Button>
               </>
@@ -231,6 +241,16 @@ export function OrderDrawer({
                 <Button tk={tk} variant="ghost" icon={<CheckCircle size={16} />} onClick={() => onMarkPaid(order)}>{tr("sales_btn_mark_paid", "Marcar pagado")}</Button>
               )}
               <Button tk={tk} variant="ghost" icon={<Printer size={16} />} onClick={() => printTicket(order)}>{tr("sales_print", "Imprimir ticket")}</Button>
+              <Button tk={tk} variant="ghost" icon={<FileText size={16} />} onClick={async () => {
+                try {
+                  const blob = await (await import("./api")).salesApi.downloadDocument(order.id, "remission");
+                  const url = window.URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url; a.download = `remision_${order.folio || order.id}.pdf`;
+                  document.body.appendChild(a); a.click(); a.remove();
+                  window.URL.revokeObjectURL(url);
+                } catch (e: any) { alert(e?.response?.data?.detail || "Error al descargar PDF"); }
+              }}>PDF remisión</Button>
               {order.customer?.phone && (
                 <Button tk={tk} variant="ghost" icon={<MessageCircle size={16} />} onClick={() => openWhatsApp(order.customer!.phone!, whatsappTicketMessage(order))}>{tr("sales_whatsapp", "Enviar por WhatsApp")}</Button>
               )}

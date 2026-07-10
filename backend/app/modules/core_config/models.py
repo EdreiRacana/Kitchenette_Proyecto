@@ -35,6 +35,15 @@ class CompanyProfile(Base):
     base_currency = Column(String, default="MXN")
     timezone = Column(String, default="America/Mexico_City")
     logo_url = Column(String, nullable=True)
+    # Branding para documentos PDF (cotización, remisión, factura)
+    commercial_name = Column(String, nullable=True)   # nombre comercial (puede ≠ razón social)
+    brand_color = Column(String, nullable=True, default="#33B2F5")  # accent en headers PDF
+    document_footer = Column(String, nullable=True)   # leyenda pie de página (ej. términos)
+    # Modo de negocio de la empresa — permite ocultar/mostrar módulos y ajustar flujos:
+    #   "product"  → catálogo con inventario, órdenes con SKU (default)
+    #   "service"  → catálogo de servicios sin stock, órdenes rápidas, sin almacén
+    #   "mixed"    → ambos coexisten (item_type=service en Products individuales)
+    business_mode = Column(String, default="product", nullable=True)
     # Impuesto Sobre Nómina (ISN) estatal — patronal. Varía por entidad
     # (CDMX 3%, Nuevo León 3%, Jalisco 2%, Estado de México 3%, etc.).
     # Se guarda como % (ej. 3.0 = 3%). Default 3% para orientar.

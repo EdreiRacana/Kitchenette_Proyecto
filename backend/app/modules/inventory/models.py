@@ -19,6 +19,7 @@ class ProductItemType(str, enum.Enum):
     FINISHED_GOOD = "finished_good"   # producto terminado, listo para venta
     RAW_MATERIAL = "raw_material"     # insumo, usado en recetas/producción
     CONSUMABLE = "consumable"         # consumible (limpieza, empaque, etc.)
+    SERVICE = "service"               # servicio (no tiene stock ni entra en inventario)
     OTHER = "other"
 
 class Supplier(Base):
