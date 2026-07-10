@@ -932,6 +932,38 @@ async def sales_by_seller(db: AsyncSession, start: Optional[datetime] = None, en
     ]
 
 
+async def sales_heatmap(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None,
+                        branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.HeatmapCell]:
+    """Agrupa ventas por (día-de-semana, hora) para dibujar el heatmap
+    de actividad. dow: 0=lunes … 6=domingo (ISO week)."""
+    O = models.Order
+    conds = [O.kind == "order", O.status != "cancelled"]
+    if start is not None:
+        conds.append(O.created_at >= start)
+    if end is not None:
+        conds.append(O.created_at < end)
+    if branch_warehouse_ids is not None:
+        conds.append(_branch_cond(O, branch_warehouse_ids))
+    # ISODOW: 1=lunes … 7=domingo → restamos 1 para 0-indexar
+    dow_expr = (func.extract("isodow", O.created_at) - 1).label("dow")
+    hour_expr = func.extract("hour", O.created_at).label("hour")
+    stmt = (
+        select(
+            dow_expr, hour_expr,
+            func.count(O.id).label("orders"),
+            func.coalesce(func.sum(O.total_amount), 0.0).label("total"),
+        )
+        .where(*conds)
+        .group_by(dow_expr, hour_expr)
+        .order_by(dow_expr, hour_expr)
+    )
+    return [
+        schemas.HeatmapCell(dow=int(r.dow), hour=int(r.hour),
+                            orders=r.orders, total=_r(r.total))
+        for r in (await db.execute(stmt)).all()
+    ]
+
+
 async def sales_by_channel(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None,
                            branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.SalesByChannel]:
     O = models.Order

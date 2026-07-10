@@ -294,6 +294,15 @@ class SalesByChannel(BaseModel):
     orders: int
 
 
+class HeatmapCell(BaseModel):
+    """Actividad de ventas por día-de-semana × hora.
+    dow: 0=lunes … 6=domingo (ISO week). hour: 0-23."""
+    dow: int
+    hour: int
+    orders: int
+    total: float
+
+
 class Customer360(BaseModel):
     customer: CustomerLite
     total_spent: float

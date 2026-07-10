@@ -130,6 +130,7 @@ export interface CustomerForecast {
 export interface TopProduct { variant_id: number | null; name: string; quantity: number; total: number; }
 export interface SalesBySeller { user_id: number | null; name: string; total: number; orders: number; }
 export interface SalesByChannel { channel: string; total: number; orders: number; }
+export interface HeatmapCell { dow: number; hour: number; orders: number; total: number; }
 
 export interface CustomerPnLBreakdown {
   gross_sales: number; returns: number; allowances: number; discounts: number;

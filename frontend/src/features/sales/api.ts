@@ -133,6 +133,10 @@ export const salesApi = {
     const { data } = await api.get<SalesByChannel[]>(`/sales/analytics/by-channel`, { params: { start, end } });
     return data;
   },
+  async heatmap(start?: string, end?: string): Promise<import("./types").HeatmapCell[]> {
+    const { data } = await api.get<import("./types").HeatmapCell[]>(`/sales/analytics/heatmap`, { params: { start, end } });
+    return data;
+  },
   async exportFile(filters: OrderFilters, formato: "csv" | "xlsx"): Promise<Blob> {
     const sep = qs(filters) ? "&" : "?";
     const { data } = await api.get<Blob>(`/sales/export${qs(filters)}${sep}formato=${formato}`, {

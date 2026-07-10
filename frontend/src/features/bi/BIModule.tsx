@@ -3,7 +3,7 @@
 // Todos los números mostrados se obtienen de endpoints reales del backend (incluyendo RH/Nómina).
 // Contrato { t, s } igual que App.tsx
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import { createPortal } from "react-dom";
 import {
   LayoutDashboard, Package, Wallet, Users, Sliders,
@@ -127,6 +127,329 @@ function exportPeriodReport(D: BIState, period: Period) {
 }
 
 // ── SVG Charts ────────────────────────────────────────────────────────────
+/* ── RadarChart: 6 ejes actual vs anterior ────────────────────────── */
+function RadarChart({ t, axes, cur, prev, size = 240 }: any) {
+  const cx = size / 2, cy = size / 2, r = size * 0.38;
+  const n = axes.length;
+  const angleFor = (i: number) => (Math.PI * 2 * i) / n - Math.PI / 2;
+  const pt = (val: number, i: number, max: number) => {
+    const norm = max > 0 ? Math.min(1, val / max) : 0;
+    return [cx + r * norm * Math.cos(angleFor(i)), cy + r * norm * Math.sin(angleFor(i))];
+  };
+  // Normalizamos por eje: cada eje tiene su propio max (para que sean comparables)
+  const maxByAxis = axes.map((_: any, i: number) => Math.max(cur[i] || 0, prev[i] || 0, 1));
+  const gridLevels = [0.25, 0.5, 0.75, 1];
+  const polyPoints = (arr: number[]) =>
+    arr.map((v, i) => pt(v, i, maxByAxis[i]).map((n) => n.toFixed(1)).join(",")).join(" ");
+  return (
+    <svg viewBox={`0 0 ${size} ${size}`} width="100%" style={{ maxHeight: size + 20 }}>
+      {/* Grid concéntrico */}
+      {gridLevels.map((lvl, i) => (
+        <polygon key={i}
+          points={axes.map((_: any, ai: number) => {
+            const [x, y] = [cx + r * lvl * Math.cos(angleFor(ai)), cy + r * lvl * Math.sin(angleFor(ai))];
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+          }).join(" ")}
+          fill="none" stroke={t.border} strokeWidth="1" opacity="0.5" />
+      ))}
+      {/* Ejes radiales */}
+      {axes.map((_: any, i: number) => {
+        const [x, y] = [cx + r * Math.cos(angleFor(i)), cy + r * Math.sin(angleFor(i))];
+        return <line key={i} x1={cx} y1={cy} x2={x.toFixed(1)} y2={y.toFixed(1)} stroke={t.border} strokeWidth="1" opacity="0.5" />;
+      })}
+      {/* Polígono período anterior */}
+      <polygon points={polyPoints(prev)} fill={t.textLo} fillOpacity="0.10" stroke={t.textLo} strokeOpacity="0.55" strokeWidth="1.4" strokeDasharray="4 4" />
+      {/* Polígono actual */}
+      <polygon points={polyPoints(cur)} fill={t.nova} fillOpacity="0.14" stroke={t.nova} strokeOpacity="0.85" strokeWidth="1.8" />
+      {cur.map((v: number, i: number) => {
+        const [x, y] = pt(v, i, maxByAxis[i]);
+        return <circle key={i} cx={x.toFixed(1)} cy={y.toFixed(1)} r="3" fill={t.panel} stroke={t.nova} strokeWidth="1.6" />;
+      })}
+      {/* Labels */}
+      {axes.map((ax: string, i: number) => {
+        const [x, y] = [cx + (r + 22) * Math.cos(angleFor(i)), cy + (r + 22) * Math.sin(angleFor(i))];
+        const anchor: any = Math.abs(x - cx) < 5 ? "middle" : x < cx ? "end" : "start";
+        return (
+          <text key={i} x={x.toFixed(1)} y={y.toFixed(1)} textAnchor={anchor}
+                fontSize="10.5" fill={t.textMid} fontWeight="600" dominantBaseline="middle">
+            {ax}
+          </text>
+        );
+      })}
+    </svg>
+  );
+}
+
+/* ── Waterfall: cascada P&L (Ingresos → Gastos → Utilidad) ─────────── */
+function WaterfallChart({ t, ingresos, gastosCategorias, utilidad }: any) {
+  // Construimos steps: primer barra sube = ingresos; luego una barra baja por cada categoría de gasto; última barra = utilidad neta.
+  type Step = { label: string; delta: number; kind: "start" | "sub" | "end"; };
+  const steps: Step[] = [{ label: "Ingresos", delta: ingresos, kind: "start" }];
+  for (const g of gastosCategorias.slice(0, 5)) {
+    steps.push({ label: g.label, delta: -Math.abs(g.value), kind: "sub" });
+  }
+  // Si hay más gastos, agrupa el resto
+  if (gastosCategorias.length > 5) {
+    const restTotal = gastosCategorias.slice(5).reduce((a: number, c: any) => a + c.value, 0);
+    if (restTotal > 0) steps.push({ label: "Otros gastos", delta: -restTotal, kind: "sub" });
+  }
+  steps.push({ label: "Utilidad neta", delta: utilidad, kind: "end" });
+
+  // Cálculo cumulativo
+  let cum = 0;
+  const bars = steps.map((s, i) => {
+    if (s.kind === "end") {
+      // Utilidad neta = barra desde 0 hasta el valor final
+      const to = s.delta;
+      return { ...s, from: 0, to, i };
+    }
+    const from = s.kind === "start" ? 0 : cum;
+    const to = from + s.delta;
+    cum = to;
+    return { ...s, from, to, i };
+  });
+
+  const maxAbs = Math.max(1, ...bars.map(b => Math.abs(b.from)), ...bars.map(b => Math.abs(b.to)));
+  const W = 800, H = 260, PL = 20, PR = 20, PT = 20, PB = 44;
+  const iw = W - PL - PR, ih = H - PT - PB;
+  const barW = Math.min(70, (iw / bars.length) * 0.62);
+  const bx = (i: number) => PL + (iw / bars.length) * i + (iw / bars.length - barW) / 2;
+  const by = (v: number) => PT + (1 - v / maxAbs) * ih;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%" }} preserveAspectRatio="xMidYMid meet">
+      {/* Base line (0) */}
+      <line x1={PL} x2={W - PR} y1={PT + ih} y2={PT + ih} stroke={t.border} strokeWidth="1" />
+      {bars.map((b, i) => {
+        const y1 = by(b.from), y2 = by(b.to);
+        const top = Math.min(y1, y2), h = Math.max(2, Math.abs(y2 - y1));
+        const color = b.kind === "start" ? t.nova : b.kind === "end" ? (b.to >= 0 ? t.good : t.bad) : "#B87A8A";
+        return (
+          <g key={i}>
+            <rect x={bx(i).toFixed(1)} y={top.toFixed(1)} width={barW.toFixed(1)} height={h.toFixed(1)}
+                  rx="4" fill={color} fillOpacity="0.35" stroke={color} strokeOpacity="0.7" strokeWidth="1" />
+            {/* Línea conectora hacia siguiente */}
+            {i < bars.length - 1 && b.kind !== "end" && (
+              <line x1={(bx(i) + barW).toFixed(1)} y1={y2.toFixed(1)}
+                    x2={bx(i + 1).toFixed(1)} y2={y2.toFixed(1)}
+                    stroke={t.border} strokeWidth="1" strokeDasharray="3 3" opacity="0.65" />
+            )}
+            <text x={(bx(i) + barW / 2).toFixed(1)} y={(top - 6).toFixed(1)} textAnchor="middle"
+                  fontSize="10.5" fill={t.textHi} fontWeight="700">
+              {(b.delta >= 0 ? "+" : "−") + fmt(Math.abs(b.delta), "money")}
+            </text>
+            <text x={(bx(i) + barW / 2).toFixed(1)} y={(PT + ih + 16).toFixed(1)} textAnchor="middle"
+                  fontSize="10" fill={t.textLo}>
+              {b.label.length > 12 ? b.label.slice(0, 11) + "…" : b.label}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/* ── Sankey/Embudo curvo (trapecios) ──────────────────────────────── */
+function SankeyFunnel({ t, stages }: any) {
+  // stages: [{ label, value, color }]
+  if (!stages || stages.length === 0) return null;
+  const W = 720, H = 220, PL = 20, PR = 20, PT = 14, PB = 32;
+  const iw = W - PL - PR, ih = H - PT - PB;
+  const max = Math.max(1, stages[0].value);
+  const sectionW = iw / stages.length;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%" }}>
+      {stages.map((s: any, i: number) => {
+        const nextV = i < stages.length - 1 ? stages[i + 1].value : s.value;
+        const h1 = (s.value / max) * ih, h2 = (nextV / max) * ih;
+        const x0 = PL + i * sectionW;
+        const x1 = x0 + sectionW - 12; // gap entre etapas
+        const cy = PT + ih / 2;
+        const top1 = cy - h1 / 2, bot1 = cy + h1 / 2;
+        const top2 = cy - h2 / 2, bot2 = cy + h2 / 2;
+        // Etapa actual: trapecio
+        const trap = `M ${x0} ${top1} L ${x1} ${top2} L ${x1} ${bot2} L ${x0} ${bot1} Z`;
+        // Conector curvo hacia la siguiente
+        const isLast = i === stages.length - 1;
+        return (
+          <g key={i}>
+            <path d={trap} fill={s.color} fillOpacity="0.35" stroke={s.color} strokeOpacity="0.75" strokeWidth="1" />
+            <text x={((x0 + x1) / 2).toFixed(1)} y={(cy - 4).toFixed(1)} textAnchor="middle"
+                  fontSize="15" fontWeight="800" fill={t.textHi}>
+              {s.value.toLocaleString("es-MX")}
+            </text>
+            <text x={((x0 + x1) / 2).toFixed(1)} y={(cy + 10).toFixed(1)} textAnchor="middle"
+                  fontSize="10" fill={t.textLo}>
+              {s.label}
+            </text>
+            {/* Conversión hacia la siguiente etapa */}
+            {!isLast && (
+              <text x={(x1 + 6).toFixed(1)} y={(cy - h1 / 2 - 6).toFixed(1)} textAnchor="middle"
+                    fontSize="10" fill={t.textLo} fontWeight="600">
+                {s.value > 0 ? Math.round((nextV / s.value) * 100) : 0}%
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/* ── Treemap simple (squarified aproximado, filas horizontales) ───── */
+function Treemap({ t, items, height = 220 }: any) {
+  if (!items || items.length === 0) {
+    return <div style={{ padding: "60px 0", textAlign: "center", color: t.textLo, fontSize: 12.5 }}>Sin datos.</div>;
+  }
+  const total = items.reduce((a: number, it: any) => a + it.value, 0) || 1;
+  // Distribución en filas: agrupa las 3 más grandes en fila superior y el resto en fila inferior
+  const sorted = [...items].sort((a, b) => b.value - a.value);
+  const topRow = sorted.slice(0, 3);
+  const bottomRow = sorted.slice(3);
+  const topSum = topRow.reduce((a, it) => a + it.value, 0);
+  const bottomSum = bottomRow.reduce((a, it) => a + it.value, 0);
+  const topRowH = bottomRow.length === 0 ? height : Math.round(height * (topSum / total));
+  const bottomRowH = height - topRowH;
+  const palette = ["#5B8DEF", "#5EBBA9", "#C89E5A", "#8E7BB8", "#B87A8A", "#7BA98E", "#8CA1BE"];
+  const renderRow = (row: any[], rowH: number, sum: number) => (
+    <div style={{ display: "flex", width: "100%", height: rowH, gap: 2 }}>
+      {row.map((it, i) => {
+        const w = sum > 0 ? (it.value / sum) * 100 : 0;
+        const color = palette[i % palette.length];
+        return (
+          <div key={i} style={{ width: `${w}%`, background: color + "38", border: `1px solid ${color}66`, borderRadius: 4, padding: "8px 10px", overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "space-between", minWidth: 0 }} title={`${it.label} — ${fmt(it.value, "money")}`}>
+            <div style={{ fontSize: 11.5, color: t.textHi, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.label}</div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: color }}>{fmt(it.value, "money")}</div>
+              <div style={{ fontSize: 10, color: t.textLo }}>{((it.value / total) * 100).toFixed(1)}%</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      {topRow.length > 0 && renderRow(topRow, topRowH, topSum)}
+      {bottomRow.length > 0 && renderRow(bottomRow, bottomRowH, bottomSum)}
+    </div>
+  );
+}
+
+/* ── Heatmap semanal (7 días × 24 horas) ──────────────────────────── */
+function HeatmapWeek({ t, cells }: any) {
+  const days = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const grid: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
+  for (const c of cells || []) {
+    if (c.dow >= 0 && c.dow < 7 && c.hour >= 0 && c.hour < 24) {
+      grid[c.dow][c.hour] += c.total || 0;
+    }
+  }
+  const max = Math.max(1, ...grid.flat());
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "44px repeat(24, minmax(20px, 1fr))", gap: 2, minWidth: 640 }}>
+        <div />
+        {hours.map(h => (
+          <div key={h} style={{ fontSize: 9, color: t.textLo, textAlign: "center", paddingBottom: 4 }}>
+            {h % 3 === 0 ? h : ""}
+          </div>
+        ))}
+        {days.map((d, di) => (
+          <Fragment key={`row-${di}`}>
+            <div style={{ fontSize: 11, color: t.textMid, display: "flex", alignItems: "center", paddingRight: 6, fontWeight: 600 }}>{d}</div>
+            {hours.map(h => {
+              const v = grid[di][h];
+              const alpha = v > 0 ? 0.15 + Math.pow(v / max, 0.6) * 0.65 : 0.04;
+              return (
+                <div key={`${di}-${h}`}
+                     title={v > 0 ? `${d} ${h}:00 — ${fmt(v, "money")}` : `${d} ${h}:00 — sin ventas`}
+                     style={{
+                       height: 22, borderRadius: 3,
+                       background: `rgba(91, 141, 239, ${alpha})`,
+                       border: v > 0 ? `1px solid rgba(91, 141, 239, ${Math.min(0.9, alpha + 0.15)})` : "none",
+                     }} />
+              );
+            })}
+          </Fragment>
+        ))}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: 10.5, color: t.textLo }}>
+        <span>Menos actividad</span>
+        {[0.1, 0.3, 0.5, 0.7, 0.9].map(a => (
+          <div key={a} style={{ width: 20, height: 12, borderRadius: 2, background: `rgba(91, 141, 239, ${a})` }} />
+        ))}
+        <span>Más actividad</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── Bubble chart: Top clientes (X pedidos, Y ticket, tamaño = venta) ─ */
+function BubbleChart({ t, items }: any) {
+  if (!items || items.length === 0) {
+    return <div style={{ padding: "60px 0", textAlign: "center", color: t.textLo, fontSize: 12.5 }}>Sin ventas registradas.</div>;
+  }
+  const [hover, setHover] = useState<number | null>(null);
+  const W = 700, H = 300, PL = 60, PR = 20, PT = 20, PB = 44;
+  const iw = W - PL - PR, ih = H - PT - PB;
+  const maxOrders = Math.max(1, ...items.map((it: any) => it.orders));
+  const maxTicket = Math.max(1, ...items.map((it: any) => it.ticket));
+  const maxTotal = Math.max(1, ...items.map((it: any) => it.total));
+  const x = (v: number) => PL + (v / maxOrders) * iw;
+  const y = (v: number) => PT + (1 - v / maxTicket) * ih;
+  const rBubble = (v: number) => 8 + Math.sqrt(v / maxTotal) * 30;
+  const palette = ["#5B8DEF", "#5EBBA9", "#C89E5A", "#8E7BB8", "#B87A8A", "#7BA98E"];
+  return (
+    <div style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%" }}>
+        {/* Grid */}
+        {[0.25, 0.5, 0.75, 1].map(g => (
+          <line key={g} x1={PL} x2={W - PR} y1={PT + (1 - g) * ih} y2={PT + (1 - g) * ih} stroke={t.border} strokeWidth="1" opacity="0.5" />
+        ))}
+        {/* Ejes */}
+        <line x1={PL} y1={PT + ih} x2={W - PR} y2={PT + ih} stroke={t.textLo} strokeWidth="1" />
+        <line x1={PL} y1={PT} x2={PL} y2={PT + ih} stroke={t.textLo} strokeWidth="1" />
+        {/* Bubbles */}
+        {items.map((it: any, i: number) => {
+          const cxB = x(it.orders), cyB = y(it.ticket), rB = rBubble(it.total);
+          const color = palette[i % palette.length];
+          return (
+            <g key={i}
+               onMouseEnter={() => setHover(i)}
+               onMouseLeave={() => setHover(null)}
+               style={{ cursor: "pointer" }}>
+              <circle cx={cxB.toFixed(1)} cy={cyB.toFixed(1)} r={rB.toFixed(1)}
+                      fill={color} fillOpacity={hover === i ? 0.55 : 0.32}
+                      stroke={color} strokeOpacity="0.9" strokeWidth={hover === i ? 2 : 1} />
+            </g>
+          );
+        })}
+        {/* Labels */}
+        <text x={PL - 6} y={PT + 8} textAnchor="end" fontSize="10" fill={t.textLo}>Ticket prom.</text>
+        <text x={PL - 6} y={PT + ih + 4} textAnchor="end" fontSize="10" fill={t.textLo}>0</text>
+        <text x={PL} y={H - 8} textAnchor="start" fontSize="10" fill={t.textLo}>0</text>
+        <text x={W - PR} y={H - 8} textAnchor="end" fontSize="10" fill={t.textLo}>Pedidos</text>
+      </svg>
+      {hover !== null && (
+        <div style={{ position: "absolute", top: 12, right: 20, background: t.panel2, border: `1px solid ${t.nova}`, borderRadius: 10, padding: "10px 14px", fontSize: 12, boxShadow: "0 8px 24px rgba(0,0,0,.45)", minWidth: 200, pointerEvents: "none" }}>
+          <div style={{ fontWeight: 700, color: t.textHi, marginBottom: 6 }}>{items[hover].name}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, color: t.textMid }}>
+            <span>Ventas totales</span><span style={{ color: t.textHi, fontWeight: 700 }}>{fmt(items[hover].total, "money")}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, color: t.textMid, marginTop: 3 }}>
+            <span>Pedidos</span><span style={{ color: t.textHi }}>{items[hover].orders}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, color: t.textMid, marginTop: 3 }}>
+            <span>Ticket promedio</span><span style={{ color: t.textHi }}>{fmt(items[hover].ticket, "money")}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LineBarChart({ data, t, height = 200 }: { data: ChartPoint[]; t: any; height?: number }) {
   const [hover, setHover] = useState<number | null>(null);
   const W = 600, H = height, PL = 8, PR = 8, PT = 16, PB = 28;
@@ -270,10 +593,11 @@ function GaugeArc({ value, target, max, t }: { value: number; target: number; ma
 }
 
 // ── KPI Card Component ────────────────────────────────────────────────────
-function KPIBlock({ label, value, prev, format, icon: Icon, color, target, t, sparkData, onClick }: any) {
-  const d = delta(value, prev);
+function KPIBlock({ label, value, prev, format, icon: Icon, color, target, t, sparkData, onClick, noHistory }: any) {
+  const hasComparison = !noHistory && prev !== undefined && prev !== null && prev !== value;
+  const d = hasComparison ? delta(value, prev) : 0;
   const up = d >= 0;
-  const tl = light(value, prev, target);
+  const tl = hasComparison ? light(value, prev, target) : ("yellow" as TrafficLight);
   const tlColor = lightColor(tl, t);
   return (
     <div onClick={onClick} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "16px 18px", cursor: onClick ? "pointer" : "default", position: "relative", overflow: "hidden", transition: "transform .12s, box-shadow .12s" }}
@@ -295,9 +619,15 @@ function KPIBlock({ label, value, prev, format, icon: Icon, color, target, t, sp
         </div>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 7 }}>
-        {up ? <ArrowUpRight size={13} color={t.good} /> : <ArrowDownRight size={13} color={t.bad} />}
-        <span style={{ fontSize: 12, fontWeight: 700, color: up ? t.good : t.bad }}>{Math.abs(d)}%</span>
-        <span style={{ fontSize: 11, color: t.textLo }}>vs anterior</span>
+        {hasComparison ? (
+          <>
+            {up ? <ArrowUpRight size={13} color={t.good} /> : <ArrowDownRight size={13} color={t.bad} />}
+            <span style={{ fontSize: 12, fontWeight: 700, color: up ? t.good : t.bad }}>{Math.abs(d)}%</span>
+            <span style={{ fontSize: 11, color: t.textLo }}>vs anterior</span>
+          </>
+        ) : (
+          <span style={{ fontSize: 11, color: t.textLo, fontStyle: "italic" }}>— sin comparativo histórico</span>
+        )}
         {target && <span style={{ fontSize: 11, color: t.textLo, marginLeft: 4 }}>· ref. {fmt(target, format)}</span>}
       </div>
       {onClick && (
@@ -395,9 +725,17 @@ interface BIState {
   hrTotal: number; hrActive: number; hrOnTrial: number; hrExpiring30: number;
   hrPayrollMonthly: number; hrPresentToday: number; hrAbsentToday: number;
   hrByDepartment: DrillRow[];
+
+  // Nuevos datasets para charts BI premium
+  heatmap: { dow: number; hour: number; orders: number; total: number }[];
+  topClientesRich: { name: string; total: number; orders: number; ticket: number }[];
+  salaryBuckets: DrillRow[];  // histograma de salarios (base_salary de empleados)
 }
 
-const CHANNEL_COLORS = ["#33B2F5", "#34D399", "#A78BFA", "#FBBF24", "#F472B6", "#60A5FA"];
+// Paleta pastel — copiada del Tablero rediseñado para coherencia visual
+const CHANNEL_COLORS = ["#5B8DEF", "#5EBBA9", "#C89E5A", "#8E7BB8", "#B87A8A", "#7BA98E"];
+
+const isMobileBI = () => typeof window !== "undefined" && window.innerWidth < 860;
 
 async function loadBIState(period: Period): Promise<BIState> {
   const { curStart, curEnd, prevStart, prevEnd } = computeRanges(period);
@@ -409,24 +747,26 @@ async function loadBIState(period: Period): Promise<BIState> {
     statsCur, statsPrev,
     trendCur, trendPrev,
     topCust, topProd,
-    bySeller, byChannel,
+    bySeller, byChannel, heatmap,
     finComparison, finDashboard,
     invStats, reorderAlerts,
-    hrDashboard,
+    hrDashboard, employees,
   ] = await Promise.all([
     salesApi.stats(curStartISO, curEndISO),
     salesApi.stats(prevStartISO, prevEndISO),
-    salesApi.trend(granularity, days),
-    salesApi.trend(granularity, days, curStartISO),
-    salesApi.topCustomers(5, curStartISO, curEndISO),
+    salesApi.trend(granularity, days, curEndISO),      // fix: siempre pasar endDate simétrico
+    salesApi.trend(granularity, days, prevEndISO),     // fix: mismo tratamiento para período anterior
+    salesApi.topCustomers(10, curStartISO, curEndISO),
     salesApi.topProducts(5, curStartISO, curEndISO),
     salesApi.bySeller(curStartISO, curEndISO),
     salesApi.byChannel(curStartISO, curEndISO),
+    salesApi.heatmap(curStartISO, curEndISO).catch(() => []),
     financeService.getPeriodComparison(curStartISO, curEndISO),
     financeService.getDashboard(),
     inventoryService.getStats(),
     inventoryService.getReorderAlerts(),
     hrApi.dashboard(),
+    hrApi.employees().catch(() => []),
   ]);
 
   const n = Math.max(trendCur.length, trendPrev.length);
@@ -497,6 +837,27 @@ async function loadBIState(period: Period): Promise<BIState> {
     hrPayrollMonthly: hrDashboard.total_payroll_monthly,
     hrPresentToday: hrDashboard.present_today, hrAbsentToday: hrDashboard.absent_today,
     hrByDepartment: Object.entries(hrDashboard.by_department ?? {}).map(([label, value]) => ({ label, value: value as number })),
+
+    heatmap,
+    topClientesRich: topCust.map(c => ({
+      name: c.name, total: c.total, orders: c.orders,
+      ticket: c.orders ? c.total / c.orders : 0,
+    })),
+    salaryBuckets: (() => {
+      const salaries = (employees || []).map((e: any) => Number(e.base_salary || 0)).filter((s: number) => s > 0);
+      if (salaries.length === 0) return [];
+      const bucketDefs = [
+        { label: "≤ $10k", min: 0, max: 10000 },
+        { label: "$10k – $25k", min: 10000, max: 25000 },
+        { label: "$25k – $50k", min: 25000, max: 50000 },
+        { label: "$50k – $100k", min: 50000, max: 100000 },
+        { label: "> $100k", min: 100000, max: Infinity },
+      ];
+      return bucketDefs.map(b => {
+        const count = salaries.filter((s: number) => s >= b.min && s < b.max).length;
+        return { label: b.label, value: count, pct: count / salaries.length * 100 };
+      });
+    })(),
   };
 }
 
@@ -555,8 +916,8 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
       { id: "ticket", label: "Ticket promedio", value: D.ticket, prev: D.ticketPrev, format: "money" as const, icon: Star, color: t.warn },
       { id: "margen", label: "Margen neto", value: D.margenNeto, prev: D.margenNetoPrev, format: "percent" as const, icon: Activity, color: t.good },
       { id: "gastos", label: "Gastos totales", value: D.gastos, prev: D.gastosPrev, format: "money" as const, icon: TrendingDown, color: t.bad },
-      { id: "inventario", label: "Valor inventario", value: D.inventarioVal, prev: D.inventarioVal, format: "money" as const, icon: Package, color: t.nova },
-      { id: "cxc", label: "Por cobrar (CXC)", value: D.cxc, prev: D.cxc, format: "money" as const, icon: Clock, color: t.warn },
+      { id: "inventario", label: "Valor inventario", value: D.inventarioVal, prev: null, noHistory: true, format: "money" as const, icon: Package, color: t.nova },
+      { id: "cxc", label: "Por cobrar (CXC)", value: D.cxc, prev: null, noHistory: true, format: "money" as const, icon: Clock, color: t.warn },
       { id: "pendientes", label: "Pendiente de cobro (período)", value: D.pendientes, prev: D.pendientesPrev, format: "money" as const, icon: Clock, color: t.warn },
     ];
   }, [D, t]);
@@ -708,6 +1069,45 @@ function BIModuleBody({
             ))}
           </div>
 
+          {/* Radar 6 ejes: actual vs anterior */}
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi }}>Vista 360 del período — actual vs anterior</div>
+              <div style={{ display: "flex", gap: 16 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: t.textMid }}><span style={{ width: 14, height: 3, borderRadius: 2, background: t.nova }} /> Actual</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: t.textMid }}><span style={{ width: 14, height: 0, borderTop: `2px dashed ${t.textLo}` }} /> Anterior</span>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: isMobileBI() ? "1fr" : "1fr 1fr", gap: 20, alignItems: "center" }}>
+              <RadarChart t={t}
+                axes={["Ventas", "Utilidad", "Pedidos", "Ticket", "Margen %", "Cotizaciones"]}
+                cur={[D.ventas, Math.max(0, D.utilidad), D.pedidos, D.ticket, Math.max(0, D.margenNeto), D.quotesCount]}
+                prev={[D.ventasPrev, Math.max(0, D.utilidadPrev), D.pedidosPrev, D.ticketPrev, Math.max(0, D.margenNetoPrev), D.quotesCountPrev]}
+                size={280}
+              />
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {[
+                  { label: "Ventas", c: D.ventas, p: D.ventasPrev, f: "money" as const },
+                  { label: "Utilidad neta", c: D.utilidad, p: D.utilidadPrev, f: "money" as const },
+                  { label: "Pedidos", c: D.pedidos, p: D.pedidosPrev, f: "number" as const },
+                  { label: "Ticket promedio", c: D.ticket, p: D.ticketPrev, f: "money" as const },
+                  { label: "Margen neto", c: D.margenNeto, p: D.margenNetoPrev, f: "percent" as const },
+                  { label: "Cotizaciones", c: D.quotesCount, p: D.quotesCountPrev, f: "number" as const },
+                ].map(row => {
+                  const dd = delta(row.c, row.p);
+                  return (
+                    <div key={row.label} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${t.border}55` }}>
+                      <span style={{ fontSize: 12.5, color: t.textMid }}>{row.label}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>
+                        {fmt(row.c, row.f)} <span style={{ fontSize: 10.5, color: dd >= 0 ? t.good : t.bad, marginLeft: 6 }}>{dd >= 0 ? "↑" : "↓"} {Math.abs(dd)}%</span>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14 }}>
             <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
@@ -769,21 +1169,9 @@ function BIModuleBody({
 
           <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 14 }}>
             <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 16 }}>Embudo de conversión</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {funnel.map((stage, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ width: `${Math.max(stage.pct, 8)}%`, background: stage.color + "22", border: `1px solid ${stage.color}44`, borderRadius: 6, padding: "10px 14px", display: "flex", justifyContent: "space-between", transition: "width .4s" }}>
-                      <span style={{ fontSize: 13, color: t.textHi }}>{stage.label}</span>
-                      <div style={{ display: "flex", gap: 10 }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: stage.color }}>{stage.value.toLocaleString()}</span>
-                        <span style={{ fontSize: 12, color: t.textLo }}>{stage.pct}%</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ fontSize: 11, color: t.textLo, marginTop: 10 }}>Basado en cotizaciones, pedidos confirmados y tasa de pago real del período.</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Embudo de conversión</div>
+              <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 12 }}>Cotización → Pedido confirmado → Pedido pagado — con % de conversión entre etapas</div>
+              <SankeyFunnel t={t} stages={funnel.map(s => ({ label: s.label, value: s.value, color: s.color }))} />
             </div>
             <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20, display: "flex", flexDirection: "column", alignItems: "center" }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 6, alignSelf: "flex-start" }}>Tasa de pedidos pagados</div>
@@ -792,8 +1180,38 @@ function BIModuleBody({
             </div>
           </div>
 
+          {/* NUEVO: Heatmap actividad de ventas (7 días × 24 horas) */}
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Mapa de calor — actividad de ventas</div>
+            <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 16 }}>Concentración de ventas por día de semana × hora del día. Útil para planear personal y campañas.</div>
+            <HeatmapWeek t={t} cells={D.heatmap} />
+          </div>
+
+          {/* NUEVO: Bubble chart de Top clientes */}
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Radiografía de clientes</div>
+            <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 16 }}>Cada burbuja es un cliente: <b>eje X</b> = # de pedidos, <b>eje Y</b> = ticket promedio, <b>tamaño</b> = ventas totales.</div>
+            <BubbleChart t={t} items={D.topClientesRich} />
+          </div>
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            <DrillTable rows={D.ventasPorVendedor} t={t} title="Ventas por vendedor" emptyMsg="No hay pedidos con vendedor asignado en este período." />
+            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 18 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Ventas por operador</div>
+              <div style={{ fontSize: 11, color: t.textLo, marginBottom: 14, fontStyle: "italic" }}>Usuario del sistema que capturó cada pedido — no confundir con el vendedor comercial (que se registra en Empleados).</div>
+              {D.ventasPorVendedor.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: t.textLo }}>Sin pedidos en el período.</div>
+              ) : D.ventasPorVendedor.map((r: DrillRow, i: number) => (
+                <div key={i} style={{ marginBottom: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                    <span style={{ fontSize: 12.5, color: t.textMid }}>{r.label}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>{fmtFull(r.value)}</span>
+                  </div>
+                  <div style={{ height: 6, background: t.panel3, borderRadius: 99, overflow: "hidden" }}>
+                    <div style={{ width: `${r.pct ?? 0}%`, height: "100%", borderRadius: 99, background: "#5B8DEF", opacity: 0.65 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
             <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 18 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, marginBottom: 14 }}>Ventas por canal</div>
               {D.ventasPorCanal.length === 0 ? (
@@ -828,10 +1246,10 @@ function BIModuleBody({
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>
             {[
-              { id: "i_val", label: "Valor total", value: D.inventarioVal, prev: D.inventarioVal, format: "money" as const, icon: Package, color: t.nova },
-              { id: "i_und", label: "Unidades disponibles", value: D.inventarioUnidades, prev: D.inventarioUnidades, format: "number" as const, icon: Activity, color: t.good },
-              { id: "i_bajo", label: "Productos en stock bajo", value: D.inventarioBajoStock, prev: D.inventarioBajoStock, format: "number" as const, icon: AlertTriangle, color: t.warn },
-              { id: "i_ago", label: "Agotados", value: D.inventarioAgotados, prev: D.inventarioAgotados, format: "number" as const, icon: XCircle, color: t.bad },
+              { id: "i_val", label: "Valor total", value: D.inventarioVal, prev: null, noHistory: true, format: "money" as const, icon: Package, color: t.nova },
+              { id: "i_und", label: "Unidades disponibles", value: D.inventarioUnidades, prev: null, noHistory: true, format: "number" as const, icon: Activity, color: t.good },
+              { id: "i_bajo", label: "Productos en stock bajo", value: D.inventarioBajoStock, prev: null, noHistory: true, format: "number" as const, icon: AlertTriangle, color: t.warn },
+              { id: "i_ago", label: "Agotados", value: D.inventarioAgotados, prev: null, noHistory: true, format: "number" as const, icon: XCircle, color: t.bad },
             ].map((k: any) => <KPIBlock key={k.id} {...k} t={t} sparkData={sparkFor(k)} onClick={() => openDrill(k)} />)}
           </div>
 
@@ -857,7 +1275,11 @@ function BIModuleBody({
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            <DrillTable rows={D.inventarioCat} t={t} title="Valor por categoría" />
+            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 18 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Valor por categoría</div>
+              <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 14 }}>Mapa proporcional del valor total de inventario</div>
+              <Treemap t={t} items={D.inventarioCat} height={240} />
+            </div>
             <DrillTable rows={D.topProductos} t={t} title="Top productos por ventas del período" emptyMsg="No hay ventas en este período." />
           </div>
 
@@ -900,27 +1322,15 @@ function BIModuleBody({
               { id: "f_uti", label: "Utilidad neta", value: D.utilidad, prev: D.utilidadPrev, format: "money" as const, icon: DollarSign, color: t.nova },
               { id: "f_mar", label: "Margen neto", value: D.margenNeto, prev: D.margenNetoPrev, format: "percent" as const, icon: Activity, color: t.warn },
               { id: "f_gas", label: "Gastos totales", value: D.gastos, prev: D.gastosPrev, format: "money" as const, icon: TrendingDown, color: t.bad },
-              { id: "f_cxc", label: "CXC por cobrar", value: D.cxc, prev: D.cxc, format: "money" as const, icon: Clock, color: t.warn },
-              { id: "f_cxp", label: "CXP por pagar", value: D.cxp, prev: D.cxp, format: "money" as const, icon: TrendingDown, color: t.bad },
+              { id: "f_cxc", label: "CXC por cobrar", value: D.cxc, prev: null, noHistory: true, format: "money" as const, icon: Clock, color: t.warn },
+              { id: "f_cxp", label: "CXP por pagar", value: D.cxp, prev: null, noHistory: true, format: "money" as const, icon: TrendingDown, color: t.bad },
             ].map((k: any) => <KPIBlock key={k.id} {...k} t={t} sparkData={sparkFor(k)} onClick={() => openDrill(k)} />)}
           </div>
 
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 16 }}>Estado de resultados (P&L real)</div>
-            <div style={{ maxWidth: 560 }}>
-              {[
-                { label: "Ingresos totales", value: D.ingresos, bold: true, color: t.textHi },
-                { label: "Gastos totales", value: -D.gastos, color: t.bad },
-                { label: "UTILIDAD NETA", value: D.utilidad, bold: true, color: t.good, line: true, big: true },
-              ].map((row, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: row.line ? "10px 0 8px" : "7px 0", borderTop: row.line ? `1px solid ${t.border}` : "none", borderBottom: row.line && row.big ? `2px solid ${t.border}` : "none" }}>
-                  <span style={{ fontSize: row.big ? 14 : 13, color: row.color || t.textMid, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
-                  <span style={{ fontSize: row.big ? 15 : 13.5, fontWeight: row.bold ? 700 : 500, color: row.value >= 0 ? t.good : t.bad, fontVariantNumeric: "tabular-nums" }}>
-                    {fmtFull(Math.abs(row.value))}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Estado de resultados — Waterfall</div>
+            <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 16 }}>Ingresos, descuento de gastos por categoría, y utilidad neta resultante</div>
+            <WaterfallChart t={t} ingresos={D.ingresos} gastosCategorias={D.gastosCat} utilidad={D.utilidad} />
           </div>
 
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
@@ -965,7 +1375,60 @@ function BIModuleBody({
             ].map((k: any) => <KPIBlock key={k.id} {...k} t={t} onClick={() => openDrill(k)} />)}
           </div>
 
-          <DrillTable rows={D.hrByDepartment} t={t} title="Empleados por departamento" emptyMsg="No hay empleados registrados." />
+          <div style={{ display: "grid", gridTemplateColumns: isMobileBI() ? "1fr" : "1fr 1fr", gap: 14 }}>
+            {/* Donut de plantilla por departamento */}
+            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Plantilla por departamento</div>
+              <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 16 }}>Distribución de empleados en la organización</div>
+              {D.hrByDepartment.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: t.textLo, padding: "20px 0", textAlign: "center" }}>Sin empleados registrados.</div>
+              ) : (
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <DonutChart data={D.hrByDepartment.map((r, i) => ({ label: r.label, value: r.value, color: CHANNEL_COLORS[i % CHANNEL_COLORS.length] }))} t={t} size={200} />
+                </div>
+              )}
+            </div>
+            {/* Histograma de rangos salariales */}
+            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Distribución salarial</div>
+              <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 16 }}>Empleados por rango de salario base mensual</div>
+              {D.salaryBuckets.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: t.textLo, padding: "20px 0", textAlign: "center" }}>Sin datos de salario.</div>
+              ) : D.salaryBuckets.map((b, i) => (
+                <div key={i} style={{ marginBottom: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <span style={{ fontSize: 12.5, color: t.textMid }}>{b.label}</span>
+                    <span style={{ fontSize: 12.5, color: t.textHi, fontWeight: 700 }}>{b.value} <span style={{ fontSize: 10.5, color: t.textLo }}>· {(b.pct ?? 0).toFixed(0)}%</span></span>
+                  </div>
+                  <div style={{ height: 6, background: t.panel3, borderRadius: 99 }}>
+                    <div style={{ width: `${b.pct ?? 0}%`, height: "100%", borderRadius: 99, background: "#5EBBA9", opacity: 0.6 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Barras de plantilla por depto */}
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 14 }}>Empleados por departamento (ranked)</div>
+            {D.hrByDepartment.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: t.textLo }}>Sin datos.</div>
+            ) : D.hrByDepartment.slice().sort((a: any, b: any) => b.value - a.value).map((r: DrillRow, i: number) => {
+              const max = Math.max(1, ...D.hrByDepartment.map((x: DrillRow) => x.value));
+              const pct = (r.value / max) * 100;
+              return (
+                <div key={i} style={{ marginBottom: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                    <span style={{ fontSize: 12.5, color: t.textMid }}>{r.label}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>{r.value} <span style={{ fontSize: 10.5, color: t.textLo, marginLeft: 4 }}>emp.</span></span>
+                  </div>
+                  <div style={{ height: 6, background: t.panel3, borderRadius: 99 }}>
+                    <div style={{ width: `${pct}%`, height: "100%", borderRadius: 99, background: CHANNEL_COLORS[i % CHANNEL_COLORS.length], opacity: 0.6 }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
