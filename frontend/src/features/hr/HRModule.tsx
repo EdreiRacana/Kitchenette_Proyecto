@@ -718,7 +718,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 14 }}>
             {periods.map(p => {
               const ps = PERIOD_STATUS[p.status];
               const freqColors: Record<string, string> = { quincenal: t.nova, semanal: t.good, catorcenal: "#A78BFA", mensual: t.warn };
@@ -739,17 +739,17 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                   </div>
                   {p.status !== "draft" ? (
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                      <div style={{ background: t.panel2, borderRadius: 8, padding: "10px 12px" }}>
+                      <div style={{ background: t.panel2, borderRadius: 8, padding: "10px 10px", minWidth: 0 }}>
                         <div style={{ fontSize: 10.5, color: t.textLo }}>Bruto</div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi }}>{mxn(p.total_gross)}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={mxn(p.total_gross)}>{mxn(p.total_gross)}</div>
                       </div>
-                      <div style={{ background: t.panel2, borderRadius: 8, padding: "10px 12px" }}>
+                      <div style={{ background: t.panel2, borderRadius: 8, padding: "10px 10px", minWidth: 0 }}>
                         <div style={{ fontSize: 10.5, color: t.textLo }}>Deducciones</div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: t.bad }}>{mxn(p.total_deductions)}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: t.bad, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={mxn(p.total_deductions)}>{mxn(p.total_deductions)}</div>
                       </div>
-                      <div style={{ background: t.panel2, borderRadius: 8, padding: "10px 12px" }}>
+                      <div style={{ background: t.panel2, borderRadius: 8, padding: "10px 10px", minWidth: 0 }}>
                         <div style={{ fontSize: 10.5, color: t.textLo }}>Neto</div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: t.good }}>{mxn(p.total_net)}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: t.good, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={mxn(p.total_net)}>{mxn(p.total_net)}</div>
                       </div>
                     </div>
                   ) : (
@@ -2347,9 +2347,9 @@ function PayrollDetailEditor({
         <div style={{ marginTop: 16, padding: "12px 14px", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10 }}>
           <div style={{ fontSize: 11.5, fontWeight: 700, color: t.textLo, letterSpacing: 0.4, textTransform: "uppercase", marginBottom: 8 }}>Vista previa (aproximada)</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-            <div><div style={{ fontSize: 11, color: t.textLo }}>Nuevo bruto</div><div style={{ fontSize: 15, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(preview.gross)}</div></div>
-            <div><div style={{ fontSize: 11, color: t.textLo }}>Deducciones aprox.</div><div style={{ fontSize: 15, fontWeight: 700, color: t.bad, fontVariantNumeric: "tabular-nums" }}>{mxn(preview.deducciones)}</div></div>
-            <div><div style={{ fontSize: 11, color: t.textLo }}>Neto estimado</div><div style={{ fontSize: 15, fontWeight: 700, color: t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(preview.neto)}</div></div>
+            <div style={{ minWidth: 0 }}><div style={{ fontSize: 11, color: t.textLo }}>Nuevo bruto</div><div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={mxn(preview.gross)}>{mxn(preview.gross)}</div></div>
+            <div style={{ minWidth: 0 }}><div style={{ fontSize: 11, color: t.textLo }}>Deducciones aprox.</div><div style={{ fontSize: 14, fontWeight: 700, color: t.bad, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={mxn(preview.deducciones)}>{mxn(preview.deducciones)}</div></div>
+            <div style={{ minWidth: 0 }}><div style={{ fontSize: 11, color: t.textLo }}>Neto estimado</div><div style={{ fontSize: 14, fontWeight: 700, color: t.good, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={mxn(preview.neto)}>{mxn(preview.neto)}</div></div>
           </div>
           <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 6, lineHeight: 1.5 }}>
             El servidor recalcula ISR y SAE con las tablas oficiales; los números finales pueden variar por centavos.
