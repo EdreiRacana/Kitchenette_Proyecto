@@ -583,14 +583,14 @@ function IncomeExpenseArea({ t, data }: any) {
         onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover(near((e.clientX - r.left) / r.width * W)); }}
         onMouseLeave={() => setHover(null)}>
         <defs>
-          <linearGradient id="ingFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.nova} stopOpacity="0.18" /><stop offset="100%" stopColor={t.nova} stopOpacity="0" /></linearGradient>
-          <linearGradient id="gasFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.good} stopOpacity="0.12" /><stop offset="100%" stopColor={t.good} stopOpacity="0" /></linearGradient>
+          <linearGradient id="ingFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.nova} stopOpacity="0.12" /><stop offset="100%" stopColor={t.nova} stopOpacity="0" /></linearGradient>
+          <linearGradient id="gasFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.good} stopOpacity="0.08" /><stop offset="100%" stopColor={t.good} stopOpacity="0" /></linearGradient>
         </defs>
         {grid.map((g, i) => <line key={i} x1={P.l} x2={W - P.r} y1={g} y2={g} stroke={t.gridLine} strokeWidth="1" strokeOpacity="0.5" />)}
         <path d={areaGas} fill="url(#gasFill)" />
-        <path d={linePath(gastos)} fill="none" stroke={t.good} strokeWidth="1.6" strokeOpacity="0.75" strokeLinejoin="round" strokeLinecap="round" />
+        <path d={linePath(gastos)} fill="none" stroke={t.good} strokeWidth="1.4" strokeOpacity="0.6" strokeLinejoin="round" strokeLinecap="round" />
         <path d={areaIng} fill="url(#ingFill)" />
-        <path d={linePath(ingresos)} fill="none" stroke={t.nova} strokeWidth="1.8" strokeOpacity="0.85" strokeLinejoin="round" strokeLinecap="round" />
+        <path d={linePath(ingresos)} fill="none" stroke={t.nova} strokeWidth="1.6" strokeOpacity="0.75" strokeLinejoin="round" strokeLinecap="round" />
         {ingresos.map((v: number, i: number) => <circle key={i} cx={x(i)} cy={y(v)} r="2" fill={t.panel} stroke={t.nova} strokeWidth="1.2" strokeOpacity="0.7" />)}
         {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={P.t} y2={P.t + ih} stroke={t.nova} strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />}
         {data.map((d: any, i: number) => <text key={i} x={x(i)} y={H - 9} fill={t.textLo} fontSize="11" textAnchor="middle">{(d.period || "").slice(-5)}</text>)}
@@ -690,7 +690,7 @@ function DonutChart({ t, items, colors }: any) {
       <div style={{ position: "relative", display: "flex", justifyContent: "center" }}>
         <svg viewBox="0 0 200 200" width="180" height="180">
           {arcs.map((a: any, i: number) => (
-            <path key={i} d={a.d} fill="none" stroke={a.color} strokeOpacity="0.8" strokeWidth={sw} strokeLinecap="butt" />
+            <path key={i} d={a.d} fill="none" stroke={a.color} strokeOpacity="0.65" strokeWidth={sw} strokeLinecap="butt" />
           ))}
         </svg>
         <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center" }}>
@@ -725,8 +725,8 @@ function OperationalBars({ t, bars }: any) {
               <span style={{ fontSize: 12, color: t.textMid }}>{b.label}</span>
               <span style={{ fontSize: 13, fontWeight: 700, color, fontVariantNumeric: "tabular-nums" }}>{b.value}</span>
             </div>
-            <div style={{ height: 6, background: t.panel3, borderRadius: 999, overflow: "hidden" }}>
-              <div style={{ width: `${Math.max(0, Math.min(100, b.pct))}%`, height: "100%", borderRadius: 999, background: color, opacity: 0.75 }} />
+            <div style={{ height: 5, background: t.panel3, borderRadius: 999, overflow: "hidden" }}>
+              <div style={{ width: `${Math.max(0, Math.min(100, b.pct))}%`, height: "100%", borderRadius: 999, background: color, opacity: 0.6 }} />
             </div>
           </div>
         );
@@ -770,6 +770,60 @@ function AlertsList({ t, s, items, onGo }: any) {
   );
 }
 function lang(s: any) { return (s?.nav?.dashboard || "").toLowerCase().includes("dash") ? "en" : "es"; }
+
+/* ── Termómetro vertical (Meta vs Real) ───────────────────────────── */
+function Thermometer({ t, actual, target, pct }: any) {
+  // Layout: tubo vertical con bulbo abajo. El % de llenado sube desde el bulbo.
+  const W = 90, H = 260;
+  const tubeW = 22;
+  const bulbR = 28;
+  const cx = W / 2;
+  const tubeTop = 22;
+  const tubeBottom = H - bulbR - 8;
+  const tubeH = tubeBottom - tubeTop;
+  const fillPct = Math.max(0, Math.min(100, pct));
+  const fillH = (tubeH * fillPct) / 100;
+  // Color según nivel
+  const fillColor = fillPct >= 90 ? t.good : fillPct >= 65 ? t.nova : fillPct >= 35 ? t.warn : t.bad;
+  const scaleMarks = [0, 25, 50, 75, 100];
+  return (
+    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 18, padding: "8px 0 0" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}>
+        <defs>
+          <linearGradient id="thermoFill" x1="0" y1="1" x2="0" y2="0">
+            <stop offset="0%" stopColor={fillColor} stopOpacity="0.55" />
+            <stop offset="100%" stopColor={fillColor} stopOpacity="0.9" />
+          </linearGradient>
+        </defs>
+        {/* Tubo de fondo (glass) */}
+        <rect x={cx - tubeW / 2} y={tubeTop} width={tubeW} height={tubeH}
+              rx={tubeW / 2} fill={t.panel3} stroke={t.border} strokeWidth="1" />
+        {/* Llenado del tubo */}
+        <rect x={cx - tubeW / 2 + 2} y={tubeBottom - fillH}
+              width={tubeW - 4} height={fillH}
+              rx={(tubeW - 4) / 2} fill="url(#thermoFill)" />
+        {/* Bulbo de fondo */}
+        <circle cx={cx} cy={H - bulbR - 4} r={bulbR} fill={t.panel3}
+                stroke={t.border} strokeWidth="1" />
+        {/* Bulbo llenado */}
+        <circle cx={cx} cy={H - bulbR - 4} r={bulbR - 3} fill={fillColor} fillOpacity="0.75" />
+        {/* Texto % dentro del bulbo */}
+        <text x={cx} y={H - bulbR + 1} textAnchor="middle" fontSize="16" fontWeight="700" fill="#fff">
+          {fillPct}%
+        </text>
+      </svg>
+      {/* Escala + valores a la derecha */}
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", height: tubeH + 16, position: "relative" }}>
+        {scaleMarks.slice().reverse().map((m) => (
+          <div key={m} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10.5, color: t.textLo, fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ width: 8, height: 1, background: t.border, display: "inline-block" }} />
+            <span>{m}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /* ============================ Dashboard ============================ */
 function Dashboard({ t, s, lang, setPage, isMobile }) {
@@ -964,7 +1018,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
             <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Ventas por canal</div>
           </div>
-          <DonutChart t={t} items={data.byChannel} colors={[t.nova, t.good, t.warn, "#A78BFA", t.bad]} />
+          <DonutChart t={t} items={data.byChannel} colors={["#5B8DEF", "#5EBBA9", "#C89E5A", "#8E7BB8", "#B87A8A"]} />
         </Card>
         <Card t={t} style={{ padding: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
@@ -1016,12 +1070,16 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
           </div>
           {data.goal.configured ? (
             <>
-              <div style={{ fontSize: 24, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{goalPct}%</div>
-              <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 12 }}>{s.dash.metaSub}</div>
-              <div style={{ height: 12, background: t.panel3, borderRadius: 999, overflow: "hidden" }}><div style={{ width: `${Math.min(100, goalPct)}%`, height: "100%", borderRadius: 999, background: goalPct >= 90 ? t.good : goalPct >= 65 ? t.nova : t.warn }} /></div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, fontSize: 12.5 }}>
-                <span style={{ color: t.textLo }}>{s.dash.real} <b style={{ color: t.textHi }}>{mxnShort(data.goal.actual)}</b></span>
-                <span style={{ color: t.textLo }}>{s.dash.meta} <b style={{ color: t.textHi }}>{mxnShort(data.goal.target)}</b></span>
+              <Thermometer t={t} actual={data.goal.actual} target={data.goal.target} pct={goalPct} />
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14, fontSize: 12.5 }}>
+                <div>
+                  <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>{s.dash.real}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxnShort(data.goal.actual)}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>{s.dash.meta}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxnShort(data.goal.target)}</div>
+                </div>
               </div>
               <div style={{ marginTop: "auto", paddingTop: 12, fontSize: 12.5, color: t.textMid, borderTop: `1px solid ${t.borderSoft}` }}>{s.dash.remaining(mxn(Math.max(0, data.goal.target - data.goal.actual)))}</div>
             </>
