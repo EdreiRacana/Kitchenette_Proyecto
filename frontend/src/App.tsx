@@ -33,6 +33,7 @@ const NAV_PERM = {
 import { salesApi } from "./features/sales/api";
 import { inventoryService } from "./features/inventory/service";
 import { forecastApi } from "./features/forecast/api";
+import { hrApi } from "./features/hr/api";
 
 /* ============================ Responsive ============================ */
 function useIsMobile(breakpoint = 880) {
@@ -228,7 +229,8 @@ async function loadDashboardData(preset, customStart, customEnd) {
   const prevStartISO = prevStart.toISOString(), prevEndISO = prevEnd.toISOString();
   const { granularity, days } = dashTrendParams(preset);
 
-  const [statsCur, statsPrev, trendCur, trendPrev, finComparison, invStats, finDashboard, budgets, forecastGoal] = await Promise.all([
+  const [statsCur, statsPrev, trendCur, trendPrev, finComparison, invStats, finDashboard, budgets, forecastGoal,
+         topCustomers, byChannel, cashFlow, reorderAlerts, hrAlerts] = await Promise.all([
     salesApi.stats(curStartISO, curEndISO),
     salesApi.stats(prevStartISO, prevEndISO),
     salesApi.trend(granularity, days, curEndISO),
@@ -239,6 +241,11 @@ async function loadDashboardData(preset, customStart, customEnd) {
     financeService.getBudgets(),
     // Forecast tiene prioridad; si no hay plan activo cae a los presupuestos de Finanzas.
     forecastApi.goalForRange(curStartISO, curEndISO).catch(() => ({ goal_amount: 0, plan_id: null, plan_name: null, plan_year: null, months_covered: [] })),
+    salesApi.topCustomers(5, curStartISO, curEndISO).catch(() => []),
+    salesApi.byChannel(curStartISO, curEndISO).catch(() => []),
+    financeService.getCashFlow(12).catch(() => []),
+    inventoryService.getReorderAlerts().catch(() => []),
+    hrApi.alerts().catch(() => []),
   ]);
 
   const n = Math.max(trendCur.length, trendPrev.length);
@@ -265,6 +272,67 @@ async function loadDashboardData(preset, customStart, customEnd) {
   const totalIncome = finComparison.current.total_income || 0;
   const margin = totalIncome ? Math.round((finComparison.current.net_profit / totalIncome) * 100) : 0;
 
+  // Alertas TOP 5 unificadas — CxC vencida, inventario, RH, etc.
+  const alerts = [];
+  // Inventario agotado / bajo (top del más crítico)
+  for (const r of (reorderAlerts || []).slice(0, 5)) {
+    alerts.push({
+      title: `${r.product_name} (${r.sku})`,
+      detail: `${r.warehouse_name} — disponible ${r.available} / punto reorden ${r.reorder_point}`,
+      level: r.level === "red" ? "danger" : "warning",
+      module: "inventario",
+    });
+  }
+  // Alertas de RH (contratos por vencer, vencidos)
+  for (const a of (hrAlerts || []).slice(0, 5)) {
+    alerts.push({
+      title: a.employee_name,
+      detail: a.message,
+      level: a.type === "danger" ? "danger" : "warning",
+      module: "rh",
+    });
+  }
+  // Cartera por cobrar (si hay saldo importante)
+  if ((finDashboard.cxc_balance || 0) > 0) {
+    alerts.push({
+      title: "Cartera por cobrar",
+      detail: `${mxnShort(finDashboard.cxc_balance || 0)} pendiente de cobro`,
+      level: (finDashboard.cxc_balance || 0) > 100000 ? "danger" : "warning",
+      module: "finanzas",
+    });
+  }
+  // Cuentas por pagar
+  if ((finDashboard.cxp_balance || 0) > 0) {
+    alerts.push({
+      title: "Cuentas por pagar",
+      detail: `${mxnShort(finDashboard.cxp_balance || 0)} pendiente de pago a proveedores`,
+      level: "warning",
+      module: "finanzas",
+    });
+  }
+  // Ordenar por severidad
+  alerts.sort((a, b) => (a.level === "danger" ? -1 : 1) - (b.level === "danger" ? -1 : 1));
+  const topAlerts = alerts.slice(0, 5);
+
+  // KPIs operativos para las barras de progreso
+  const target35 = 35;
+  const cobranzaPct = (statsCur.total_sold || 0) > 0
+    ? Math.max(0, Math.min(100, Math.round(((statsCur.total_sold || 0) - (finDashboard.cxc_balance || 0)) / (statsCur.total_sold || 1) * 100)))
+    : 0;
+  const marginPct = margin;
+  const marginPctVsTarget = Math.max(0, Math.min(100, Math.round((margin / target35) * 100)));
+  const forecastPct = goalTarget > 0 ? Math.max(0, Math.min(100, Math.round(statsCur.total_sold / goalTarget * 100))) : 0;
+  const invHealthPct = (invStats.total_units || 0) > 0
+    ? Math.max(0, Math.min(100, Math.round((1 - ((invStats.out_of_stock + invStats.low_stock) / Math.max(1, invStats.total_units))) * 100)))
+    : 100;
+
+  const progressBars = [
+    { label: "Cumplimiento de meta", pct: forecastPct, value: `${forecastPct}%`, tone: forecastPct >= 90 ? "good" : forecastPct >= 65 ? "nova" : "warn" },
+    { label: "Margen neto vs objetivo", pct: marginPctVsTarget, value: `${marginPct}%`, tone: marginPct >= 30 ? "good" : marginPct >= 20 ? "nova" : "warn" },
+    { label: "Cobranza del período", pct: cobranzaPct, value: `${cobranzaPct}%`, tone: cobranzaPct >= 85 ? "good" : cobranzaPct >= 60 ? "nova" : "warn" },
+    { label: "Salud del inventario", pct: invHealthPct, value: `${invHealthPct}%`, tone: invHealthPct >= 90 ? "good" : invHealthPct >= 70 ? "nova" : "warn" },
+  ];
+
   return {
     range: [curStart, curEnd],
     kpis,
@@ -273,6 +341,11 @@ async function loadDashboardData(preset, customStart, customEnd) {
     attention: { agotados: invStats.out_of_stock, cartera: finDashboard.cxc_balance ?? 0, stockBajo: invStats.low_stock },
     series: { cur: seriesCur, prev: seriesPrev },
     xlabels,
+    topCustomers: (topCustomers || []).slice(0, 5),
+    byChannel: (byChannel || []),
+    cashFlow: (cashFlow || []).slice(-12),
+    topAlerts,
+    progressBars,
   };
 }
 
@@ -465,6 +538,196 @@ function MiniCalendar({ t, s, start, end, onPick }) {
 }
 const calNav = (t) => ({ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", display: "grid", placeItems: "center" });
 
+/* ── Chart: Ingresos vs Gastos (área doble con tooltip) ─────────────── */
+function IncomeExpenseArea({ t, data }: any) {
+  const [hover, setHover] = useState<number | null>(null);
+  if (!data || data.length === 0) {
+    return <div style={{ padding: "60px 0", textAlign: "center", color: t.textLo, fontSize: 13 }}>Sin datos suficientes para mostrar la tendencia.</div>;
+  }
+  const W = 660, H = 220, P = { l: 8, r: 8, t: 14, b: 26 };
+  const iw = W - P.l - P.r, ih = H - P.t - P.b, n = data.length;
+  const maxV = Math.max(1, ...data.map((d: any) => Math.max(d.income || 0, d.expenses || 0))) * 1.14;
+  const x = (i: number) => P.l + (n === 1 ? iw / 2 : (i * iw) / (n - 1));
+  const y = (v: number) => P.t + (1 - v / maxV) * ih;
+  const linePath = (arr: number[]) => arr.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
+  const ingresos = data.map((d: any) => d.income || 0);
+  const gastos = data.map((d: any) => d.expenses || 0);
+  const areaIng = `${linePath(ingresos)} L ${x(n - 1).toFixed(1)} ${(P.t + ih).toFixed(1)} L ${x(0).toFixed(1)} ${(P.t + ih).toFixed(1)} Z`;
+  const areaGas = `${linePath(gastos)} L ${x(n - 1).toFixed(1)} ${(P.t + ih).toFixed(1)} L ${x(0).toFixed(1)} ${(P.t + ih).toFixed(1)} Z`;
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((g) => P.t + g * ih);
+  const near = (px: number) => { let b = 0, bd = 1e9; for (let i = 0; i < n; i++) { const d = Math.abs(px - x(i)); if (d < bd) { bd = d; b = i; } } return b; };
+  const hv = hover !== null && data[hover] ? data[hover] : null;
+  return (
+    <div style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 220, cursor: "crosshair" }} preserveAspectRatio="none"
+        onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover(near((e.clientX - r.left) / r.width * W)); }}
+        onMouseLeave={() => setHover(null)}>
+        <defs>
+          <linearGradient id="ingFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.nova} stopOpacity="0.35" /><stop offset="100%" stopColor={t.nova} stopOpacity="0" /></linearGradient>
+          <linearGradient id="gasFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.good} stopOpacity="0.28" /><stop offset="100%" stopColor={t.good} stopOpacity="0" /></linearGradient>
+        </defs>
+        {grid.map((g, i) => <line key={i} x1={P.l} x2={W - P.r} y1={g} y2={g} stroke={t.gridLine} strokeWidth="1" />)}
+        <path d={areaGas} fill="url(#gasFill)" />
+        <path d={linePath(gastos)} fill="none" stroke={t.good} strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" />
+        <path d={areaIng} fill="url(#ingFill)" />
+        <path d={linePath(ingresos)} fill="none" stroke={t.nova} strokeWidth="2.6" strokeLinejoin="round" strokeLinecap="round" />
+        {ingresos.map((v: number, i: number) => <circle key={i} cx={x(i)} cy={y(v)} r="2.5" fill={t.panel} stroke={t.nova} strokeWidth="1.6" />)}
+        {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={P.t} y2={P.t + ih} stroke={t.nova} strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />}
+        {data.map((d: any, i: number) => <text key={i} x={x(i)} y={H - 9} fill={t.textLo} fontSize="11" textAnchor="middle">{(d.period || "").slice(-5)}</text>)}
+      </svg>
+      {hv && (
+        <div style={{ position: "absolute", top: 8, left: `${(x(hover!) / W) * 100 > 60 ? (x(hover!) / W) * 100 - 2 : (x(hover!) / W) * 100 + 3}%`, transform: (x(hover!) / W) * 100 > 60 ? "translateX(-100%)" : "none", background: t.panel2, border: `1px solid ${t.nova}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, boxShadow: "0 8px 24px rgba(0,0,0,.45)", minWidth: 160, pointerEvents: "none", zIndex: 5 }}>
+          <div style={{ fontWeight: 700, color: t.textHi, marginBottom: 6 }}>{hv.period}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 3 }}>
+            <span style={{ color: t.textMid, display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 9, background: t.nova }} />Ingresos</span>
+            <span style={{ color: t.textHi, fontWeight: 700 }}>{mxnShort(hv.income || 0)}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 6 }}>
+            <span style={{ color: t.textMid, display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 9, background: t.good }} />Gastos</span>
+            <span style={{ color: t.textMid }}>{mxnShort(hv.expenses || 0)}</span>
+          </div>
+          <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 5, color: (hv.net || 0) >= 0 ? t.good : t.bad, fontWeight: 700 }}>
+            Neto: {mxnShort(hv.net || 0)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Chart: Top clientes (barras horizontales con gradiente) ────────── */
+function TopBarsHorizontal({ t, items, onClick }: any) {
+  if (!items || items.length === 0) {
+    return <div style={{ padding: "60px 0", textAlign: "center", color: t.textLo, fontSize: 12.5 }}>Sin ventas registradas en el período.</div>;
+  }
+  const max = Math.max(1, ...items.map((it: any) => it.total || 0));
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {items.map((c: any, i: number) => {
+        const pct = Math.max(4, Math.round(((c.total || 0) / max) * 100));
+        return (
+          <div key={c.customer_id ?? i} onClick={() => onClick?.(c)} style={{ cursor: onClick ? "pointer" : "default" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, gap: 8 }}>
+              <span style={{ fontSize: 12.5, color: t.textHi, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }} title={c.name}>{c.name}</span>
+              <span style={{ fontSize: 12, color: t.textLo, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{mxnShort(c.total || 0)}</span>
+            </div>
+            <div style={{ height: 10, background: t.panel3, borderRadius: 999, overflow: "hidden" }}>
+              <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${t.nova}, ${t.good})`, boxShadow: `0 0 8px ${t.nova}66` }} />
+            </div>
+            <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 3 }}>{c.orders} pedido{c.orders === 1 ? "" : "s"}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── Chart: Donut (canales) con centro ─────────────────────────────── */
+function DonutChart({ t, items, colors }: any) {
+  if (!items || items.length === 0) {
+    return <div style={{ padding: "40px 0", textAlign: "center", color: t.textLo, fontSize: 12.5 }}>Sin datos de canal.</div>;
+  }
+  const total = items.reduce((a: number, it: any) => a + (it.total || 0), 0);
+  const cx = 100, cy = 100, r = 70, sw = 24;
+  let acc = 0;
+  const arcs = items.map((it: any, i: number) => {
+    const val = it.total || 0;
+    const frac = total > 0 ? val / total : 0;
+    const startA = acc * 2 * Math.PI - Math.PI / 2;
+    acc += frac;
+    const endA = acc * 2 * Math.PI - Math.PI / 2;
+    const large = frac > 0.5 ? 1 : 0;
+    const x1 = cx + r * Math.cos(startA), y1 = cy + r * Math.sin(startA);
+    const x2 = cx + r * Math.cos(endA), y2 = cy + r * Math.sin(endA);
+    return { d: `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`, color: colors[i % colors.length], frac, val, name: it.channel || it.name || "—" };
+  });
+  const topItem = arcs.reduce((max: any, a: any) => (a.frac > (max?.frac ?? 0) ? a : max), null as any);
+  return (
+    <div>
+      <div style={{ position: "relative", display: "flex", justifyContent: "center" }}>
+        <svg viewBox="0 0 200 200" width="180" height="180">
+          {arcs.map((a: any, i: number) => (
+            <path key={i} d={a.d} fill="none" stroke={a.color} strokeWidth={sw} strokeLinecap="butt" />
+          ))}
+        </svg>
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center" }}>
+          <div style={{ fontSize: 24, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{topItem ? Math.round(topItem.frac * 100) : 0}%</div>
+          <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 }}>{topItem?.name || "—"}</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12 }}>
+        {arcs.map((a: any, i: number) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 6, color: t.textMid }}>
+              <span style={{ width: 9, height: 9, borderRadius: 3, background: a.color }} /> {a.name}
+            </span>
+            <span style={{ color: t.textHi, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{mxnShort(a.val)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Chart: barras de progreso apiladas (Operational KPIs) ──────────── */
+function OperationalBars({ t, bars }: any) {
+  const toneColor: any = { good: t.good, nova: t.nova, warn: t.warn, bad: t.bad };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {bars.map((b: any, i: number) => {
+        const color = toneColor[b.tone] || t.nova;
+        return (
+          <div key={i}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+              <span style={{ fontSize: 12, color: t.textMid }}>{b.label}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color, fontVariantNumeric: "tabular-nums" }}>{b.value}</span>
+            </div>
+            <div style={{ height: 8, background: t.panel3, borderRadius: 999, overflow: "hidden" }}>
+              <div style={{ width: `${Math.max(0, Math.min(100, b.pct))}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${color}, ${color}bb)`, boxShadow: `0 0 6px ${color}55` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── Tabla de alertas TOP 5 ────────────────────────────────────────── */
+function AlertsList({ t, s, items, onGo }: any) {
+  const levelMeta: any = {
+    danger: { label: "CRÍTICO", color: t.bad },
+    warning: { label: "AVISO", color: t.warn },
+    info: { label: "INFO", color: t.nova },
+  };
+  if (!items || items.length === 0) {
+    return (
+      <div style={{ padding: "40px 12px", textAlign: "center", color: t.textLo, fontSize: 13 }}>
+        <CheckCircle size={28} color={t.good} style={{ marginBottom: 6 }} />
+        <div>{lang(s) === "en" ? "No urgent alerts." : "Sin alertas urgentes."}</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      {items.map((a: any, i: number) => {
+        const meta = levelMeta[a.level] || levelMeta.info;
+        return (
+          <div key={i} onClick={() => a.module && onGo?.(a.module)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderTop: i === 0 ? "none" : `1px solid ${t.border}`, gap: 10, cursor: a.module ? "pointer" : "default" }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</div>
+              <div style={{ fontSize: 11.5, color: t.textLo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.detail}</div>
+            </div>
+            <span style={{ fontSize: 10, fontWeight: 800, color: meta.color, background: meta.color + "1e", border: `1px solid ${meta.color}55`, padding: "3px 8px", borderRadius: 6, letterSpacing: 0.4, whiteSpace: "nowrap" }}>
+              {meta.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function lang(s: any) { return (s?.nav?.dashboard || "").toLowerCase().includes("dash") ? "en" : "es"; }
+
 /* ============================ Dashboard ============================ */
 function Dashboard({ t, s, lang, setPage, isMobile }) {
   void lang;
@@ -623,6 +886,50 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
         })}
       </div>
 
+      {/* ── FILA: Tendencia Ingresos vs Gastos + Top clientes ── */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 2fr) minmax(0, 1fr)", gap: 10, marginBottom: 12 }}>
+        <Card t={t} style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Tendencia de ingresos y gastos</div>
+            <div style={{ display: "flex", gap: 16 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: t.textMid }}><span style={{ width: 14, height: 3, borderRadius: 2, background: t.nova }} /> Ingresos</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: t.textMid }}><span style={{ width: 14, height: 3, borderRadius: 2, background: t.good }} /> Gastos</span>
+            </div>
+          </div>
+          <IncomeExpenseArea t={t} data={data.cashFlow} />
+        </Card>
+        <Card t={t} style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Top 5 clientes</div>
+            <span style={{ fontSize: 11, color: t.textLo }}>del período</span>
+          </div>
+          <TopBarsHorizontal t={t} items={data.topCustomers} onClick={() => setPage("clientes")} />
+        </Card>
+      </div>
+
+      {/* ── FILA: Donut ventas por canal + Alertas TOP 5 + KPIs operativos ── */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr)", gap: 10, marginBottom: 12 }}>
+        <Card t={t} style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Ventas por canal</div>
+          </div>
+          <DonutChart t={t} items={data.byChannel} colors={[t.nova, t.good, t.warn, "#A78BFA", t.bad]} />
+        </Card>
+        <Card t={t} style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Alertas tempranas (TOP 5)</div>
+          </div>
+          <AlertsList t={t} s={s} items={data.topAlerts} onGo={setPage} />
+        </Card>
+        <Card t={t} style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>KPIs operativos</div>
+          </div>
+          <OperationalBars t={t} bars={data.progressBars} />
+        </Card>
+      </div>
+
+      {/* ── FILA: Comparativa período actual vs anterior + Meta ── */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 2fr) minmax(0, 1fr)", gap: 10 }}>
         <Card t={t} style={{ padding: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, flexWrap: "wrap", gap: 8 }}>
