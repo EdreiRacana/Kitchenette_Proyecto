@@ -167,6 +167,8 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const [companyForm, setCompanyForm] = useState<CompanyProfile>({
     legal_name: "", tax_id: "", contact_email: "", contact_phone: "", address: "",
     base_currency: "MXN", timezone: "America/Mexico_City", logo_url: "",
+    commercial_name: "", brand_color: "#33B2F5", document_footer: "",
+    business_mode: "product",
   });
   const [companySaving, setCompanySaving] = useState(false);
   const [companyMsg, setCompanyMsg] = useState("");
@@ -196,6 +198,9 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
         contact_email: data.contact_email || "", contact_phone: data.contact_phone || "",
         address: data.address || "", base_currency: data.base_currency || "MXN",
         timezone: data.timezone || "America/Mexico_City", logo_url: data.logo_url || "",
+        commercial_name: data.commercial_name || "", brand_color: data.brand_color || "#33B2F5",
+        document_footer: data.document_footer || "",
+        business_mode: (data.business_mode as any) || "product",
       });
       setCompanyExists(true);
     } catch { setCompanyExists(false); }
@@ -261,12 +266,10 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
     }
     setLogoUploading(true); setCompanyMsg("");
     try {
-      const dataUri = await fileToCompressedDataUri(file);
-      const nextForm = { ...companyForm, logo_url: dataUri };
-      setCompanyForm(nextForm);
-      const safeNextForm = { ...nextForm, contact_email: nextForm.contact_email?.trim() || undefined };
-      if (companyExists) await configService.updateCompanyProfile({ logo_url: dataUri });
-      else await configService.createCompanyProfile(safeNextForm);
+      // Nuevo endpoint: sube el archivo real a /uploads/company y regresa la URL.
+      // El PDF de cotización/remisión necesita el logo en disco (no data URI).
+      const res = await configService.uploadCompanyLogo(file);
+      setCompanyForm(f => ({ ...f, logo_url: res.logo_url }));
       setCompanyExists(true);
       setCompanyMsg("Logo actualizado ✓");
     } catch (err: any) {
@@ -420,6 +423,40 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                 <div><label style={lbl}>RFC</label><input value={companyForm.tax_id || ""} onChange={e => setCompanyForm(f => ({ ...f, tax_id: e.target.value }))} style={{ ...inp, fontFamily: "monospace" }} /></div>
                 <div><label style={lbl}>Dirección fiscal</label><input value={companyForm.address || ""} onChange={e => setCompanyForm(f => ({ ...f, address: e.target.value }))} style={inp} /></div>
               </div>
+            </div>
+          </div>
+
+          {/* Branding para documentos PDF (cotización, remisión, factura) */}
+          <div style={card}>
+            {sectionTitle(FileText, "Documentos y branding", "#8E7BB8")}
+            <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 14 }}>Estos datos aparecen en los PDFs de cotización, remisión y pre-factura.</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 160px", gap: 12 }}>
+              <div><label style={lbl}>Nombre comercial (marca)</label>
+                <input value={companyForm.commercial_name || ""} placeholder="Ej. Sthenova, Sears, La Tienda…"
+                       onChange={e => setCompanyForm(f => ({ ...f, commercial_name: e.target.value }))} style={inp} />
+              </div>
+              <div><label style={lbl}>Modo de negocio</label>
+                <select value={companyForm.business_mode || "product"} onChange={e => setCompanyForm(f => ({ ...f, business_mode: e.target.value as any }))} style={{ ...inp, cursor: "pointer" }}>
+                  <option value="product">Productos con inventario</option>
+                  <option value="service">Solo servicios</option>
+                  <option value="mixed">Mixto (productos + servicios)</option>
+                </select>
+              </div>
+              <div><label style={lbl}>Color de acento</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="color" value={companyForm.brand_color || "#33B2F5"}
+                         onChange={e => setCompanyForm(f => ({ ...f, brand_color: e.target.value }))}
+                         style={{ width: 44, height: 38, borderRadius: 6, border: `1px solid ${t.border}`, background: "transparent", cursor: "pointer" }} />
+                  <input value={companyForm.brand_color || "#33B2F5"} onChange={e => setCompanyForm(f => ({ ...f, brand_color: e.target.value }))} style={{ ...inp, fontFamily: "monospace" }} />
+                </div>
+              </div>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <label style={lbl}>Pie de página en documentos (opcional)</label>
+              <textarea value={companyForm.document_footer || ""} rows={2}
+                        placeholder="Ej. Cotización válida por 15 días. Precios sujetos a cambio. IVA incluido."
+                        onChange={e => setCompanyForm(f => ({ ...f, document_footer: e.target.value }))}
+                        style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} />
             </div>
           </div>
 

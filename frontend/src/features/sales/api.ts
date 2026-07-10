@@ -152,6 +152,42 @@ export const salesApi = {
     const { data } = await api.post<CustomerReturn>(`/sales/returns/${id}/cancel`);
     return data;
   },
+
+  // ── Universal ERP ──────────────────────────────────────
+  async downloadDocument(orderId: number, kind: "quote" | "remission" | "proforma"): Promise<Blob> {
+    const { data } = await api.get<Blob>(`/sales/${orderId}/document/${kind}.pdf`, {
+      responseType: "blob",
+    });
+    return data;
+  },
+  async listMarketplaceParsers(): Promise<{ parsers: string[] }> {
+    const { data } = await api.get<{ parsers: string[] }>(`/sales/marketplace/parsers`);
+    return data;
+  },
+  async importMarketplaceReport(customerId: number, platform: string, file: File): Promise<any> {
+    const form = new FormData();
+    form.append("customer_id", String(customerId));
+    form.append("platform", platform);
+    form.append("file", file);
+    const { data } = await api.post<any>(`/sales/marketplace/import`, form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+    return data;
+  },
+  async customerPnLUniversal(customerId: number, start?: string, end?: string): Promise<any> {
+    const { data } = await api.get<any>(`/sales/customers/${customerId}/pnl-universal`, {
+      params: { start, end },
+    });
+    return data;
+  },
+  async receiveReturn(returnId: number, payload: {
+    warehouse_id: number;
+    items_condition: Record<number, "sellable" | "damaged">;
+    notes?: string;
+  }): Promise<any> {
+    const { data } = await api.post<any>(`/sales/returns/${returnId}/receive`, payload);
+    return data;
+  },
   async customers(): Promise<CustomerLite[]> {
     const { data } = await api.get<CustomerLite[]>(`/customers/`);
     return data;

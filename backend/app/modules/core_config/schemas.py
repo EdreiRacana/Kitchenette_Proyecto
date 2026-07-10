@@ -14,6 +14,12 @@ class CompanyProfileBase(BaseModel):
     base_currency: Optional[str] = "MXN"
     timezone: Optional[str] = "America/Mexico_City"
     logo_url: Optional[str] = None
+    # ── Branding para documentos PDF ─────────────────
+    commercial_name: Optional[str] = None
+    brand_color: Optional[str] = "#33B2F5"
+    document_footer: Optional[str] = None
+    business_mode: Optional[str] = "product"  # product | service | mixed
+    state_payroll_tax_rate: Optional[float] = 3.0
 
 class CompanyProfileCreate(CompanyProfileBase):
     pass

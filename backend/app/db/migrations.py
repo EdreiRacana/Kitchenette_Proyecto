@@ -66,6 +66,40 @@ _CUSTOMER_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS ix_customers_client_type ON customers (client_type)",
     "CREATE INDEX IF NOT EXISTS ix_customers_sucursal    ON customers (sucursal)",
     "CREATE INDEX IF NOT EXISTS ix_customers_rfc         ON customers (rfc)",
+    # ── Universal ERP (perfil comercial extendido) ──────────
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS relationship_type       VARCHAR DEFAULT 'retail'",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS commission_base_pct     DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS logistics_pct           DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS logistics_fixed         DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS cedis_pct               DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS portal_pct              DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS withholding_scheme      VARCHAR DEFAULT 'none'",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS withholding_isr_pct     DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS withholding_iva_pct     DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS commercial_discount_pct DOUBLE PRECISION DEFAULT 0",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS marketplace_platform    VARCHAR",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS seller_id_external      VARCHAR",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS consignment_settlement_days INTEGER DEFAULT 30",
+    "UPDATE customers SET relationship_type = 'retail' WHERE relationship_type IS NULL",
+    "UPDATE customers SET withholding_scheme = 'none' WHERE withholding_scheme IS NULL",
+    "CREATE INDEX IF NOT EXISTS ix_customers_relationship_type ON customers (relationship_type)",
+]
+
+_UNIVERSAL_ERP_STATEMENTS = [
+    # Orders: campos nuevos para marketplace / consignación / servicios
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS relationship_type   VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS external_order_id   VARCHAR",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS import_id           INTEGER",
+    "CREATE INDEX IF NOT EXISTS ix_orders_external_order_id ON orders (external_order_id)",
+    "CREATE INDEX IF NOT EXISTS ix_orders_relationship_type ON orders (relationship_type)",
+    # OrderItem: is_service + unit_cost snapshot para P&L
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS is_service BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS unit_cost  DOUBLE PRECISION DEFAULT 0",
+    # CompanyProfile: branding + business_mode
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS commercial_name  VARCHAR",
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS brand_color      VARCHAR DEFAULT '#33B2F5'",
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS document_footer  TEXT",
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS business_mode    VARCHAR DEFAULT 'product'",
 ]
 
 _SALES_STATEMENTS = [
@@ -326,6 +360,7 @@ def _apply(sync_conn: Connection) -> None:
     all_statements = [
         ("customers",  _CUSTOMER_STATEMENTS),
         ("sales",      _SALES_STATEMENTS),
+        ("universal_erp", _UNIVERSAL_ERP_STATEMENTS),
         ("ingesta",    _INGESTA_STATEMENTS),
         ("inventory",  _INVENTORY_STATEMENTS),
         ("finance",    _FINANCE_STATEMENTS),

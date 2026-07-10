@@ -4,7 +4,7 @@
 // Respeta el patrón modular del proyecto: usa Tokens, componentes de ../sales/ui y money().
 // Datos demo realistas (derivados del cliente + periodo) hasta conectar el backend real.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   X, TrendingUp, RotateCcw, Receipt, Truck, Percent, Landmark,
@@ -123,6 +123,38 @@ export default function Customer360({
   tk: Tokens; customer: Customer; onClose: () => void; onEdit?: (c: Customer) => void;
 }) {
   const [tab, setTab] = useState<"resumen" | "pnl" | "transacciones" | "devoluciones" | "documentos">("resumen");
+  const mktInputRef = useRef<HTMLInputElement>(null);
+  const [mktUploading, setMktUploading] = useState(false);
+  const handleMarketplaceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const platform = customer.marketplace_platform || "liverpool";
+    if (!confirm(
+      `Se importará el reporte "${file.name}" para el cliente ${customer.name}.\n\n`
+      + `Plataforma: ${platform}\n\n`
+      + `El sistema creará las órdenes automáticamente y detectará devoluciones. ¿Continuar?`
+    )) {
+      if (mktInputRef.current) mktInputRef.current.value = "";
+      return;
+    }
+    setMktUploading(true);
+    try {
+      const result = await salesApi.importMarketplaceReport(customer.id, platform, file);
+      alert(
+        `Importación completada:\n\n`
+        + `• Filas leídas: ${result.rows_read}\n`
+        + `• Órdenes creadas: ${result.orders_created}\n`
+        + `• Órdenes actualizadas: ${result.orders_updated}\n`
+        + `• Devoluciones registradas: ${result.returns_created}\n`
+        + `• Errores: ${result.errors_count}`
+      );
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || err?.message || "Error al importar el reporte");
+    } finally {
+      setMktUploading(false);
+      if (mktInputRef.current) mktInputRef.current.value = "";
+    }
+  };
   const [period, setPeriod] = useState<Period>("quarter");
 
   const [docs, setDocs] = useState<CustomerDocument[]>([]);
@@ -537,6 +569,17 @@ export default function Customer360({
 
         {/* Footer */}
         <div style={{ marginTop: "auto", padding: "16px 24px", borderTop: `1px solid ${tk.border}`, background: tk.panel, display: "flex", gap: 10, justifyContent: "flex-end", position: "sticky", bottom: 0 }}>
+          <input ref={mktInputRef} type="file" accept=".xlsx,.xls,.csv"
+                 style={{ display: "none" }}
+                 onChange={handleMarketplaceUpload} />
+          {(customer.relationship_type === "marketplace" || customer.relationship_type === "chain_physical") && (
+            <button
+              disabled={mktUploading}
+              onClick={() => mktInputRef.current?.click()}
+              style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${tk.accent}66`, background: tk.accent + "18", color: tk.accent, cursor: mktUploading ? "wait" : "pointer", fontSize: 13, fontWeight: 700, opacity: mktUploading ? 0.6 : 1 }}>
+              {mktUploading ? "Procesando…" : `Importar reporte ${customer.marketplace_platform || "marketplace"}`}
+            </button>
+          )}
           <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${tk.border}`, background: "transparent", color: tk.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Cerrar</button>
           {onEdit && (
             <button onClick={() => onEdit(customer)} style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: tk.accent, color: "#06122B", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>Editar cliente</button>

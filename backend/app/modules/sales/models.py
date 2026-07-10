@@ -22,6 +22,7 @@ from sqlalchemy import (
     ForeignKey,
     Float,
     Text,
+    Boolean,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -45,7 +46,14 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     folio = Column(String, unique=True, index=True, nullable=True)  # e.g. ORD-000123 / COT-000045
-    kind = Column(String, default="order", nullable=False, index=True)  # order | quote
+    kind = Column(String, default="order", nullable=False, index=True)  # order | quote | consignment_delivery | consignment_sale
+    # Modelo comercial de esta orden (heredado del cliente por default).
+    # Permite que las órdenes de marketplace / consignación / firm se comporten distinto.
+    relationship_type = Column(String, nullable=True, index=True)  # ver customers.RELATIONSHIP_TYPES
+    # ID externo del pedido en la plataforma marketplace (Liverpool "Id del pedido", etc)
+    external_order_id = Column(String, nullable=True, index=True)
+    # Cuando es una orden importada de reporte marketplace, referencia al import
+    import_id = Column(Integer, ForeignKey("sales_report_imports.id"), nullable=True, index=True)
 
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # seller
@@ -123,6 +131,11 @@ class OrderItem(Base):
     tax_rate = Column(Float, default=0.0, nullable=False)
     subtotal = Column(Float, nullable=False)   # qty*unit_price - discount
     total = Column(Float, nullable=False)       # subtotal + line tax
+    # Servicios (Fase Universal ERP): la partida no descuenta inventario ni
+    # requiere warehouse. Se hereda del catálogo (Product.item_type) pero
+    # se puede sobreescribir al capturar la orden.
+    is_service = Column(Boolean, default=False, nullable=False)
+    unit_cost = Column(Float, default=0.0, nullable=False)  # costo snapshot para P&L cliente
 
     order = relationship("Order", back_populates="items")
     variant = relationship("ProductVariant")

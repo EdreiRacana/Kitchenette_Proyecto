@@ -24,7 +24,11 @@ function toPayload(d: CustomerDraft) {
     pais, estado, municipio, localidad, calle, colonia, codigo_postal,
     no_exterior, no_interior, codigo_colonia, codigo_localidad, referencia, address,
     is_active, notes,
-  } = d;
+    // Universal ERP
+    relationship_type, commission_base_pct, logistics_pct, logistics_fixed,
+    cedis_pct, portal_pct, withholding_scheme, withholding_isr_pct, withholding_iva_pct,
+    commercial_discount_pct, marketplace_platform, seller_id_external, consignment_settlement_days,
+  } = d as any;
   return {
     razon_social: razon_social || null, nombre_comercial: nombre_comercial || null,
     name: name || null, client_type: client_type || null,
@@ -43,6 +47,20 @@ function toPayload(d: CustomerDraft) {
     no_interior: no_interior || null, codigo_colonia: codigo_colonia || null,
     codigo_localidad: codigo_localidad || null, referencia: referencia || null,
     address: address || null, is_active: is_active ?? true, notes: notes || null,
+    // ── Perfil comercial (Universal ERP) ──
+    relationship_type: relationship_type || "retail",
+    commission_base_pct: commission_base_pct ?? 0,
+    logistics_pct: logistics_pct ?? 0,
+    logistics_fixed: logistics_fixed ?? 0,
+    cedis_pct: cedis_pct ?? 0,
+    portal_pct: portal_pct ?? 0,
+    withholding_scheme: withholding_scheme || "none",
+    withholding_isr_pct: withholding_isr_pct ?? 0,
+    withholding_iva_pct: withholding_iva_pct ?? 0,
+    commercial_discount_pct: commercial_discount_pct ?? 0,
+    marketplace_platform: marketplace_platform || null,
+    seller_id_external: seller_id_external || null,
+    consignment_settlement_days: consignment_settlement_days ?? 30,
   };
 }
 

@@ -240,3 +240,87 @@ async def invoice_payload(order_id: int, db: DB, _: CurrentUser):
     if not order.bill_rfc:
         raise HTTPException(400, "El pedido no tiene datos de facturación (RFC)")
     return service.build_invoice_payload(order)
+
+
+# ── Universal ERP: PDFs, importadores marketplace, P&L cliente ─────────────
+from fastapi import UploadFile, File, Form
+from fastapi.responses import Response
+from app.modules.sales import universal_service
+
+
+@router.get("/{order_id}/document/{kind}.pdf")
+async def download_document_pdf(order_id: int, kind: str, db: DB, _: CurrentUser):
+    """Descarga PDF del documento asociado a la orden.
+    kind ∈ {quote, remission, proforma}. Se genera con logo, colores y datos
+    de la empresa (CompanyProfile)."""
+    if kind not in ("quote", "remission", "proforma"):
+        raise HTTPException(400, "kind debe ser quote | remission | proforma")
+    pdf_bytes = await universal_service.generate_document_pdf(db, order_id, kind)
+    if not pdf_bytes:
+        raise HTTPException(404, "Pedido no encontrado")
+    filenames = {"quote": "cotizacion", "remission": "remision", "proforma": "pre_factura"}
+    fname = f"{filenames[kind]}_{order_id}.pdf"
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/marketplace/parsers")
+async def list_parsers(_: CurrentUser):
+    """Lista de plataformas soportadas por el importador de reportes."""
+    return {"parsers": list(universal_service.PARSERS.keys()) + ["custom"]}
+
+
+@router.post("/marketplace/import")
+async def import_marketplace(
+    db: DB, current_user: CurrentUser,
+    customer_id: int = Form(...),
+    platform: str = Form(...),
+    file: UploadFile = File(...),
+    mapping_json: Optional[str] = Form(None),
+):
+    """Sube un XLSX de reporte marketplace (Liverpool, Amazon, etc.) y crea
+    órdenes + devoluciones automáticamente. Idempotente por external_order_id.
+    """
+    import json as _json
+    contents = await file.read()
+    mapping = _json.loads(mapping_json) if mapping_json else None
+    try:
+        result = await universal_service.import_marketplace_report(
+            db, customer_id=customer_id, platform=platform,
+            file_bytes=contents, filename=file.filename or "reporte.xlsx",
+            mapping=mapping, user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return result
+
+
+@router.get("/customers/{customer_id}/pnl-universal")
+async def customer_pnl_universal(customer_id: int, db: DB, _: CurrentUser,
+                                  start: Optional[datetime] = Query(default=None),
+                                  end: Optional[datetime] = Query(default=None)):
+    """Estado de resultados por cliente con desglose completo (Universal ERP):
+    Venta bruta − comisiones − logísticos − CEDIS − portal − descuentos −
+    devoluciones − retenciones ISR/IVA − COGS = Margen bruto. Usa la config
+    comercial del cliente (relationship_type, commission_base_pct, etc.)."""
+    return await universal_service.compute_customer_pnl(db, customer_id, start=start, end=end)
+
+
+@router.post("/returns/{return_id}/receive")
+async def receive_return_endpoint(return_id: int, payload: dict, db: DB, current_user: CurrentUser):
+    """Recibe físicamente la devolución en almacén y marca condition
+    (sellable/damaged) por cada partida."""
+    warehouse_id = payload.get("warehouse_id")
+    items_condition = payload.get("items_condition", {})
+    if not warehouse_id:
+        raise HTTPException(400, "warehouse_id requerido")
+    # Convertir keys a int
+    items_condition = {int(k): v for k, v in items_condition.items()}
+    result = await universal_service.receive_return(
+        db, return_id=return_id, warehouse_id=warehouse_id,
+        items_condition=items_condition, notes=payload.get("notes"),
+        user_id=current_user.id,
+    )
+    if not result:
+        raise HTTPException(404, "Devolución no encontrada")
+    return result
