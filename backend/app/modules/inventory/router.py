@@ -331,3 +331,39 @@ async def production_order_pdf(prod_id: int, db: DB, current_user: CurrentUser):
         raise HTTPException(status_code=404, detail="Production order not found")
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="OP-{prod_id}.pdf"'})
+
+
+# ── Kardex FIFO / valuación de inventario ───────────────────────────────────
+from datetime import datetime as _dt
+from app.modules.inventory import fifo_service
+
+
+@router.get("/kardex/{variant_id}")
+async def get_kardex(variant_id: int, db: DB, current_user: CurrentUser,
+                     warehouse_id: Optional[int] = None,
+                     start: Optional[_dt] = None,
+                     end: Optional[_dt] = None,
+                     limit: int = 500):
+    """Kardex FIFO: movimientos cronológicos con costo aplicado, saldo
+    acumulado y costo promedio en cada punto. Es la base para el P&L real."""
+    return await fifo_service.get_kardex(db, variant_id, warehouse_id, start, end, limit)
+
+
+@router.get("/valuation/{variant_id}")
+async def get_variant_valuation(variant_id: int, db: DB, current_user: CurrentUser,
+                                warehouse_id: Optional[int] = None):
+    """Costo promedio ponderado actual del variant (para calcular COGS
+    al momento de vender). Regresa 0 si no hay stock disponible."""
+    if warehouse_id:
+        return {"variant_id": variant_id, "warehouse_id": warehouse_id,
+                "unit_cost_current": await fifo_service.get_current_cost(db, variant_id, warehouse_id)}
+    # Agregar por todos los almacenes
+    from sqlalchemy.future import select
+    from sqlalchemy import distinct
+    from app.modules.inventory.models import StockLot
+    res = await db.execute(select(distinct(StockLot.warehouse_id)).where(StockLot.variant_id == variant_id))
+    warehouses = [r[0] for r in res.all()]
+    per_wh = {}
+    for wh in warehouses:
+        per_wh[wh] = await fifo_service.get_current_cost(db, variant_id, wh)
+    return {"variant_id": variant_id, "per_warehouse": per_wh}

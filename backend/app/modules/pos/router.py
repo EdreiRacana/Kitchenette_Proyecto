@@ -117,3 +117,43 @@ async def search_products(db: DB, _: CurrentUser,
                           q: str = Query(..., min_length=1),
                           limit: int = Query(20, ge=1, le=100)):
     return await service.search_products(db, q, limit)
+
+
+# ── PDFs: ticket térmico y reporte Z ──────────────────────────────────────
+from fastapi.responses import Response
+from app.modules.pos import pdf_ticket
+
+
+@router.get("/sale/{order_id}/ticket.pdf")
+async def download_ticket(order_id: int, db: DB, _: CurrentUser,
+                          width: int = Query(80, description="58 o 80 mm")):
+    if width not in (58, 80):
+        raise HTTPException(400, "width debe ser 58 o 80")
+    data = await service.prepare_ticket_data(db, order_id)
+    if not data:
+        raise HTTPException(404, "Venta no encontrada")
+    pdf = pdf_ticket.build_thermal_ticket(
+        company=data["company"], order=data["order"],
+        items=data["items"], payments=data["payments"],
+        session=data["session"], width_mm=width,
+    )
+    fname = f"ticket_{data['order'].get('folio') or order_id}.pdf"
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{fname}"'})
+
+
+@router.get("/session/{session_id}/report.pdf")
+async def download_session_report(session_id: int, db: DB, _: CurrentUser,
+                                    kind: str = Query("Z", description="Z o X")):
+    if kind not in ("Z", "X"):
+        raise HTTPException(400, "kind debe ser Z (cierre) o X (corte)")
+    session = await service.get_session(db, session_id)
+    if not session:
+        raise HTTPException(404, "Sesión no encontrada")
+    report = await service.get_session_report(db, session_id)
+    from app.modules.sales.universal_service import _get_company_dict
+    company = await _get_company_dict(db)
+    pdf = pdf_ticket.build_session_z_report(company, session, report, kind=kind)
+    fname = f"reporte_{kind}_turno_{session_id}.pdf"
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
