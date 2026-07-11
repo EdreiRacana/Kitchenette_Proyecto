@@ -306,6 +306,19 @@ async def customer_pnl_universal(customer_id: int, db: DB, _: CurrentUser,
     return await universal_service.compute_customer_pnl(db, customer_id, start=start, end=end)
 
 
+@router.get("/customers/{customer_id}/settlement")
+async def marketplace_settlement(customer_id: int, db: DB, _: CurrentUser,
+                                 start: Optional[datetime] = Query(default=None),
+                                 end: Optional[datetime] = Query(default=None),
+                                 deposited_amount: Optional[float] = Query(default=None)):
+    """Reconciliación de liquidación marketplace. Compara lo depositado por
+    la plataforma (Liverpool, Amazon, ML) contra lo esperado según órdenes
+    − devoluciones. Detecta variance para reclamaciones."""
+    from app.modules.sales.marketplace_settlement import compute_settlement
+    return await compute_settlement(db, customer_id, start=start, end=end,
+                                     deposited_amount=deposited_amount)
+
+
 @router.post("/returns/{return_id}/receive")
 async def receive_return_endpoint(return_id: int, payload: dict, db: DB, current_user: CurrentUser):
     """Recibe físicamente la devolución en almacén y marca condition

@@ -340,12 +340,24 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
       {showCash && <CashMovementModal t={t} session={session} type={showCash}
         onDone={() => setShowCash(null)} onCancel={() => setShowCash(null)} />}
       {lastSale && (
-        <div style={{ position: "fixed", top: 16, right: 16, background: t.good + "22", border: `1px solid ${t.good}`, borderRadius: 10, padding: "14px 18px", zIndex: 90, display: "flex", alignItems: "center", gap: 10, boxShadow: "0 8px 24px rgba(0,0,0,.4)" }}>
+        <div style={{ position: "fixed", top: 16, right: 16, background: t.good + "22", border: `1px solid ${t.good}`, borderRadius: 10, padding: "14px 18px", zIndex: 90, display: "flex", alignItems: "center", gap: 12, boxShadow: "0 8px 24px rgba(0,0,0,.4)" }}>
           <Check size={20} color={t.good} />
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>Venta {lastSale.folio}</div>
             <div style={{ fontSize: 11.5, color: t.textLo }}>Total {mxn(lastSale.total_amount)} — Cambio {mxn(lastSale.change || 0)}</div>
           </div>
+          <button title="Imprimir ticket 80mm"
+            onClick={async () => {
+              try {
+                const blob = await posApi.downloadTicket(lastSale.order_id, 80);
+                const url = URL.createObjectURL(blob);
+                const w = window.open(url, "_blank");
+                if (w) { setTimeout(() => w.print(), 500); }
+              } catch (e: any) { alert("Error al imprimir ticket"); }
+            }}
+            style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.good}55`, background: t.good + "12", color: t.good, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+            <Printer size={14} /> Ticket
+          </button>
         </div>
       )}
     </div>
@@ -496,13 +508,24 @@ function CloseSessionModal({ t, session, onClosed, onCancel }: any) {
             setSaving(true);
             try {
               const closed = await posApi.closeSession({ session_id: session.id, denominations: dens, closing_notes: notes || undefined });
-              alert(
+              const openZ = confirm(
                 `Turno cerrado.\n\n`
                 + `Esperado: ${mxn(closed.expected_cash)}\n`
                 + `Contado:  ${mxn(closed.actual_cash)}\n`
                 + `Diferencia: ${closed.variance >= 0 ? "+" : ""}${mxn(closed.variance)}\n\n`
-                + `Ventas: ${closed.total_sales_count} · ${mxn(closed.total_sales_amount)}`
+                + `Ventas: ${closed.total_sales_count} · ${mxn(closed.total_sales_amount)}\n\n`
+                + `¿Descargar el reporte Z (PDF)?`
               );
+              if (openZ) {
+                try {
+                  const blob = await posApi.downloadSessionReport(session.id, "Z");
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url; a.download = `reporte_Z_turno_${session.id}.pdf`;
+                  document.body.appendChild(a); a.click(); a.remove();
+                  URL.revokeObjectURL(url);
+                } catch { /* silencio: el cierre ya se ejecutó */ }
+              }
               onClosed();
             } catch (e: any) { alert(e?.response?.data?.detail || "Error"); }
             finally { setSaving(false); }

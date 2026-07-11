@@ -88,6 +88,11 @@ export const posApi = {
 
   searchProducts: (q: string, limit = 20) =>
     api.get<POSProduct[]>("/pos/products/search", { params: { q, limit } }).then(r => r.data),
+
+  downloadTicket: (orderId: number, width: 58 | 80 = 80) =>
+    api.get<Blob>(`/pos/sale/${orderId}/ticket.pdf`, { params: { width }, responseType: "blob" }).then(r => r.data),
+  downloadSessionReport: (sessionId: number, kind: "Z" | "X" = "Z") =>
+    api.get<Blob>(`/pos/session/${sessionId}/report.pdf`, { params: { kind }, responseType: "blob" }).then(r => r.data),
 };
 
 // Denominaciones para arqueo

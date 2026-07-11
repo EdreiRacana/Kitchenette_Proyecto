@@ -348,6 +348,60 @@ async def register_sale(db: AsyncSession, session_id: int,
 
 
 # ── Búsqueda rápida de productos (para el POS) ─────────────────────────────
+async def prepare_ticket_data(db: AsyncSession, order_id: int) -> Optional[dict]:
+    """Reúne todos los datos necesarios para imprimir un ticket POS."""
+    from app.modules.sales.universal_service import _get_company_dict
+    res = await db.execute(select(sales_models.Order).where(sales_models.Order.id == order_id))
+    order = res.scalars().first()
+    if not order:
+        return None
+
+    res_items = await db.execute(select(sales_models.OrderItem).where(
+        sales_models.OrderItem.order_id == order_id
+    ))
+    items = [{
+        "product_name": it.product_name, "sku": it.sku,
+        "quantity": it.quantity, "unit_price": it.unit_price,
+        "subtotal": it.subtotal, "total": it.total,
+    } for it in res_items.scalars().all()]
+
+    res_pays = await db.execute(select(sales_models.Payment).where(
+        sales_models.Payment.order_id == order_id
+    ).order_by(sales_models.Payment.created_at))
+    payments = [{"method": p.method, "amount": p.amount, "reference": p.reference}
+                for p in res_pays.scalars().all()]
+    total_paid = sum(p["amount"] for p in payments)
+
+    session_dict = None
+    if order.pos_session_id:
+        session_dict = await get_session(db, order.pos_session_id)
+
+    customer_name = None
+    if order.customer_id:
+        from app.modules.customers.models import Customer
+        res_c = await db.execute(select(Customer).where(Customer.id == order.customer_id))
+        c = res_c.scalars().first()
+        if c:
+            customer_name = c.razon_social or c.name
+
+    company = await _get_company_dict(db)
+    order_dict = {
+        "id": order.id, "folio": order.folio,
+        "subtotal": order.subtotal, "tax_amount": order.tax_amount,
+        "total_amount": order.total_amount,
+        "change": max(0, round(total_paid - (order.total_amount or 0), 2)),
+        "customer_name": customer_name,
+        "created_at": order.created_at,
+    }
+    return {
+        "company": company,
+        "order": order_dict,
+        "items": items,
+        "payments": payments,
+        "session": session_dict,
+    }
+
+
 async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List[dict]:
     """Búsqueda unificada por SKU exacto, código de barras o nombre parcial.
     Prioriza matches exactos por SKU/barcode para lector."""
