@@ -127,16 +127,58 @@ async def _move_stock(db: AsyncSession, *, variant_id: int, warehouse_id: Option
 async def _apply_stock_for_items(db: AsyncSession, order: models.Order,
                                  items: List[models.OrderItem], direction: str,
                                  user_id: Optional[int]) -> None:
+    """direction='out' descuenta stock vía FIFO (consume_stock) y snapshotea
+    el costo unitario real en OrderItem.unit_cost para P&L exacto.
+    direction='in' (cancelación/edición) devuelve stock con el costo que ya
+    estaba snapshoteado en la partida."""
     if order.kind != "order":
         return  # quotes never touch inventory
     wh = await _resolve_warehouse_id(db, order.warehouse_id)
+    if not wh:
+        return
+    from app.modules.inventory import fifo_service
     for it in items:
-        if it.variant_id:
-            await _move_stock(
-                db, variant_id=it.variant_id, warehouse_id=wh,
-                qty=it.quantity or 0, direction=direction,
-                order_id=order.id, user_id=user_id,
-            )
+        if not it.variant_id:
+            continue
+        if getattr(it, "is_service", False):
+            continue
+        qty = int(it.quantity or 0)
+        if qty <= 0:
+            continue
+        ref = f"order:{order.id}"
+        if direction == "out":
+            try:
+                result = await fifo_service.consume_stock(
+                    db, variant_id=it.variant_id, warehouse_id=wh,
+                    quantity=qty, reference=ref, user_id=user_id,
+                    allow_negative=True, commit=False,
+                )
+                it.unit_cost = float(result.get("unit_cost_avg") or 0.0)
+            except Exception as e:
+                # Nunca tumbar la venta por un tropiezo de inventario.
+                print(f"[sales] consume_stock error order {order.id} variant {it.variant_id}: {e}")
+                await _move_stock(
+                    db, variant_id=it.variant_id, warehouse_id=wh,
+                    qty=qty, direction="out",
+                    order_id=order.id, user_id=user_id,
+                )
+        else:
+            # Devolución/edición: restock con el costo que ya venía snapshoteado.
+            unit_cost = float(getattr(it, "unit_cost", 0.0) or 0.0)
+            try:
+                await fifo_service.receive_stock(
+                    db, variant_id=it.variant_id, warehouse_id=wh,
+                    quantity=qty, unit_cost=unit_cost,
+                    reference=f"return:{ref}", user_id=user_id,
+                    commit=False,
+                )
+            except Exception as e:
+                print(f"[sales] receive_stock error order {order.id} variant {it.variant_id}: {e}")
+                await _move_stock(
+                    db, variant_id=it.variant_id, warehouse_id=wh,
+                    qty=qty, direction="in",
+                    order_id=order.id, user_id=user_id,
+                )
 
 
 # ── Finance integration ───────────────────────────────────────────────────────
@@ -202,7 +244,8 @@ async def _build_items(db: AsyncSession, items_in: List[schemas.OrderItemCreate]
     out: List[models.OrderItem] = []
     for raw in items_in:
         name, sku = raw.product_name, raw.sku
-        if raw.variant_id and (not name or not sku):
+        is_service = bool(getattr(raw, "is_service", False) or False)
+        if raw.variant_id and (not name or not sku or not is_service):
             res = await db.execute(
                 select(inv.ProductVariant)
                 .where(inv.ProductVariant.id == raw.variant_id)
@@ -211,7 +254,13 @@ async def _build_items(db: AsyncSession, items_in: List[schemas.OrderItemCreate]
             variant = res.scalars().first()
             if variant:
                 sku = sku or variant.sku
-                name = name or (variant.product.name if variant.product else variant.sku)
+                if variant.product:
+                    name = name or variant.product.name
+                    # Servicios del catálogo => no descontar inventario
+                    if (variant.product.item_type or "") == "service":
+                        is_service = True
+                else:
+                    name = name or variant.sku
         it = models.OrderItem(
             variant_id=raw.variant_id,
             product_name=name or "Producto",
@@ -220,6 +269,7 @@ async def _build_items(db: AsyncSession, items_in: List[schemas.OrderItemCreate]
             unit_price=_r(raw.unit_price),
             discount_amount=_r(raw.discount_amount),
             tax_rate=raw.tax_rate or 0.0,
+            is_service=is_service,
         )
         it.subtotal, it.total = _compute_line(it)
         out.append(it)

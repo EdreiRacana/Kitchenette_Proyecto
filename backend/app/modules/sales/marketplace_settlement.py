@@ -38,11 +38,13 @@ async def compute_settlement(
     Returns:
       Desglose completo con líneas de órdenes, devoluciones, esperado y variance.
     """
+    # Aplica a marketplaces y sell-through de cadenas: en ambos casos existe un
+    # "esperado a depositar" y el cliente/plataforma envía un pago periódico.
     conds = [
         sales_models.Order.customer_id == customer_id,
         sales_models.Order.kind == "order",
         sales_models.Order.status != "cancelled",
-        sales_models.Order.channel == "marketplace",
+        sales_models.Order.channel.in_(("marketplace", "chain_sellthrough")),
     ]
     if start:
         conds.append(sales_models.Order.created_at >= start)

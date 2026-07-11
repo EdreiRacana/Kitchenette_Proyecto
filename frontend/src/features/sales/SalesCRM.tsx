@@ -1031,7 +1031,13 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
                     <tr key={o.id} onClick={() => openDetail(o)} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2, cursor: "pointer" }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = tk.panel3)}
                       onMouseLeave={(e) => (e.currentTarget.style.background = i % 2 === 0 ? tk.panel : tk.panel2)}>
-                      <td style={{ padding: "12px 16px", fontSize: 14, color: tk.accent, fontWeight: 700 }}>{o.folio}{o.kind === "quote" && <span style={{ fontSize: 10, color: tk.textLo, fontWeight: 600 }}> · COT</span>}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 14, color: tk.accent, fontWeight: 700 }}>
+                        {o.folio}
+                        {o.kind === "quote" && <span style={{ fontSize: 10, color: tk.textLo, fontWeight: 600 }}> · COT</span>}
+                        {o.channel === "pos" && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: tk.good, background: tk.good + "1F", padding: "1px 6px", borderRadius: 10, verticalAlign: "middle" }}>POS</span>}
+                        {o.channel === "marketplace" && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: "#A78BFA", background: "#A78BFA1F", padding: "1px 6px", borderRadius: 10, verticalAlign: "middle" }}>MKT</span>}
+                        {o.channel === "chain_sellthrough" && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: "#F59E0B", background: "#F59E0B1F", padding: "1px 6px", borderRadius: 10, verticalAlign: "middle" }}>ST</span>}
+                      </td>
                       <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</td>
                       <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{dateShort(o.created_at)}</td>
                       <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid }}>{paymentLabel(o.payment_method)}</td>

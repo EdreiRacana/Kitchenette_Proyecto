@@ -26,6 +26,7 @@ import { resolveMediaUrl } from "../../services/api";
 import { useServerRecovery } from "../../hooks/useServerRecovery";
 import { openWhatsApp } from "../../utils/whatsapp";
 import ReturnModal from "./ReturnModal";
+import KardexTab from "./KardexTab";
 
 type Warehouse_ = WarehouseT;
 
@@ -75,7 +76,7 @@ const exportMovementsCSV = (movements: Movement[]) => {
   downloadCSV(`movimientos_${new Date().toISOString().slice(0, 10)}.csv`, [header, ...rows]);
 };
 
-type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "adjustments" | "purchase-orders" | "recipes" | "production" | "import";
+type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "kardex" | "adjustments" | "purchase-orders" | "recipes" | "production" | "import";
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any; initialQuery?: string }) {
@@ -271,6 +272,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
     { id: "suppliers", label: lang === "es" ? "Proveedores" : "Suppliers", icon: Users },
     { id: "entries", label: lang === "es" ? "Entradas" : "Entries", icon: ArrowDownToLine },
     { id: "movements", label: lang === "es" ? "Movimientos" : "Movements", icon: ArrowLeftRight },
+    { id: "kardex", label: lang === "es" ? "Kardex FIFO" : "Kardex FIFO", icon: FileSpreadsheet },
     { id: "adjustments", label: lang === "es" ? "Ajustes" : "Adjustments", icon: SlidersHorizontal },
     { id: "purchase-orders", label: lang === "es" ? "Compras" : "Purchase orders", icon: ClipboardList },
     { id: "recipes", label: lang === "es" ? "Construcción" : "Recipes / BOM", icon: FlaskConical },
@@ -847,6 +849,11 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── TAB: Kardex FIFO ── */}
+      {tab === "kardex" && (
+        <KardexTab t={t} lang={lang} products={products} warehouses={warehouses} />
       )}
 
       {/* ── TAB: Adjustments ── */}

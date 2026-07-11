@@ -18,6 +18,7 @@ class OrderItemBase(BaseModel):
     unit_price: float = Field(ge=0)
     discount_amount: float = Field(default=0.0, ge=0)
     tax_rate: float = Field(default=0.0, ge=0)
+    is_service: bool = False
 
 
 class OrderItemCreate(OrderItemBase):

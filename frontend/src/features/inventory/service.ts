@@ -350,4 +350,42 @@ export const inventoryService = {
     getReturns: async () => (await api.get<CustomerReturn[]>('/sales/returns')).data,
     createReturn: async (data: any) => (await api.post<CustomerReturn>('/sales/returns', data)).data,
     cancelReturn: async (id: number) => (await api.post<CustomerReturn>(`/sales/returns/${id}/cancel`)).data,
+
+    // Kardex FIFO
+    getKardex: async (variantId: number, params?: { warehouse_id?: number; start?: string; end?: string; limit?: number }) =>
+        (await api.get<KardexResult>(`/inventory/kardex/${variantId}`, { params })).data,
+    getValuation: async (variantId: number, warehouseId?: number) =>
+        (await api.get<ValuationResult>(`/inventory/valuation/${variantId}`, { params: warehouseId ? { warehouse_id: warehouseId } : {} })).data,
 };
+
+export interface KardexMovement {
+    id: number;
+    created_at: string;
+    movement_type: string;
+    quantity: number;
+    unit_cost: number;
+    reference?: string | null;
+    notes?: string | null;
+    warehouse_id?: number | null;
+    balance: number;
+    inv_value: number;
+    avg_cost: number;
+}
+
+export interface KardexResult {
+    variant_id: number;
+    warehouse_id: number | null;
+    movements: KardexMovement[];
+    current_balance: number;
+    current_inventory_value: number;
+    current_avg_cost: number;
+    total_received: number;
+    total_shipped: number;
+}
+
+export interface ValuationResult {
+    variant_id: number;
+    warehouse_id?: number;
+    unit_cost_current?: number;
+    per_warehouse?: Record<string, number>;
+}
