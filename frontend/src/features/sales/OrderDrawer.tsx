@@ -105,10 +105,19 @@ export function OrderDrawer({
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 22px", borderBottom: `1px solid ${tk.border}` }}>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 800, fontSize: 18, color: tk.textHi }}>{order.folio}</span>
               <Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{statusMeta(order.status).label}</Badge>
               {isQuote && <Badge tk={tk} bg={tk.accent + "1A"} color={tk.accent} border={tk.accent + "44"}>Cotización</Badge>}
+              {order.channel === "pos" && (
+                <Badge tk={tk} bg={tk.good + "1F"} color={tk.good} border={tk.good + "55"}>POS</Badge>
+              )}
+              {order.channel === "marketplace" && (
+                <Badge tk={tk} bg="#A78BFA1F" color="#A78BFA" border="#A78BFA55">Marketplace</Badge>
+              )}
+              {order.channel === "chain_sellthrough" && (
+                <Badge tk={tk} bg="#F59E0B1F" color="#F59E0B" border="#F59E0B55">Sell-through</Badge>
+              )}
             </div>
             <div style={{ fontSize: 13, color: tk.textMid, marginTop: 4 }}>{order.customer?.name ?? tr("sales_no_customer", "Mostrador")}</div>
           </div>
@@ -240,7 +249,30 @@ export function OrderDrawer({
               {order.balance > 0 && order.status !== "cancelled" && (
                 <Button tk={tk} variant="ghost" icon={<CheckCircle size={16} />} onClick={() => onMarkPaid(order)}>{tr("sales_btn_mark_paid", "Marcar pagado")}</Button>
               )}
-              <Button tk={tk} variant="ghost" icon={<Printer size={16} />} onClick={() => printTicket(order)}>{tr("sales_print", "Imprimir ticket")}</Button>
+              {order.channel === "pos" ? (
+                <>
+                  <Button tk={tk} variant="ghost" icon={<Printer size={16} />} onClick={async () => {
+                    try {
+                      const { posApi } = await import("../pos/api");
+                      const blob = await posApi.downloadTicket(order.id, 80);
+                      const url = URL.createObjectURL(blob);
+                      const w = window.open(url, "_blank");
+                      if (w) setTimeout(() => w.print(), 500);
+                    } catch { alert("Error al imprimir ticket POS"); }
+                  }}>Ticket 80mm</Button>
+                  <Button tk={tk} variant="ghost" icon={<Printer size={16} />} onClick={async () => {
+                    try {
+                      const { posApi } = await import("../pos/api");
+                      const blob = await posApi.downloadTicket(order.id, 58);
+                      const url = URL.createObjectURL(blob);
+                      const w = window.open(url, "_blank");
+                      if (w) setTimeout(() => w.print(), 500);
+                    } catch { alert("Error al imprimir ticket POS"); }
+                  }}>Ticket 58mm</Button>
+                </>
+              ) : (
+                <Button tk={tk} variant="ghost" icon={<Printer size={16} />} onClick={() => printTicket(order)}>{tr("sales_print", "Imprimir ticket")}</Button>
+              )}
               <Button tk={tk} variant="ghost" icon={<FileText size={16} />} onClick={async () => {
                 try {
                   const blob = await (await import("./api")).salesApi.downloadDocument(order.id, "remission");

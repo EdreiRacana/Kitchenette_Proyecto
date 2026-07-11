@@ -85,6 +85,12 @@ async def session_report(session_id: int, db: DB, _: CurrentUser):
     return r
 
 
+@router.get("/session/{session_id}/sales")
+async def session_sales(session_id: int, db: DB, _: CurrentUser):
+    """Historial de ventas de un turno POS (para reimprimir tickets)."""
+    return await service.list_session_sales(db, session_id)
+
+
 @router.post("/session/cash-movement")
 async def cash_movement(data: schemas.CashMovementRequest, db: DB, current_user: CurrentUser):
     try:

@@ -7,8 +7,9 @@ import {
   Store, ShoppingCart, DollarSign, Plus, Minus, Trash2, Search,
   Lock, Unlock, LogIn, LogOut, Printer, RefreshCw, Package, Download,
   Banknote, CreditCard, ArrowLeftRight, Check, X, AlertTriangle,
+  Receipt, User, Clock, ChevronRight,
 } from "lucide-react";
-import { posApi, DENOMINATIONS, type POSTerminal, type POSSession, type POSProduct, type POSSaleItem } from "./api";
+import { posApi, DENOMINATIONS, type POSTerminal, type POSSession, type POSProduct, type POSSaleItem, type SessionSale } from "./api";
 
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -174,6 +175,8 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const [showClose, setShowClose] = useState(false);
   const [showCash, setShowCash] = useState<"cash_in" | "cash_out" | null>(null);
   const [lastSale, setLastSale] = useState<any | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { searchRef.current?.focus(); }, []);
@@ -234,6 +237,11 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
             </div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => setShowHistory(true)}
+              title="Ver historial de ventas del turno (reimprimir tickets)"
+              style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.nova}55`, background: t.nova + "18", color: t.nova, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}>
+              <Receipt size={12} /> Ventas del turno
+            </button>
             <button onClick={() => setShowCash("cash_in")}
               style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
               <Plus size={12} /> Fondo
@@ -333,8 +341,10 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
       </div>
 
       {showPay && <PayModal t={t} session={session} total={total} cart={cart}
-        onDone={(sale) => { setCart([]); setShowPay(false); setLastSale(sale); }}
+        onDone={(sale) => { setCart([]); setShowPay(false); setLastSale(sale); setHistoryRefresh(v => v + 1); }}
         onCancel={() => setShowPay(false)} />}
+      {showHistory && <SalesHistoryDrawer t={t} session={session} refreshKey={historyRefresh}
+        onClose={() => setShowHistory(false)} />}
       {showClose && <CloseSessionModal t={t} session={session}
         onClosed={() => { setShowClose(false); onClosed(); }} onCancel={() => setShowClose(false)} />}
       {showCash && <CashMovementModal t={t} session={session} type={showCash}
@@ -574,3 +584,196 @@ function CloseSessionModal({ t, session, onClosed, onCancel }: any) {
 
 const modalBg: React.CSSProperties = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 };
 const modalPane: React.CSSProperties = { width: "100%", maxWidth: 480, borderRadius: 14, overflow: "hidden", boxShadow: "0 24px 60px rgba(0,0,0,0.6)" };
+
+
+// ── Historial de ventas del turno ─────────────────────────────────────────
+function SalesHistoryDrawer({ t, session, refreshKey, onClose }: {
+  t: any; session: POSSession; refreshKey: number; onClose: () => void;
+}) {
+  const [sales, setSales] = useState<SessionSale[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const rows = await posApi.sessionSales(session.id);
+      setSales(rows);
+    } catch (e: any) {
+      setError("No se pudo cargar el historial de ventas.");
+      setSales([]);
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [session.id, refreshKey]);
+
+  const printTicket = async (orderId: number, width: 58 | 80) => {
+    setBusy(orderId);
+    try {
+      const blob = await posApi.downloadTicket(orderId, width);
+      const url = URL.createObjectURL(blob);
+      const w = window.open(url, "_blank");
+      if (w) { setTimeout(() => w.print(), 500); }
+    } catch { alert("Error al imprimir ticket"); }
+    finally { setBusy(null); }
+  };
+  const downloadTicket = async (orderId: number, folio: string | null) => {
+    setBusy(orderId);
+    try {
+      const blob = await posApi.downloadTicket(orderId, 80);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `ticket_${folio || orderId}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch { alert("Error al descargar ticket"); }
+    finally { setBusy(null); }
+  };
+
+  const totalSold = sales.reduce((a, s) => a + (s.total_amount || 0), 0);
+  const salesCount = sales.length;
+
+  const filtered = q.trim()
+    ? sales.filter(s => {
+        const qs = q.toLowerCase();
+        return (s.folio || "").toLowerCase().includes(qs)
+          || (s.customer_name || "").toLowerCase().includes(qs)
+          || String(s.total_amount).includes(qs);
+      })
+    : sales;
+
+  const methodLabel: Record<string, { label: string; color: string; icon: any }> = {
+    cash: { label: "Efectivo", color: t.good, icon: Banknote },
+    card: { label: "Tarjeta", color: t.nova, icon: CreditCard },
+    transfer: { label: "Transf.", color: "#A78BFA", icon: ArrowLeftRight },
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.7)", zIndex: 95, display: "flex", justifyContent: "flex-end" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 560, maxWidth: "100vw", height: "100%", background: t.base, borderLeft: `1px solid ${t.border}`, display: "flex", flexDirection: "column", boxShadow: "-8px 0 32px rgba(0,0,0,0.4)" }}>
+        {/* Header */}
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${t.border}`, background: t.panel, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+              <Receipt size={18} color={t.nova} />
+              <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi }}>Ventas del turno</div>
+            </div>
+            <div style={{ fontSize: 12, color: t.textLo }}>
+              {session.terminal_name} · Cajero {session.cashier_name}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 4 }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* KPI + búsqueda */}
+        <div style={{ padding: "14px 22px", borderBottom: `1px solid ${t.border}`, background: t.panel2, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 14px" }}>
+              <div style={{ fontSize: 11, color: t.textLo, marginBottom: 2 }}>Ventas realizadas</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{salesCount}</div>
+            </div>
+            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 14px" }}>
+              <div style={{ fontSize: 11, color: t.textLo, marginBottom: 2 }}>Total cobrado</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(totalSold)}</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ flex: 1, position: "relative" }}>
+              <Search size={14} color={t.textLo} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar folio, cliente o monto…"
+                style={{ width: "100%", padding: "8px 12px 8px 32px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, outline: "none" }} />
+            </div>
+            <button onClick={load} title="Actualizar"
+              style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 12 }}>
+              <RefreshCw size={13} />
+            </button>
+          </div>
+        </div>
+
+        {/* Lista */}
+        <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
+          {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo, fontSize: 13 }}>Cargando…</div>}
+          {error && (
+            <div style={{ padding: "12px 14px", background: t.bad + "18", border: `1px solid ${t.bad}44`, color: t.bad, borderRadius: 10, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+              <AlertTriangle size={15} /> {error}
+            </div>
+          )}
+          {!loading && !error && filtered.length === 0 && (
+            <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>
+              <Receipt size={32} style={{ opacity: 0.35, marginBottom: 10 }} />
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: t.textMid }}>
+                {sales.length === 0 ? "Aún no hay ventas en este turno" : "Sin resultados"}
+              </div>
+              {sales.length === 0 && (
+                <div style={{ fontSize: 12, color: t.textLo, marginTop: 4 }}>
+                  Cada venta aparecerá aquí para que puedas reimprimir el ticket en cualquier momento.
+                </div>
+              )}
+            </div>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {filtered.map(s => {
+              const hh = s.created_at ? new Date(s.created_at) : null;
+              const timeStr = hh ? hh.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) : "";
+              const dateStr = hh ? hh.toLocaleDateString("es-MX", { day: "2-digit", month: "short" }) : "";
+              const isWorking = busy === s.order_id;
+              return (
+                <div key={s.order_id} style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: t.nova, fontFamily: "monospace" }}>{s.folio || `#${s.order_id}`}</div>
+                      <div style={{ fontSize: 11, color: t.textLo, marginTop: 2, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><Clock size={10} />{dateStr} {timeStr}</span>
+                        <span>· {s.items_count} art.</span>
+                        {s.customer_name && (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><User size={10} />{s.customer_name}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(s.total_amount)}</div>
+                      {s.change > 0 && (
+                        <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2 }}>Cambio {mxn(s.change)}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    {s.payment_methods.map((m, i) => {
+                      const meta = methodLabel[m] || { label: m, color: t.textLo, icon: DollarSign };
+                      const Icon = meta.icon;
+                      return (
+                        <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: meta.color, background: meta.color + "18", padding: "2px 8px", borderRadius: 20 }}>
+                          <Icon size={10} /> {meta.label}
+                        </span>
+                      );
+                    })}
+                    <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+                      <button disabled={isWorking} onClick={() => printTicket(s.order_id, 80)}
+                        title="Reimprimir ticket 80mm"
+                        style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${t.good}55`, background: t.good + "18", color: t.good, cursor: isWorking ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600 }}>
+                        <Printer size={11} /> 80mm
+                      </button>
+                      <button disabled={isWorking} onClick={() => printTicket(s.order_id, 58)}
+                        title="Reimprimir ticket 58mm"
+                        style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: isWorking ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 11.5 }}>
+                        <Printer size={11} /> 58mm
+                      </button>
+                      <button disabled={isWorking} onClick={() => downloadTicket(s.order_id, s.folio)}
+                        title="Descargar PDF"
+                        style={{ padding: "5px 8px", borderRadius: 7, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: isWorking ? "wait" : "pointer", display: "flex", alignItems: "center", fontSize: 11.5 }}>
+                        <Download size={11} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -93,7 +93,24 @@ export const posApi = {
     api.get<Blob>(`/pos/sale/${orderId}/ticket.pdf`, { params: { width }, responseType: "blob" }).then(r => r.data),
   downloadSessionReport: (sessionId: number, kind: "Z" | "X" = "Z") =>
     api.get<Blob>(`/pos/session/${sessionId}/report.pdf`, { params: { kind }, responseType: "blob" }).then(r => r.data),
+  sessionSales: (sessionId: number) =>
+    api.get<SessionSale[]>(`/pos/session/${sessionId}/sales`).then(r => r.data),
 };
+
+export interface SessionSale {
+  order_id: number;
+  folio: string | null;
+  created_at: string | null;
+  status: string;
+  total_amount: number;
+  paid_amount: number;
+  change: number;
+  items_count: number;
+  customer_id: number | null;
+  customer_name: string | null;
+  payment_methods: string[];
+  payments: { method: string; amount: number }[];
+}
 
 // Denominaciones para arqueo
 export const DENOMINATIONS: number[] = [1000, 500, 200, 100, 50, 20, 10, 5, 2, 1, 0.5];
