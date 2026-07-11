@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Store, ShoppingCart, DollarSign, Plus, Minus, Trash2, Search,
-  Lock, Unlock, LogIn, LogOut, Printer, RefreshCw, Package,
+  Lock, Unlock, LogIn, LogOut, Printer, RefreshCw, Package, Download,
   Banknote, CreditCard, ArrowLeftRight, Check, X, AlertTriangle,
 } from "lucide-react";
 import { posApi, DENOMINATIONS, type POSTerminal, type POSSession, type POSProduct, type POSSaleItem } from "./api";
@@ -333,30 +333,64 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
       </div>
 
       {showPay && <PayModal t={t} session={session} total={total} cart={cart}
-        onDone={(sale) => { setCart([]); setShowPay(false); setLastSale(sale); setTimeout(() => setLastSale(null), 6000); }}
+        onDone={(sale) => { setCart([]); setShowPay(false); setLastSale(sale); }}
         onCancel={() => setShowPay(false)} />}
       {showClose && <CloseSessionModal t={t} session={session}
         onClosed={() => { setShowClose(false); onClosed(); }} onCancel={() => setShowClose(false)} />}
       {showCash && <CashMovementModal t={t} session={session} type={showCash}
         onDone={() => setShowCash(null)} onCancel={() => setShowCash(null)} />}
       {lastSale && (
-        <div style={{ position: "fixed", top: 16, right: 16, background: t.good + "22", border: `1px solid ${t.good}`, borderRadius: 10, padding: "14px 18px", zIndex: 90, display: "flex", alignItems: "center", gap: 12, boxShadow: "0 8px 24px rgba(0,0,0,.4)" }}>
-          <Check size={20} color={t.good} />
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>Venta {lastSale.folio}</div>
-            <div style={{ fontSize: 11.5, color: t.textLo }}>Total {mxn(lastSale.total_amount)} — Cambio {mxn(lastSale.change || 0)}</div>
+        <div style={{ position: "fixed", top: 16, right: 16, background: t.good + "22", border: `1px solid ${t.good}`, borderRadius: 12, padding: "16px 18px", zIndex: 90, display: "flex", alignItems: "flex-start", gap: 14, boxShadow: "0 8px 24px rgba(0,0,0,.4)", maxWidth: 460 }}>
+          <Check size={22} color={t.good} style={{ flexShrink: 0, marginTop: 2 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 3 }}>Venta {lastSale.folio}</div>
+            <div style={{ fontSize: 12, color: t.textLo, marginBottom: 10 }}>
+              Total {mxn(lastSale.total_amount)} · Cambio {mxn(lastSale.change || 0)}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              <button title="Imprimir ticket 80mm en una ventana nueva"
+                onClick={async () => {
+                  try {
+                    const blob = await posApi.downloadTicket(lastSale.order_id, 80);
+                    const url = URL.createObjectURL(blob);
+                    const w = window.open(url, "_blank");
+                    if (w) { setTimeout(() => w.print(), 500); }
+                  } catch (e: any) { alert("Error al imprimir ticket"); }
+                }}
+                style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.good}55`, background: t.good + "20", color: t.good, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600 }}>
+                <Printer size={13} /> Imprimir 80mm
+              </button>
+              <button title="Imprimir ticket 58mm"
+                onClick={async () => {
+                  try {
+                    const blob = await posApi.downloadTicket(lastSale.order_id, 58);
+                    const url = URL.createObjectURL(blob);
+                    const w = window.open(url, "_blank");
+                    if (w) { setTimeout(() => w.print(), 500); }
+                  } catch (e: any) { alert("Error al imprimir ticket"); }
+                }}
+                style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.good}55`, background: "transparent", color: t.good, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600 }}>
+                <Printer size={13} /> 58mm
+              </button>
+              <button title="Descargar el PDF del ticket"
+                onClick={async () => {
+                  try {
+                    const blob = await posApi.downloadTicket(lastSale.order_id, 80);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url; a.download = `ticket_${lastSale.folio}.pdf`;
+                    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                  } catch (e: any) { alert("Error al descargar ticket"); }
+                }}
+                style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 12 }}>
+                <Download size={13} /> Descargar
+              </button>
+            </div>
           </div>
-          <button title="Imprimir ticket 80mm"
-            onClick={async () => {
-              try {
-                const blob = await posApi.downloadTicket(lastSale.order_id, 80);
-                const url = URL.createObjectURL(blob);
-                const w = window.open(url, "_blank");
-                if (w) { setTimeout(() => w.print(), 500); }
-              } catch (e: any) { alert("Error al imprimir ticket"); }
-            }}
-            style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.good}55`, background: t.good + "12", color: t.good, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
-            <Printer size={14} /> Ticket
+          <button onClick={() => setLastSale(null)} title="Cerrar"
+            style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 2, display: "flex", flexShrink: 0 }}>
+            <X size={18} />
           </button>
         </div>
       )}
