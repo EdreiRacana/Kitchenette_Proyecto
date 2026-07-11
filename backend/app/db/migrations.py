@@ -86,10 +86,12 @@ _CUSTOMER_STATEMENTS = [
 ]
 
 _UNIVERSAL_ERP_STATEMENTS = [
-    # Orders: campos nuevos para marketplace / consignación / servicios
+    # Orders: campos nuevos para marketplace / consignación / servicios / POS
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS relationship_type   VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS external_order_id   VARCHAR",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS import_id           INTEGER",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS pos_session_id      INTEGER",
+    "CREATE INDEX IF NOT EXISTS ix_orders_pos_session_id ON orders (pos_session_id)",
     "CREATE INDEX IF NOT EXISTS ix_orders_external_order_id ON orders (external_order_id)",
     "CREATE INDEX IF NOT EXISTS ix_orders_relationship_type ON orders (relationship_type)",
     # OrderItem: is_service + unit_cost snapshot para P&L
