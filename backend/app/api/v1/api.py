@@ -14,6 +14,7 @@ from app.modules.accounting.router import router as accounting_router
 from app.modules.core_config.router import router as config_router
 from app.modules.ingesta.router import router as ingesta_router
 from app.modules.hr.router import router as hr_router
+from app.modules.pos.router import router as pos_router
 from app.modules.search.router import router as search_router
 from app.modules.notifications.router import router as notifications_router
 from app.modules.forecast.router import router as forecast_router
@@ -34,6 +35,7 @@ api_router.include_router(accounting_router, prefix="/accounting", tags=["accoun
 api_router.include_router(config_router,    prefix="/config",     tags=["configuration"])
 api_router.include_router(ingesta_router,   prefix="/ingesta",    tags=["ingesta"])
 api_router.include_router(hr_router,        prefix="/hr",         tags=["hr"], dependencies=[Depends(module_write_guard("hr"))])
+api_router.include_router(pos_router,       prefix="/pos",        tags=["pos"], dependencies=[Depends(module_write_guard("sales"))])
 api_router.include_router(search_router,    prefix="/search",     tags=["search"])
 api_router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
 

@@ -54,6 +54,8 @@ class Order(Base):
     external_order_id = Column(String, nullable=True, index=True)
     # Cuando es una orden importada de reporte marketplace, referencia al import
     import_id = Column(Integer, ForeignKey("sales_report_imports.id"), nullable=True, index=True)
+    # Cuando es una venta POS, referencia a la sesión de caja
+    pos_session_id = Column(Integer, ForeignKey("pos_sessions.id"), nullable=True, index=True)
 
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # seller
