@@ -165,14 +165,17 @@ async def import_marketplace_report(
                     result.returns_created += 1
                 result.orders_updated += 1
             else:
-                # Crear orden nueva
+                # Crear orden nueva. El canal proviene de la fila (marketplace o
+                # chain_sellthrough) para que el reporte separe ingresos por modelo.
+                order_channel = row.channel or "marketplace"
+                order_note_prefix = "Sell-through" if order_channel == "chain_sellthrough" else "Reporte"
                 new_order = models.Order(
                     folio=await _next_folio(db),
                     kind="order",
                     customer_id=customer_id,
-                    status="paid",  # marketplace paga directo, se marca como pagada
-                    channel="marketplace",
-                    relationship_type=customer.relationship_type or "marketplace",
+                    status="paid",  # marketplace/cadena paga directo, se marca como pagada
+                    channel=order_channel,
+                    relationship_type=customer.relationship_type or ("chain_physical" if order_channel == "chain_sellthrough" else "marketplace"),
                     external_order_id=row.external_order_id,
                     subtotal=row.subtotal,
                     discount_amount=0.0,
@@ -181,7 +184,11 @@ async def import_marketplace_report(
                     shipping_amount=0.0,
                     total_amount=row.subtotal,
                     paid_amount=row.net_to_seller,
-                    notes=f"Importado de reporte {platform.title()} · Comisión: ${row.commission_amount:,.2f}",
+                    notes=(
+                        f"{order_note_prefix} {platform.title()} · "
+                        f"Comisión: ${row.commission_amount:,.2f}"
+                        + (f" · {row.delivery_status}" if row.delivery_status else "")
+                    ),
                     created_at=row.created_at or datetime.now(),
                 )
                 db.add(new_order)

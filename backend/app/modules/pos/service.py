@@ -7,6 +7,7 @@ import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 
 from app.modules.pos import models, schemas, models as pos_models
 from app.modules.sales import models as sales_models
@@ -306,8 +307,10 @@ async def register_sale(db: AsyncSession, session_id: int,
     db.add(order)
     await db.flush()
 
+    from app.modules.inventory import fifo_service
+    from app.modules.inventory import models as inv_models
     for it in order_items:
-        db.add(sales_models.OrderItem(
+        oi = sales_models.OrderItem(
             order_id=order.id, variant_id=it.get("variant_id"),
             product_name=it["product_name"], sku=it.get("sku"),
             quantity=it["quantity"], unit_price=it["unit_price"],
@@ -316,7 +319,30 @@ async def register_sale(db: AsyncSession, session_id: int,
             subtotal=it["subtotal"], total=it["total"],
             is_service=it.get("is_service", False),
             unit_cost=it.get("unit_cost", 0.0),
-        ))
+        )
+        db.add(oi)
+        # Descuento FIFO real + snapshot de costo unitario para P&L exacto
+        variant_id = it.get("variant_id")
+        qty = int(it.get("quantity") or 0)
+        if variant_id and warehouse_id and qty > 0 and not it.get("is_service"):
+            # Servicios del catálogo tampoco descuentan inventario
+            res_v = await db.execute(select(inv_models.ProductVariant)
+                                       .where(inv_models.ProductVariant.id == variant_id)
+                                       .options(selectinload(inv_models.ProductVariant.product)))
+            v = res_v.scalars().first()
+            if v and v.product and (v.product.item_type or "") == "service":
+                oi.is_service = True
+                continue
+            try:
+                result = await fifo_service.consume_stock(
+                    db, variant_id=variant_id, warehouse_id=warehouse_id,
+                    quantity=qty, reference=f"order:{order.id}",
+                    user_id=user_id or s.cashier_id,
+                    allow_negative=True, commit=False,
+                )
+                oi.unit_cost = float(result.get("unit_cost_avg") or 0.0)
+            except Exception as e:
+                print(f"[pos] consume_stock error order {order.id} variant {variant_id}: {e}")
 
     # Registrar Payment(s) y POSTransaction(s) — una por método
     for method, amount in payments.items():

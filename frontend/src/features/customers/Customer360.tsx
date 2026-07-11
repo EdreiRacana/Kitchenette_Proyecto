@@ -20,6 +20,8 @@ import { customersApi } from "./api";
 import { openWhatsApp } from "../../utils/whatsapp";
 import { salesApi } from "../sales/api";
 import type { CustomerPnLBreakdown, CustomerTransaction, CustomerReturnLine } from "../sales/types";
+import SettlementModal from "./SettlementModal";
+import { Calculator } from "lucide-react";
 
 const DOC_TYPES = ["INE/Identificación", "Constancia de situación fiscal", "Comprobante de domicilio", "Contrato", "Otro"];
 
@@ -123,12 +125,16 @@ export default function Customer360({
   tk: Tokens; customer: Customer; onClose: () => void; onEdit?: (c: Customer) => void;
 }) {
   const [tab, setTab] = useState<"resumen" | "pnl" | "transacciones" | "devoluciones" | "documentos">("resumen");
+  const [settlementOpen, setSettlementOpen] = useState(false);
   const mktInputRef = useRef<HTMLInputElement>(null);
   const [mktUploading, setMktUploading] = useState(false);
   const handleMarketplaceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const platform = customer.marketplace_platform || "liverpool";
+    // Para cadenas físicas usa el parser de sell-through; para marketplace,
+    // el nombre de la plataforma (liverpool por default).
+    const platform = customer.marketplace_platform
+      || (customer.relationship_type === "chain_physical" ? "chain_sellthrough" : "liverpool");
     if (!confirm(
       `Se importará el reporte "${file.name}" para el cliente ${customer.name}.\n\n`
       + `Plataforma: ${platform}\n\n`
@@ -573,12 +579,20 @@ export default function Customer360({
                  style={{ display: "none" }}
                  onChange={handleMarketplaceUpload} />
           {(customer.relationship_type === "marketplace" || customer.relationship_type === "chain_physical") && (
-            <button
-              disabled={mktUploading}
-              onClick={() => mktInputRef.current?.click()}
-              style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${tk.accent}66`, background: tk.accent + "18", color: tk.accent, cursor: mktUploading ? "wait" : "pointer", fontSize: 13, fontWeight: 700, opacity: mktUploading ? 0.6 : 1 }}>
-              {mktUploading ? "Procesando…" : `Importar reporte ${customer.marketplace_platform || "marketplace"}`}
-            </button>
+            <>
+              <button
+                disabled={mktUploading}
+                onClick={() => mktInputRef.current?.click()}
+                style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${tk.accent}66`, background: tk.accent + "18", color: tk.accent, cursor: mktUploading ? "wait" : "pointer", fontSize: 13, fontWeight: 700, opacity: mktUploading ? 0.6 : 1 }}>
+                {mktUploading ? "Procesando…" : `Importar reporte ${customer.marketplace_platform || "marketplace"}`}
+              </button>
+              <button
+                onClick={() => setSettlementOpen(true)}
+                title="Conciliar el depósito recibido vs las órdenes del periodo"
+                style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${tk.good}66`, background: tk.good + "18", color: tk.good, cursor: "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                <Calculator size={14} /> Conciliar liquidación
+              </button>
+            </>
           )}
           <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${tk.border}`, background: "transparent", color: tk.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Cerrar</button>
           {onEdit && (
@@ -586,6 +600,10 @@ export default function Customer360({
           )}
         </div>
       </div>
+
+      {settlementOpen && (
+        <SettlementModal tk={tk} customerId={customer.id} customerName={customer.name} onClose={() => setSettlementOpen(false)} />
+      )}
     </div>,
     document.body
   );

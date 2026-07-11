@@ -15,6 +15,44 @@ export interface VariantOption {
   price: number;
 }
 
+export interface SettlementOrderLine {
+  order_id: number;
+  folio: string | null;
+  external_order_id: string | null;
+  created_at: string | null;
+  gross: number;
+  net_to_seller: number;
+  commission: number;
+}
+
+export interface SettlementReturnLine {
+  return_id: number;
+  folio: string | null;
+  order_id: number;
+  status: string;
+  reason: string | null;
+  refund_amount: number;
+}
+
+export interface SettlementReport {
+  customer_id: number;
+  period_start: string | null;
+  period_end: string | null;
+  orders_count: number;
+  returns_count: number;
+  totals: {
+    gross_sales: number;
+    commission_total: number;
+    net_expected_before_returns: number;
+    returns_deducted: number;
+    expected_deposit: number;
+    deposited: number | null;
+    variance: number | null;
+  };
+  orders: SettlementOrderLine[];
+  returns: SettlementReturnLine[];
+}
+
 function qs(filters: OrderFilters): string {
   const p = new URLSearchParams();
   Object.entries(filters).forEach(([k, v]) => {
@@ -177,6 +215,12 @@ export const salesApi = {
   async customerPnLUniversal(customerId: number, start?: string, end?: string): Promise<any> {
     const { data } = await api.get<any>(`/sales/customers/${customerId}/pnl-universal`, {
       params: { start, end },
+    });
+    return data;
+  },
+  async customerSettlement(customerId: number, params: { start?: string; end?: string; deposited_amount?: number }): Promise<SettlementReport> {
+    const { data } = await api.get<SettlementReport>(`/sales/customers/${customerId}/settlement`, {
+      params,
     });
     return data;
   },

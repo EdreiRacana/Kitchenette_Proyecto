@@ -42,9 +42,12 @@ async def receive_stock(
     quantity: int, unit_cost: float,
     reference: Optional[str] = None,
     user_id: Optional[int] = None,
+    commit: bool = True,
 ) -> models.StockLot:
     """Entrada de stock: crea un lote FIFO con su costo propio.
-    También registra un StockMovement de tipo IN."""
+    También registra un StockMovement de tipo IN.
+    Si commit=False, el caller es dueño de la transacción (útil al integrar
+    con la creación de una orden que aún no se ha comprometido)."""
     if quantity <= 0:
         raise ValueError("quantity debe ser positiva")
     lot = models.StockLot(
@@ -55,14 +58,16 @@ async def receive_stock(
     db.add(lot)
     db.add(models.StockMovement(
         variant_id=variant_id, warehouse_id=warehouse_id,
-        quantity=quantity, movement_type="IN",
+        quantity=quantity, movement_type="in",
         unit_cost=unit_cost, reference=reference,
         user_id=user_id,
     ))
-    # Actualizar StockLevel agregado
     await _adjust_stock_level(db, variant_id, warehouse_id, quantity)
-    await db.commit()
-    await db.refresh(lot)
+    if commit:
+        await db.commit()
+        await db.refresh(lot)
+    else:
+        await db.flush()
     return lot
 
 
@@ -70,6 +75,7 @@ async def consume_stock(
     db: AsyncSession, variant_id: int, warehouse_id: int, quantity: int,
     reference: Optional[str] = None, user_id: Optional[int] = None,
     allow_negative: bool = False,
+    commit: bool = True,
 ) -> Dict[str, float]:
     """Salida de stock con costeo FIFO.
     Consume los lotes más antiguos primero. Retorna:
@@ -122,12 +128,15 @@ async def consume_stock(
     unit_cost_avg = round(total_cost / quantity, 4) if quantity > 0 else 0.0
     db.add(models.StockMovement(
         variant_id=variant_id, warehouse_id=warehouse_id,
-        quantity=-quantity, movement_type="OUT",
+        quantity=-quantity, movement_type="out",
         unit_cost=unit_cost_avg, reference=reference,
         user_id=user_id,
     ))
     await _adjust_stock_level(db, variant_id, warehouse_id, -quantity)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
 
     return {
         "total_cost": round(total_cost, 2),
@@ -148,11 +157,11 @@ async def _adjust_stock_level(
     if lvl is None:
         lvl = models.StockLevel(
             variant_id=variant_id, warehouse_id=warehouse_id,
-            available=max(0, delta), reserved=0,
+            quantity=max(0, delta), reserved_quantity=0,
         )
         db.add(lvl)
     else:
-        lvl.available = (lvl.available or 0) + delta
+        lvl.quantity = (lvl.quantity or 0) + delta
 
 
 async def get_kardex(
