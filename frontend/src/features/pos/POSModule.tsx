@@ -468,19 +468,41 @@ function SaleSuccessModal({ t, sale, onClose }: { t: any; sale: any; onClose: ()
 
 // ── Modales ─────────────────────────────────────────────────────────
 function PayModal({ t, session, total, cart, onDone, onCancel }: any) {
-  const [cash, setCash] = useState<number>(total);
+  // Sólo el efectivo puede exceder el total (para calcular cambio). Tarjeta y
+  // transferencia deben ser exactos: si el cajero teclea $500 en tarjeta, el
+  // sistema NO debe cobrar los $500 de efectivo también — este bug provocaba
+  // que ambos métodos aparecieran duplicados en el ticket.
   const [card, setCard] = useState<number>(0);
   const [transfer, setTransfer] = useState<number>(0);
+  const [cash, setCash] = useState<number>(total);
+  const [cashEdited, setCashEdited] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Auto-balance: mientras el cajero no toque el efectivo, éste refleja
+  // exactamente lo que falta cubrir con tarjeta/transferencia.
+  useEffect(() => {
+    if (!cashEdited) {
+      setCash(Math.max(0, Math.round((total - card - transfer) * 100) / 100));
+    }
+  }, [total, card, transfer, cashEdited]);
+
   const paid = cash + card + transfer;
   const change = paid - total;
   const submit = async () => {
     setSaving(true);
     try {
       const payments: Record<string, number> = {};
-      if (cash > 0) payments.cash = cash;
-      if (card > 0) payments.card = card;
-      if (transfer > 0) payments.transfer = transfer;
+      // Tarjeta/transferencia: se cobra el monto exacto tecleado.
+      if (card > 0) payments.card = Math.round(card * 100) / 100;
+      if (transfer > 0) payments.transfer = Math.round(transfer * 100) / 100;
+      // Efectivo: cobra sólo lo que faltaba después de los electrónicos,
+      // pero registra el monto físico recibido para calcular cambio.
+      const nonCash = (payments.card || 0) + (payments.transfer || 0);
+      const cashDue = Math.max(0, Math.round((total - nonCash) * 100) / 100);
+      if (cash > 0 && cashDue > 0) {
+        // Registrar el efectivo real recibido (para arqueo), no el "debido".
+        payments.cash = Math.round(cash * 100) / 100;
+      }
       const res = await posApi.registerSale({
         session_id: session.id, customer_id: undefined,
         items: cart.map((it: any) => ({
@@ -504,21 +526,40 @@ function PayModal({ t, session, total, cart, onDone, onCancel }: any) {
         </div>
         <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
           {[
-            { l: "Efectivo", ic: Banknote, val: cash, set: setCash, c: t.good },
-            { l: "Tarjeta", ic: CreditCard, val: card, set: setCard, c: t.nova },
-            { l: "Transferencia", ic: ArrowLeftRight, val: transfer, set: setTransfer, c: "#8E7BB8" },
+            { l: "Efectivo", ic: Banknote, val: cash, c: t.good, key: "cash" as const,
+              set: (v: number) => { setCash(v); setCashEdited(true); },
+              hint: cashEdited ? "Manual" : "Auto",
+            },
+            { l: "Tarjeta", ic: CreditCard, val: card, c: t.nova, key: "card" as const,
+              set: setCard, hint: null,
+            },
+            { l: "Transferencia", ic: ArrowLeftRight, val: transfer, c: "#8E7BB8", key: "transfer" as const,
+              set: setTransfer, hint: null,
+            },
           ].map(row => (
             <div key={row.l} style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ width: 40, height: 40, borderRadius: 8, background: row.c + "22", color: row.c, display: "grid", placeItems: "center" }}>
                 <row.ic size={16} />
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11.5, color: t.textLo }}>{row.l}</div>
-                <input type="number" step={0.01} min={0} value={row.val} onChange={e => row.set(parseFloat(e.target.value) || 0)}
+                <div style={{ fontSize: 11.5, color: t.textLo, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>{row.l}</span>
+                  {row.hint && (
+                    <span style={{ fontSize: 9.5, color: cashEdited ? t.warn : t.good, background: (cashEdited ? t.warn : t.good) + "22", padding: "1px 6px", borderRadius: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{row.hint}</span>
+                  )}
+                </div>
+                <input type="number" step={0.01} min={0} value={row.val || ""} onChange={e => row.set(parseFloat(e.target.value) || 0)}
+                  onFocus={e => e.target.select()}
                   style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 15, fontWeight: 700, marginTop: 3 }} />
               </div>
             </div>
           ))}
+          {cashEdited && (
+            <button onClick={() => setCashEdited(false)} type="button"
+              style={{ alignSelf: "flex-start", background: "transparent", border: "none", color: t.nova, fontSize: 11, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+              Volver a auto-balance del efectivo
+            </button>
+          )}
           <div style={{ marginTop: 6, padding: 14, background: change >= 0 ? t.good + "18" : t.bad + "18", borderRadius: 10, border: `1px solid ${change >= 0 ? t.good : t.bad}55` }}>
             <div style={{ fontSize: 12, color: t.textLo }}>{change >= 0 ? "Cambio a entregar" : "Falta"}</div>
             <div style={{ fontSize: 22, fontWeight: 900, color: change >= 0 ? t.good : t.bad }}>{mxn(Math.abs(change))}</div>

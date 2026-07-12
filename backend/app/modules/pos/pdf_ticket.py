@@ -149,12 +149,21 @@ def build_thermal_ticket(
     separator()
 
     # ── Totales ────────────────────────────────
-    subtotal = order.get("subtotal") or 0.0
-    tax = order.get("tax_amount") or 0.0
+    # En el POS los precios ya incluyen IVA, así que `subtotal` en la orden
+    # es realmente el total-con-IVA. Para el desglose contable mostramos el
+    # subtotal SIN IVA (total - IVA), IVA aparte y TOTAL con IVA.
     total_amount = order.get("total_amount") or 0.0
-    line(f"Subtotal: {_mxn(subtotal)}", size=8, align="right")
+    tax = order.get("tax_amount") or 0.0
+    discount = order.get("discount_amount") or 0.0
+    shipping = order.get("shipping_amount") or 0.0
+    subtotal_neto = round(total_amount - tax - shipping + discount, 2)
+    line(f"Subtotal: {_mxn(subtotal_neto)}", size=8, align="right")
+    if discount > 0:
+        line(f"Descuento: -{_mxn(discount)}", size=8, align="right")
     if tax > 0:
-        line(f"IVA: {_mxn(tax)}", size=8, align="right")
+        line(f"IVA (16%): {_mxn(tax)}", size=8, align="right")
+    if shipping > 0:
+        line(f"Envío: {_mxn(shipping)}", size=8, align="right")
     line(f"TOTAL: {_mxn(total_amount)}", size=11, align="right", bold=True)
 
     separator()
