@@ -10,7 +10,7 @@ import {
   Building2, Users, Shield, Receipt, Plug, Workflow, Lock, Settings,
   Plus, Search, Edit2, Trash2, Check, X, Mail, Globe,
   FileText, Upload, Download, RefreshCw,
-  CheckCircle, AlertTriangle, Info, ChevronRight,
+  CheckCircle, AlertTriangle, AlertCircle, Info, ChevronRight,
   Key, Bell, Clock, UserPlus,
   ShoppingBag, Truck, Banknote, Fingerprint, Save,
   ToggleLeft, ToggleRight, Activity, ShieldCheck,
@@ -399,14 +399,28 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               {sectionTitle(Building2, "Identidad de la empresa", t.nova)}
               <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
                 {companyForm.logo_url
-                  ? <img src={(companyForm.logo_url.startsWith("http") || companyForm.logo_url.startsWith("data:")) ? companyForm.logo_url : `${(import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1").replace(/\/api\/v1\/?$/, "")}${companyForm.logo_url}`} alt="Logo" style={{ width: 64, height: 64, borderRadius: 16, objectFit: "cover", border: `1px solid ${t.border}` }} />
+                  ? <img src={(companyForm.logo_url.startsWith("http") || companyForm.logo_url.startsWith("data:")) ? companyForm.logo_url : `${(import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1").replace(/\/api\/v1\/?$/, "")}${companyForm.logo_url}`}
+                      alt="Logo"
+                      onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      style={{ width: 64, height: 64, borderRadius: 16, objectFit: "cover", border: `1px solid ${t.border}` }} />
                   : <div style={{ width: 64, height: 64, borderRadius: 16, background: comp.color + "26", color: comp.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 800 }}>{comp.initials}</div>}
-                <div>
+                <div style={{ flex: 1 }}>
                   <input ref={logoInputRef} type="file" accept="image/png,image/svg+xml,image/jpeg" style={{ display: "none" }} onChange={handleLogoChange} />
                   <button onClick={() => logoInputRef.current?.click()} disabled={logoUploading} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
                     <Upload size={14} /> {logoUploading ? "Subiendo…" : "Cambiar logo"}
                   </button>
-                  <div style={{ fontSize: 11, color: t.textLo, marginTop: 6 }}>PNG, JPG o SVG, máx 2MB</div>
+                  {companyForm.logo_url?.includes("/config/company/logo") ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: t.good, marginTop: 6, fontWeight: 600 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: 99, background: t.good }} />
+                      Guardado en base de datos (persistente)
+                    </div>
+                  ) : companyForm.logo_url ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: t.warn, marginTop: 6, fontWeight: 600 }}>
+                      <AlertCircle size={11} />
+                      <span>Vuelve a subir el logo para hacerlo persistente</span>
+                    </div>
+                  ) : null}
+                  <div style={{ fontSize: 11, color: t.textLo, marginTop: 4 }}>PNG, JPG o SVG, máx 2MB</div>
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
