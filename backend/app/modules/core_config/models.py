@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, Enum, Integer, DateTime, ForeignKey, JSON, Float, func
+from sqlalchemy import Column, String, Boolean, Enum, Integer, DateTime, ForeignKey, JSON, Float, LargeBinary, func
 from sqlalchemy.orm import relationship
 import enum
 import uuid
@@ -35,6 +35,11 @@ class CompanyProfile(Base):
     base_currency = Column(String, default="MXN")
     timezone = Column(String, default="America/Mexico_City")
     logo_url = Column(String, nullable=True)
+    # Bytes del logo — persistente cross-deploy. El filesystem de Render es
+    # efímero, así que /uploads/ se pierde en cada deploy y sólo confiar en
+    # `logo_url` rompe los PDFs. `logo_bytes` es la fuente de verdad para PDFs.
+    logo_bytes = Column(LargeBinary, nullable=True)
+    logo_mime = Column(String, nullable=True)
     # Branding para documentos PDF (cotización, remisión, factura)
     commercial_name = Column(String, nullable=True)   # nombre comercial (puede ≠ razón social)
     brand_color = Column(String, nullable=True, default="#33B2F5")  # accent en headers PDF

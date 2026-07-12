@@ -36,11 +36,23 @@ def _accent(brand_color: Optional[str]) -> colors.Color:
 
 def _company_header(company: dict, doc_title: str, doc_folio: str, brand: colors.Color) -> Table:
     """Header con logo + datos empresa + folio grande a la derecha."""
+    from io import BytesIO as _BytesIO
+    import os as _os
     logo_cell = ""
-    if company.get("logo_path"):
+    # Preferir bytes en DB (persistente) sobre archivo local (efímero en Render)
+    logo_src = None
+    mime = (company.get("logo_mime") or "").lower()
+    if "svg" not in mime:
+        b = company.get("logo_bytes")
+        if b:
+            logo_src = _BytesIO(b)
+        elif company.get("logo_path") and _os.path.exists(company["logo_path"]) and not company["logo_path"].lower().endswith(".svg"):
+            logo_src = company["logo_path"]
+    if logo_src is not None:
         try:
-            logo_cell = Image(company["logo_path"], width=42 * mm, height=18 * mm, kind="proportional")
-        except Exception:
+            logo_cell = Image(logo_src, width=42 * mm, height=18 * mm, kind="proportional")
+        except Exception as _e:
+            print(f"[pdf_docs] logo render error: {_e}")
             logo_cell = ""
 
     empresa_lines = []

@@ -133,6 +133,10 @@ async def upload_company_logo(
     profile = await service.get_company_profile(db)
     if profile:
         profile.logo_url = f"/static/company/{filename}"
+        # Persistir bytes en DB — el filesystem de Render es efímero y
+        # /uploads/ se pierde en cada deploy. Los PDFs leen de aquí.
+        profile.logo_bytes = contents
+        profile.logo_mime = file.content_type
         await db.commit()
         await db.refresh(profile)
 
@@ -142,6 +146,22 @@ async def upload_company_logo(
         details={"filename": filename, "size": len(contents)},
     )
     return {"logo_url": f"/static/company/{filename}", "size": len(contents)}
+
+
+@router.get("/company/logo")
+async def get_company_logo(db: AsyncSession = Depends(deps.get_db)):
+    """Sirve el logo desde la DB (persistente cross-deploy).
+    Usar como <img src='/config/company/logo'> — no requiere auth para que
+    también funcione en tickets impresos y correos."""
+    from fastapi.responses import Response
+    profile = await service.get_company_profile(db)
+    if not profile or not profile.logo_bytes:
+        raise HTTPException(404, "Logo no configurado")
+    return Response(
+        content=profile.logo_bytes,
+        media_type=profile.logo_mime or "image/png",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 # -- System Integrations Endpoints --

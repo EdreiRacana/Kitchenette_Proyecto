@@ -352,6 +352,9 @@ _BRANCH_STATEMENTS = [
     "ALTER TABLE budgets ADD COLUMN IF NOT EXISTS branch_id INTEGER",
     # Tasa ISN estatal (patronal) en el perfil de la empresa
     "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS state_payroll_tax_rate DOUBLE PRECISION DEFAULT 3.0",
+    # Logo persistente en la DB (el filesystem de Render es efímero)
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS logo_bytes BYTEA",
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS logo_mime  VARCHAR",
 ]
 
 
