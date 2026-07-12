@@ -30,15 +30,32 @@ async def _get_company_dict(db: AsyncSession) -> dict:
     cp = res.scalars().first()
     if not cp:
         return {"legal_name": "Mi Empresa", "commercial_name": "Mi Empresa"}
+    # Preferimos los bytes de la DB (persistentes cross-deploy) sobre el
+    # archivo local, porque en Render el filesystem es efímero y se pierde
+    # en cada deploy.
+    logo_bytes = getattr(cp, "logo_bytes", None) or None
     logo_path = None
-    if cp.logo_url:
-        # logo_url típicamente es "/static/uploads/logo.png"; resolvemos ruta local
+    if not logo_bytes and cp.logo_url:
         rel = cp.logo_url.lstrip("/")
         if rel.startswith("static/"):
             rel = rel[len("static/"):]
         candidate = os.path.join(os.getcwd(), "uploads", rel)
         if os.path.exists(candidate):
             logo_path = candidate
+            # Backfill: si el archivo existía pero la DB no tenía bytes,
+            # los guardamos ahora para que sobrevivan al próximo deploy.
+            try:
+                with open(candidate, "rb") as f:
+                    cp.logo_bytes = f.read()
+                    ext = candidate.rsplit(".", 1)[-1].lower()
+                    cp.logo_mime = {
+                        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                        "webp": "image/webp", "svg": "image/svg+xml",
+                    }.get(ext, "image/png")
+                await db.commit()
+                logo_bytes = cp.logo_bytes
+            except Exception as e:
+                print(f"[company] backfill logo_bytes error: {e}")
     return {
         "legal_name": cp.legal_name,
         "commercial_name": cp.commercial_name or cp.legal_name,
@@ -47,6 +64,8 @@ async def _get_company_dict(db: AsyncSession) -> dict:
         "contact_phone": cp.contact_phone,
         "address": cp.address,
         "logo_path": logo_path,
+        "logo_bytes": logo_bytes,
+        "logo_mime": getattr(cp, "logo_mime", None),
         "brand_color": cp.brand_color or "#33B2F5",
         "document_footer": cp.document_footer,
     }

@@ -32,6 +32,25 @@ def _truncate(s: str, n: int) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
+def _company_logo_source(company: dict):
+    """Devuelve un origen usable por reportlab (BytesIO o ruta local), o None.
+    Prefiere `logo_bytes` (persistente en DB) sobre `logo_path` (efímero).
+    Ignora SVG porque reportlab no lo renderiza sin extras."""
+    mime = (company.get("logo_mime") or "").lower()
+    if "svg" in mime:
+        return None
+    b = company.get("logo_bytes")
+    if b:
+        try:
+            return BytesIO(b)
+        except Exception:
+            pass
+    p = company.get("logo_path")
+    if p and os.path.exists(p) and not p.lower().endswith(".svg"):
+        return p
+    return None
+
+
 def build_thermal_ticket(
     company: dict, order: dict, items: List[dict],
     payments: List[dict], session: Optional[dict] = None,
@@ -75,15 +94,19 @@ def build_thermal_ticket(
         y -= 10
 
     # ── Header ──────────────────────────────────
-    # Logo si existe
-    if company.get("logo_path") and os.path.exists(company["logo_path"]):
+    # Logo (prefiere bytes en DB → sobrevive al deploy de Render)
+    logo_src = _company_logo_source(company)
+    if logo_src is not None:
         try:
-            logo_h = 12 * mm
-            c.drawImage(company["logo_path"], (page_w - 20 * mm) / 2, y - logo_h,
-                        width=20 * mm, height=logo_h, preserveAspectRatio=True, mask="auto")
+            from reportlab.lib.utils import ImageReader
+            reader = ImageReader(logo_src)
+            logo_h = 14 * mm
+            logo_w = 24 * mm
+            c.drawImage(reader, (page_w - logo_w) / 2, y - logo_h,
+                        width=logo_w, height=logo_h, preserveAspectRatio=True, mask="auto")
             y -= logo_h + 4
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[pdf_ticket] logo render error: {e}")
 
     line(company.get("commercial_name") or company.get("legal_name") or "MI EMPRESA",
          size=10, align="center", bold=True)
@@ -180,9 +203,10 @@ def build_session_z_report(
 
     # ── Header con logo + datos empresa ───────
     logo_cell = ""
-    if company.get("logo_path") and os.path.exists(company["logo_path"]):
+    logo_src = _company_logo_source(company)
+    if logo_src is not None:
         try:
-            logo_cell = Image(company["logo_path"], width=32 * mm, height=14 * mm, kind="proportional")
+            logo_cell = Image(logo_src, width=32 * mm, height=14 * mm, kind="proportional")
         except Exception:
             logo_cell = ""
 

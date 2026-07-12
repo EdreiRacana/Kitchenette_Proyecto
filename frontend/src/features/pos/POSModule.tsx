@@ -3,6 +3,7 @@
 // Pensado para tablet/pantalla táctil pero funciona con teclado + lector.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Store, ShoppingCart, DollarSign, Plus, Minus, Trash2, Search,
   Lock, Unlock, LogIn, LogOut, Printer, RefreshCw, Package, Download,
@@ -349,62 +350,118 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
         onClosed={() => { setShowClose(false); onClosed(); }} onCancel={() => setShowClose(false)} />}
       {showCash && <CashMovementModal t={t} session={session} type={showCash}
         onDone={() => setShowCash(null)} onCancel={() => setShowCash(null)} />}
-      {lastSale && (
-        <div style={{ position: "fixed", top: 16, right: 16, background: t.good + "22", border: `1px solid ${t.good}`, borderRadius: 12, padding: "16px 18px", zIndex: 90, display: "flex", alignItems: "flex-start", gap: 14, boxShadow: "0 8px 24px rgba(0,0,0,.4)", maxWidth: 460 }}>
-          <Check size={22} color={t.good} style={{ flexShrink: 0, marginTop: 2 }} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 3 }}>Venta {lastSale.folio}</div>
-            <div style={{ fontSize: 12, color: t.textLo, marginBottom: 10 }}>
-              Total {mxn(lastSale.total_amount)} · Cambio {mxn(lastSale.change || 0)}
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              <button title="Imprimir ticket 80mm en una ventana nueva"
-                onClick={async () => {
-                  try {
-                    const blob = await posApi.downloadTicket(lastSale.order_id, 80);
-                    const url = URL.createObjectURL(blob);
-                    const w = window.open(url, "_blank");
-                    if (w) { setTimeout(() => w.print(), 500); }
-                  } catch (e: any) { alert("Error al imprimir ticket"); }
-                }}
-                style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.good}55`, background: t.good + "20", color: t.good, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600 }}>
-                <Printer size={13} /> Imprimir 80mm
-              </button>
-              <button title="Imprimir ticket 58mm"
-                onClick={async () => {
-                  try {
-                    const blob = await posApi.downloadTicket(lastSale.order_id, 58);
-                    const url = URL.createObjectURL(blob);
-                    const w = window.open(url, "_blank");
-                    if (w) { setTimeout(() => w.print(), 500); }
-                  } catch (e: any) { alert("Error al imprimir ticket"); }
-                }}
-                style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.good}55`, background: "transparent", color: t.good, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600 }}>
-                <Printer size={13} /> 58mm
-              </button>
-              <button title="Descargar el PDF del ticket"
-                onClick={async () => {
-                  try {
-                    const blob = await posApi.downloadTicket(lastSale.order_id, 80);
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url; a.download = `ticket_${lastSale.folio}.pdf`;
-                    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                  } catch (e: any) { alert("Error al descargar ticket"); }
-                }}
-                style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 12 }}>
-                <Download size={13} /> Descargar
-              </button>
-            </div>
-          </div>
-          <button onClick={() => setLastSale(null)} title="Cerrar"
-            style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 2, display: "flex", flexShrink: 0 }}>
+      {lastSale && <SaleSuccessModal t={t} sale={lastSale} onClose={() => setLastSale(null)} />}
+    </div>
+  );
+}
+
+
+// ── Modal de venta exitosa (centrado, siempre encima de la topbar) ────────
+function SaleSuccessModal({ t, sale, onClose }: { t: any; sale: any; onClose: () => void }) {
+  const [printing, setPrinting] = useState<58 | 80 | null>(null);
+  const [downloaded, setDownloaded] = useState(false);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape" || e.key === "Enter") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const doPrint = async (width: 58 | 80) => {
+    setPrinting(width);
+    try {
+      const blob = await posApi.downloadTicket(sale.order_id, width);
+      const url = URL.createObjectURL(blob);
+      const w = window.open(url, "_blank");
+      if (w) setTimeout(() => w.print(), 500);
+    } catch { alert("Error al imprimir ticket"); }
+    finally { setPrinting(null); }
+  };
+  const doDownload = async () => {
+    try {
+      const blob = await posApi.downloadTicket(sale.order_id, 80);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `ticket_${sale.folio}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setDownloaded(true);
+      setTimeout(() => setDownloaded(false), 2000);
+    } catch { alert("Error al descargar ticket"); }
+  };
+
+  return createPortal(
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.75)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(4px)" }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 520, background: t.base, border: `2px solid ${t.good}55`, borderRadius: 20, boxShadow: `0 24px 80px rgba(0,0,0,0.6), 0 0 0 4px ${t.good}18`, overflow: "hidden", animation: "pop-in .18s ease-out" }}>
+        <style>{`@keyframes pop-in { 0% { transform: scale(.92); opacity: 0 } 100% { transform: scale(1); opacity: 1 } }`}</style>
+
+        {/* Top gradient banner */}
+        <div style={{ background: `linear-gradient(135deg, ${t.good}, #059669)`, padding: "28px 28px 22px", position: "relative" }}>
+          <button onClick={onClose} title="Cerrar (Esc)"
+            style={{ position: "absolute", top: 12, right: 12, width: 32, height: 32, borderRadius: 8, border: "none", background: "rgba(255,255,255,0.18)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <X size={18} />
           </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div style={{ width: 60, height: 60, borderRadius: 30, background: "rgba(255,255,255,0.25)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}>
+              <Check size={34} color="#fff" strokeWidth={3} />
+            </div>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", lineHeight: 1.1 }}>¡Venta exitosa!</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.9)", marginTop: 4, fontFamily: "monospace", fontWeight: 600 }}>{sale.folio}</div>
+            </div>
+          </div>
         </div>
-      )}
-    </div>
+
+        {/* Amounts */}
+        <div style={{ padding: "24px 28px", borderBottom: `1px solid ${t.border}` }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div>
+              <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Total cobrado</div>
+              <div style={{ fontSize: 28, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{mxn(sale.total_amount)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Cambio</div>
+              <div style={{ fontSize: 28, fontWeight: 800, color: (sale.change || 0) > 0 ? t.warn : t.textLo, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{mxn(sale.change || 0)}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Ticket actions */}
+        <div style={{ padding: 22 }}>
+          <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 12, textAlign: "center" }}>
+            Imprimir o descargar el ticket
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 8 }}>
+            <button onClick={() => doPrint(80)} disabled={printing !== null}
+              style={{ padding: "14px 16px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy || "#1e40af"})`, color: "#fff", cursor: printing ? "wait" : "pointer", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: printing ? 0.6 : 1, boxShadow: `0 4px 12px ${t.nova}44` }}>
+              <Printer size={17} /> {printing === 80 ? "Imprimiendo…" : "Ticket 80mm"}
+            </button>
+            <button onClick={() => doPrint(58)} disabled={printing !== null}
+              style={{ padding: "14px 16px", borderRadius: 12, border: `1px solid ${t.nova}55`, background: t.nova + "18", color: t.nova, cursor: printing ? "wait" : "pointer", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: printing ? 0.6 : 1 }}>
+              <Printer size={17} /> {printing === 58 ? "Imprimiendo…" : "Ticket 58mm"}
+            </button>
+          </div>
+          <button onClick={doDownload}
+            style={{ width: "100%", padding: "11px 16px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            {downloaded ? <><Check size={14} /> Descargado</> : <><Download size={14} /> Descargar PDF</>}
+          </button>
+        </div>
+
+        {/* Footer with next action */}
+        <div style={{ padding: "16px 22px", borderTop: `1px solid ${t.border}`, background: t.panel2, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ fontSize: 11.5, color: t.textLo, lineHeight: 1.4 }}>
+            Puedes reimprimir desde<br/><b style={{ color: t.nova }}>Ventas del turno</b> en cualquier momento
+          </div>
+          <button onClick={onClose}
+            style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: "pointer", fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, boxShadow: `0 4px 12px ${t.good}44` }}>
+            Nueva venta <ChevronRight size={16} />
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -650,7 +707,7 @@ function SalesHistoryDrawer({ t, session, refreshKey, onClose }: {
   };
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.7)", zIndex: 95, display: "flex", justifyContent: "flex-end" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.7)", zIndex: 9998, display: "flex", justifyContent: "flex-end" }}>
       <div onClick={e => e.stopPropagation()} style={{ width: 560, maxWidth: "100vw", height: "100%", background: t.base, borderLeft: `1px solid ${t.border}`, display: "flex", flexDirection: "column", boxShadow: "-8px 0 32px rgba(0,0,0,0.4)" }}>
         {/* Header */}
         <div style={{ padding: "18px 22px", borderBottom: `1px solid ${t.border}`, background: t.panel, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
