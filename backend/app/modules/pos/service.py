@@ -280,6 +280,17 @@ async def register_sale(db: AsyncSession, session_id: int,
     # IVA incluido en precio → separo: tax_amount = base × tasa / (1 + tasa)
     tax_amount = round(base_after_discount * tax_rate / (100 + tax_rate), 2)
     total = round(base_after_discount + shipping_amount, 2)
+    # Sólo el efectivo puede exceder el total (para dar cambio). Tarjeta y
+    # transferencia deben cobrarse en el monto exacto — si el cliente elige
+    # pago mixto, el efectivo cubre sólo la diferencia. Esta validación
+    # evita que un bug del cliente duplique el cargo a tarjeta.
+    non_cash = sum(v for k, v in payments.items() if k != "cash")
+    if non_cash > total + 0.005:
+        raise ValueError(
+            f"El pago con tarjeta+transferencia (${non_cash:,.2f}) excede el "
+            f"total (${total:,.2f}). No es posible dar cambio con métodos "
+            f"electrónicos — ajusta los montos."
+        )
     paid = sum(payments.values())
     if paid + 0.005 < total:
         raise ValueError(f"El pago (${paid:,.2f}) es menor que el total (${total:,.2f})")
@@ -413,7 +424,10 @@ async def prepare_ticket_data(db: AsyncSession, order_id: int) -> Optional[dict]
     company = await _get_company_dict(db)
     order_dict = {
         "id": order.id, "folio": order.folio,
-        "subtotal": order.subtotal, "tax_amount": order.tax_amount,
+        "subtotal": order.subtotal,
+        "tax_amount": order.tax_amount,
+        "discount_amount": order.discount_amount or 0.0,
+        "shipping_amount": order.shipping_amount or 0.0,
         "total_amount": order.total_amount,
         "change": max(0, round(total_paid - (order.total_amount or 0), 2)),
         "customer_name": customer_name,

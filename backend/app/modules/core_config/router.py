@@ -63,7 +63,17 @@ async def read_company_profile(
     profile = await service.get_company_profile(db)
     if not profile:
         raise HTTPException(status_code=404, detail="Company profile not found")
-    return profile
+    # Si el logo está persistido en la DB, expón la URL que sirve desde bytes
+    # (sobrevive al deploy de Render). Si sólo hay logo_url apuntando al
+    # filesystem efímero, el frontend seguirá viendo un placeholder cuando el
+    # archivo ya no exista — el usuario debe re-subir el logo una vez.
+    resp = schemas.CompanyProfileResponse.model_validate(profile)
+    if getattr(profile, "logo_bytes", None):
+        # Cache-buster con el hash de los bytes para invalidar al re-subir
+        import hashlib
+        v = hashlib.md5(profile.logo_bytes).hexdigest()[:8]
+        resp.logo_url = f"/api/v1/config/company/logo?v={v}"
+    return resp
 
 @router.post("/company", response_model=schemas.CompanyProfileResponse, status_code=status.HTTP_201_CREATED)
 async def create_company_profile(
