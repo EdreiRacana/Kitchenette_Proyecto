@@ -510,7 +510,31 @@ async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List
     q = (query or "").strip()
     if not q:
         return []
-    # Exact SKU match first (lector de código de barras)
+
+    def _serialize(v, p):
+        return {
+            "variant_id": v.id, "product_id": p.id,
+            "sku": v.sku, "barcode": getattr(v, "barcode", None),
+            "product_name": p.name,
+            "variant_label": getattr(v, "label", None) or getattr(v, "attributes", None),
+            "unit_price": getattr(v, "price", 0.0) or 0.0,
+            "unit_cost": getattr(v, "cost_price", 0.0) or 0.0,
+        }
+
+    # 1) Match EXACTO por SKU o barcode (lector de código de barras)
+    exact = await db.execute(
+        select(ProductVariant, Product)
+        .join(Product, ProductVariant.product_id == Product.id)
+        .where((ProductVariant.sku == q) | (ProductVariant.barcode == q))
+        .limit(2)
+    )
+    exact_rows = exact.all()
+    if len(exact_rows) == 1:
+        # Un solo match exacto → escaneo bulletproof, regresar solo eso
+        v, p = exact_rows[0]
+        return [_serialize(v, p)]
+
+    # 2) Match parcial por SKU, barcode o nombre
     stmt = (
         select(ProductVariant, Product)
         .join(Product, ProductVariant.product_id == Product.id)
@@ -521,14 +545,4 @@ async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List
         .limit(limit)
     )
     res = await db.execute(stmt)
-    out = []
-    for v, p in res.all():
-        out.append({
-            "variant_id": v.id, "product_id": p.id,
-            "sku": v.sku, "barcode": getattr(v, "barcode", None),
-            "product_name": p.name,
-            "variant_label": getattr(v, "label", None) or getattr(v, "attributes", None),
-            "unit_price": getattr(v, "price", 0.0) or 0.0,
-            "unit_cost": getattr(v, "cost_price", 0.0) or 0.0,
-        })
-    return out
+    return [_serialize(v, p) for v, p in res.all()]

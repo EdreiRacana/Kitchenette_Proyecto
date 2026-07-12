@@ -178,24 +178,23 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const [lastSale, setLastSale] = useState<any | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [historyRefresh, setHistoryRefresh] = useState(0);
+  const [scanFlash, setScanFlash] = useState<string | null>(null); // feedback breve al escanear
   const searchRef = useRef<HTMLInputElement>(null);
+  const anyModalOpen = showPay || showClose || !!showCash || !!lastSale || showHistory;
 
-  useEffect(() => { searchRef.current?.focus(); }, []);
-
-  // Debounced search
+  // Autofocus permanente: cuando no hay modal abierto, el input SIEMPRE debe
+  // tener el focus. Un escáner de código de barras funciona "escribiendo" en
+  // el elemento enfocado, así que si perdemos focus, se pierde el escaneo.
   useEffect(() => {
-    if (!query.trim()) { setResults([]); return; }
-    const timer = setTimeout(async () => {
-      setSearching(true);
-      try {
-        const r = await posApi.searchProducts(query, 20);
-        setResults(r);
-      } catch { setResults([]); } finally { setSearching(false); }
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [query]);
+    if (anyModalOpen) return;
+    searchRef.current?.focus();
+    const refocus = () => { if (document.activeElement !== searchRef.current) searchRef.current?.focus(); };
+    const iv = setInterval(refocus, 800);
+    window.addEventListener("click", refocus);
+    return () => { clearInterval(iv); window.removeEventListener("click", refocus); };
+  }, [anyModalOpen]);
 
-  const addToCart = (p: POSProduct) => {
+  const addToCart = (p: POSProduct, viaScanner = false) => {
     setCart(prev => {
       const existing = prev.find(it => it.variant_id === p.variant_id);
       if (existing) {
@@ -209,8 +208,55 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
         is_service: false, line_total: p.unit_price,
       }];
     });
+    if (viaScanner) {
+      setScanFlash(p.product_name);
+      setTimeout(() => setScanFlash(null), 1200);
+    }
     setQuery(""); setResults([]);
     searchRef.current?.focus();
+  };
+
+  // Búsqueda con debounce (para auto-suggest al escribir a mano)
+  useEffect(() => {
+    if (!query.trim()) { setResults([]); return; }
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const r = await posApi.searchProducts(query, 20);
+        setResults(r);
+        // Si sólo hay un resultado exacto por SKU/barcode y viene de un escaneo
+        // rápido (>=6 caracteres, típico de barcodes), agregar directamente.
+        if (r.length === 1 && (r[0].sku === query.trim() || r[0].barcode === query.trim())) {
+          addToCart(r[0], true);
+        }
+      } catch { setResults([]); } finally { setSearching(false); }
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  // Enter en el input: escáner físico termina con Enter. Si hay 1 resultado,
+  // agregar; si hay varios, seleccionar el primero exacto.
+  const onSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    // Buscar sincrónicamente sin esperar debounce
+    try {
+      const r = await posApi.searchProducts(q, 5);
+      if (r.length === 0) {
+        setScanFlash("__notfound__");
+        setTimeout(() => setScanFlash(null), 1400);
+        return;
+      }
+      // Priorizar match exacto por SKU o barcode
+      const exact = r.find(p => p.sku === q || p.barcode === q);
+      const chosen = exact || r[0];
+      addToCart(chosen, true);
+    } catch {
+      setScanFlash("__error__");
+      setTimeout(() => setScanFlash(null), 1400);
+    }
   };
 
   const changeQty = (idx: number, delta: number) => {
@@ -262,9 +308,22 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
           <div style={{ position: "relative" }}>
             <Search size={16} color={t.textLo} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
             <input ref={searchRef} value={query} onChange={e => setQuery(e.target.value)}
+              onKeyDown={onSearchKeyDown}
               placeholder="Escanea código de barras, teclea SKU o nombre…"
-              autoFocus
-              style={{ width: "100%", padding: "12px 14px 12px 38px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14, outline: "none" }} />
+              autoFocus autoComplete="off" spellCheck={false}
+              style={{ width: "100%", padding: "12px 14px 12px 38px", borderRadius: 10, border: `1px solid ${scanFlash === "__notfound__" ? t.bad : scanFlash === "__error__" ? t.bad : scanFlash ? t.good : t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14, outline: "none", transition: "border-color .2s" }} />
+            {scanFlash && (
+              <div style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: (scanFlash === "__notfound__" || scanFlash === "__error__") ? t.bad : t.good, background: ((scanFlash === "__notfound__" || scanFlash === "__error__") ? t.bad : t.good) + "22", padding: "3px 10px", borderRadius: 20, pointerEvents: "none" }}>
+                {scanFlash === "__notfound__" ? <><AlertTriangle size={12} /> No encontrado</>
+                  : scanFlash === "__error__" ? <><AlertTriangle size={12} /> Error</>
+                  : <><Check size={12} /> {scanFlash.length > 20 ? scanFlash.slice(0, 20) + "…" : scanFlash}</>}
+              </div>
+            )}
+          </div>
+          <div style={{ marginTop: 6, fontSize: 10.5, color: t.textLo, display: "flex", alignItems: "center", gap: 8 }}>
+            <span>💡 Enter para agregar</span>
+            <span>·</span>
+            <span>Escáner listo</span>
           </div>
         </div>
 
@@ -467,40 +526,50 @@ function SaleSuccessModal({ t, sale, onClose }: { t: any; sale: any; onClose: ()
 
 
 // ── Modales ─────────────────────────────────────────────────────────
+type PayMode = "cash" | "card" | "transfer" | "mixed";
+
 function PayModal({ t, session, total, cart, onDone, onCancel }: any) {
-  // Sólo el efectivo puede exceder el total (para calcular cambio). Tarjeta y
-  // transferencia deben ser exactos: si el cajero teclea $500 en tarjeta, el
-  // sistema NO debe cobrar los $500 de efectivo también — este bug provocaba
-  // que ambos métodos aparecieran duplicados en el ticket.
+  // Modo por default: efectivo (95% de las ventas de un POS son en efectivo).
+  // El cajero elige el método con un click en el botón grande. Si el pago es
+  // mixto, presiona "Mixto" y aparecen los tres inputs editables.
+  const [mode, setMode] = useState<PayMode>("cash");
+  const [cash, setCash] = useState<number>(total);
   const [card, setCard] = useState<number>(0);
   const [transfer, setTransfer] = useState<number>(0);
-  const [cash, setCash] = useState<number>(total);
-  const [cashEdited, setCashEdited] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Auto-balance: mientras el cajero no toque el efectivo, éste refleja
-  // exactamente lo que falta cubrir con tarjeta/transferencia.
+  // Al cambiar de modo, resetear valores según el método elegido.
   useEffect(() => {
-    if (!cashEdited) {
-      setCash(Math.max(0, Math.round((total - card - transfer) * 100) / 100));
-    }
-  }, [total, card, transfer, cashEdited]);
+    if (mode === "cash") { setCash(total); setCard(0); setTransfer(0); }
+    else if (mode === "card") { setCash(0); setCard(total); setTransfer(0); }
+    else if (mode === "transfer") { setCash(0); setCard(0); setTransfer(total); }
+    // "mixed" no auto-fill — el cajero teclea manualmente
+  }, [mode, total]);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onCancel(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onCancel]);
 
   const paid = cash + card + transfer;
-  const change = paid - total;
+  const change = mode === "cash" || mode === "mixed" ? paid - total : 0;
+  const isValid = mode === "cash"
+    ? cash + 0.005 >= total
+    : mode === "card"
+      ? Math.abs(card - total) < 0.005
+      : mode === "transfer"
+        ? Math.abs(transfer - total) < 0.005
+        : paid + 0.005 >= total && (card + transfer) <= total + 0.005;
+
   const submit = async () => {
     setSaving(true);
     try {
       const payments: Record<string, number> = {};
-      // Tarjeta/transferencia: se cobra el monto exacto tecleado.
       if (card > 0) payments.card = Math.round(card * 100) / 100;
       if (transfer > 0) payments.transfer = Math.round(transfer * 100) / 100;
-      // Efectivo: cobra sólo lo que faltaba después de los electrónicos,
-      // pero registra el monto físico recibido para calcular cambio.
-      const nonCash = (payments.card || 0) + (payments.transfer || 0);
-      const cashDue = Math.max(0, Math.round((total - nonCash) * 100) / 100);
-      if (cash > 0 && cashDue > 0) {
-        // Registrar el efectivo real recibido (para arqueo), no el "debido".
+      if (cash > 0) {
+        // En modo cash o mixto, registrar el efectivo real (para calcular cambio).
         payments.cash = Math.round(cash * 100) / 100;
       }
       const res = await posApi.registerSale({
@@ -517,61 +586,125 @@ function PayModal({ t, session, total, cart, onDone, onCancel }: any) {
     } catch (e: any) { alert(e?.response?.data?.detail || "Error al cobrar"); }
     finally { setSaving(false); }
   };
+
+  const methodDefs = [
+    { key: "cash" as const,     label: "Efectivo",      ic: Banknote,       c: t.good },
+    { key: "card" as const,     label: "Tarjeta",       ic: CreditCard,     c: t.nova },
+    { key: "transfer" as const, label: "Transferencia", ic: ArrowLeftRight, c: "#A78BFA" },
+  ];
+
   return (
-    <div style={modalBg} onClick={onCancel}>
-      <div style={{ ...modalPane, background: t.panel, border: `1px solid ${t.border}` }} onClick={e => e.stopPropagation()}>
-        <div style={{ padding: 20, borderBottom: `1px solid ${t.border}` }}>
-          <div style={{ fontSize: 12, color: t.textLo }}>Total a cobrar</div>
-          <div style={{ fontSize: 32, fontWeight: 900, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(total)}</div>
+    <div style={{ ...modalBg, zIndex: 9990 }} onClick={onCancel}>
+      <div style={{ ...modalPane, background: t.panel, border: `1px solid ${t.border}`, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2}, ${t.panel})` }}>
+          <div style={{ fontSize: 11.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Total a cobrar</div>
+          <div style={{ fontSize: 36, fontWeight: 900, color: t.textHi, fontVariantNumeric: "tabular-nums", lineHeight: 1.1, marginTop: 2 }}>{mxn(total)}</div>
         </div>
-        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
-          {[
-            { l: "Efectivo", ic: Banknote, val: cash, c: t.good, key: "cash" as const,
-              set: (v: number) => { setCash(v); setCashEdited(true); },
-              hint: cashEdited ? "Manual" : "Auto",
-            },
-            { l: "Tarjeta", ic: CreditCard, val: card, c: t.nova, key: "card" as const,
-              set: setCard, hint: null,
-            },
-            { l: "Transferencia", ic: ArrowLeftRight, val: transfer, c: "#8E7BB8", key: "transfer" as const,
-              set: setTransfer, hint: null,
-            },
-          ].map(row => (
-            <div key={row.l} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ width: 40, height: 40, borderRadius: 8, background: row.c + "22", color: row.c, display: "grid", placeItems: "center" }}>
-                <row.ic size={16} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11.5, color: t.textLo, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span>{row.l}</span>
-                  {row.hint && (
-                    <span style={{ fontSize: 9.5, color: cashEdited ? t.warn : t.good, background: (cashEdited ? t.warn : t.good) + "22", padding: "1px 6px", borderRadius: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{row.hint}</span>
-                  )}
-                </div>
-                <input type="number" step={0.01} min={0} value={row.val || ""} onChange={e => row.set(parseFloat(e.target.value) || 0)}
-                  onFocus={e => e.target.select()}
-                  style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 15, fontWeight: 700, marginTop: 3 }} />
-              </div>
-            </div>
-          ))}
-          {cashEdited && (
-            <button onClick={() => setCashEdited(false)} type="button"
-              style={{ alignSelf: "flex-start", background: "transparent", border: "none", color: t.nova, fontSize: 11, cursor: "pointer", padding: 0, textDecoration: "underline" }}>
-              Volver a auto-balance del efectivo
-            </button>
-          )}
-          <div style={{ marginTop: 6, padding: 14, background: change >= 0 ? t.good + "18" : t.bad + "18", borderRadius: 10, border: `1px solid ${change >= 0 ? t.good : t.bad}55` }}>
-            <div style={{ fontSize: 12, color: t.textLo }}>{change >= 0 ? "Cambio a entregar" : "Falta"}</div>
-            <div style={{ fontSize: 22, fontWeight: 900, color: change >= 0 ? t.good : t.bad }}>{mxn(Math.abs(change))}</div>
+
+        {/* Selector de método (botones grandes) */}
+        <div style={{ padding: "18px 20px 8px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 10, fontWeight: 700 }}>Método de pago</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
+            {methodDefs.map(m => {
+              const on = mode === m.key;
+              const Icon = m.ic;
+              return (
+                <button key={m.key} onClick={() => setMode(m.key)}
+                  style={{ padding: "14px 8px", borderRadius: 12, border: on ? `2px solid ${m.c}` : `1px solid ${t.border}`, background: on ? m.c + "20" : t.panel2, color: on ? m.c : t.textMid, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: on ? 800 : 600, transition: "all .12s", boxShadow: on ? `0 4px 12px ${m.c}33` : "none" }}>
+                  <Icon size={22} strokeWidth={on ? 2.5 : 2} />
+                  {m.label}
+                </button>
+              );
+            })}
+            {(() => {
+              const on = mode === "mixed";
+              return (
+                <button onClick={() => setMode("mixed")}
+                  style={{ padding: "14px 8px", borderRadius: 12, border: on ? `2px solid ${t.warn}` : `1px solid ${t.border}`, background: on ? t.warn + "20" : t.panel2, color: on ? t.warn : t.textMid, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: on ? 800 : 600, transition: "all .12s", boxShadow: on ? `0 4px 12px ${t.warn}33` : "none" }}>
+                  <DollarSign size={22} strokeWidth={on ? 2.5 : 2} />
+                  Mixto
+                </button>
+              );
+            })()}
           </div>
         </div>
-        <div style={{ padding: 16, borderTop: `1px solid ${t.border}`, display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <button onClick={onCancel} style={{ padding: "10px 18px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer" }}>Cancelar</button>
-          <button disabled={saving || paid < total - 0.005} onClick={submit}
-            style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: paid < total - 0.005 ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: paid < total - 0.005 ? "not-allowed" : "pointer", fontWeight: 700 }}>
-            {saving ? "Procesando…" : "Confirmar venta"}
+
+        {/* Inputs de monto */}
+        <div style={{ padding: "10px 20px 6px", display: "flex", flexDirection: "column", gap: 10 }}>
+          {mode === "cash" && (
+            <MoneyInput t={t} label="Efectivo recibido" value={cash} onChange={setCash} color={t.good} icon={Banknote} big />
+          )}
+          {mode === "card" && (
+            <MoneyInput t={t} label="Monto con tarjeta" value={card} onChange={setCard} color={t.nova} icon={CreditCard} big />
+          )}
+          {mode === "transfer" && (
+            <MoneyInput t={t} label="Monto por transferencia" value={transfer} onChange={setTransfer} color="#A78BFA" icon={ArrowLeftRight} big />
+          )}
+          {mode === "mixed" && (
+            <>
+              <MoneyInput t={t} label="Efectivo" value={cash} onChange={setCash} color={t.good} icon={Banknote} />
+              <MoneyInput t={t} label="Tarjeta" value={card} onChange={setCard} color={t.nova} icon={CreditCard} />
+              <MoneyInput t={t} label="Transferencia" value={transfer} onChange={setTransfer} color="#A78BFA" icon={ArrowLeftRight} />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: t.textLo, padding: "4px 2px" }}>
+                <span>Suma capturada</span>
+                <span style={{ fontWeight: 700, color: paid >= total ? t.good : t.warn, fontVariantNumeric: "tabular-nums" }}>{mxn(paid)}</span>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Cambio / faltante */}
+        <div style={{ padding: "8px 20px 18px" }}>
+          <div style={{ padding: "14px 16px", background: change >= 0 ? t.good + "18" : t.bad + "18", borderRadius: 12, border: `1px solid ${change >= 0 ? t.good : t.bad}55`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                {mode === "card" || mode === "transfer"
+                  ? "Sin efectivo"
+                  : (change >= 0 ? "Cambio a entregar" : "Falta por cobrar")}
+              </div>
+              <div style={{ fontSize: 26, fontWeight: 900, color: change >= 0 ? t.good : t.bad, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
+                {mode === "card" || mode === "transfer" ? mxn(0) : mxn(Math.abs(change))}
+              </div>
+            </div>
+            {(mode === "card" || mode === "transfer") && isValid && (
+              <div style={{ fontSize: 11.5, color: t.textLo, textAlign: "right", maxWidth: 180, lineHeight: 1.4 }}>
+                El cliente pagará exactamente<br /><b style={{ color: t.textHi }}>{mxn(total)}</b> con {mode === "card" ? "tarjeta" : "transferencia"}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: "14px 20px", borderTop: `1px solid ${t.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: t.panel2 }}>
+          <button onClick={onCancel} style={{ padding: "11px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}>
+            Cancelar (Esc)
+          </button>
+          <button disabled={saving || !isValid} onClick={submit}
+            style={{ padding: "12px 28px", borderRadius: 10, border: "none", background: !isValid ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: !isValid ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14, display: "flex", alignItems: "center", gap: 8, boxShadow: isValid ? `0 4px 12px ${t.good}55` : "none" }}>
+            <Check size={16} /> {saving ? "Procesando…" : `Cobrar ${mxn(total)}`}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function MoneyInput({ t, label, value, onChange, color, icon: Icon, big }:
+  { t: any; label: string; value: number; onChange: (v: number) => void; color: string; icon: any; big?: boolean }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (big) inputRef.current?.select(); }, [big]);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ width: big ? 48 : 40, height: big ? 48 : 40, borderRadius: 10, background: color + "22", color, display: "grid", placeItems: "center", flexShrink: 0 }}>
+        <Icon size={big ? 20 : 16} />
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 11, color: t.textLo, marginBottom: 2, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>{label}</div>
+        <input ref={inputRef} type="number" step={0.01} min={0} value={value || ""}
+          onChange={e => onChange(parseFloat(e.target.value) || 0)}
+          onFocus={e => e.target.select()}
+          style={{ width: "100%", padding: big ? "12px 14px" : "9px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: big ? 22 : 15, fontWeight: 800, outline: "none", fontVariantNumeric: "tabular-nums" }} />
       </div>
     </div>
   );
