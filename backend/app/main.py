@@ -1,6 +1,4 @@
 
-import logging
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -8,9 +6,13 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from app.core.config import settings
 from app.core.rate_limit import limiter
+from app.core.logging import configure_logging, get_logger
 from app.api.v1.api import api_router
 
-logger = logging.getLogger("uvicorn.error")
+# Configurar logging ANTES de que se cree cualquier logger — así todos
+# los módulos de la app comparten la misma configuración estructurada.
+configure_logging()
+logger = get_logger("app.main")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -101,7 +103,7 @@ async def startup():
         async with AsyncSessionLocal() as session:
             await seed_rbac(session)
     except Exception as e:
-        print(f"[startup] RBAC seed skipped: {e}")
+        logger.warning("RBAC seed skipped", extra={"error": str(e)})
 
     # Seed Contabilidad (catálogo de cuentas + mapeo para pólizas automáticas).
     # Sin esto, una venta no genera póliza contable (falla en silencio). Debe
@@ -113,7 +115,7 @@ async def startup():
             await acc.seed_default_chart(session)
             await acc.ensure_default_map(session)
     except Exception as e:
-        print(f"[startup] Accounting seed skipped: {e}")
+        logger.warning("Accounting seed skipped", extra={"error": str(e)})
 
     from app.core.scheduler import start_scheduler
     start_scheduler()

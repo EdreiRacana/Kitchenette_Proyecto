@@ -24,6 +24,9 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.modules.sales import models, schemas
+from app.core.logging import get_logger
+
+log = get_logger(__name__)
 
 
 # ── Small helpers ─────────────────────────────────────────────────────────────
@@ -156,7 +159,7 @@ async def _apply_stock_for_items(db: AsyncSession, order: models.Order,
                 it.unit_cost = float(result.get("unit_cost_avg") or 0.0)
             except Exception as e:
                 # Nunca tumbar la venta por un tropiezo de inventario.
-                print(f"[sales] consume_stock error order {order.id} variant {it.variant_id}: {e}")
+                log.warning("consume_stock error en venta", extra={"order_id": order.id, "variant_id": it.variant_id, "error": str(e)}, exc_info=True)
                 await _move_stock(
                     db, variant_id=it.variant_id, warehouse_id=wh,
                     qty=qty, direction="out",
@@ -173,7 +176,7 @@ async def _apply_stock_for_items(db: AsyncSession, order: models.Order,
                     commit=False,
                 )
             except Exception as e:
-                print(f"[sales] receive_stock error order {order.id} variant {it.variant_id}: {e}")
+                log.warning("receive_stock error en devolución", extra={"order_id": order.id, "variant_id": it.variant_id, "error": str(e)}, exc_info=True)
                 await _move_stock(
                     db, variant_id=it.variant_id, warehouse_id=wh,
                     qty=qty, direction="in",
@@ -215,7 +218,7 @@ async def _accounting_record_sale(db: AsyncSession, order: models.Order) -> None
                               tax=order.tax_amount or 0.0,
                               concept=f"Venta {order.folio or '#' + str(order.id)}", user_id=order.user_id)
     except Exception as e:  # la contabilidad jamás debe tumbar una venta
-        print(f"[accounting] hook venta error: {e}")
+        log.warning("hook contable venta falló", extra={"order_id": order.id, "error": str(e)}, exc_info=True)
 
 
 async def _accounting_record_payment(db: AsyncSession, order: models.Order, amount: float) -> None:
@@ -225,7 +228,7 @@ async def _accounting_record_payment(db: AsyncSession, order: models.Order, amou
                                  amount=amount, concept=f"Cobro {order.folio or '#' + str(order.id)}",
                                  user_id=order.user_id)
     except Exception as e:
-        print(f"[accounting] hook cobro error: {e}")
+        log.warning("hook contable cobro falló", extra={"order_id": order.id, "error": str(e)}, exc_info=True)
 
 
 async def _accounting_void_order(db: AsyncSession, order: models.Order) -> None:
@@ -233,7 +236,7 @@ async def _accounting_void_order(db: AsyncSession, order: models.Order) -> None:
         from app.modules.accounting import service as acc
         await acc.void_order(db, order_id=order.id)
     except Exception as e:
-        print(f"[accounting] hook void error: {e}")
+        log.warning("hook contable void falló", extra={"order_id": order.id, "error": str(e)}, exc_info=True)
 
 
 # ── Item materialization (snapshots from catalog) ──────────────────────────────
