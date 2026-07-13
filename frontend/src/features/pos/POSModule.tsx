@@ -8,9 +8,13 @@ import {
   Store, ShoppingCart, DollarSign, Plus, Minus, Trash2, Search,
   Lock, Unlock, LogIn, LogOut, Printer, RefreshCw, Package, Download,
   Banknote, CreditCard, ArrowLeftRight, Check, X, AlertTriangle,
-  Receipt, User, Clock, ChevronRight,
+  Receipt, User, Clock, ChevronRight, History,
 } from "lucide-react";
-import { posApi, DENOMINATIONS, type POSTerminal, type POSSession, type POSProduct, type POSSaleItem, type SessionSale } from "./api";
+import {
+  posApi, DENOMINATIONS,
+  type POSTerminal, type POSSession, type POSProduct, type POSSaleItem, type SessionSale,
+  type PreviousSessionReport, type POSTransactionRow,
+} from "./api";
 
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -61,6 +65,7 @@ function SessionSetup({ t, terminals, onOpened, onTerminalsChanged }: {
   const [saving, setSaving] = useState(false);
   const [creatingTerminal, setCreatingTerminal] = useState(false);
   const [newTerm, setNewTerm] = useState({ name: "", code: "" });
+  const [showPrev, setShowPrev] = useState<{ terminalId?: number; scope: "auto" | "me" | "terminal" } | null>(null);
 
   const openNow = async () => {
     if (!selected) return;
@@ -75,8 +80,17 @@ function SessionSetup({ t, terminals, onOpened, onTerminalsChanged }: {
 
   return (
     <div style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
-      <h1 style={{ margin: 0, fontSize: 24, color: t.textHi }}>Punto de venta</h1>
-      <p style={{ color: t.textLo, fontSize: 13, marginTop: 4 }}>Selecciona la caja y captura el fondo inicial para abrir el turno.</p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 24, color: t.textHi }}>Punto de venta</h1>
+          <p style={{ color: t.textLo, fontSize: 13, marginTop: 4 }}>Selecciona la caja y captura el fondo inicial para abrir el turno.</p>
+        </div>
+        <button onClick={() => setShowPrev({ terminalId: selected || undefined, scope: selected ? "terminal" : "me" })}
+          title="Revisar el reporte del último turno cerrado"
+          style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+          <History size={14} /> Revisar turno anterior
+        </button>
+      </div>
 
       <div style={{ marginTop: 24, display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
         {terminals.map(term => {
@@ -136,6 +150,14 @@ function SessionSetup({ t, terminals, onOpened, onTerminalsChanged }: {
         </div>
       )}
 
+      {showPrev && (
+        <PreviousSessionDrawer t={t}
+          terminalId={showPrev.terminalId}
+          scope={showPrev.scope}
+          onClose={() => setShowPrev(null)}
+        />
+      )}
+
       {creatingTerminal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
           onClick={() => setCreatingTerminal(false)}>
@@ -178,9 +200,10 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const [lastSale, setLastSale] = useState<any | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [historyRefresh, setHistoryRefresh] = useState(0);
+  const [showPrev, setShowPrev] = useState(false);
   const [scanFlash, setScanFlash] = useState<string | null>(null); // feedback breve al escanear
   const searchRef = useRef<HTMLInputElement>(null);
-  const anyModalOpen = showPay || showClose || !!showCash || !!lastSale || showHistory;
+  const anyModalOpen = showPay || showClose || !!showCash || !!lastSale || showHistory || showPrev;
 
   // Autofocus permanente: cuando no hay modal abierto, el input SIEMPRE debe
   // tener el focus. Un escáner de código de barras funciona "escribiendo" en
@@ -288,6 +311,11 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
               title="Ver historial de ventas del turno (reimprimir tickets)"
               style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.nova}55`, background: t.nova + "18", color: t.nova, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}>
               <Receipt size={12} /> Ventas del turno
+            </button>
+            <button onClick={() => setShowPrev(true)}
+              title="Revisar el reporte del último turno cerrado en esta caja"
+              style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+              <History size={12} /> Turno anterior
             </button>
             <button onClick={() => setShowCash("cash_in")}
               style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
@@ -410,6 +438,13 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
       {showCash && <CashMovementModal t={t} session={session} type={showCash}
         onDone={() => setShowCash(null)} onCancel={() => setShowCash(null)} />}
       {lastSale && <SaleSuccessModal t={t} sale={lastSale} onClose={() => setLastSale(null)} />}
+      {showPrev && (
+        <PreviousSessionDrawer t={t}
+          terminalId={session.terminal_id}
+          scope="terminal"
+          onClose={() => setShowPrev(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1005,6 +1040,272 @@ function SalesHistoryDrawer({ t, session, refreshKey, onClose }: {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+// ── Turno anterior: reporte del último turno cerrado ─────────────────────
+function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
+  t: any;
+  terminalId?: number;
+  scope: "auto" | "me" | "terminal" | "any";
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [report, setReport] = useState<PreviousSessionReport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<"Z" | "X" | null>(null);
+  const [reprint, setReprint] = useState<number | null>(null);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true); setErr(null);
+      try {
+        const r = await posApi.previousSession({ terminal_id: terminalId, scope });
+        if (!cancelled) setReport(r);
+      } catch (e: any) {
+        if (!cancelled) {
+          const detail = e?.response?.data?.detail;
+          setErr(e?.response?.status === 404
+            ? "No hay turnos cerrados anteriores para mostrar."
+            : (detail || e?.message || "Error al cargar el turno anterior"));
+        }
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [terminalId, scope]);
+
+  const downloadZ = async (kind: "Z" | "X") => {
+    if (!report) return;
+    setDownloading(kind);
+    try {
+      const blob = await posApi.downloadSessionReport(report.id, kind);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `reporte_${kind}_turno_${report.id}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch { alert("Error al descargar el reporte"); }
+    finally { setDownloading(null); }
+  };
+
+  const reprintTicket = async (orderId: number) => {
+    setReprint(orderId);
+    try {
+      const blob = await posApi.downloadTicket(orderId, 80);
+      const url = URL.createObjectURL(blob);
+      const w = window.open(url, "_blank");
+      if (w) setTimeout(() => w.print(), 500);
+    } catch { alert("Error al reimprimir ticket"); }
+    finally { setReprint(null); }
+  };
+
+  const fmtDT = (v?: string | null) => {
+    if (!v) return "—";
+    try { return new Date(v).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" }); }
+    catch { return v; }
+  };
+  const varianceColor = report && Math.abs(report.variance || 0) < 0.01 ? t.good
+    : report && (report.variance || 0) > 0 ? t.nova : t.bad;
+
+  const methodLabels: Record<string, string> = {
+    cash: "Efectivo", card: "Tarjeta", transfer: "Transferencia",
+    credit: "Crédito", unknown: "Otro",
+  };
+  const txLabels: Record<string, { label: string; color: string }> = {
+    opening: { label: "Apertura", color: t.textMid },
+    closing: { label: "Cierre", color: t.textMid },
+    sale: { label: "Venta", color: t.good },
+    refund: { label: "Reembolso", color: t.bad },
+    cash_in: { label: "Fondo", color: t.nova },
+    cash_out: { label: "Retiro", color: t.warn },
+  };
+
+  const saleTxs = (report?.transactions || []).filter(x => x.type === "sale" && x.order_id);
+  const orderIds = Array.from(new Set(saleTxs.map(x => x.order_id!)));
+
+  const modal = (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 500, display: "flex", justifyContent: "flex-end" }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: 620, maxWidth: "100%", background: t.panel, borderLeft: `1px solid ${t.border}`, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.border}`, background: t.panel2, display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 2 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}>
+              <History size={16} color={t.nova} /> Turno anterior
+            </div>
+            <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 3 }}>
+              {scope === "terminal" ? "Último cierre en esta caja"
+                : scope === "any" ? "Último cierre global"
+                : "Tu último cierre"}
+            </div>
+          </div>
+          <button onClick={onClose}
+            style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer" }}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div style={{ flex: 1, padding: 18 }}>
+          {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+          {err && !loading && (
+            <div style={{ padding: 30, textAlign: "center", color: t.textLo }}>
+              <AlertTriangle size={28} color={t.warn} />
+              <div style={{ marginTop: 12, fontSize: 13 }}>{err}</div>
+            </div>
+          )}
+          {report && !loading && !err && (
+            <>
+              <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 12.5 }}>
+                  <div>
+                    <div style={{ color: t.textLo, fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.4 }}>Caja</div>
+                    <div style={{ color: t.textHi, fontWeight: 700, marginTop: 2 }}>{report.terminal_name}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: t.textLo, fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.4 }}>Cajero</div>
+                    <div style={{ color: t.textHi, fontWeight: 700, marginTop: 2 }}>{report.cashier_name}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: t.textLo, fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.4 }}>Abierto</div>
+                    <div style={{ color: t.textMid, marginTop: 2 }}>{fmtDT(report.opened_at)}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: t.textLo, fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.4 }}>Cerrado</div>
+                    <div style={{ color: t.textMid, marginTop: 2 }}>{fmtDT(report.closed_at)}</div>
+                  </div>
+                </div>
+                {(report.opening_notes || report.closing_notes) && (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${t.border}`, fontSize: 11.5, color: t.textLo }}>
+                    {report.opening_notes && <div>📝 Apertura: {report.opening_notes}</div>}
+                    {report.closing_notes && <div style={{ marginTop: 4 }}>🔒 Cierre: {report.closing_notes}</div>}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                <StatMini t={t} label="Ventas" value={mxn(report.total_sales_amount)} sub={`${report.total_sales_count} tickets`} />
+                <StatMini t={t} label="Fondo inicial" value={mxn(report.opening_balance)} />
+                <StatMini t={t} label="Reembolsos" value={mxn(report.total_refunds)} />
+                <StatMini t={t} label="Entradas caja" value={mxn(report.total_cash_in)} />
+                <StatMini t={t} label="Salidas caja" value={mxn(report.total_cash_out)} />
+                <StatMini t={t} label="Diferencia" value={mxn(report.variance)} color={varianceColor} />
+              </div>
+
+              <div style={{ marginTop: 14, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
+                <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Arqueo</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, fontSize: 13 }}>
+                  <div>
+                    <div style={{ color: t.textLo, fontSize: 10.5 }}>Esperado</div>
+                    <div style={{ color: t.textHi, fontWeight: 700, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{mxn(report.expected_cash)}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: t.textLo, fontSize: 10.5 }}>Contado</div>
+                    <div style={{ color: t.textHi, fontWeight: 700, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{mxn(report.actual_cash)}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: t.textLo, fontSize: 10.5 }}>Diferencia</div>
+                    <div style={{ color: varianceColor, fontWeight: 800, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
+                      {(report.variance || 0) >= 0 ? "+" : ""}{mxn(report.variance)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {Object.keys(report.sales_by_method || {}).length > 0 && (
+                <div style={{ marginTop: 14, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Ventas por método</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {Object.entries(report.sales_by_method).map(([k, v]) => (
+                      <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: t.textMid }}>
+                        <span>{methodLabels[k] || k}</span>
+                        <span style={{ color: t.textHi, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{mxn(v as number)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {orderIds.length > 0 && (
+                <div style={{ marginTop: 14, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>Tickets del turno</span>
+                    <span style={{ color: t.textMid, textTransform: "none", letterSpacing: 0 }}>{orderIds.length}</span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 200, overflowY: "auto" }}>
+                    {orderIds.map(oid => (
+                      <div key={oid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", background: t.panel3, borderRadius: 6, fontSize: 12 }}>
+                        <span style={{ color: t.textMid, fontFamily: "monospace" }}>#{oid}</span>
+                        <button disabled={reprint === oid}
+                          onClick={() => reprintTicket(oid)}
+                          style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${t.good}55`, background: t.good + "18", color: t.good, cursor: reprint === oid ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600 }}>
+                          <Printer size={10} /> {reprint === oid ? "…" : "Reimprimir"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {report.transactions && report.transactions.length > 0 && (
+                <div style={{ marginTop: 14, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Movimientos</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflowY: "auto", fontSize: 12 }}>
+                    {report.transactions.map((tx: POSTransactionRow) => {
+                      const meta = txLabels[tx.type] || { label: tx.type, color: t.textMid };
+                      return (
+                        <div key={tx.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px", borderRadius: 5 }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span style={{ color: meta.color, fontWeight: 700, fontSize: 11 }}>{meta.label}</span>
+                            {tx.notes && <span style={{ color: t.textLo, fontSize: 10.5 }}>{tx.notes}</span>}
+                          </div>
+                          <span style={{ color: t.textHi, fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>
+                            {mxn(tx.amount)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button disabled={downloading === "Z"} onClick={() => downloadZ("Z")}
+                  style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.nova}, #2563EB)`, color: "#fff", cursor: downloading ? "wait" : "pointer", fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+                  <Download size={14} /> {downloading === "Z" ? "Descargando…" : "Descargar Reporte Z (PDF)"}
+                </button>
+                <button disabled={downloading === "X"} onClick={() => downloadZ("X")}
+                  style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, cursor: downloading ? "wait" : "pointer", fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+                  <Download size={14} /> {downloading === "X" ? "…" : "Corte X"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(modal, document.body);
+}
+
+
+function StatMini({ t, label, value, sub, color }: {
+  t: any; label: string; value: string; sub?: string; color?: string;
+}) {
+  return (
+    <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 12 }}>
+      <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: 15, fontWeight: 800, color: color || t.textHi, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      {sub && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2 }}>{sub}</div>}
     </div>
   );
 }
