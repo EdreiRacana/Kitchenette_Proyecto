@@ -16,6 +16,7 @@ import {
 import { financeService, downloadCSV } from "./service";
 import type { SupplierBill, SupplierBillDraft, BillsStats as BillsStatsData } from "./service";
 import { useServerRecovery } from "../../hooks/useServerRecovery";
+import api from "../../services/api";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Transaction {
@@ -103,6 +104,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
   const [editingBank, setEditingBank] = useState<BankAccount | null>(null);
   const [bankView, setBankView] = useState<BankAccount | null>(null);
   const [transferFrom, setTransferFrom] = useState<BankAccount | null>(null);
+  const [reconcileOpen, setReconcileOpen] = useState(false);
   const [q, setQ] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [catFilter, setCatFilter] = useState("");
@@ -406,7 +408,21 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
                 </div>
               ))}
             </div>
-            <button onClick={exportCXC} style={ghostBtn}><Download size={14} /> Descargar</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={async () => {
+                try {
+                  const res = await api.get("/finance/cxc/aging-report.pdf", { responseType: "blob" });
+                  const url = URL.createObjectURL(res.data);
+                  const a = document.createElement("a");
+                  a.href = url; a.download = `cxc_${new Date().toISOString().slice(0,10)}.pdf`;
+                  document.body.appendChild(a); a.click(); a.remove();
+                  URL.revokeObjectURL(url);
+                } catch { alert("Error al descargar PDF"); }
+              }} style={{ ...ghostBtn, background: t.nova + "18", color: t.nova, borderColor: t.nova + "55" }}>
+                <FileText size={14} /> PDF de cartera
+              </button>
+              <button onClick={exportCXC} style={ghostBtn}><Download size={14} /> CSV</button>
+            </div>
           </div>
 
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -499,7 +515,17 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
                   alert(r.sent > 0 ? `Se enviaron ${r.sent} recordatorio(s) de pago al correo de la empresa.` : "No hay recordatorios pendientes por enviar, o no hay correo configurado (Configuración > Integraciones).");
                 } catch { alert("No se pudieron enviar los recordatorios."); }
               }} style={{ ...ghostBtn, padding: "8px 12px" }} title="Enviar recordatorios por email"><Mail size={14} /> Recordatorios</button>
-              <button onClick={exportCXP} style={{ ...ghostBtn, padding: "8px 12px" }} title="Descargar CSV"><Download size={14} /> Descargar</button>
+              <button onClick={async () => {
+                try {
+                  const res = await api.get("/finance/cxp/aging-report.pdf", { responseType: "blob" });
+                  const url = URL.createObjectURL(res.data);
+                  const a = document.createElement("a");
+                  a.href = url; a.download = `cxp_${new Date().toISOString().slice(0,10)}.pdf`;
+                  document.body.appendChild(a); a.click(); a.remove();
+                  URL.revokeObjectURL(url);
+                } catch { alert("Error al descargar PDF"); }
+              }} style={{ ...ghostBtn, padding: "8px 12px", background: t.nova + "18", color: t.nova, borderColor: t.nova + "55" }}><FileText size={14} /> PDF</button>
+              <button onClick={exportCXP} style={{ ...ghostBtn, padding: "8px 12px" }} title="Descargar CSV"><Download size={14} /> CSV</button>
             </div>
           </div>
 
@@ -637,6 +663,13 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Banks ── */}
       {tab === "banks" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi }}>Cuentas bancarias</div>
+            <button onClick={() => setReconcileOpen(true)}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.good}55`, background: t.good + "18", color: t.good, cursor: "pointer", fontSize: 13, fontWeight: 700 }}>
+              <Upload size={14} /> Conciliar extracto bancario
+            </button>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
             {banks.map(b => {
               const typeColors: Record<string, string> = { checking: t.nova, savings: t.good, credit: t.bad };
@@ -905,7 +938,165 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
           }}
         />
       )}
+
+      {reconcileOpen && (
+        <BankReconcileModal t={t} banks={banks}
+          onClose={() => setReconcileOpen(false)}
+          onDone={async () => { setReconcileOpen(false); await load(); }} />
+      )}
     </div>
+  );
+}
+
+
+// ── Modal: Conciliación bancaria (importar extracto) ─────────────────────
+function BankReconcileModal({ t, banks, onClose, onDone }:
+  { t: any; banks: BankAccount[]; onClose: () => void; onDone: () => void }) {
+  const [bankId, setBankId] = useState<number | "">("");
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<null | {
+    imported: number; matched: number; unmatched: number; duplicated: number;
+    match_rate: number; details: any[]; error?: string;
+  }>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const upload = async () => {
+    if (!bankId || !file) return;
+    setBusy(true); setError(null); setResult(null);
+    try {
+      const form = new FormData();
+      form.append("bank_account_id", String(bankId));
+      form.append("file", file);
+      const { data } = await api.post("/finance/reconciliation/import", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setResult(data);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Error al procesar el extracto");
+    } finally { setBusy(false); }
+  };
+
+  const modalBg: React.CSSProperties = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 };
+
+  return createPortal(
+    <div style={modalBg} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 720, maxHeight: "88vh", overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14 }}>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", background: t.panel2 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi }}>Conciliar extracto bancario</div>
+            <div style={{ fontSize: 12, color: t.textLo, marginTop: 2 }}>Sube el CSV o XLSX del banco. El sistema hará matching automático por fecha ±3 días + monto exacto.</div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 4 }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <div style={{ padding: 22 }}>
+          {!result && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: t.textLo, marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>Cuenta bancaria</label>
+                <select value={bankId} onChange={e => setBankId(e.target.value ? Number(e.target.value) : "")}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14 }}>
+                  <option value="">— Selecciona —</option>
+                  {banks.map(b => <option key={b.id} value={b.id}>{b.name} · {b.bank || ""} {b.account_number ? "·" + b.account_number : ""}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: t.textLo, marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>Archivo del extracto</label>
+                <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "24px 20px", borderRadius: 10, border: `2px dashed ${t.border}`, background: t.panel2, cursor: "pointer" }}>
+                  <Upload size={18} color={t.nova} />
+                  <span style={{ fontSize: 13.5, color: file ? t.textHi : t.textLo }}>{file ? file.name : "Elegir archivo (CSV o XLSX)"}</span>
+                  <input type="file" accept=".csv,.xlsx,.xls" onChange={e => setFile(e.target.files?.[0] || null)} style={{ display: "none" }} />
+                </label>
+              </div>
+              <div style={{ padding: 12, background: t.panel2, borderRadius: 8, fontSize: 11.5, color: t.textLo, lineHeight: 1.5 }}>
+                <b style={{ color: t.textMid }}>Formato esperado:</b> columnas Fecha, Concepto, Cargo, Abono
+                (o Monto único con signo). Se aceptan variantes: BBVA, Santander, Banorte.
+                El delimitador CSV se detecta automáticamente (coma o punto y coma).
+              </div>
+              {error && (
+                <div style={{ padding: "10px 12px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 8, fontSize: 13 }}>
+                  <AlertCircle size={13} style={{ marginRight: 6, verticalAlign: "text-bottom" }} /> {error}
+                </div>
+              )}
+            </div>
+          )}
+
+          {result && !result.error && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ padding: 16, background: t.good + "18", border: `1px solid ${t.good}55`, borderRadius: 10, textAlign: "center" }}>
+                <CheckCircle size={26} color={t.good} style={{ marginBottom: 8 }} />
+                <div style={{ fontSize: 15, fontWeight: 800, color: t.textHi }}>Extracto procesado</div>
+                <div style={{ fontSize: 12, color: t.textLo, marginTop: 4 }}>Tasa de conciliación automática: <b style={{ color: t.good }}>{result.match_rate}%</b></div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                {[
+                  { label: "Importados", value: result.imported, color: t.nova },
+                  { label: "Conciliados", value: result.matched, color: t.good },
+                  { label: "Sin match", value: result.unmatched, color: t.warn },
+                  { label: "Duplicados", value: result.duplicated, color: t.textLo },
+                ].map(k => (
+                  <div key={k.label} style={{ padding: "12px 10px", background: t.panel2, borderRadius: 8, textAlign: "center" }}>
+                    <div style={{ fontSize: 10, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{k.label}</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: k.color, marginTop: 4 }}>{k.value}</div>
+                  </div>
+                ))}
+              </div>
+              {result.details && result.details.length > 0 && (
+                <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: 8 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                        <th style={{ padding: "8px 10px", textAlign: "left", color: t.textLo, fontSize: 10.5, textTransform: "uppercase" }}>Estado</th>
+                        <th style={{ padding: "8px 10px", textAlign: "left", color: t.textLo, fontSize: 10.5, textTransform: "uppercase" }}>Fecha</th>
+                        <th style={{ padding: "8px 10px", textAlign: "left", color: t.textLo, fontSize: 10.5, textTransform: "uppercase" }}>Descripción</th>
+                        <th style={{ padding: "8px 10px", textAlign: "right", color: t.textLo, fontSize: 10.5, textTransform: "uppercase" }}>Monto</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.details.slice(0, 60).map((d, i) => {
+                        const sColor = d.status === "matched" ? t.good : d.status === "duplicated" ? t.textLo : t.warn;
+                        const sLabel = d.status === "matched" ? "Conciliado" : d.status === "duplicated" ? "Duplicado" : "Sin match";
+                        return (
+                          <tr key={i} style={{ borderBottom: `1px solid ${t.border}55` }}>
+                            <td style={{ padding: "6px 10px" }}>
+                              <span style={{ fontSize: 10.5, fontWeight: 700, color: sColor, background: sColor + "22", padding: "2px 8px", borderRadius: 12 }}>{sLabel}</span>
+                            </td>
+                            <td style={{ padding: "6px 10px", color: t.textMid }}>{d.date ? new Date(d.date).toLocaleDateString("es-MX") : "—"}</td>
+                            <td style={{ padding: "6px 10px", color: t.textMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 280 }}>{d.desc}</td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", color: (d.amount || 0) > 0 ? t.good : t.bad, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{mxn(d.amount)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: "14px 22px", borderTop: `1px solid ${t.border}`, display: "flex", justifyContent: "flex-end", gap: 8, background: t.panel2 }}>
+          {!result ? (
+            <>
+              <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer" }}>Cancelar</button>
+              <button disabled={!bankId || !file || busy} onClick={upload}
+                style={{ padding: "9px 22px", borderRadius: 8, border: "none", background: (!bankId || !file) ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: (!bankId || !file || busy) ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                <Upload size={13} /> {busy ? "Procesando…" : "Conciliar"}
+              </button>
+            </>
+          ) : (
+            <button onClick={onDone} style={{ padding: "9px 22px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy || "#1e40af"})`, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+              Cerrar
+            </button>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

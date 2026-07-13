@@ -5,11 +5,12 @@ import { createPortal } from "react-dom";
 import {
   BookOpen, Layers, FileText, Plus, X, Check, Trash2, RefreshCw, Search,
   ChevronRight, AlertTriangle, Ban, Info, BarChart3, Scale, TrendingUp,
-  SlidersHorizontal, Zap, Landmark, Download,
+  SlidersHorizontal, Zap, Landmark, Download, Lock, Unlock, Calendar,
 } from "lucide-react";
 import {
   accountingService, type Account, type JournalEntry, type LedgerReport,
   type TrialBalance, type BalanceSheet, type IncomeStatement, type AccountMapItem,
+  type PeriodClose,
 } from "./service";
 
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -23,7 +24,7 @@ const TYPE_COLOR: Record<string, string> = {
   ingreso: "#34D399", costo: "#F472B6", gasto: "#F87171", orden: "#94A3B8",
 };
 
-type Tab = "accounts" | "entries" | "ledger" | "reports" | "sat" | "config";
+type Tab = "accounts" | "entries" | "ledger" | "reports" | "close" | "sat" | "config";
 
 export default function AccountingModule({ t, s }: { t: any; s: any }) {
   const lang = s?.nav ? "es" : "en";
@@ -68,6 +69,7 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
     { id: "entries", label: lang === "es" ? "Pólizas" : "Journal entries", icon: FileText },
     { id: "ledger", label: lang === "es" ? "Mayor / auxiliar" : "Ledger", icon: BookOpen },
     { id: "reports", label: lang === "es" ? "Estados financieros" : "Financial statements", icon: BarChart3 },
+    { id: "close", label: lang === "es" ? "Cierre mensual" : "Month close", icon: Lock },
     { id: "sat", label: lang === "es" ? "Contabilidad Electrónica (SAT)" : "SAT e-accounting", icon: Landmark },
     { id: "config", label: lang === "es" ? "Configuración" : "Settings", icon: SlidersHorizontal },
   ] as const;
@@ -224,6 +226,11 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Estados financieros ── */}
       {tab === "reports" && accounts.length > 0 && (
         <ReportsView t={t} lang={lang} />
+      )}
+
+      {/* ── TAB: Cierre mensual ── */}
+      {tab === "close" && accounts.length > 0 && (
+        <PeriodCloseView t={t} lang={lang} onChanged={load} />
       )}
 
       {/* ── TAB: Contabilidad Electrónica SAT ── */}
@@ -826,6 +833,184 @@ function SatView({ t, lang }: { t: any; lang: string }) {
             <div><label style={{ fontSize: 11, color: t.textLo, display: "block", marginBottom: 4 }}>{(tipoSol === "DE" || tipoSol === "CO") ? (lang === "es" ? "No. trámite" : "Procedure no.") : (lang === "es" ? "No. orden" : "Order no.")}</label><input value={numOrden} onChange={e => setNumOrden(e.target.value)} placeholder={tipoSol === "AF" ? "ABC6912345/12" : ""} style={{ ...inp, width: "100%" }} /></div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+
+// ── Vista: Cierre mensual ─────────────────────────────────────────────
+function PeriodCloseView({ t, lang, onChanged }: { t: any; lang: string; onChanged?: () => void }) {
+  const [closes, setCloses] = useState<PeriodClose[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [notes, setNotes] = useState("");
+
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const rows = await accountingService.listPeriodCloses();
+      setCloses(rows);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "No se pudo cargar el historial");
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const doClose = async () => {
+    if (!confirm(lang === "es"
+      ? `¿Cerrar el período ${year}-${String(month).padStart(2, "0")}?\n\nSe congelarán todas las pólizas de ese mes. Solo un superusuario puede reabrirlo después.`
+      : `Close period ${year}-${String(month).padStart(2, "0")}?`)) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await accountingService.closePeriod(year, month, notes.trim() || undefined);
+      alert(res.message);
+      setNotes("");
+      await load(); onChanged?.();
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "No se pudo cerrar el período");
+    } finally { setBusy(false); }
+  };
+
+  const doReopen = async (pc: PeriodClose) => {
+    const reason = prompt(lang === "es"
+      ? `Razón para reabrir ${pc.period}:\n(quedará registrado en la bitácora de auditoría)`
+      : `Reason to reopen ${pc.period}:`);
+    if (!reason || !reason.trim()) return;
+    setBusy(true); setError(null);
+    try {
+      await accountingService.reopenPeriod(pc.year, pc.month, reason.trim());
+      await load(); onChanged?.();
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "No se pudo reabrir el período");
+    } finally { setBusy(false); }
+  };
+
+  const closedThisYear = closes.filter(c => c.year === now.getFullYear() && c.status === "closed").length;
+  const isPeriodClosed = closes.some(c => c.year === year && c.month === month && c.status === "closed");
+  const monthLabels = ["", "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+
+  const inp: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none" };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+        <div style={{ ...glass(t), borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Meses cerrados {now.getFullYear()}</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: t.good, marginTop: 4 }}>{closedThisYear} / 12</div>
+        </div>
+        <div style={{ ...glass(t), borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Último cierre</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: t.textHi, marginTop: 4 }}>
+            {closes.filter(c => c.status === "closed")[0]?.period || "—"}
+          </div>
+        </div>
+        <div style={{ ...glass(t), borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Reaperturas</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: closes.filter(c => c.status === "reopened").length > 0 ? t.warn : t.textHi, marginTop: 4 }}>
+            {closes.filter(c => c.status === "reopened").length}
+          </div>
+        </div>
+      </div>
+
+      {/* Formulario de cierre */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 10, padding: 9 }}><Lock size={18} /></div>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi }}>{lang === "es" ? "Cerrar un período" : "Close a period"}</div>
+            <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 2 }}>{lang === "es" ? "Congela las pólizas de ese mes y guarda snapshot del trial balance, estado de resultados y balance." : "Freezes entries of the month and saves a snapshot."}</div>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "auto auto 1fr auto", gap: 10, alignItems: "end" }}>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: t.textLo, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.4 }}>Año</label>
+            <select value={year} onChange={e => setYear(Number(e.target.value))} style={{ ...inp, width: 100, cursor: "pointer" }}>
+              {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: t.textLo, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.4 }}>Mes</label>
+            <select value={month} onChange={e => setMonth(Number(e.target.value))} style={{ ...inp, width: 120, cursor: "pointer" }}>
+              {monthLabels.slice(1).map((m, i) => <option key={i + 1} value={i + 1}>{i + 1} · {m}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: t.textLo, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.4 }}>Notas (opcional)</label>
+            <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Ej. Cierre firmado por contador el 5 del mes" style={inp} />
+          </div>
+          <button disabled={busy || isPeriodClosed} onClick={doClose}
+            style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: isPeriodClosed ? t.panel3 : `linear-gradient(135deg, ${t.nova}, ${t.navy || "#1e40af"})`, color: "#fff", cursor: (busy || isPeriodClosed) ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+            <Lock size={14} /> {busy ? "…" : (isPeriodClosed ? "Ya cerrado" : "Cerrar mes")}
+          </button>
+        </div>
+        {isPeriodClosed && (
+          <div style={{ marginTop: 10, fontSize: 11.5, color: t.warn, display: "flex", alignItems: "center", gap: 5 }}>
+            <AlertTriangle size={12} /> Este período ya está cerrado. Reábrelo desde la tabla inferior si necesitas modificarlo.
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div style={{ padding: "12px 14px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+          <AlertTriangle size={15} /> {error}
+        </div>
+      )}
+
+      {/* Historial */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+          <Calendar size={15} color={t.nova} />
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi }}>{lang === "es" ? "Historial de cierres" : "Close history"}</div>
+          <span style={{ marginLeft: "auto", fontSize: 11.5, color: t.textLo }}>{closes.length} registros</span>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+            <thead>
+              <tr style={{ background: t.panel2 }}>
+                {["Período", "Estado", "Cerrado", "Reabierto", "Notas", ""].map((h, i) => (
+                  <th key={i} style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 700, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${t.border}` }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr><td colSpan={6} style={{ padding: 40, textAlign: "center", color: t.textLo, fontSize: 13 }}>Cargando…</td></tr>
+              )}
+              {!loading && closes.length === 0 && (
+                <tr><td colSpan={6} style={{ padding: 40, textAlign: "center", color: t.textLo, fontSize: 13 }}>Sin cierres registrados</td></tr>
+              )}
+              {!loading && closes.map((c, i) => (
+                <tr key={c.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
+                  <td style={{ padding: "10px 14px", fontSize: 13.5, color: t.textHi, fontWeight: 700, fontFamily: "monospace" }}>{c.period}</td>
+                  <td style={{ padding: "10px 14px" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: c.status === "closed" ? t.good : t.warn, background: (c.status === "closed" ? t.good : t.warn) + "22", padding: "3px 10px", borderRadius: 20 }}>
+                      {c.status === "closed" ? <><Lock size={11} /> Cerrado</> : <><Unlock size={11} /> Reabierto</>}
+                    </span>
+                  </td>
+                  <td style={{ padding: "10px 14px", fontSize: 12.5, color: t.textMid }}>{c.closed_at ? new Date(c.closed_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" }) : "—"}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 12.5, color: c.reopened_at ? t.warn : t.textLo }}>
+                    {c.reopened_at ? new Date(c.reopened_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" }) : "—"}
+                  </td>
+                  <td style={{ padding: "10px 14px", fontSize: 12, color: t.textMid, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.notes || ""}>{c.notes || "—"}</td>
+                  <td style={{ padding: "10px 14px", textAlign: "right" }}>
+                    {c.status === "closed" && (
+                      <button onClick={() => doReopen(c)} disabled={busy}
+                        style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${t.warn}55`, background: t.warn + "18", color: t.warn, cursor: "pointer", fontSize: 11.5, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <Unlock size={11} /> Reabrir
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
