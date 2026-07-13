@@ -11,6 +11,9 @@ from sqlalchemy.orm import selectinload
 
 from app.modules.pos import models, schemas, models as pos_models
 from app.modules.sales import models as sales_models
+from app.core.logging import get_logger
+
+log = get_logger(__name__)
 
 
 async def _log(db: AsyncSession, user_id: Optional[int], action: str, description: str = None, details: dict = None):
@@ -353,7 +356,9 @@ async def register_sale(db: AsyncSession, session_id: int,
                 )
                 oi.unit_cost = float(result.get("unit_cost_avg") or 0.0)
             except Exception as e:
-                print(f"[pos] consume_stock error order {order.id} variant {variant_id}: {e}")
+                log.warning("consume_stock error en venta POS",
+                            extra={"order_id": order.id, "variant_id": variant_id, "error": str(e)},
+                            exc_info=True)
 
     # Registrar Payment(s) y POSTransaction(s) — una por método
     for method, amount in payments.items():

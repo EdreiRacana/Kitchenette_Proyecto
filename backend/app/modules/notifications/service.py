@@ -21,7 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
 
+from app.core.logging import get_logger
 from . import schemas
+
+log = get_logger(__name__)
 
 REMINDER_LEAD_DAYS = 3
 POS_SHIFT_MAX_HOURS = 14        # más de esto = alerta
@@ -59,7 +62,7 @@ async def build_digest(db: AsyncSession) -> schemas.NotificationDigest:
                 id=f"inv_{a.variant_id}_{a.warehouse_id}",
             ))
     except Exception as exc:
-        print(f"[notifications] inventory alerts failed: {exc}")
+        log.warning("Inventory alerts failed", extra={"error": str(exc)})
 
     horizon = (datetime.now(timezone.utc) + timedelta(days=REMINDER_LEAD_DAYS)).date()
 
@@ -100,7 +103,7 @@ async def build_digest(db: AsyncSession) -> schemas.NotificationDigest:
                 id=f"cxp_{i.reference}",
             ))
     except Exception as exc:
-        print(f"[notifications] finance alerts failed: {exc}")
+        log.warning("Finance alerts failed", extra={"error": str(exc)})
 
     # ── POS: turno abierto demasiado tiempo + variance del último cierre
     try:
@@ -139,7 +142,7 @@ async def build_digest(db: AsyncSession) -> schemas.NotificationDigest:
                     amount=abs(variance),
                 ))
     except Exception as exc:
-        print(f"[notifications] pos alerts failed: {exc}")
+        log.warning("POS alerts failed", extra={"error": str(exc)})
 
     # ── RH: nómina próxima + obligaciones patronales ──────────────────
     try:
@@ -197,7 +200,7 @@ async def build_digest(db: AsyncSession) -> schemas.NotificationDigest:
                         due_date=datetime.combine(target, datetime.min.time(), tzinfo=timezone.utc),
                     ))
     except Exception as exc:
-        print(f"[notifications] hr/tax alerts failed: {exc}")
+        log.warning("HR/tax alerts failed", extra={"error": str(exc)})
 
     # ── Forecast: metas del mes ──────────────────────────────────────
     try:
@@ -229,7 +232,7 @@ async def build_digest(db: AsyncSession) -> schemas.NotificationDigest:
                     amount=gap,
                 ))
     except Exception as exc:
-        print(f"[notifications] forecast alerts failed: {exc}")
+        log.warning("Forecast alerts failed", extra={"error": str(exc)})
 
     # ── Ordenar: critical > warning > info; luego por monto/due_date desc
     sev_rank = {"critical": 0, "warning": 1, "info": 2}
