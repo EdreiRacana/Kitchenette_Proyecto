@@ -20,6 +20,7 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.pdfgen import canvas
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image,
+    KeepTogether, PageBreak,
 )
 
 
@@ -195,22 +196,46 @@ def build_thermal_ticket(
 
 def build_session_z_report(
     company: dict, session: dict, report: dict, kind: str = "Z",
+    sales: Optional[List[dict]] = None,
 ) -> bytes:
     """Reporte Z (cierre de turno) o X (corte intermedio) del POS.
-    Formato carta con desglose por método de pago y arqueo."""
+
+    Contenido:
+      - Header con logo + datos empresa + badge X/Z.
+      - Metadatos del turno (caja, cajero, apertura, cierre, estado).
+      - Resumen: fondo, ventas, entradas/salidas, reembolsos, esperado/real/variance.
+      - Ventas por método de pago.
+      - Arqueo por denominación.
+      - Reconciliación post-cierre (depósitos, floats, ajustes, cash_remaining_after).
+      - Tickets/ventas del turno con folios.
+      - Bitácora completa de movimientos.
+      - Notas de apertura y cierre.
+      - Firmas.
+    """
     from reportlab.lib.pagesizes import LETTER
 
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=LETTER,
-        leftMargin=18 * mm, rightMargin=18 * mm,
-        topMargin=15 * mm, bottomMargin=15 * mm,
+        leftMargin=15 * mm, rightMargin=15 * mm,
+        topMargin=12 * mm, bottomMargin=12 * mm,
         title=f"Reporte {kind} · Turno {session.get('id')}",
     )
     styles = getSampleStyleSheet()
     story = []
 
-    # ── Header con logo + datos empresa ───────
+    brand_hex = company.get("brand_color") or "#33B2F5"
+    brand = colors.HexColor(brand_hex)
+    grey_bg = colors.HexColor("#F0F3F8")
+    grey_border = colors.HexColor("#CCCCCC")
+    grey_grid = colors.HexColor("#EEEEEE")
+    label_grey = colors.HexColor("#666666")
+
+    h1 = ParagraphStyle("h1", parent=styles["Normal"], fontSize=10.5,
+                        textColor=brand, spaceAfter=2, fontName="Helvetica-Bold")
+    body = ParagraphStyle("body", parent=styles["Normal"], fontSize=9)
+
+    # ── Header: logo + empresa + badge X/Z ──────────────────────────────
     logo_cell = ""
     logo_src = _company_logo_source(company)
     if logo_src is not None:
@@ -226,22 +251,31 @@ def build_session_z_report(
         empresa_lines.append(company["legal_name"])
     if company.get("tax_id"):
         empresa_lines.append(f"RFC: {company['tax_id']}")
-    p_empresa = Paragraph("<br/>".join(empresa_lines), ParagraphStyle(
-        "e", parent=styles["Normal"], fontSize=8.5, leading=11, textColor=colors.HexColor("#333")))
-    brand = colors.HexColor(company.get("brand_color") or "#33B2F5")
-    p_titulo = Paragraph(f"<font size='16' color='{company.get('brand_color') or '#33B2F5'}'><b>REPORTE {kind}</b></font>"
-                          f"<br/><font size='10'>Turno #{session.get('id')}</font>",
-                          ParagraphStyle("t", parent=styles["Normal"], alignment=TA_RIGHT))
-    header = Table([[logo_cell, p_empresa, p_titulo]], colWidths=[38 * mm, 90 * mm, 50 * mm])
+    p_empresa = Paragraph(
+        "<br/>".join(empresa_lines),
+        ParagraphStyle("e", parent=styles["Normal"], fontSize=8.5, leading=11,
+                       textColor=colors.HexColor("#333")))
+
+    is_final = kind == "Z"
+    badge_color = "#059669" if is_final else "#D97706"
+    badge_label = "DEFINITIVO" if is_final else "PROVISIONAL"
+    p_titulo = Paragraph(
+        f"<font size='18' color='{brand_hex}'><b>REPORTE {kind}</b></font><br/>"
+        f"<font size='9' color='#666'>Turno #{session.get('id')}</font><br/>"
+        f"<font size='8' color='{badge_color}'><b>■ {badge_label}</b></font>",
+        ParagraphStyle("t", parent=styles["Normal"], alignment=TA_RIGHT))
+
+    header = Table([[logo_cell, p_empresa, p_titulo]],
+                    colWidths=[38 * mm, 92 * mm, 50 * mm])
     header.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LINEBELOW", (0, 0), (-1, 0), 1.5, brand),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
     ]))
     story.append(header)
-    story.append(Spacer(1, 6 * mm))
+    story.append(Spacer(1, 4 * mm))
 
-    # ── Datos del turno ───────────────────────
+    # ── Metadatos del turno ────────────────────────────────────────────
     def fmt_dt(s):
         if not s: return "—"
         try:
@@ -250,26 +284,52 @@ def build_session_z_report(
         except Exception:
             return str(s)
 
+    state_label = {
+        "open": "ABIERTO", "closed": "CERRADO", "reconciled": "RECONCILIADO",
+    }.get(session.get("status"), (session.get("status") or "—").upper())
+
     meta = [
         ["Caja:", session.get("terminal_name") or "—", "Cajero:", session.get("cashier_name") or "—"],
         ["Apertura:", fmt_dt(session.get("opened_at")), "Cierre:", fmt_dt(session.get("closed_at"))],
-        ["Estado:", (session.get("status") or "—").upper(), "", ""],
+        ["Estado:", state_label, "Emitido:", datetime.now().strftime("%d/%m/%Y %H:%M")],
     ]
     t_meta = Table(meta, colWidths=[22 * mm, 60 * mm, 22 * mm, 60 * mm])
     t_meta.setStyle(TableStyle([
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#666")),
-        ("TEXTCOLOR", (2, 0), (2, -1), colors.HexColor("#666")),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("TEXTCOLOR", (0, 0), (0, -1), label_grey),
+        ("TEXTCOLOR", (2, 0), (2, -1), label_grey),
         ("FONTNAME", (1, 0), (1, -1), "Helvetica-Bold"),
         ("FONTNAME", (3, 0), (3, -1), "Helvetica-Bold"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
     ]))
     story.append(t_meta)
-    story.append(Spacer(1, 6 * mm))
+    story.append(Spacer(1, 5 * mm))
 
-    # ── Resumen del turno ─────────────────────
-    story.append(Paragraph("<b>RESUMEN DEL TURNO</b>",
-                            ParagraphStyle("h", parent=styles["Normal"], fontSize=11, textColor=brand)))
-    story.append(Spacer(1, 3 * mm))
+    def _std_table_style(header_bg=True, totals_row=None):
+        st = [
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("BOX", (0, 0), (-1, -1), 0.4, grey_border),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, grey_grid),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]
+        if header_bg:
+            st += [("BACKGROUND", (0, 0), (-1, 0), grey_bg),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold")]
+        if totals_row is not None:
+            st += [("LINEABOVE", (0, totals_row), (-1, totals_row), 0.8, colors.HexColor("#999")),
+                    ("FONTNAME", (0, totals_row), (-1, totals_row), "Helvetica-Bold")]
+        return TableStyle(st)
+
+    # ── Resumen del turno ──────────────────────────────────────────────
+    variance = session.get("variance") or 0
+    var_bg = (colors.HexColor("#FEE2E2") if variance < -0.01
+              else colors.HexColor("#D1FAE5") if variance > 0.01
+              else grey_bg)
     resumen = [
         ["Concepto", "Monto"],
         ["Fondo inicial (apertura)", _mxn(session.get("opening_balance") or 0)],
@@ -279,114 +339,167 @@ def build_session_z_report(
         ["− Reembolsos", "− " + _mxn(session.get("total_refunds") or 0)],
         ["EFECTIVO ESPERADO (calculado)", _mxn(session.get("expected_cash") or 0)],
         ["EFECTIVO REAL (arqueo)", _mxn(session.get("actual_cash") or 0)],
-        ["DIFERENCIA", ("+" if (session.get("variance") or 0) >= 0 else "") + _mxn(session.get("variance") or 0)],
+        ["DIFERENCIA", ("+" if variance >= 0 else "") + _mxn(variance)],
     ]
+    story.append(Paragraph("RESUMEN DEL TURNO", h1))
     t_res = Table(resumen, colWidths=[110 * mm, 60 * mm])
-    variance_row = 8
-    t_res.setStyle(TableStyle([
-        ("FONTSIZE", (0, 0), (-1, -1), 9.5),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F0F3F8")),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-        ("LINEABOVE", (0, 6), (-1, 6), 0.8, colors.HexColor("#999")),
-        ("FONTNAME", (0, 6), (-1, -1), "Helvetica-Bold"),
-        ("BACKGROUND", (0, variance_row), (-1, variance_row),
-         colors.HexColor("#FEE2E2") if (session.get("variance") or 0) < 0
-         else colors.HexColor("#D1FAE5") if (session.get("variance") or 0) > 0
-         else colors.HexColor("#F0F3F8")),
-        ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#CCC")),
-        ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#EEE")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-    ]))
-    story.append(t_res)
-    story.append(Spacer(1, 6 * mm))
+    st_res = _std_table_style(totals_row=6)
+    st_res.add("BACKGROUND", (0, 8), (-1, 8), var_bg)
+    st_res.add("FONTNAME", (0, 6), (-1, 8), "Helvetica-Bold")
+    t_res.setStyle(st_res)
+    story.append(KeepTogether(t_res))
+    story.append(Spacer(1, 4 * mm))
 
-    # ── Ventas por método de pago ─────────────
+    # ── Ventas por método de pago ──────────────────────────────────────
     by_method = report.get("sales_by_method") or {}
     if by_method:
-        story.append(Paragraph("<b>VENTAS POR MÉTODO DE PAGO</b>",
-                                ParagraphStyle("h", parent=styles["Normal"], fontSize=11, textColor=brand)))
-        story.append(Spacer(1, 3 * mm))
-        labels = {"cash": "Efectivo", "card": "Tarjeta", "transfer": "Transferencia"}
+        labels = {"cash": "Efectivo", "card": "Tarjeta", "transfer": "Transferencia",
+                  "credit": "Crédito", "unknown": "Otro"}
         rows = [["Método", "Monto"]]
         total = 0.0
         for k, v in by_method.items():
             rows.append([labels.get(k, k.title()), _mxn(v)])
             total += v
         rows.append(["TOTAL", _mxn(total)])
+        story.append(Paragraph("VENTAS POR MÉTODO DE PAGO", h1))
         t_meth = Table(rows, colWidths=[110 * mm, 60 * mm])
-        t_meth.setStyle(TableStyle([
-            ("FONTSIZE", (0, 0), (-1, -1), 9.5),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F0F3F8")),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-            ("LINEABOVE", (0, -1), (-1, -1), 0.8, colors.HexColor("#999")),
-            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-            ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#CCC")),
-            ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#EEE")),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ]))
-        story.append(t_meth)
-        story.append(Spacer(1, 6 * mm))
+        t_meth.setStyle(_std_table_style(totals_row=len(rows) - 1))
+        story.append(KeepTogether(t_meth))
+        story.append(Spacer(1, 4 * mm))
 
-    # ── Arqueo por denominación ───────────────
+    # ── Arqueo por denominación ────────────────────────────────────────
     dens = session.get("denominations_json") or {}
     if dens:
-        story.append(Paragraph("<b>ARQUEO POR DENOMINACIÓN</b>",
-                                ParagraphStyle("h", parent=styles["Normal"], fontSize=11, textColor=brand)))
-        story.append(Spacer(1, 3 * mm))
         rows = [["Denominación", "Cantidad", "Subtotal"]]
         total = 0.0
         for d in sorted(dens.keys(), key=lambda x: -float(x)):
-            qty = int(dens[d])
-            sub = float(d) * qty
+            try:
+                qty = int(dens[d])
+                sub = float(d) * qty
+            except (ValueError, TypeError):
+                continue
+            if qty <= 0:
+                continue
             total += sub
             rows.append([f"${d}", str(qty), _mxn(sub)])
         rows.append(["TOTAL CONTADO", "", _mxn(total)])
+        story.append(Paragraph("ARQUEO POR DENOMINACIÓN", h1))
         t_den = Table(rows, colWidths=[60 * mm, 60 * mm, 50 * mm])
-        t_den.setStyle(TableStyle([
-            ("FONTSIZE", (0, 0), (-1, -1), 9.5),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F0F3F8")),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-            ("LINEABOVE", (0, -1), (-1, -1), 0.8, colors.HexColor("#999")),
-            ("ALIGN", (1, 0), (2, -1), "RIGHT"),
-            ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#CCC")),
-            ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#EEE")),
-        ]))
-        story.append(t_den)
-        story.append(Spacer(1, 6 * mm))
+        t_den.setStyle(_std_table_style(totals_row=len(rows) - 1))
+        story.append(KeepTogether(t_den))
+        story.append(Spacer(1, 4 * mm))
 
-    # ── Firmas ────────────────────────────────
+    # ── Reconciliación post-cierre ─────────────────────────────────────
+    total_dep = report.get("total_deposited") or 0
+    total_flt = report.get("total_float_next") or 0
+    total_adj = report.get("total_adjustments") or 0
+    cash_rem = report.get("cash_remaining_after") or 0
+    if total_dep or total_flt or total_adj or session.get("status") == "reconciled":
+        rows = [
+            ["Concepto", "Monto"],
+            ["Depositado al banco", _mxn(total_dep)],
+            ["Fondo del próximo turno", _mxn(total_flt)],
+            ["Ajustes con motivo", _mxn(total_adj)],
+            ["EFECTIVO PENDIENTE", _mxn(cash_rem)],
+        ]
+        story.append(Paragraph("RECONCILIACIÓN POST-CIERRE", h1))
+        t_rec = Table(rows, colWidths=[110 * mm, 60 * mm])
+        st_rec = _std_table_style(totals_row=4)
+        pending_bg = (colors.HexColor("#D1FAE5") if cash_rem < 0.01
+                       else colors.HexColor("#FEF3C7"))
+        st_rec.add("BACKGROUND", (0, 4), (-1, 4), pending_bg)
+        t_rec.setStyle(st_rec)
+        story.append(KeepTogether(t_rec))
+        story.append(Spacer(1, 4 * mm))
+
+    # ── Tickets del turno ──────────────────────────────────────────────
+    sales_list = sales or []
+    if sales_list:
+        rows = [["Folio", "Cliente", "Métodos", "Total"]]
+        for s in sales_list[:40]:  # tope defensivo
+            methods = ", ".join([labels.get(m, m) for m in (s.get("payment_methods") or [])]) if by_method else ", ".join(s.get("payment_methods") or [])
+            rows.append([
+                str(s.get("folio") or f"#{s.get('order_id')}"),
+                _truncate(s.get("customer_name") or "Público en general", 30),
+                _truncate(methods, 26),
+                _mxn(s.get("total_amount") or 0),
+            ])
+        remaining = len(sales_list) - 40
+        if remaining > 0:
+            rows.append(["", f"(+{remaining} tickets más)", "", ""])
+        story.append(Paragraph(f"TICKETS DEL TURNO ({len(sales_list)})", h1))
+        t_sales = Table(rows, colWidths=[25 * mm, 65 * mm, 50 * mm, 30 * mm])
+        st_sales = _std_table_style()
+        st_sales.add("ALIGN", (0, 1), (2, -1), "LEFT")
+        st_sales.add("ALIGN", (3, 0), (3, -1), "RIGHT")
+        st_sales.add("FONTNAME", (0, 1), (0, -1), "Courier")
+        t_sales.setStyle(st_sales)
+        story.append(t_sales)
+        story.append(Spacer(1, 4 * mm))
+
+    # ── Bitácora de movimientos ────────────────────────────────────────
+    tx_list = report.get("transactions") or []
+    if tx_list:
+        tx_labels = {
+            "opening": "Apertura", "closing": "Cierre",
+            "sale": "Venta", "refund": "Reembolso",
+            "cash_in": "Fondo", "cash_out": "Retiro",
+            "bank_deposit": "Depósito banco",
+            "float_next_shift": "Fondo próximo turno",
+            "adjustment": "Ajuste",
+        }
+        rows = [["Fecha/Hora", "Movimiento", "Nota", "Monto"]]
+        for tx in tx_list:
+            rows.append([
+                fmt_dt(tx.get("created_at")),
+                tx_labels.get(tx.get("type") or "", tx.get("type") or "—"),
+                _truncate(tx.get("notes") or "", 42),
+                _mxn(tx.get("amount") or 0),
+            ])
+        story.append(Paragraph(f"BITÁCORA DE MOVIMIENTOS ({len(tx_list)})", h1))
+        t_tx = Table(rows, colWidths=[32 * mm, 32 * mm, 76 * mm, 30 * mm])
+        st_tx = _std_table_style()
+        st_tx.add("ALIGN", (0, 1), (2, -1), "LEFT")
+        st_tx.add("ALIGN", (3, 0), (3, -1), "RIGHT")
+        t_tx.setStyle(st_tx)
+        story.append(t_tx)
+        story.append(Spacer(1, 4 * mm))
+
+    # ── Notas ──────────────────────────────────────────────────────────
+    if session.get("closing_notes") or session.get("opening_notes"):
+        notes_block = [Paragraph("NOTAS", h1)]
+        if session.get("opening_notes"):
+            notes_block.append(Paragraph(
+                f"<b>Apertura:</b> {session['opening_notes']}", body))
+        if session.get("closing_notes"):
+            notes_block.append(Paragraph(
+                f"<b>Cierre:</b> {session['closing_notes']}", body))
+        story.append(KeepTogether(notes_block))
+        story.append(Spacer(1, 4 * mm))
+
+    # ── Firmas ─────────────────────────────────────────────────────────
     firmas = [
-        ["", "", ""],
-        ["_______________________", "_______________________", ""],
-        ["Cajero", "Supervisor", ""],
+        ["_______________________", "_______________________"],
+        ["Cajero", "Supervisor"],
     ]
-    t_firm = Table(firmas, colWidths=[70 * mm, 70 * mm, 30 * mm])
+    t_firm = Table(firmas, colWidths=[85 * mm, 85 * mm])
     t_firm.setStyle(TableStyle([
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("TEXTCOLOR", (0, 2), (-1, 2), colors.HexColor("#666")),
+        ("TEXTCOLOR", (0, 1), (-1, 1), label_grey),
+        ("TOPPADDING", (0, 0), (-1, 0), 14),
     ]))
-    story.append(Spacer(1, 12 * mm))
-    story.append(t_firm)
+    story.append(Spacer(1, 6 * mm))
+    story.append(KeepTogether(t_firm))
 
-    # ── Notas ────────────────────────────────
-    if session.get("closing_notes") or session.get("opening_notes"):
-        story.append(Spacer(1, 8 * mm))
-        story.append(Paragraph("<b>NOTAS</b>",
-                                ParagraphStyle("h", parent=styles["Normal"], fontSize=10, textColor=brand)))
-        if session.get("opening_notes"):
-            story.append(Paragraph(f"<b>Apertura:</b> {session['opening_notes']}",
-                                    ParagraphStyle("n", parent=styles["Normal"], fontSize=9)))
-        if session.get("closing_notes"):
-            story.append(Paragraph(f"<b>Cierre:</b> {session['closing_notes']}",
-                                    ParagraphStyle("n", parent=styles["Normal"], fontSize=9)))
+    # ── Pie de página con hash de auditoría (número de folio interno) ──
+    story.append(Spacer(1, 4 * mm))
+    story.append(Paragraph(
+        f"<font size='7' color='#999'>Documento generado por STHENOVA ERP · "
+        f"Turno {session.get('id')} · Reporte tipo {kind} "
+        f"({'definitivo' if is_final else 'provisional'}) · "
+        f"Emitido {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</font>",
+        ParagraphStyle("f", parent=styles["Normal"], alignment=TA_CENTER)))
 
     doc.build(story)
     return buf.getvalue()

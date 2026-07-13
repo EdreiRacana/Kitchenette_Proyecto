@@ -318,9 +318,12 @@ async def download_session_report(session_id: int, db: DB, _: CurrentUser,
     if not session:
         raise HTTPException(404, "Sesión no encontrada")
     report = await service.get_session_report(db, session_id)
+    sales = await service.list_session_sales(db, session_id)
     from app.modules.sales.universal_service import _get_company_dict
     company = await _get_company_dict(db)
-    pdf = pdf_ticket.build_session_z_report(company, session, report, kind=kind)
+    pdf = pdf_ticket.build_session_z_report(
+        company, session, report, kind=kind, sales=sales,
+    )
     fname = f"reporte_{kind}_turno_{session_id}.pdf"
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
