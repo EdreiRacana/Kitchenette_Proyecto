@@ -1057,12 +1057,31 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
   const [err, setErr] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<"Z" | "X" | null>(null);
   const [reprint, setReprint] = useState<number | null>(null);
+  const [reconcileType, setReconcileType] = useState<"bank_deposit" | "float_next_shift" | "adjustment" | null>(null);
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [markingReconciled, setMarkingReconciled] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
+
+  const loadReport = async (sessionId?: number) => {
+    setLoading(true); setErr(null);
+    try {
+      const r = sessionId
+        ? await posApi.sessionReport(sessionId) as PreviousSessionReport
+        : await posApi.previousSession({ terminal_id: terminalId, scope });
+      setReport(r);
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      setErr(e?.response?.status === 404
+        ? "No hay turnos cerrados anteriores para mostrar."
+        : (detail || e?.message || "Error al cargar el turno anterior"));
+    } finally { setLoading(false); }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -1082,6 +1101,24 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
     })();
     return () => { cancelled = true; };
   }, [terminalId, scope]);
+
+  const flashOk = (msg: string) => {
+    setFlash(msg);
+    window.setTimeout(() => setFlash(null), 2600);
+  };
+
+  const doMarkReconciled = async () => {
+    if (!report) return;
+    if (!confirm("¿Marcar este turno como reconciliado? Ya no podrás editarlo salvo por admin.")) return;
+    setMarkingReconciled(true);
+    try {
+      const r = await posApi.markReconciled(report.id);
+      setReport(r);
+      flashOk("Turno marcado como reconciliado");
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "Error");
+    } finally { setMarkingReconciled(false); }
+  };
 
   const downloadZ = async (kind: "Z" | "X") => {
     if (!report) return;
@@ -1127,6 +1164,9 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
     refund: { label: "Reembolso", color: t.bad },
     cash_in: { label: "Fondo", color: t.nova },
     cash_out: { label: "Retiro", color: t.warn },
+    bank_deposit: { label: "Depósito banco", color: t.nova },
+    float_next_shift: { label: "Fondo próximo turno", color: t.warn },
+    adjustment: { label: "Ajuste", color: t.bad },
   };
 
   const saleTxs = (report?.transactions || []).filter(x => x.type === "sale" && x.order_id);
@@ -1141,11 +1181,22 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
           <div>
             <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}>
               <History size={16} color={t.nova} /> Turno anterior
+              {report && (
+                <span style={{
+                  fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+                  background: report.status === "reconciled" ? t.good + "22" : t.warn + "22",
+                  color: report.status === "reconciled" ? t.good : t.warn,
+                  textTransform: "uppercase", letterSpacing: 0.4,
+                }}>
+                  {report.status === "reconciled" ? "Reconciliado" : "Cerrado"}
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 3 }}>
               {scope === "terminal" ? "Último cierre en esta caja"
                 : scope === "any" ? "Último cierre global"
                 : "Tu último cierre"}
+              {report && <> · Turno #{report.id}</>}
             </div>
           </div>
           <button onClick={onClose}
@@ -1220,6 +1271,70 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
                 </div>
               </div>
 
+              {/* ── Reconciliación post-cierre ─────────────────────────── */}
+              <div style={{ marginTop: 14, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Reconciliación post-cierre</div>
+                  <div style={{ fontSize: 10.5, color: t.textLo }}>
+                    Pendiente: <b style={{ color: (report.cash_remaining_after || 0) > 0.01 ? t.warn : t.good, fontVariantNumeric: "tabular-nums" }}>{mxn(report.cash_remaining_after)}</b>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, fontSize: 12, marginBottom: 10 }}>
+                  <div style={{ padding: "8px 10px", background: t.panel3, borderRadius: 6 }}>
+                    <div style={{ color: t.textLo, fontSize: 10.5 }}>Depositado al banco</div>
+                    <div style={{ color: t.nova, fontWeight: 700, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{mxn(report.total_deposited)}</div>
+                  </div>
+                  <div style={{ padding: "8px 10px", background: t.panel3, borderRadius: 6 }}>
+                    <div style={{ color: t.textLo, fontSize: 10.5 }}>Fondo próximo turno</div>
+                    <div style={{ color: t.warn, fontWeight: 700, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{mxn(report.total_float_next)}</div>
+                  </div>
+                  <div style={{ padding: "8px 10px", background: t.panel3, borderRadius: 6 }}>
+                    <div style={{ color: t.textLo, fontSize: 10.5 }}>Ajustes</div>
+                    <div style={{ color: t.textHi, fontWeight: 700, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{mxn(report.total_adjustments)}</div>
+                  </div>
+                </div>
+
+                {report.status === "closed" && (
+                  <>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      <button onClick={() => setReconcileType("bank_deposit")}
+                        style={{ padding: "8px 12px", borderRadius: 7, border: `1px solid ${t.nova}55`, background: t.nova + "18", color: t.nova, cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                        <Banknote size={13} /> Depósito banco
+                      </button>
+                      <button onClick={() => setReconcileType("float_next_shift")}
+                        style={{ padding: "8px 12px", borderRadius: 7, border: `1px solid ${t.warn}55`, background: t.warn + "18", color: t.warn, cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                        <ArrowLeftRight size={13} /> Fondo próximo turno
+                      </button>
+                      <button onClick={() => setReconcileType("adjustment")}
+                        style={{ padding: "8px 12px", borderRadius: 7, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                        <AlertTriangle size={13} /> Ajuste con motivo
+                      </button>
+                      <button onClick={() => setEditingNotes(true)}
+                        style={{ padding: "8px 12px", borderRadius: 7, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                        <Receipt size={13} /> Editar notas
+                      </button>
+                    </div>
+                    {(report.cash_remaining_after || 0) <= 0.01 && (
+                      <button disabled={markingReconciled} onClick={doMarkReconciled}
+                        style={{ marginTop: 10, padding: "9px 14px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: markingReconciled ? "wait" : "pointer", fontWeight: 800, fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+                        <Check size={14} /> {markingReconciled ? "Marcando…" : "Marcar como reconciliado"}
+                      </button>
+                    )}
+                  </>
+                )}
+                {report.status === "reconciled" && (
+                  <div style={{ marginTop: 4, fontSize: 11.5, color: t.good, display: "flex", alignItems: "center", gap: 6 }}>
+                    <Check size={13} /> Turno cerrado y reconciliado — todo el efectivo justificado.
+                  </div>
+                )}
+                {flash && (
+                  <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6, background: t.good + "22", color: t.good, fontSize: 11.5, fontWeight: 700 }}>
+                    ✓ {flash}
+                  </div>
+                )}
+              </div>
+
               {Object.keys(report.sales_by_method || {}).length > 0 && (
                 <div style={{ marginTop: 14, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
                   <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Ventas por método</div>
@@ -1289,6 +1404,266 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
               </div>
             </>
           )}
+        </div>
+
+        {report && reconcileType && (
+          <ReconcileMovementModal t={t}
+            sessionId={report.id}
+            type={reconcileType}
+            maxAmount={report.cash_remaining_after}
+            onClose={() => setReconcileType(null)}
+            onDone={async () => {
+              const type = reconcileType;
+              setReconcileType(null);
+              await loadReport(report.id);
+              flashOk(
+                type === "bank_deposit" ? "Depósito bancario registrado"
+                  : type === "float_next_shift" ? "Fondo del próximo turno registrado"
+                  : "Ajuste registrado"
+              );
+            }}
+          />
+        )}
+        {report && editingNotes && (
+          <EditNotesModal t={t}
+            sessionId={report.id}
+            initialOpening={report.opening_notes || ""}
+            initialClosing={report.closing_notes || ""}
+            onClose={() => setEditingNotes(false)}
+            onDone={async () => {
+              setEditingNotes(false);
+              await loadReport(report.id);
+              flashOk("Notas actualizadas");
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+
+  return createPortal(modal, document.body);
+}
+
+
+// ── Modales de reconciliación ────────────────────────────────────────────
+function ReconcileMovementModal({ t, sessionId, type, maxAmount, onClose, onDone }: {
+  t: any;
+  sessionId: number;
+  type: "bank_deposit" | "float_next_shift" | "adjustment";
+  maxAmount: number;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [amount, setAmount] = useState<number>(0);
+  const [notes, setNotes] = useState("");
+  const [bankId, setBankId] = useState<number | null>(null);
+  const [banks, setBanks] = useState<any[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (type === "bank_deposit") {
+      posApi.bankAccountsForPos().then(bs => {
+        setBanks(bs);
+        if (bs.length > 0) setBankId(bs[0].id);
+      }).catch(() => setBanks([]));
+    }
+  }, [type]);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const config = {
+    bank_deposit: {
+      title: "Registrar depósito bancario",
+      hint: "Efectivo llevado al banco tras el cierre. Se registra también en el módulo Finanzas.",
+      color: t.nova, icon: Banknote,
+      requireBank: true, requireNotes: false,
+    },
+    float_next_shift: {
+      title: "Fondo dejado para el siguiente turno",
+      hint: "Efectivo que queda en la caja como fondo del siguiente cajero.",
+      color: t.warn, icon: ArrowLeftRight,
+      requireBank: false, requireNotes: false,
+    },
+    adjustment: {
+      title: "Ajuste con motivo",
+      hint: "Registra un ajuste al efectivo del turno. El motivo queda en la bitácora.",
+      color: t.bad, icon: AlertTriangle,
+      requireBank: false, requireNotes: true,
+    },
+  }[type];
+  const Icon = config.icon;
+
+  const canSave = amount > 0
+    && (type === "adjustment" || amount <= maxAmount + 0.005)
+    && (!config.requireBank || bankId !== null)
+    && (!config.requireNotes || notes.trim().length > 0);
+
+  const submit = async () => {
+    if (!canSave || saving) return;
+    setSaving(true); setErr(null);
+    try {
+      await posApi.reconcileMovement(sessionId, {
+        type,
+        amount,
+        notes: notes || undefined,
+        bank_account_id: type === "bank_deposit" ? bankId! : undefined,
+      });
+      onDone();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || e?.message || "Error");
+    } finally { setSaving(false); }
+  };
+
+  const modal = (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: 460, maxWidth: "100%", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 8, background: config.color + "22", color: config.color, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Icon size={16} />
+          </div>
+          <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>{config.title}</h3>
+        </div>
+        <div style={{ fontSize: 12, color: t.textLo, marginBottom: 16 }}>{config.hint}</div>
+
+        {type !== "adjustment" && (
+          <div style={{ marginBottom: 12, padding: "8px 10px", borderRadius: 6, background: t.panel2, fontSize: 11.5, color: t.textLo }}>
+            Efectivo disponible del turno: <b style={{ color: t.textHi }}>{mxn(maxAmount)}</b>
+          </div>
+        )}
+
+        <label style={{ fontSize: 11.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Monto (MXN)</label>
+        <div style={{ position: "relative", marginTop: 4 }}>
+          <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: t.textLo }}>$</span>
+          <input type="number" step={0.01} min={0.01} value={amount || ""}
+            onChange={e => setAmount(parseFloat(e.target.value) || 0)}
+            autoFocus
+            style={{ width: "100%", padding: "10px 14px 10px 26px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14 }} />
+        </div>
+
+        {config.requireBank && (
+          <div style={{ marginTop: 12 }}>
+            <label style={{ fontSize: 11.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Cuenta bancaria destino</label>
+            {banks.length === 0 ? (
+              <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 6, background: t.bad + "18", color: t.bad, fontSize: 12 }}>
+                No hay cuentas bancarias activas. Crea una en Finanzas antes de registrar el depósito.
+              </div>
+            ) : (
+              <select value={bankId ?? ""} onChange={e => setBankId(Number(e.target.value))}
+                style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14, marginTop: 4 }}>
+                {banks.map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}{b.bank ? ` · ${b.bank}` : ""}{b.account_number ? ` (${b.account_number})` : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+
+        <div style={{ marginTop: 12 }}>
+          <label style={{ fontSize: 11.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>
+            Notas {config.requireNotes ? <span style={{ color: t.bad }}>*</span> : "(opcional)"}
+          </label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
+            placeholder={type === "adjustment" ? "Motivo del ajuste (obligatorio)" : type === "bank_deposit" ? "Ej. Depósito ventanilla BBVA folio 12345" : "Ej. Se dejaron $500 en billetes chicos"}
+            style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, marginTop: 4, fontFamily: "inherit", resize: "vertical" }} />
+        </div>
+
+        {err && (
+          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 6, background: t.bad + "18", color: t.bad, fontSize: 12 }}>
+            {err}
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button onClick={onClose}
+            style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button disabled={!canSave || saving} onClick={submit}
+            style={{ padding: "9px 18px", borderRadius: 8, border: "none",
+              background: canSave ? `linear-gradient(135deg, ${config.color}, ${config.color}dd)` : t.panel3,
+              color: "#fff", cursor: canSave && !saving ? "pointer" : "not-allowed", fontWeight: 800 }}>
+            {saving ? "Guardando…" : "Registrar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(modal, document.body);
+}
+
+
+function EditNotesModal({ t, sessionId, initialOpening, initialClosing, onClose, onDone }: {
+  t: any;
+  sessionId: number;
+  initialOpening: string;
+  initialClosing: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [opening, setOpening] = useState(initialOpening);
+  const [closing, setClosing] = useState(initialClosing);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const submit = async () => {
+    setSaving(true); setErr(null);
+    try {
+      await posApi.updateSessionNotes(sessionId, {
+        opening_notes: opening,
+        closing_notes: closing,
+      });
+      onDone();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error");
+    } finally { setSaving(false); }
+  };
+
+  const modal = (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: 500, maxWidth: "100%", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>Editar notas del turno</h3>
+        <div style={{ marginTop: 14 }}>
+          <label style={{ fontSize: 11.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Notas de apertura</label>
+          <textarea value={opening} onChange={e => setOpening(e.target.value)} rows={2}
+            style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, marginTop: 4, fontFamily: "inherit", resize: "vertical" }} />
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <label style={{ fontSize: 11.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Notas de cierre</label>
+          <textarea value={closing} onChange={e => setClosing(e.target.value)} rows={4}
+            style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, marginTop: 4, fontFamily: "inherit", resize: "vertical" }} />
+        </div>
+        {err && (
+          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 6, background: t.bad + "18", color: t.bad, fontSize: 12 }}>
+            {err}
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button onClick={onClose}
+            style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button disabled={saving} onClick={submit}
+            style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: t.nova, color: "#fff", cursor: saving ? "wait" : "pointer", fontWeight: 800 }}>
+            {saving ? "Guardando…" : "Guardar"}
+          </button>
         </div>
       </div>
     </div>

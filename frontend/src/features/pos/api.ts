@@ -97,7 +97,30 @@ export const posApi = {
     api.get<Blob>(`/pos/session/${sessionId}/report.pdf`, { params: { kind }, responseType: "blob" }).then(r => r.data),
   sessionSales: (sessionId: number) =>
     api.get<SessionSale[]>(`/pos/session/${sessionId}/sales`).then(r => r.data),
+
+  // Reconciliación post-cierre
+  bankAccountsForPos: () =>
+    api.get<PosBankAccount[]>("/pos/bank-accounts").then(r => r.data),
+  reconcileMovement: (sessionId: number, data: {
+    type: "bank_deposit" | "float_next_shift" | "adjustment";
+    amount: number;
+    notes?: string;
+    bank_account_id?: number;
+  }) => api.post<any>(`/pos/session/${sessionId}/reconcile`, data).then(r => r.data),
+  updateSessionNotes: (sessionId: number, data: { closing_notes?: string; opening_notes?: string }) =>
+    api.patch<PreviousSessionReport>(`/pos/session/${sessionId}/notes`, data).then(r => r.data),
+  markReconciled: (sessionId: number) =>
+    api.post<PreviousSessionReport>(`/pos/session/${sessionId}/mark-reconciled`).then(r => r.data),
 };
+
+export interface PosBankAccount {
+  id: number;
+  name: string;
+  bank?: string | null;
+  account_number?: string | null;
+  currency: string;
+  balance: number;
+}
 
 export interface SessionSale {
   order_id: number;
@@ -114,9 +137,13 @@ export interface SessionSale {
   payments: { method: string; amount: number }[];
 }
 
+export type POSTransactionType =
+  | "opening" | "closing" | "sale" | "refund" | "cash_in" | "cash_out"
+  | "bank_deposit" | "float_next_shift" | "adjustment";
+
 export interface POSTransactionRow {
   id: number;
-  type: "opening" | "closing" | "sale" | "refund" | "cash_in" | "cash_out";
+  type: POSTransactionType;
   amount: number;
   payment_method?: string | null;
   order_id?: number | null;
@@ -127,6 +154,10 @@ export interface POSTransactionRow {
 export interface PreviousSessionReport extends POSSession {
   sales_by_method: Record<string, number>;
   transactions: POSTransactionRow[];
+  total_deposited: number;
+  total_float_next: number;
+  total_adjustments: number;
+  cash_remaining_after: number;
 }
 
 // Denominaciones para arqueo

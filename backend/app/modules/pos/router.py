@@ -130,6 +130,87 @@ async def session_sales(session_id: int, db: DB, _: CurrentUser):
     return await service.list_session_sales(db, session_id)
 
 
+# ── Reconciliación post-cierre ────────────────────────────────────────────
+def _can_reconcile(session: dict, user: User) -> bool:
+    """El propio cajero del turno, admin, manager o superuser pueden reconciliar."""
+    if user.is_superuser:
+        return True
+    if (user.role or "user") in ("admin", "manager"):
+        return True
+    return session.get("cashier_id") == user.id
+
+
+@router.get("/bank-accounts")
+async def list_bank_accounts_for_pos(db: DB, _: CurrentUser):
+    """Cuentas bancarias activas para el select de depósito en el UI."""
+    return await service.list_active_bank_accounts(db)
+
+
+@router.post("/session/{session_id}/reconcile")
+async def add_reconciliation(
+    session_id: int,
+    data: schemas.ReconcileMovementRequest,
+    db: DB,
+    current_user: CurrentUser,
+):
+    """Registra depósito bancario, efectivo dejado para el siguiente turno,
+    o un ajuste con motivo, sobre un turno YA CERRADO. Se guarda en la
+    bitácora del turno y, para depósitos, crea el movimiento bancario."""
+    s = await service.get_session(db, session_id)
+    if not s:
+        raise HTTPException(404, "Sesión no encontrada")
+    if not _can_reconcile(s, current_user):
+        raise HTTPException(403, "No autorizado para reconciliar este turno")
+    try:
+        return await service.add_reconciliation_movement(
+            db, session_id=session_id,
+            type=data.type, amount=data.amount, notes=data.notes,
+            bank_account_id=data.bank_account_id,
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.patch("/session/{session_id}/notes")
+async def update_session_notes(
+    session_id: int,
+    data: schemas.UpdateSessionNotesRequest,
+    db: DB,
+    current_user: CurrentUser,
+):
+    """Editar notas de apertura/cierre de un turno (para corregir errores)."""
+    s = await service.get_session(db, session_id)
+    if not s:
+        raise HTTPException(404, "Sesión no encontrada")
+    if not _can_reconcile(s, current_user):
+        raise HTTPException(403, "No autorizado")
+    r = await service.update_session_notes(
+        db, session_id,
+        closing_notes=data.closing_notes,
+        opening_notes=data.opening_notes,
+        user_id=current_user.id,
+    )
+    return r
+
+
+@router.post("/session/{session_id}/mark-reconciled")
+async def mark_reconciled(session_id: int, db: DB, current_user: CurrentUser):
+    """Marca el turno como reconciliado (status = reconciled) una vez que
+    todos los movimientos post-cierre están registrados."""
+    s = await service.get_session(db, session_id)
+    if not s:
+        raise HTTPException(404, "Sesión no encontrada")
+    if not _can_reconcile(s, current_user):
+        raise HTTPException(403, "No autorizado")
+    try:
+        return await service.mark_session_reconciled(
+            db, session_id, user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.post("/session/cash-movement")
 async def cash_movement(data: schemas.CashMovementRequest, db: DB, current_user: CurrentUser):
     try:
