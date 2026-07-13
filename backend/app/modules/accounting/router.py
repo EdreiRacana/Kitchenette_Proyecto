@@ -185,3 +185,36 @@ async def balance_sheet(db: DB, _: CurrentUser, as_of: Optional[datetime] = None
 async def income_statement(db: DB, _: CurrentUser,
                            date_from: Optional[datetime] = None, date_to: Optional[datetime] = None):
     return await service.income_statement(db, date_from=date_from, date_to=date_to)
+
+
+# ── Cierre de período ──────────────────────────────────────────────────
+@router.get("/period-close")
+async def list_closes(db: DB, _: CurrentUser):
+    """Historial de cierres mensuales."""
+    return await service.list_period_closes(db)
+
+
+@router.post("/period-close")
+async def close_month(year: int, month: int, db: DB, current_user: CurrentUser,
+                       notes: Optional[str] = None):
+    """Cierra un mes: bloquea edición de pólizas en ese período y persiste
+    snapshot del trial balance + income statement + balance sheet."""
+    # Requiere admin/manager
+    if not current_user.is_superuser and (current_user.role or "user") not in ("admin", "manager"):
+        raise HTTPException(403, "Se requiere rol admin/manager para cerrar períodos")
+    try:
+        return await service.close_period(db, year, month, user_id=current_user.id, notes=notes)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/period-close/{year}/{month}/reopen")
+async def reopen_month(year: int, month: int, db: DB, current_user: CurrentUser,
+                        reason: Optional[str] = None):
+    """Reabre un mes cerrado. Requiere justificación textual — deja rastro auditable."""
+    if not current_user.is_superuser:
+        raise HTTPException(403, "Sólo el superusuario puede reabrir períodos cerrados")
+    try:
+        return await service.reopen_period(db, year, month, user_id=current_user.id, reason=reason)
+    except ValueError as e:
+        raise HTTPException(400, str(e))

@@ -84,3 +84,26 @@ class JournalLine(Base):
 
     entry = relationship("JournalEntry", back_populates="lines")
     account = relationship("Account")
+
+
+class PeriodClose(Base):
+    """Cierre de período contable. Cuando existe un registro con status=closed
+    para (year, month), las pólizas con date en ese mes se consideran
+    congeladas — no se pueden crear/editar/cancelar sin reabrir el período.
+
+    Guarda snapshot del trial balance y de los totales del estado de resultados
+    en el momento del cierre para auditoría (aunque los datos vivos cambien
+    después por reaperturas)."""
+    __tablename__ = "accounting_period_close"
+
+    id = Column(Integer, primary_key=True, index=True)
+    year = Column(Integer, nullable=False, index=True)
+    month = Column(Integer, nullable=False, index=True)
+    status = Column(String, default="closed", nullable=False)  # closed | reopened
+    closed_at = Column(DateTime(timezone=True), server_default=func.now())
+    reopened_at = Column(DateTime(timezone=True), nullable=True)
+    closed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reopened_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # Snapshot en JSON: {"trial_balance": [...], "income_statement": {...}, "totals": {...}}
+    snapshot_json = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)

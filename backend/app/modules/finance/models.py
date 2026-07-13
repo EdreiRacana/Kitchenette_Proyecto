@@ -47,6 +47,11 @@ class BankTransaction(Base):
     reference = Column(String, nullable=True)
     reconciled = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Conciliación bancaria
+    bank_date = Column(DateTime(timezone=True), nullable=True, index=True)  # fecha del extracto
+    matched_transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
+    source = Column(String, default="manual", nullable=False)  # manual | import:{bank}
+    external_ref = Column(String, nullable=True)  # ID del extracto (para no duplicar)
 
     bank_account = relationship("BankAccount", back_populates="movements")
 
