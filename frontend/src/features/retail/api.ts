@@ -3,6 +3,7 @@ import type {
   RetailChannel, RetailChannelCreate, RetailStore, RetailStoreCreate,
   SellOutReport, SellOutReportCreate, RetailKPIs,
   StoreVelocityRow, SKUVelocityRow, ReplenishmentResponse,
+  ImportSellOutResponse,
 } from "./types";
 
 export const retailApi = {
@@ -50,4 +51,16 @@ export const retailApi = {
     api.get<SKUVelocityRow[]>("/retail/skus-velocity", { params: opts }).then(r => r.data),
   replenishment: (channel_id?: number) =>
     api.get<ReplenishmentResponse>("/retail/replenishment", { params: { channel_id } }).then(r => r.data),
+
+  // Plantilla + import
+  downloadTemplate: (format: "xlsx" | "csv" = "xlsx") =>
+    api.get(`/retail/sellout/template`, { params: { format }, responseType: "blob" })
+      .then(r => r.data as Blob),
+  importSellOut: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post<ImportSellOutResponse>("/retail/sellout/import", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }).then(r => r.data);
+  },
 };

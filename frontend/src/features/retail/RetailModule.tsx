@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import {
   Store, LayoutDashboard, Building2, ShoppingBag, Package, Truck,
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
-  ChevronRight, RefreshCw, Check,
+  ChevronRight, RefreshCw, Check, Download, Upload, FileText,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -16,7 +16,7 @@ import type { CustomerLite } from "../sales/types";
 import type {
   RetailChannel, RetailStore, SellOutReport, RetailKPIs,
   StoreVelocityRow, SKUVelocityRow, ReplenishmentResponse,
-  ReplenishmentSuggestion, WosStatus,
+  ReplenishmentSuggestion, WosStatus, ImportSellOutResponse,
 } from "./types";
 
 type Tokens = any;
@@ -692,6 +692,8 @@ function SellOutView({ t, channels, selectedChannel }: {
   const [reports, setReports] = useState<SellOutReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -711,13 +713,39 @@ function SellOutView({ t, channels, selectedChannel }: {
     load();
   };
 
+  const downloadTemplate = async (format: "xlsx" | "csv") => {
+    setDownloading(true);
+    try {
+      const blob = await retailApi.downloadTemplate(format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `retail_sellout_plantilla.${format}`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "Error al descargar la plantilla");
+    } finally { setDownloading(false); }
+  };
+
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10, flexWrap: "wrap" }}>
         <div style={{ color: t.textLo, fontSize: 13 }}>{reports.length} reportes de sell-out</div>
-        <button disabled={channels.length === 0} onClick={() => setAdding(true)} style={btnPrimary(t)}>
-          <Plus size={14} /> Registrar sell-out
-        </button>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button disabled={downloading} onClick={() => downloadTemplate("xlsx")} style={btnGhost(t)} title="Descargar plantilla Excel con hojas de referencia">
+            <FileText size={13} /> {downloading ? "…" : "Plantilla Excel"}
+          </button>
+          <button disabled={downloading} onClick={() => downloadTemplate("csv")} style={btnGhost(t)} title="Descargar plantilla CSV mínima">
+            <Download size={13} /> CSV
+          </button>
+          <button disabled={channels.length === 0} onClick={() => setImporting(true)} style={{ ...btnGhost(t), background: t.nova + "18", borderColor: t.nova + "55", color: t.nova }}>
+            <Upload size={13} /> Importar archivo
+          </button>
+          <button disabled={channels.length === 0} onClick={() => setAdding(true)} style={btnPrimary(t)}>
+            <Plus size={14} /> Registrar sell-out
+          </button>
+        </div>
       </div>
 
       {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
@@ -778,6 +806,152 @@ function SellOutView({ t, channels, selectedChannel }: {
           onClose={() => setAdding(false)}
           onSaved={() => { setAdding(false); load(); }} />
       )}
+      {importing && (
+        <ImportSellOutModal t={t}
+          onClose={() => setImporting(false)}
+          onDone={() => { setImporting(false); load(); }} />
+      )}
+    </div>
+  );
+}
+
+
+function ImportSellOutModal({ t, onClose, onDone }: {
+  t: Tokens; onClose: () => void; onDone: () => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [result, setResult] = useState<ImportSellOutResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const handleFile = (f: File) => {
+    const ok = /\.(xlsx|xlsm|csv)$/i.test(f.name);
+    if (!ok) { setErr("Solo se acepta .xlsx, .xlsm o .csv"); return; }
+    setErr(null);
+    setFile(f);
+  };
+
+  const submit = async () => {
+    if (!file) return;
+    setUploading(true); setErr(null); setResult(null);
+    try {
+      const r = await retailApi.importSellOut(file);
+      setResult(r);
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || e?.message || "Error al importar");
+    } finally { setUploading(false); }
+  };
+
+  const done = () => { onDone(); };
+
+  const modal = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 620, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 8, background: t.nova + "22", color: t.nova, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Upload size={16} />
+          </div>
+          <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>Importar sell-out desde archivo</h3>
+        </div>
+        <p style={{ color: t.textLo, fontSize: 12, marginTop: 8 }}>
+          Sube el archivo Excel o CSV siguiendo la plantilla. Se matchea la cadena por código o nombre, la tienda por código externo/interno o nombre, y el SKU contra tu catálogo. Filas repetidas (misma tienda + SKU + periodo) se actualizan.
+        </p>
+
+        {!result && (
+          <>
+            <label
+              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={e => {
+                e.preventDefault(); setDragOver(false);
+                const f = e.dataTransfer.files?.[0];
+                if (f) handleFile(f);
+              }}
+              style={{
+                display: "block", marginTop: 14, padding: "30px 20px",
+                border: `2px dashed ${dragOver ? t.nova : t.border}`,
+                borderRadius: 12, background: dragOver ? t.nova + "12" : t.panel2,
+                textAlign: "center", cursor: "pointer",
+                transition: "background .15s, border-color .15s",
+              }}>
+              <input type="file" accept=".xlsx,.xlsm,.csv" style={{ display: "none" }}
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+              <Upload size={26} color={dragOver ? t.nova : t.textLo} />
+              <div style={{ marginTop: 8, color: t.textHi, fontSize: 13.5, fontWeight: 600 }}>
+                {file ? file.name : "Arrastra el archivo aquí o haz clic para seleccionar"}
+              </div>
+              <div style={{ marginTop: 4, color: t.textLo, fontSize: 11 }}>
+                .xlsx, .xlsm o .csv (usa la plantilla)
+              </div>
+            </label>
+
+            {err && <div style={errStyle(t)}>{err}</div>}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+              <button onClick={onClose} style={btnGhost(t)}>Cancelar</button>
+              <button disabled={!file || uploading} onClick={submit} style={btnPrimary(t)}>
+                {uploading ? "Importando…" : "Importar"}
+              </button>
+            </div>
+          </>
+        )}
+
+        {result && (
+          <>
+            <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: t.panel2, border: `1px solid ${t.border}` }}>
+              <div style={{ fontSize: 13, color: t.textHi, fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                <Check size={16} color={t.good} /> Importación terminada
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, fontSize: 12 }}>
+                <StatMini t={t} label="Filas" value={result.total_rows.toString()} />
+                <StatMini t={t} label="Creadas" value={result.created.toString()} color={t.good} />
+                <StatMini t={t} label="Actualizadas" value={result.updated.toString()} color={t.nova} />
+                <StatMini t={t} label="Omitidas" value={result.skipped.toString()} color={t.textLo} />
+              </div>
+            </div>
+
+            {result.errors.length > 0 && (
+              <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: t.bad + "12", border: `1px solid ${t.bad}55` }}>
+                <div style={{ color: t.bad, fontWeight: 700, fontSize: 12.5, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                  <AlertTriangle size={13} /> {result.errors.length} fila{result.errors.length !== 1 ? "s" : ""} con problema
+                </div>
+                <div style={{ maxHeight: 220, overflowY: "auto", fontSize: 11.5, display: "flex", flexDirection: "column", gap: 4 }}>
+                  {result.errors.map((e, i) => (
+                    <div key={i} style={{ padding: "5px 8px", borderRadius: 5, background: t.panel3, color: t.textMid }}>
+                      <b style={{ color: t.textHi }}>Fila {e.row}:</b> {e.reason}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+              <button onClick={done} style={btnPrimary(t)}>
+                Listo
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  return createPortal(modal, document.body);
+}
+
+
+function StatMini({ t, label, value, color }: { t: Tokens; label: string; value: string; color?: string }) {
+  return (
+    <div style={{ padding: 8, background: t.panel, borderRadius: 6 }}>
+      <div style={{ fontSize: 10, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: 16, fontWeight: 800, color: color || t.textHi, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
     </div>
   );
 }

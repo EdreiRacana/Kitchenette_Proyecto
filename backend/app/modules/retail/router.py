@@ -1,10 +1,12 @@
 """REST API del módulo Retail Sell-out Analytics."""
 from __future__ import annotations
 
+import io
 from datetime import datetime
 from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
@@ -12,6 +14,8 @@ from app.db.session import get_db
 from app.modules.auth.models import User
 
 from . import schemas, service
+
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 router = APIRouter()
 
@@ -213,6 +217,45 @@ async def skus_velocity(db: DB, _: CurrentUser,
                           channel_id: Optional[int] = Query(None),
                           limit: int = Query(100, ge=1, le=500)):
     return await service.skus_velocity(db, channel_id=channel_id, limit=limit)
+
+
+# ── Plantilla + import ──────────────────────────────────────────────────
+
+@router.get("/sellout/template")
+async def download_sellout_template(
+    db: DB, _: CurrentUser,
+    format: str = Query("xlsx", pattern="^(xlsx|csv)$"),
+):
+    if format == "csv":
+        content = service.build_sellout_template_csv()
+        return StreamingResponse(
+            io.BytesIO(content),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="retail_sellout_plantilla.csv"'},
+        )
+    content = await service.build_sellout_template_xlsx(db)
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=_XLSX_MIME,
+        headers={"Content-Disposition": 'attachment; filename="retail_sellout_plantilla.xlsx"'},
+    )
+
+
+@router.post("/sellout/import", response_model=schemas.ImportSellOutResponse)
+async def import_sellout(
+    db: DB, current_user: CurrentUser,
+    file: UploadFile = File(...),
+):
+    """Ingesta bulk de sell-out desde xlsx o csv siguiendo la plantilla."""
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Archivo vacío")
+    try:
+        return await service.import_sellout(
+            db, content, file.filename or "", user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 # ── Replenishment engine ────────────────────────────────────────────────

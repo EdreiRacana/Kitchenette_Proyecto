@@ -229,3 +229,19 @@ class StorePerformanceOut(BaseModel):
     latest_on_hand: int
     wos_weeks: float
     status: str
+
+
+# ── Import bulk ─────────────────────────────────────────────────────────
+
+class ImportRowError(BaseModel):
+    row: int
+    reason: str
+    raw: Optional[dict] = None
+
+
+class ImportSellOutResponse(BaseModel):
+    total_rows: int
+    created: int
+    updated: int
+    skipped: int
+    errors: List[ImportRowError] = Field(default_factory=list)

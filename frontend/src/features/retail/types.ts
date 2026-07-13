@@ -149,3 +149,17 @@ export interface ReplenishmentResponse {
   high_count: number;
   normal_count: number;
 }
+
+export interface ImportRowError {
+  row: number;
+  reason: string;
+  raw?: Record<string, any> | null;
+}
+
+export interface ImportSellOutResponse {
+  total_rows: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: ImportRowError[];
+}
