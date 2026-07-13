@@ -9,7 +9,7 @@ import {
   FileText, FileWarning, Mail, Bell, Maximize2, X, TrendingDown, Activity,
   Zap, Award, Eye, Check, IdCard, Settings, Plus, Search, Globe, Sun, Moon,
   Lock, LogOut, User as UserIcon, Menu, UserCircle2, ShoppingBag, Box,
-  Truck, ClipboardList, BookText, Store, HelpCircle, Sparkles,
+  Truck, ClipboardList, BookText, Store, HelpCircle, Sparkles, Building2,
 } from "lucide-react";
 import SalesCRM from "./features/sales/SalesCRM";
 import CustomersModule from "./features/customers/CustomersModule";
@@ -21,6 +21,7 @@ import HRModule from "./features/hr/HRModule";
 import BIModule from "./features/bi/BIModule";
 import ConfigModule from "./features/config/ConfigModule";
 import ForecastModule from "./features/forecast/ForecastModule";
+import RetailModule from "./features/retail/RetailModule";
 import POSModule from "./features/pos/POSModule";
 import api from "./services/api";
 import { useServerRecovery } from "./hooks/useServerRecovery";
@@ -28,7 +29,7 @@ import configService from "./features/config/service";
 
 // Mapa de id de módulo del menú → clave de permiso del backend (rbac.py).
 const NAV_PERM = {
-  dashboard: "dashboard", ventas: "sales", pos: "sales", forecast: "sales", clientes: "customers", inventario: "inventory",
+  dashboard: "dashboard", ventas: "sales", pos: "sales", forecast: "sales", retail: "sales", clientes: "customers", inventario: "inventory",
   finanzas: "finance", contabilidad: "accounting", rh: "hr", reportes: "reports", config: "config",
 };
 import { salesApi } from "./features/sales/api";
@@ -78,7 +79,7 @@ const STRINGS = {
   es: {
     monShort: MON_ES,
     cal: { months: ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"], dows: ["L", "M", "X", "J", "V", "S", "D"] },
-    nav: { dashboard: "Tablero", ventas: "Ventas / CRM", pos: "Punto de venta", forecast: "Forecast", clientes: "Clientes", inventario: "Inventario", finanzas: "Finanzas", contabilidad: "Contabilidad", rh: "RH / Nómina", reportes: "Reportes / BI", config: "Configuración" },
+    nav: { dashboard: "Tablero", ventas: "Ventas / CRM", pos: "Punto de venta", forecast: "Forecast", retail: "Retail", clientes: "Clientes", inventario: "Inventario", finanzas: "Finanzas", contabilidad: "Contabilidad", rh: "RH / Nómina", reportes: "Reportes / BI", config: "Configuración" },
     modules: "MÓDULOS", search: "Nexus — buscar en todo el sistema…", role: "Administrador",
     api: "API", soonTag: "pronto",
     secure: "Sistema Seguro",
@@ -112,7 +113,7 @@ const STRINGS = {
   en: {
     monShort: MON_EN,
     cal: { months: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"], dows: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] },
-    nav: { dashboard: "Dashboard", ventas: "Sales / CRM", pos: "Point of Sale", forecast: "Forecast", clientes: "Customers", inventario: "Inventory", finanzas: "Finance", contabilidad: "Accounting", rh: "HR / Payroll", reportes: "Reports / BI", config: "Settings" },
+    nav: { dashboard: "Dashboard", ventas: "Sales / CRM", pos: "Point of Sale", forecast: "Forecast", retail: "Retail", clientes: "Customers", inventario: "Inventory", finanzas: "Finance", contabilidad: "Accounting", rh: "HR / Payroll", reportes: "Reports / BI", config: "Settings" },
     modules: "MODULES", search: "Nexus — search the whole system…", role: "Administrator",
     api: "API", soonTag: "soon",
     secure: "Secure System",
@@ -382,6 +383,7 @@ const MODULES = [
   { id: "dashboard", icon: LayoutDashboard }, { id: "ventas", icon: ShoppingCart },
   { id: "pos", icon: Store, live: true },
   { id: "forecast", icon: Target, live: true },
+  { id: "retail", icon: Building2, live: true },
   { id: "clientes", icon: Users }, { id: "inventario", icon: Package, live: true },
   { id: "finanzas", icon: Wallet }, { id: "contabilidad", icon: BookText, live: true },
   { id: "rh", icon: IdCard },
@@ -2160,6 +2162,7 @@ export default function App() {
     ventas: <SalesCRM t={t} s={s} initialQuery={qFor("ventas")} />,
     pos: <POSModule t={t} />,
     forecast: <ForecastModule t={t} s={s} />,
+    retail: <RetailModule t={t} />,
     clientes: <CustomersModule t={t} s={s} initialQuery={qFor("clientes")} />,
     finanzas: <FinanceModule t={t} s={s} />,
     contabilidad: <AccountingModule t={t} s={s} />,

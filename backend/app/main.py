@@ -86,6 +86,7 @@ from app.modules.accounting import models as accounting_models
 from app.modules.core_config import models as config_models
 from app.modules.hr import models as hr_models
 from app.modules.forecast import models as forecast_models
+from app.modules.retail import models as retail_models
 
 
 @app.on_event("startup")
