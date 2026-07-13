@@ -101,3 +101,27 @@ class POSSessionReport(POSSessionOut):
     """Reporte detallado del turno con ventas por método de pago."""
     sales_by_method: Dict[str, float]  # {"cash": 12500, "card": 3200}
     transactions: List[dict]
+    # Reconciliación post-cierre (derivados dinámicos)
+    total_deposited: float = 0.0        # efectivo llevado al banco tras cerrar
+    total_float_next: float = 0.0       # efectivo dejado para el siguiente turno
+    total_adjustments: float = 0.0      # ajustes registrados con motivo
+    cash_remaining_after: float = 0.0   # actual_cash - deposits - floats
+
+
+class ReconcileMovementRequest(BaseModel):
+    """Movimiento post-cierre para reconciliar un turno ya cerrado.
+
+    Tipos válidos:
+      • bank_deposit    → efectivo llevado al banco (crea BankTransaction).
+      • float_next_shift→ efectivo dejado como fondo del siguiente turno.
+      • adjustment      → ajuste con motivo (sobrante/faltante justificado).
+    """
+    type: str  # bank_deposit | float_next_shift | adjustment
+    amount: float
+    notes: Optional[str] = None
+    bank_account_id: Optional[int] = None  # requerido si type=bank_deposit
+
+
+class UpdateSessionNotesRequest(BaseModel):
+    closing_notes: Optional[str] = None
+    opening_notes: Optional[str] = None

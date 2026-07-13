@@ -245,6 +245,18 @@ async def get_session_report(db: AsyncSession, session_id: int) -> Optional[dict
         "payment_method": t.payment_method, "order_id": t.order_id,
         "notes": t.notes, "created_at": t.created_at,
     } for t in txs]
+
+    # Reconciliación post-cierre — derivados dinámicos
+    total_deposited = round(sum(t.amount for t in txs if t.type == "bank_deposit"), 2)
+    total_float_next = round(sum(t.amount for t in txs if t.type == "float_next_shift"), 2)
+    total_adjustments = round(sum(t.amount for t in txs if t.type == "adjustment"), 2)
+    base["total_deposited"] = total_deposited
+    base["total_float_next"] = total_float_next
+    base["total_adjustments"] = total_adjustments
+    base["cash_remaining_after"] = round(
+        (base.get("actual_cash") or 0.0) - total_deposited - total_float_next,
+        2,
+    )
     return base
 
 
@@ -585,3 +597,166 @@ async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List
     )
     res = await db.execute(stmt)
     return [_serialize(v, p) for v, p in res.all()]
+
+
+# ── Reconciliación post-cierre ────────────────────────────────────────────
+# El variance del cierre queda inmutable (auditoría del arqueo real). Los
+# movimientos post-cierre solo describen a dónde fue el efectivo: banco,
+# fondo del siguiente turno o ajuste con motivo. El total no puede exceder
+# el efectivo contado (actual_cash) menos lo ya reconciliado.
+
+_RECONCILE_TYPES = ("bank_deposit", "float_next_shift", "adjustment")
+
+
+async def add_reconciliation_movement(
+    db: AsyncSession,
+    session_id: int,
+    type: str,
+    amount: float,
+    notes: Optional[str] = None,
+    bank_account_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+) -> dict:
+    """Registra un movimiento post-cierre. Recalcula totales derivados."""
+    if type not in _RECONCILE_TYPES:
+        raise ValueError(f"Tipo inválido. Debe ser uno de: {', '.join(_RECONCILE_TYPES)}")
+    if amount is None or amount <= 0:
+        raise ValueError("El monto debe ser positivo")
+
+    res = await db.execute(select(pos_models.POSSession).where(pos_models.POSSession.id == session_id))
+    s = res.scalars().first()
+    if not s:
+        raise ValueError("Sesión no encontrada")
+    if s.status not in ("closed", "reconciled"):
+        raise ValueError(
+            "La sesión debe estar cerrada para reconciliar. "
+            f"Estado actual: {s.status}"
+        )
+
+    # Validar que no reste más efectivo del disponible (para depósitos/floats)
+    if type in ("bank_deposit", "float_next_shift"):
+        res_prev = await db.execute(select(pos_models.POSTransaction).where(
+            pos_models.POSTransaction.session_id == session_id,
+            pos_models.POSTransaction.type.in_(("bank_deposit", "float_next_shift")),
+        ))
+        prev_out = sum(t.amount for t in res_prev.scalars().all())
+        available = round((s.actual_cash or 0.0) - prev_out, 2)
+        if amount > available + 0.005:
+            raise ValueError(
+                f"Monto excede el efectivo disponible del turno "
+                f"(${available:,.2f}). Ya reconciliado: ${prev_out:,.2f}."
+            )
+
+    # Depósito → crear BankTransaction en la cuenta seleccionada
+    bank_tx_id = None
+    if type == "bank_deposit":
+        if bank_account_id is None:
+            raise ValueError("bank_account_id es requerido para bank_deposit")
+        from app.modules.finance import models as fin_models
+        acc = await db.get(fin_models.BankAccount, bank_account_id)
+        if not acc:
+            raise ValueError("Cuenta bancaria no encontrada")
+        if not acc.is_active:
+            raise ValueError("La cuenta bancaria está inactiva")
+        bank_tx = fin_models.BankTransaction(
+            bank_account_id=bank_account_id,
+            type="deposit",
+            amount=amount,
+            description=(notes or f"Depósito turno POS #{session_id}"),
+            reference=f"pos_session:{session_id}",
+            reconciled=False,
+            source="pos",
+        )
+        db.add(bank_tx)
+        acc.balance = round((acc.balance or 0.0) + amount, 2)
+        await db.flush()
+        bank_tx_id = bank_tx.id
+
+    tx = pos_models.POSTransaction(
+        session_id=session_id,
+        type=type,
+        amount=amount,
+        payment_method="cash",
+        notes=notes,
+    )
+    db.add(tx)
+    await db.commit()
+    await db.refresh(tx)
+
+    action_map = {
+        "bank_deposit": "POS_BANK_DEPOSIT",
+        "float_next_shift": "POS_FLOAT_NEXT_SHIFT",
+        "adjustment": "POS_ADJUSTMENT",
+    }
+    await _log(
+        db, user_id, action_map[type],
+        f"{type} ${amount:,.2f} en turno {session_id}",
+        {
+            "session_id": session_id, "amount": amount,
+            "bank_account_id": bank_account_id, "bank_tx_id": bank_tx_id,
+            "notes": notes,
+        },
+    )
+    return {
+        "id": tx.id, "type": tx.type, "amount": tx.amount,
+        "notes": tx.notes, "created_at": tx.created_at,
+        "bank_transaction_id": bank_tx_id,
+    }
+
+
+async def update_session_notes(
+    db: AsyncSession, session_id: int,
+    closing_notes: Optional[str] = None,
+    opening_notes: Optional[str] = None,
+    user_id: Optional[int] = None,
+) -> Optional[dict]:
+    res = await db.execute(select(pos_models.POSSession).where(pos_models.POSSession.id == session_id))
+    s = res.scalars().first()
+    if not s:
+        return None
+    if closing_notes is not None:
+        s.closing_notes = closing_notes
+    if opening_notes is not None:
+        s.opening_notes = opening_notes
+    await db.commit()
+    await _log(db, user_id, "POS_EDIT_SESSION_NOTES",
+                f"Notas actualizadas del turno {session_id}",
+                {"session_id": session_id})
+    return await get_session_report(db, session_id)
+
+
+async def mark_session_reconciled(
+    db: AsyncSession, session_id: int, user_id: Optional[int] = None,
+) -> Optional[dict]:
+    res = await db.execute(select(pos_models.POSSession).where(pos_models.POSSession.id == session_id))
+    s = res.scalars().first()
+    if not s:
+        return None
+    if s.status not in ("closed", "reconciled"):
+        raise ValueError(
+            f"Sólo se pueden reconciliar sesiones cerradas (estado actual: {s.status})"
+        )
+    s.status = "reconciled"
+    await db.commit()
+    await _log(db, user_id, "POS_MARK_RECONCILED",
+                f"Turno {session_id} marcado como reconciliado",
+                {"session_id": session_id})
+    return await get_session_report(db, session_id)
+
+
+async def list_active_bank_accounts(db: AsyncSession) -> List[dict]:
+    """Selects list para el select de depósito en el UI."""
+    from app.modules.finance import models as fin_models
+    res = await db.execute(
+        select(fin_models.BankAccount)
+        .where(fin_models.BankAccount.is_active.is_(True))
+        .order_by(fin_models.BankAccount.name)
+    )
+    return [
+        {
+            "id": a.id, "name": a.name, "bank": a.bank,
+            "account_number": a.account_number, "currency": a.currency,
+            "balance": a.balance,
+        }
+        for a in res.scalars().all()
+    ]
