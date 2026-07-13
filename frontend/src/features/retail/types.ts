@@ -163,3 +163,48 @@ export interface ImportSellOutResponse {
   skipped: number;
   errors: ImportRowError[];
 }
+
+export type AlertType =
+  | "stockout" | "stockout_imminent" | "overstock" | "no_movement" | "sell_through_low";
+export type AlertSeverity = "urgent" | "high" | "medium" | "low";
+export type AlertStatus = "open" | "acknowledged" | "resolved" | "dismissed";
+
+export interface RetailAlert {
+  id: number;
+  channel_id: number;
+  channel_name?: string | null;
+  store_id: number;
+  store_name?: string | null;
+  variant_id?: number | null;
+  product_name?: string | null;
+  sku?: string | null;
+  alert_type: AlertType;
+  severity: AlertSeverity;
+  message: string;
+  wos_snapshot?: number | null;
+  on_hand_snapshot?: number | null;
+  weekly_velocity_snapshot?: number | null;
+  status: AlertStatus;
+  acknowledged_at?: string | null;
+  acknowledged_by_user_id?: number | null;
+  resolved_at?: string | null;
+  resolved_by_user_id?: number | null;
+  resolution_notes?: string | null;
+  created_at?: string | null;
+}
+
+export interface EvaluateAlertsResponse {
+  created: number;
+  auto_resolved: number;
+  total_open: number;
+  urgent_open: number;
+}
+
+export interface AlertsSummary {
+  open: number;
+  urgent: number;
+  high: number;
+  medium: number;
+  low: number;
+  acknowledged: number;
+}

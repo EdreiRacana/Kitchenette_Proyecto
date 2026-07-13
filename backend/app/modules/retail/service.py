@@ -304,6 +304,10 @@ async def create_sellout(db: AsyncSession, data: schemas.SellOutReportCreate,
     )
     await _fill_variant_snapshot(db, r)
     db.add(r); await db.commit(); await db.refresh(r)
+    try:
+        await evaluate_alerts(db)
+    except Exception:
+        pass
     return r
 
 
@@ -1225,7 +1229,506 @@ async def import_sellout(
             created += 1
 
     await db.commit()
+
+    # Auto-evalúa alertas para las cadenas tocadas
+    try:
+        touched_channels = set()
+        # (Reutilizamos hint indirectamente; podríamos recorrer created rows, pero
+        # basta con evaluar todo para simplicidad y consistencia global.)
+        await evaluate_alerts(db)
+    except Exception:
+        pass
+
     return schemas.ImportSellOutResponse(
         total_rows=len(rows), created=created, updated=updated,
         skipped=skipped, errors=errors,
+    )
+
+
+# ── Alerts engine ───────────────────────────────────────────────────────
+
+# Cuánto tiempo debe pasar para poder crear una alerta nueva del mismo
+# tipo+store+variant tras cerrarse la anterior. Evita ruido de reapertura.
+_ALERT_REOPEN_COOLDOWN = timedelta(hours=6)
+
+
+def _severity_for_wos(wos: float, critical: float, target: float) -> str:
+    if wos <= 0:
+        return "urgent"
+    if wos < critical:
+        return "urgent"
+    if wos < critical * 1.5 or wos < target * 0.5:
+        return "high"
+    return "medium"
+
+
+def _is_wos_healthy(wos: float, critical: float, target: float, overstock: float) -> bool:
+    return critical <= wos <= overstock
+
+
+async def _summarize_alerts(db: AsyncSession, channel_id: Optional[int] = None
+                              ) -> Tuple[int, int]:
+    q = select(func.count(models.RetailAlert.id)).where(
+        models.RetailAlert.status.in_(("open", "acknowledged"))
+    )
+    if channel_id is not None:
+        q = q.where(models.RetailAlert.channel_id == channel_id)
+    total_open = int((await db.execute(q)).scalar() or 0)
+
+    q2 = q.where(models.RetailAlert.severity == "urgent")
+    urgent = int((await db.execute(q2)).scalar() or 0)
+    return total_open, urgent
+
+
+async def evaluate_alerts(
+    db: AsyncSession, channel_id: Optional[int] = None,
+) -> schemas.EvaluateAlertsResponse:
+    """Recorre stores × variants con sell-out reciente y genera / auto-resuelve
+    alertas según las reglas de la cadena. Idempotente.
+    """
+    now = datetime.now(timezone.utc)
+    velocity_from = now - timedelta(days=VELOCITY_WINDOW_DAYS)
+
+    # Cadenas a considerar
+    ch_stmt = select(models.RetailChannel).where(
+        models.RetailChannel.alerts_enabled.is_(True),
+        models.RetailChannel.is_active.is_(True),
+    )
+    if channel_id is not None:
+        ch_stmt = ch_stmt.where(models.RetailChannel.id == channel_id)
+    channels = list((await db.execute(ch_stmt)).scalars().all())
+    if not channels:
+        total_open, urgent = await _summarize_alerts(db, channel_id)
+        return schemas.EvaluateAlertsResponse(
+            created=0, auto_resolved=0, total_open=total_open, urgent_open=urgent,
+        )
+
+    channel_ids = [c.id for c in channels]
+
+    # Combos (store, variant) con sell-out en ventana + último período por combo
+    combos_stmt = (
+        select(
+            models.RetailStore.id.label("store_id"),
+            models.RetailStore.name.label("store_name"),
+            models.RetailStore.channel_id.label("channel_id"),
+            models.SellOutReport.variant_id,
+            models.SellOutReport.product_name,
+            models.SellOutReport.sku,
+            func.max(models.SellOutReport.period_start).label("last_period"),
+            func.max(models.SellOutReport.period_end).label("last_period_end"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units_window"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .where(
+            models.RetailStore.channel_id.in_(channel_ids),
+            models.RetailStore.is_active.is_(True),
+        )
+        .group_by(
+            models.RetailStore.id, models.RetailStore.name,
+            models.RetailStore.channel_id,
+            models.SellOutReport.variant_id,
+            models.SellOutReport.product_name,
+            models.SellOutReport.sku,
+        )
+    )
+    combos = (await db.execute(combos_stmt)).all()
+
+    # Para el sell-through: sell-out por cadena en ventana
+    sell_out_by_channel: Dict[int, int] = {}
+    for r in combos:
+        # Únicamente sumamos ventas en la ventana
+        # (Se recalcula abajo por precisión sobre period_start)
+        pass
+
+    from app.modules.sales import models as sales_models
+
+    sellout_agg = (await db.execute(
+        select(
+            models.RetailStore.channel_id,
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .where(models.SellOutReport.period_start >= velocity_from,
+                models.RetailStore.channel_id.in_(channel_ids))
+        .group_by(models.RetailStore.channel_id)
+    )).all()
+    for cid, u in sellout_agg:
+        sell_out_by_channel[int(cid)] = int(u or 0)
+
+    # Sell-in por cadena (con customer vinculado)
+    sell_in_by_channel: Dict[int, int] = {ch.id: 0 for ch in channels}
+    cust_map = {ch.id: ch.customer_id for ch in channels if ch.customer_id}
+    if cust_map:
+        cust_ids = list(cust_map.values())
+        si_rows = (await db.execute(
+            select(
+                sales_models.Order.customer_id,
+                func.coalesce(func.sum(sales_models.OrderItem.quantity), 0),
+            )
+            .join(sales_models.OrderItem, sales_models.OrderItem.order_id == sales_models.Order.id)
+            .where(
+                sales_models.Order.customer_id.in_(cust_ids),
+                sales_models.Order.kind == "order",
+                sales_models.Order.status != "cancelled",
+                sales_models.Order.created_at >= velocity_from,
+            )
+            .group_by(sales_models.Order.customer_id)
+        )).all()
+        cust_to_ch = {v: k for k, v in cust_map.items()}
+        for cust_id, u in si_rows:
+            ch_id = cust_to_ch.get(int(cust_id))
+            if ch_id:
+                sell_in_by_channel[ch_id] = int(u or 0)
+
+    # Alertas abiertas actuales — para dedupe y auto-resolve
+    open_alerts_rows = (await db.execute(
+        select(models.RetailAlert).where(
+            models.RetailAlert.channel_id.in_(channel_ids),
+            models.RetailAlert.status.in_(("open", "acknowledged")),
+        )
+    )).scalars().all()
+    open_by_key: Dict[Tuple[str, int, Optional[int]], models.RetailAlert] = {}
+    for a in open_alerts_rows:
+        open_by_key[(a.alert_type, a.store_id, a.variant_id)] = a
+
+    # Índice por canal (config)
+    ch_by_id: Dict[int, models.RetailChannel] = {c.id: c for c in channels}
+
+    created = 0
+    auto_resolved = 0
+    seen_keys: set = set()
+    now_dt = now
+
+    async def _upsert(
+        alert_type: str, store_id: int, variant_id: Optional[int],
+        channel_id_val: int, message: str, severity: str,
+        wos: Optional[float], on_hand: Optional[int], velocity: Optional[float],
+        store_name: Optional[str], product_name: Optional[str], sku: Optional[str],
+    ):
+        nonlocal created
+        key = (alert_type, store_id, variant_id)
+        seen_keys.add(key)
+        existing = open_by_key.get(key)
+        if existing:
+            # Update snapshot para reflejar el estado más reciente
+            existing.severity = severity
+            existing.message = message
+            existing.wos_snapshot = wos
+            existing.on_hand_snapshot = on_hand
+            existing.weekly_velocity_snapshot = velocity
+            existing.store_name = store_name
+            existing.product_name = product_name
+            existing.sku = sku
+            return
+        # Verifica cooldown: no reabrir si acabamos de cerrar la misma
+        prev_stmt = (
+            select(models.RetailAlert)
+            .where(
+                models.RetailAlert.alert_type == alert_type,
+                models.RetailAlert.store_id == store_id,
+                models.RetailAlert.variant_id == variant_id,
+                models.RetailAlert.status.in_(("resolved", "dismissed")),
+                models.RetailAlert.resolved_at.isnot(None),
+            )
+            .order_by(models.RetailAlert.resolved_at.desc())
+            .limit(1)
+        )
+        prev = (await db.execute(prev_stmt)).scalars().first()
+        if prev and prev.resolved_at and (now_dt - prev.resolved_at) < _ALERT_REOPEN_COOLDOWN:
+            return
+        a = models.RetailAlert(
+            channel_id=channel_id_val, store_id=store_id, variant_id=variant_id,
+            alert_type=alert_type, severity=severity, message=message,
+            wos_snapshot=wos, on_hand_snapshot=on_hand,
+            weekly_velocity_snapshot=velocity,
+            store_name=store_name, product_name=product_name, sku=sku,
+            status="open",
+        )
+        db.add(a)
+        created += 1
+
+    # Evaluación combo por combo
+    for r in combos:
+        ch = ch_by_id.get(int(r.channel_id))
+        if ch is None:
+            continue
+        # On-hand actual: suma del último período de ese (store, variant)
+        on_hand = int((await db.execute(
+            select(func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0))
+            .where(
+                models.SellOutReport.store_id == r.store_id,
+                models.SellOutReport.variant_id == r.variant_id,
+                models.SellOutReport.period_start == r.last_period,
+            )
+        )).scalar() or 0)
+
+        # Solo la ventana de velocidad
+        units_win_row = (await db.execute(
+            select(func.coalesce(func.sum(models.SellOutReport.units_sold), 0))
+            .where(
+                models.SellOutReport.store_id == r.store_id,
+                models.SellOutReport.variant_id == r.variant_id,
+                models.SellOutReport.period_start >= velocity_from,
+            )
+        )).scalar() or 0
+        units_win = int(units_win_row)
+        velocity = units_win / (VELOCITY_WINDOW_DAYS / 7.0) if units_win > 0 else 0.0
+
+        wos = (on_hand / velocity) if velocity > 0 else WOS_INFINITY
+
+        product_name = r.product_name
+        sku = r.sku
+        store_name = r.store_name
+
+        # Regla stockout puro
+        if on_hand == 0 and velocity > 0:
+            await _upsert(
+                "stockout", r.store_id, r.variant_id, ch.id,
+                message=(f"Sin stock en {store_name} · {product_name or sku or 'SKU'}. "
+                        f"Velocidad {velocity:.1f} u/sem — venta detenida."),
+                severity="urgent",
+                wos=0.0, on_hand=0, velocity=velocity,
+                store_name=store_name, product_name=product_name, sku=sku,
+            )
+        # Regla stockout_imminent
+        elif velocity > 0 and wos < ch.critical_wos_weeks:
+            sev = _severity_for_wos(wos, ch.critical_wos_weeks, ch.target_wos_weeks)
+            await _upsert(
+                "stockout_imminent", r.store_id, r.variant_id, ch.id,
+                message=(f"WOS crítico {wos:.1f} sem en {store_name} · "
+                        f"{product_name or sku or 'SKU'} (mín {ch.critical_wos_weeks:.0f})."),
+                severity=sev,
+                wos=round(wos, 2), on_hand=on_hand, velocity=velocity,
+                store_name=store_name, product_name=product_name, sku=sku,
+            )
+        # Regla overstock
+        if velocity > 0 and wos > ch.overstock_wos_weeks and wos < WOS_INFINITY:
+            await _upsert(
+                "overstock", r.store_id, r.variant_id, ch.id,
+                message=(f"Sobreinventario {wos:.1f} sem en {store_name} · "
+                        f"{product_name or sku or 'SKU'} (máx {ch.overstock_wos_weeks:.0f})."),
+                severity="medium",
+                wos=round(wos, 2), on_hand=on_hand, velocity=velocity,
+                store_name=store_name, product_name=product_name, sku=sku,
+            )
+        # Regla no_movement (con on_hand > 0 y ventana sin ventas)
+        no_move_days = int(ch.no_movement_days or 21)
+        no_move_threshold = now - timedelta(days=no_move_days)
+        if on_hand > 0 and velocity == 0 and r.last_period_end is not None:
+            last_sale_stmt = (
+                select(func.max(models.SellOutReport.period_end))
+                .where(
+                    models.SellOutReport.store_id == r.store_id,
+                    models.SellOutReport.variant_id == r.variant_id,
+                    models.SellOutReport.units_sold > 0,
+                )
+            )
+            last_sale = (await db.execute(last_sale_stmt)).scalar()
+            if last_sale is not None and last_sale.tzinfo is None:
+                last_sale = last_sale.replace(tzinfo=timezone.utc)
+            if last_sale is None or last_sale < no_move_threshold:
+                await _upsert(
+                    "no_movement", r.store_id, r.variant_id, ch.id,
+                    message=(f"Sin ventas > {no_move_days} días en {store_name} · "
+                            f"{product_name or sku or 'SKU'} · {on_hand} en stock."),
+                    severity="high",
+                    wos=None, on_hand=on_hand, velocity=0.0,
+                    store_name=store_name, product_name=product_name, sku=sku,
+                )
+
+    # Regla a nivel cadena: sell_through_low
+    for ch in channels:
+        so = sell_out_by_channel.get(ch.id, 0)
+        si = sell_in_by_channel.get(ch.id, 0)
+        if si <= 0:
+            continue
+        pct = so / si * 100.0
+        if pct < ch.sell_through_min_pct:
+            # store_id/variant_id no aplican; usamos alguna tienda representativa
+            rep_store = (await db.execute(
+                select(models.RetailStore.id, models.RetailStore.name).where(
+                    models.RetailStore.channel_id == ch.id,
+                    models.RetailStore.is_active.is_(True),
+                ).limit(1)
+            )).first()
+            if rep_store is None:
+                continue
+            store_id_val, store_name_val = int(rep_store[0]), rep_store[1]
+            await _upsert(
+                "sell_through_low", store_id_val, None, ch.id,
+                message=(f"Sell-through de {ch.name} en {pct:.1f}% "
+                        f"(mín {ch.sell_through_min_pct:.0f}%). Sell-in {si} u "
+                        f"vs sell-out {so} u en {VELOCITY_WINDOW_DAYS} días."),
+                severity="medium",
+                wos=None, on_hand=None, velocity=None,
+                store_name=store_name_val, product_name=None, sku=None,
+            )
+
+    # Auto-resolve: alertas abiertas cuya condición YA NO SE CUMPLE
+    for key, alert in open_by_key.items():
+        if key in seen_keys:
+            continue
+        # No la volvimos a levantar → auto-resolve
+        alert.status = "resolved"
+        alert.resolved_at = now
+        alert.resolution_notes = "Condición vuelta a zona sana"
+        auto_resolved += 1
+
+    await db.commit()
+
+    total_open, urgent = await _summarize_alerts(db, channel_id)
+    return schemas.EvaluateAlertsResponse(
+        created=created, auto_resolved=auto_resolved,
+        total_open=total_open, urgent_open=urgent,
+    )
+
+
+# ── Consulta / acciones sobre alertas ────────────────────────────────────
+
+async def list_alerts(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    status: Optional[str] = None, severity: Optional[str] = None,
+    limit: int = 500,
+) -> List[schemas.RetailAlertOut]:
+    stmt = (
+        select(
+            models.RetailAlert,
+            models.RetailChannel.name.label("channel_name"),
+        )
+        .join(models.RetailChannel, models.RetailAlert.channel_id == models.RetailChannel.id)
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailAlert.channel_id == channel_id)
+    if status:
+        stmt = stmt.where(models.RetailAlert.status == status)
+    if severity:
+        stmt = stmt.where(models.RetailAlert.severity == severity)
+    stmt = stmt.order_by(
+        # Prioridad urgent primero, luego por fecha
+        func.lower(models.RetailAlert.status) == "open",  # true (1) → open primero
+        models.RetailAlert.severity == "urgent",
+        models.RetailAlert.created_at.desc(),
+    ).limit(limit)
+    rows = (await db.execute(stmt)).all()
+    return [
+        schemas.RetailAlertOut(
+            id=a.id, channel_id=a.channel_id, channel_name=cn,
+            store_id=a.store_id, store_name=a.store_name,
+            variant_id=a.variant_id, product_name=a.product_name, sku=a.sku,
+            alert_type=a.alert_type, severity=a.severity, message=a.message,
+            wos_snapshot=a.wos_snapshot,
+            on_hand_snapshot=a.on_hand_snapshot,
+            weekly_velocity_snapshot=a.weekly_velocity_snapshot,
+            status=a.status,
+            acknowledged_at=a.acknowledged_at,
+            acknowledged_by_user_id=a.acknowledged_by_user_id,
+            resolved_at=a.resolved_at,
+            resolved_by_user_id=a.resolved_by_user_id,
+            resolution_notes=a.resolution_notes,
+            created_at=a.created_at,
+        ) for a, cn in rows
+    ]
+
+
+async def alerts_summary(db: AsyncSession, channel_id: Optional[int] = None
+                          ) -> schemas.AlertsSummary:
+    def _count(cond) -> int:
+        stmt = select(func.count(models.RetailAlert.id)).where(cond)
+        if channel_id is not None:
+            stmt = stmt.where(models.RetailAlert.channel_id == channel_id)
+        # Ejecuta síncrono in-async via caller
+        return stmt
+
+    open_c = int((await db.execute(_count(models.RetailAlert.status == "open"))).scalar() or 0)
+    ack_c = int((await db.execute(_count(models.RetailAlert.status == "acknowledged"))).scalar() or 0)
+
+    def _sev(sev: str):
+        return _count(and_(
+            models.RetailAlert.status.in_(("open", "acknowledged")),
+            models.RetailAlert.severity == sev,
+        ))
+
+    urgent = int((await db.execute(_sev("urgent"))).scalar() or 0)
+    high = int((await db.execute(_sev("high"))).scalar() or 0)
+    medium = int((await db.execute(_sev("medium"))).scalar() or 0)
+    low = int((await db.execute(_sev("low"))).scalar() or 0)
+
+    return schemas.AlertsSummary(
+        open=open_c, urgent=urgent, high=high, medium=medium, low=low,
+        acknowledged=ack_c,
+    )
+
+
+async def acknowledge_alert(db: AsyncSession, alert_id: int,
+                              user_id: Optional[int], notes: Optional[str] = None
+                              ) -> Optional[models.RetailAlert]:
+    a = await db.get(models.RetailAlert, alert_id)
+    if a is None:
+        return None
+    if a.status not in ("open", "acknowledged"):
+        raise ValueError(f"La alerta ya está {a.status}")
+    a.status = "acknowledged"
+    a.acknowledged_at = datetime.now(timezone.utc)
+    a.acknowledged_by_user_id = user_id
+    if notes:
+        a.resolution_notes = notes
+    await db.commit()
+    await db.refresh(a)
+    return a
+
+
+async def resolve_alert(db: AsyncSession, alert_id: int,
+                          user_id: Optional[int], notes: Optional[str] = None
+                          ) -> Optional[models.RetailAlert]:
+    a = await db.get(models.RetailAlert, alert_id)
+    if a is None:
+        return None
+    if a.status in ("resolved", "dismissed"):
+        raise ValueError(f"La alerta ya está {a.status}")
+    a.status = "resolved"
+    a.resolved_at = datetime.now(timezone.utc)
+    a.resolved_by_user_id = user_id
+    if notes:
+        a.resolution_notes = notes
+    await db.commit()
+    await db.refresh(a)
+    return a
+
+
+async def dismiss_alert(db: AsyncSession, alert_id: int,
+                         user_id: Optional[int], notes: Optional[str] = None
+                         ) -> Optional[models.RetailAlert]:
+    a = await db.get(models.RetailAlert, alert_id)
+    if a is None:
+        return None
+    if a.status in ("resolved", "dismissed"):
+        raise ValueError(f"La alerta ya está {a.status}")
+    a.status = "dismissed"
+    a.resolved_at = datetime.now(timezone.utc)
+    a.resolved_by_user_id = user_id
+    if notes:
+        a.resolution_notes = notes
+    await db.commit()
+    await db.refresh(a)
+    return a
+
+
+async def _alert_to_schema(db: AsyncSession, a: models.RetailAlert) -> schemas.RetailAlertOut:
+    ch = await db.get(models.RetailChannel, a.channel_id)
+    return schemas.RetailAlertOut(
+        id=a.id, channel_id=a.channel_id,
+        channel_name=ch.name if ch else None,
+        store_id=a.store_id, store_name=a.store_name,
+        variant_id=a.variant_id, product_name=a.product_name, sku=a.sku,
+        alert_type=a.alert_type, severity=a.severity, message=a.message,
+        wos_snapshot=a.wos_snapshot,
+        on_hand_snapshot=a.on_hand_snapshot,
+        weekly_velocity_snapshot=a.weekly_velocity_snapshot,
+        status=a.status,
+        acknowledged_at=a.acknowledged_at,
+        acknowledged_by_user_id=a.acknowledged_by_user_id,
+        resolved_at=a.resolved_at,
+        resolved_by_user_id=a.resolved_by_user_id,
+        resolution_notes=a.resolution_notes,
+        created_at=a.created_at,
     )

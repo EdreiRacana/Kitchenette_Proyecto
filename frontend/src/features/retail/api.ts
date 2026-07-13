@@ -4,6 +4,8 @@ import type {
   SellOutReport, SellOutReportCreate, RetailKPIs,
   StoreVelocityRow, SKUVelocityRow, ReplenishmentResponse,
   ImportSellOutResponse,
+  RetailAlert, AlertsSummary, EvaluateAlertsResponse,
+  AlertStatus, AlertSeverity,
 } from "./types";
 
 export const retailApi = {
@@ -63,4 +65,19 @@ export const retailApi = {
       headers: { "Content-Type": "multipart/form-data" },
     }).then(r => r.data);
   },
+
+  // Alertas
+  listAlerts: (opts?: {
+    channel_id?: number; status?: AlertStatus; severity?: AlertSeverity; limit?: number;
+  }) => api.get<RetailAlert[]>("/retail/alerts", { params: opts }).then(r => r.data),
+  alertsSummary: (channel_id?: number) =>
+    api.get<AlertsSummary>("/retail/alerts/summary", { params: { channel_id } }).then(r => r.data),
+  evaluateAlerts: (channel_id?: number) =>
+    api.post<EvaluateAlertsResponse>("/retail/alerts/evaluate", null, { params: { channel_id } }).then(r => r.data),
+  acknowledgeAlert: (id: number, notes?: string) =>
+    api.post<RetailAlert>(`/retail/alerts/${id}/acknowledge`, { notes: notes || undefined }).then(r => r.data),
+  resolveAlert: (id: number, notes?: string) =>
+    api.post<RetailAlert>(`/retail/alerts/${id}/resolve`, { notes: notes || undefined }).then(r => r.data),
+  dismissAlert: (id: number, notes?: string) =>
+    api.post<RetailAlert>(`/retail/alerts/${id}/dismiss`, { notes: notes || undefined }).then(r => r.data),
 };

@@ -9,6 +9,7 @@ import {
   Store, LayoutDashboard, Building2, ShoppingBag, Package, Truck,
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
+  Bell, EyeOff, CheckCircle2, Zap,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -17,6 +18,7 @@ import type {
   RetailChannel, RetailStore, SellOutReport, RetailKPIs,
   StoreVelocityRow, SKUVelocityRow, ReplenishmentResponse,
   ReplenishmentSuggestion, WosStatus, ImportSellOutResponse,
+  RetailAlert, AlertStatus, AlertSeverity, AlertsSummary,
 } from "./types";
 
 type Tokens = any;
@@ -48,13 +50,14 @@ function statusInfo(t: Tokens, status: WosStatus) {
   }
 }
 
-type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment";
+type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment" | "alerts";
 
 export default function RetailModule({ t }: { t: Tokens }) {
   const [tab, setTab] = useState<TabId>("dashboard");
   const [channels, setChannels] = useState<RetailChannel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [alertsSummary, setAlertsSummary] = useState<AlertsSummary | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -65,12 +68,25 @@ export default function RetailModule({ t }: { t: Tokens }) {
   };
   useEffect(() => { load(); }, []);
 
-  const tabs: Array<{ id: TabId; label: string; icon: any }> = [
+  const refreshAlertsSummary = async () => {
+    try {
+      const s = await retailApi.alertsSummary(selectedChannel || undefined);
+      setAlertsSummary(s);
+    } catch { /* silent */ }
+  };
+  useEffect(() => { refreshAlertsSummary(); }, [selectedChannel]);
+
+  const tabs: Array<{ id: TabId; label: string; icon: any; badge?: number; badgeColor?: string }> = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "channels", label: "Cadenas", icon: Building2 },
     { id: "stores", label: "Tiendas", icon: Store },
     { id: "sellout", label: "Sell-out", icon: ShoppingBag },
     { id: "replenishment", label: "Reabasto", icon: Truck },
+    {
+      id: "alerts", label: "Alertas", icon: Bell,
+      badge: alertsSummary?.open,
+      badgeColor: (alertsSummary?.urgent ?? 0) > 0 ? "urgent" : "normal",
+    },
   ];
 
   return (
@@ -94,8 +110,8 @@ export default function RetailModule({ t }: { t: Tokens }) {
         )}
       </div>
 
-      <div style={{ marginTop: 18, borderBottom: `1px solid ${t.border}`, display: "flex", gap: 4 }}>
-        {tabs.map(({ id, label, icon: Icon }) => {
+      <div style={{ marginTop: 18, borderBottom: `1px solid ${t.border}`, display: "flex", gap: 4, flexWrap: "wrap" }}>
+        {tabs.map(({ id, label, icon: Icon, badge, badgeColor }) => {
           const active = tab === id;
           return (
             <button key={id} onClick={() => setTab(id)}
@@ -107,6 +123,15 @@ export default function RetailModule({ t }: { t: Tokens }) {
                 borderBottom: `2px solid ${active ? t.nova : "transparent"}`,
               }}>
               <Icon size={14} /> {label}
+              {badge !== undefined && badge > 0 && (
+                <span style={{
+                  fontSize: 10.5, fontWeight: 800,
+                  padding: "1px 7px", borderRadius: 10,
+                  background: badgeColor === "urgent" ? t.bad : t.warn,
+                  color: "#fff",
+                  minWidth: 18, textAlign: "center",
+                }}>{badge}</span>
+              )}
             </button>
           );
         })}
@@ -132,8 +157,9 @@ export default function RetailModule({ t }: { t: Tokens }) {
             {tab === "dashboard" && <DashboardView t={t} channelId={selectedChannel} />}
             {tab === "channels" && <ChannelsView t={t} channels={channels} onChanged={load} />}
             {tab === "stores" && <StoresView t={t} channels={channels} selectedChannel={selectedChannel} />}
-            {tab === "sellout" && <SellOutView t={t} channels={channels} selectedChannel={selectedChannel} />}
+            {tab === "sellout" && <SellOutView t={t} channels={channels} selectedChannel={selectedChannel} onChanged={refreshAlertsSummary} />}
             {tab === "replenishment" && <ReplenishmentView t={t} channelId={selectedChannel} />}
+            {tab === "alerts" && <AlertsView t={t} channelId={selectedChannel} onChanged={refreshAlertsSummary} />}
           </>
         )}
       </div>
@@ -686,8 +712,9 @@ function StoreModal({ t, channels, store, defaultChannel, onClose, onSaved }: {
 
 
 // ── Sell-out reports ─────────────────────────────────────────────────────
-function SellOutView({ t, channels, selectedChannel }: {
+function SellOutView({ t, channels, selectedChannel, onChanged }: {
   t: Tokens; channels: RetailChannel[]; selectedChannel: number | null;
+  onChanged?: () => void;
 }) {
   const [reports, setReports] = useState<SellOutReport[]>([]);
   const [loading, setLoading] = useState(true);
@@ -707,10 +734,12 @@ function SellOutView({ t, channels, selectedChannel }: {
   };
   useEffect(() => { load(); }, [selectedChannel]);
 
+  const reload = () => { load(); onChanged?.(); };
+
   const del = async (r: SellOutReport) => {
     if (!confirm("¿Eliminar este reporte?")) return;
     await retailApi.deleteSellOut(r.id);
-    load();
+    reload();
   };
 
   const downloadTemplate = async (format: "xlsx" | "csv") => {
@@ -804,12 +833,12 @@ function SellOutView({ t, channels, selectedChannel }: {
       {adding && (
         <SellOutModal t={t} channels={channels} defaultChannel={selectedChannel}
           onClose={() => setAdding(false)}
-          onSaved={() => { setAdding(false); load(); }} />
+          onSaved={() => { setAdding(false); reload(); }} />
       )}
       {importing && (
         <ImportSellOutModal t={t}
           onClose={() => setImporting(false)}
-          onDone={() => { setImporting(false); load(); }} />
+          onDone={() => { setImporting(false); reload(); }} />
       )}
     </div>
   );
@@ -953,6 +982,235 @@ function StatMini({ t, label, value, color }: { t: Tokens; label: string; value:
       <div style={{ fontSize: 10, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
       <div style={{ fontSize: 16, fontWeight: 800, color: color || t.textHi, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
     </div>
+  );
+}
+
+
+// ── Alertas ──────────────────────────────────────────────────────────────
+function severityInfo(t: Tokens, s: AlertSeverity) {
+  switch (s) {
+    case "urgent": return { label: "Urgente", color: t.bad, bg: t.bad + "22" };
+    case "high": return { label: "Alta", color: t.warn, bg: t.warn + "22" };
+    case "medium": return { label: "Media", color: t.nova, bg: t.nova + "22" };
+    default: return { label: "Baja", color: t.textMid, bg: t.panel3 };
+  }
+}
+
+const ALERT_TYPE_LABEL: Record<string, string> = {
+  stockout: "Sin stock",
+  stockout_imminent: "Stock crítico",
+  overstock: "Sobreinventario",
+  no_movement: "Sin movimiento",
+  sell_through_low: "Sell-through bajo",
+};
+
+function AlertsView({ t, channelId, onChanged }: {
+  t: Tokens; channelId: number | null; onChanged: () => void;
+}) {
+  const [alerts, setAlerts] = useState<RetailAlert[]>([]);
+  const [summary, setSummary] = useState<AlertsSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<AlertStatus | "all">("open");
+  const [sevFilter, setSevFilter] = useState<AlertSeverity | "all">("all");
+  const [evaluating, setEvaluating] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [actioning, setActioning] = useState<{ id: number; kind: "ack" | "resolve" | "dismiss" } | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [a, s] = await Promise.all([
+        retailApi.listAlerts({
+          channel_id: channelId || undefined,
+          status: statusFilter === "all" ? undefined : statusFilter,
+          severity: sevFilter === "all" ? undefined : sevFilter,
+        }),
+        retailApi.alertsSummary(channelId || undefined),
+      ]);
+      setAlerts(a); setSummary(s);
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [channelId, statusFilter, sevFilter]);
+
+  const flashOk = (msg: string) => {
+    setFlash(msg); window.setTimeout(() => setFlash(null), 2400);
+  };
+
+  const doEvaluate = async () => {
+    setEvaluating(true);
+    try {
+      const r = await retailApi.evaluateAlerts(channelId || undefined);
+      flashOk(`Evaluación: ${r.created} nuevas · ${r.auto_resolved} resueltas automáticamente · ${r.total_open} abiertas`);
+      await load(); onChanged();
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "Error al evaluar");
+    } finally { setEvaluating(false); }
+  };
+
+  const doAction = async (a: RetailAlert, kind: "ack" | "resolve" | "dismiss") => {
+    let notes: string | undefined = undefined;
+    if (kind === "dismiss") {
+      const r = window.prompt("Motivo de descarte (opcional):", "");
+      if (r === null) return;
+      notes = r || undefined;
+    } else if (kind === "resolve") {
+      const r = window.prompt("Notas de resolución (opcional):", "");
+      if (r === null) return;
+      notes = r || undefined;
+    }
+    setActioning({ id: a.id, kind });
+    try {
+      if (kind === "ack") await retailApi.acknowledgeAlert(a.id, notes);
+      if (kind === "resolve") await retailApi.resolveAlert(a.id, notes);
+      if (kind === "dismiss") await retailApi.dismissAlert(a.id, notes);
+      flashOk(kind === "ack" ? "Alerta reconocida" : kind === "resolve" ? "Alerta resuelta" : "Alerta descartada");
+      await load(); onChanged();
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "Error");
+    } finally { setActioning(null); }
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <SumTile t={t} label="Abiertas" value={summary?.open ?? 0} color={t.textHi} />
+          <SumTile t={t} label="Urgentes" value={summary?.urgent ?? 0} color={t.bad} />
+          <SumTile t={t} label="Alta" value={summary?.high ?? 0} color={t.warn} />
+          <SumTile t={t} label="Media" value={summary?.medium ?? 0} color={t.nova} />
+          <SumTile t={t} label="Reconocidas" value={summary?.acknowledged ?? 0} color={t.textMid} />
+        </div>
+        <button disabled={evaluating} onClick={doEvaluate} style={btnPrimary(t)} title="Recorrer todas las cadenas y regenerar alertas">
+          <Zap size={14} /> {evaluating ? "Evaluando…" : "Evaluar ahora"}
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+        <FilterPill t={t} label="Todas" active={statusFilter === "all"} onClick={() => setStatusFilter("all")} />
+        <FilterPill t={t} label="Abiertas" active={statusFilter === "open"} onClick={() => setStatusFilter("open")} />
+        <FilterPill t={t} label="Reconocidas" active={statusFilter === "acknowledged"} onClick={() => setStatusFilter("acknowledged")} />
+        <FilterPill t={t} label="Resueltas" active={statusFilter === "resolved"} onClick={() => setStatusFilter("resolved")} />
+        <FilterPill t={t} label="Descartadas" active={statusFilter === "dismissed"} onClick={() => setStatusFilter("dismissed")} />
+        <div style={{ width: 12 }} />
+        <FilterPill t={t} label="Toda severidad" active={sevFilter === "all"} onClick={() => setSevFilter("all")} />
+        <FilterPill t={t} label="Urgentes" active={sevFilter === "urgent"} onClick={() => setSevFilter("urgent")} color={t.bad} />
+        <FilterPill t={t} label="Alta" active={sevFilter === "high"} onClick={() => setSevFilter("high")} color={t.warn} />
+        <FilterPill t={t} label="Media" active={sevFilter === "medium"} onClick={() => setSevFilter("medium")} color={t.nova} />
+      </div>
+
+      {flash && (
+        <div style={{ padding: "8px 12px", borderRadius: 6, background: t.good + "22", color: t.good, fontSize: 12, fontWeight: 600, marginBottom: 10 }}>
+          ✓ {flash}
+        </div>
+      )}
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+      {!loading && alerts.length === 0 && (
+        <div style={{ padding: 40, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10 }}>
+          <CheckCircle2 size={36} color={t.good} />
+          <div style={{ marginTop: 10, fontSize: 14, color: t.textHi }}>Sin alertas en este filtro</div>
+          <div style={{ fontSize: 12, color: t.textLo, marginTop: 4 }}>Toda la red está dentro de la política. Presiona "Evaluar ahora" si acabas de importar sell-out.</div>
+        </div>
+      )}
+      {!loading && alerts.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {alerts.map(a => {
+            const sev = severityInfo(t, a.severity);
+            const isClosed = a.status === "resolved" || a.status === "dismissed";
+            const busy = actioning?.id === a.id;
+            return (
+              <div key={a.id} style={{
+                background: t.panel, border: `1px solid ${sev.color}55`,
+                borderLeft: `4px solid ${sev.color}`,
+                borderRadius: 8, padding: 12,
+                opacity: isClosed ? 0.7 : 1,
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 800, color: sev.color, background: sev.bg, padding: "2px 8px", borderRadius: 10, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                        {sev.label}
+                      </span>
+                      <span style={{ fontSize: 10.5, color: t.textLo }}>
+                        {ALERT_TYPE_LABEL[a.alert_type] || a.alert_type}
+                      </span>
+                      <span style={{ fontSize: 10.5, color: t.textLo }}>·</span>
+                      <span style={{ fontSize: 10.5, color: t.textLo }}>{a.channel_name}</span>
+                      {a.status !== "open" && (
+                        <span style={{ fontSize: 10.5, fontWeight: 700, color: t.textMid, background: t.panel3, padding: "1px 6px", borderRadius: 10 }}>
+                          {a.status === "acknowledged" ? "Reconocida"
+                            : a.status === "resolved" ? "Resuelta" : "Descartada"}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ color: t.textHi, fontSize: 13, fontWeight: 600 }}>{a.message}</div>
+                    {(a.on_hand_snapshot !== null || a.wos_snapshot !== null) && (
+                      <div style={{ fontSize: 11, color: t.textLo, marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                        {a.on_hand_snapshot !== null && <span>Stock <b style={{ color: t.textMid }}>{num(a.on_hand_snapshot ?? 0)}</b></span>}
+                        {a.weekly_velocity_snapshot !== null && <span>Vel <b style={{ color: t.textMid }}>{(a.weekly_velocity_snapshot ?? 0).toFixed(1)}/sem</b></span>}
+                        {a.wos_snapshot !== null && <span>WOS <b style={{ color: sev.color }}>{(a.wos_snapshot ?? 0).toFixed(1)} sem</b></span>}
+                        <span>Creada {a.created_at ? new Date(a.created_at).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" }) : "—"}</span>
+                      </div>
+                    )}
+                    {a.resolution_notes && (
+                      <div style={{ marginTop: 6, padding: "5px 8px", background: t.panel2, borderRadius: 4, fontSize: 11, color: t.textLo }}>
+                        📝 {a.resolution_notes}
+                      </div>
+                    )}
+                  </div>
+                  {!isClosed && (
+                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                      {a.status === "open" && (
+                        <button disabled={busy} onClick={() => doAction(a, "ack")}
+                          style={{ ...btnGhost(t), fontSize: 11.5 }} title="Reconocer (yo me hago cargo)">
+                          <Check size={12} /> Reconocer
+                        </button>
+                      )}
+                      <button disabled={busy} onClick={() => doAction(a, "resolve")}
+                        style={{ ...btnGhost(t), color: t.good, borderColor: t.good + "55", background: t.good + "18", fontSize: 11.5 }} title="Marcar como resuelta">
+                        <CheckCircle2 size={12} /> Resolver
+                      </button>
+                      <button disabled={busy} onClick={() => doAction(a, "dismiss")}
+                        style={{ ...btnGhost(t), color: t.textLo, fontSize: 11.5 }} title="Descartar (falso positivo)">
+                        <EyeOff size={12} /> Descartar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function SumTile({ t, label, value, color }: { t: Tokens; label: string; value: number; color?: string }) {
+  return (
+    <div style={{ padding: "8px 12px", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 8, minWidth: 90 }}>
+      <div style={{ fontSize: 10, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 800, color: color || t.textHi, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+    </div>
+  );
+}
+
+
+function FilterPill({ t, label, active, onClick, color }: {
+  t: Tokens; label: string; active: boolean; onClick: () => void; color?: string;
+}) {
+  const c = color || t.nova;
+  return (
+    <button onClick={onClick}
+      style={{
+        padding: "5px 10px", borderRadius: 6, border: `1px solid ${active ? c : t.border}`,
+        background: active ? c + "22" : "transparent",
+        color: active ? c : t.textMid, cursor: "pointer",
+        fontSize: 11.5, fontWeight: 600,
+      }}>
+      {label}
+    </button>
   );
 }
 

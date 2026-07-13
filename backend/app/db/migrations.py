@@ -378,6 +378,14 @@ _BRANCH_STATEMENTS = [
 ]
 
 
+_RETAIL_STATEMENTS = [
+    # Config de alertas por cadena (agregada tras la Fase 3)
+    "ALTER TABLE retail_channels ADD COLUMN IF NOT EXISTS no_movement_days     INTEGER DEFAULT 21 NOT NULL",
+    "ALTER TABLE retail_channels ADD COLUMN IF NOT EXISTS sell_through_min_pct DOUBLE PRECISION DEFAULT 20.0 NOT NULL",
+    "ALTER TABLE retail_channels ADD COLUMN IF NOT EXISTS alerts_enabled       BOOLEAN DEFAULT TRUE NOT NULL",
+]
+
+
 def _apply(sync_conn: Connection) -> None:
     if sync_conn.dialect.name != "postgresql":
         return
@@ -392,6 +400,7 @@ def _apply(sync_conn: Connection) -> None:
         ("hr",         _HR_STATEMENTS),
         ("auth",       _AUTH_STATEMENTS),
         ("branches",   _BRANCH_STATEMENTS),
+        ("retail",     _RETAIL_STATEMENTS),
     ]
 
     for label, statements in all_statements:
