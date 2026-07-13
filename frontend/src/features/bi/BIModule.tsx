@@ -17,6 +17,7 @@ import { salesApi } from "../sales/api";
 import { financeService } from "../finance/service";
 import { inventoryService, type ReorderAlert } from "../inventory/service";
 import { hrApi } from "../hr/api";
+import ExecutiveLive from "./ExecutiveLive";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Period = "week" | "month" | "quarter" | "year";
@@ -1041,6 +1042,9 @@ function BIModuleBody({
       {/* ── TAB: Executive ── */}
       {tab === "executive" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {/* Nuevo dashboard consolidado: usa /bi/executive-summary con auto-refresh */}
+          <ExecutiveLive t={t} />
+
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
             <SectionTitle icon={Activity} title="Semáforo de salud empresarial" color={t.nova} t={t} />
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
