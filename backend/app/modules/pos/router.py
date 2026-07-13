@@ -45,6 +45,45 @@ async def current_session(db: DB, current_user: CurrentUser):
     return s or {"session": None}
 
 
+@router.get("/session/previous")
+async def previous_session(
+    db: DB, current_user: CurrentUser,
+    terminal_id: Optional[int] = Query(
+        None,
+        description="Si se manda, devuelve el último turno cerrado en ese terminal (útil "
+                    "cuando un cajero llega a una caja para revisar qué dejó el turno "
+                    "previo). Si se omite, se usa el último turno cerrado del usuario.",
+    ),
+    scope: str = Query(
+        "auto",
+        pattern="^(auto|me|terminal|any)$",
+        description="auto: si viene terminal_id filtra por terminal, si no por usuario. "
+                    "me: fuerza filtro por cajero actual. terminal: fuerza filtro por terminal. "
+                    "any: el último turno cerrado global (requiere admin/manager).",
+    ),
+):
+    """Reporte completo del último turno cerrado (arqueo, ventas por método, movimientos)."""
+    if scope == "any":
+        if not current_user.is_superuser and (current_user.role or "user") not in ("admin", "manager"):
+            raise HTTPException(403, "scope=any requiere rol admin/manager")
+        r = await service.get_previous_session(db)
+    elif scope == "me":
+        r = await service.get_previous_session(db, cashier_id=current_user.id)
+    elif scope == "terminal":
+        if terminal_id is None:
+            raise HTTPException(400, "scope=terminal requiere terminal_id")
+        r = await service.get_previous_session(db, terminal_id=terminal_id)
+    else:
+        r = await service.get_previous_session(
+            db,
+            cashier_id=None if terminal_id else current_user.id,
+            terminal_id=terminal_id,
+        )
+    if not r:
+        raise HTTPException(404, "No hay turnos cerrados anteriores")
+    return r
+
+
 @router.post("/session/open")
 async def open_session(data: schemas.OpenSessionRequest, db: DB, current_user: CurrentUser):
     try:

@@ -65,6 +65,8 @@ export const posApi = {
   updateTerminal: (id: number, data: Partial<POSTerminal>) => api.patch<POSTerminal>(`/pos/terminals/${id}`, data).then(r => r.data),
 
   currentSession: () => api.get<POSSession | { session: null }>("/pos/session/current").then(r => r.data),
+  previousSession: (opts?: { terminal_id?: number; scope?: "auto" | "me" | "terminal" | "any" }) =>
+    api.get<PreviousSessionReport>("/pos/session/previous", { params: opts }).then(r => r.data),
   openSession: (data: { terminal_id: number; opening_balance: number; opening_notes?: string }) =>
     api.post<POSSession>("/pos/session/open", data).then(r => r.data),
   closeSession: (data: { session_id: number; denominations: Record<string, number>; closing_notes?: string }) =>
@@ -110,6 +112,21 @@ export interface SessionSale {
   customer_name: string | null;
   payment_methods: string[];
   payments: { method: string; amount: number }[];
+}
+
+export interface POSTransactionRow {
+  id: number;
+  type: "opening" | "closing" | "sale" | "refund" | "cash_in" | "cash_out";
+  amount: number;
+  payment_method?: string | null;
+  order_id?: number | null;
+  notes?: string | null;
+  created_at?: string | null;
+}
+
+export interface PreviousSessionReport extends POSSession {
+  sales_by_method: Record<string, number>;
+  transactions: POSTransactionRow[];
 }
 
 // Denominaciones para arqueo

@@ -257,6 +257,40 @@ async def get_open_session_for_user(db: AsyncSession, cashier_id: int) -> Option
     return await get_session(db, s.id) if s else None
 
 
+async def get_previous_session(
+    db: AsyncSession,
+    cashier_id: Optional[int] = None,
+    terminal_id: Optional[int] = None,
+) -> Optional[dict]:
+    """Devuelve el reporte completo del último turno cerrado.
+
+    Prioridad de filtros:
+      - Si viene terminal_id → el último turno cerrado en ese terminal
+        (útil para "qué dejó el cajero anterior en la misma caja").
+      - Si no, filtra por cashier_id → el último turno cerrado del usuario.
+      - Si tampoco, devuelve el último turno cerrado global.
+
+    Se busca por closed_at desc, con fallback a opened_at desc para turnos
+    en los que closed_at pudiera ser NULL por algún estado histórico.
+    """
+    stmt = select(pos_models.POSSession).where(
+        pos_models.POSSession.status.in_(("closed", "reconciled"))
+    )
+    if terminal_id is not None:
+        stmt = stmt.where(pos_models.POSSession.terminal_id == terminal_id)
+    elif cashier_id is not None:
+        stmt = stmt.where(pos_models.POSSession.cashier_id == cashier_id)
+    stmt = stmt.order_by(
+        pos_models.POSSession.closed_at.desc().nulls_last(),
+        pos_models.POSSession.opened_at.desc(),
+        pos_models.POSSession.id.desc(),
+    ).limit(1)
+    s = (await db.execute(stmt)).scalars().first()
+    if not s:
+        return None
+    return await get_session_report(db, s.id)
+
+
 # ── Venta POS ─────────────────────────────────────────────────────────────
 async def register_sale(db: AsyncSession, session_id: int,
                         customer_id: Optional[int], items: list, payments: dict,
