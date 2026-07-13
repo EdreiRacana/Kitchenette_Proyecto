@@ -17,8 +17,10 @@ WOS (Weeks of Supply) = on_hand / velocidad_semanal_promedio
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+import csv
+import io
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, delete, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -804,4 +806,426 @@ async def store_performance(db: AsyncSession, store_id: int, weeks_back: int = 1
         total_units_sold=total_units, total_revenue=total_rev,
         avg_weekly_units=avg_weekly, latest_on_hand=latest_on_hand,
         wos_weeks=round(wos, 2), status=status,
+    )
+
+
+# ── Bulk import: plantilla + parser ─────────────────────────────────────
+
+TEMPLATE_HEADERS = [
+    "cadena_codigo", "cadena_nombre",
+    "tienda_codigo", "tienda_nombre",
+    "sku", "producto_nombre",
+    "periodo_tipo", "periodo_inicio", "periodo_fin",
+    "unidades_vendidas", "unidades_stock", "ingreso",
+    "notas",
+]
+
+
+async def _template_hints(db: AsyncSession) -> Dict[str, List[dict]]:
+    """Cadenas, tiendas y SKUs activos para las hojas de referencia."""
+    chans = (await db.execute(
+        select(models.RetailChannel).where(models.RetailChannel.is_active.is_(True))
+        .order_by(models.RetailChannel.name).limit(500)
+    )).scalars().all()
+
+    stores = (await db.execute(
+        select(models.RetailStore, models.RetailChannel.name)
+        .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(models.RetailStore.is_active.is_(True))
+        .order_by(models.RetailChannel.name, models.RetailStore.name)
+        .limit(5000)
+    )).all()
+
+    variants = (await db.execute(
+        select(inv_models.ProductVariant.sku, inv_models.ProductVariant.price,
+                inv_models.Product.name)
+        .join(inv_models.Product, inv_models.ProductVariant.product_id == inv_models.Product.id)
+        .where(inv_models.ProductVariant.is_active.is_(True))
+        .limit(3000)
+    )).all()
+
+    return {
+        "cadenas": [{"nombre": c.name, "codigo": c.code or ""} for c in chans],
+        "tiendas": [
+            {
+                "cadena": chn, "nombre": s.name, "codigo_interno": s.code or "",
+                "codigo_externo": s.external_code or "",
+                "ciudad": s.city or "", "estado": s.state or "",
+            } for s, chn in stores
+        ],
+        "productos": [
+            {"sku": v.sku, "nombre": v.name, "precio_sugerido": float(v.price or 0.0)}
+            for v in variants
+        ],
+    }
+
+
+async def build_sellout_template_xlsx(db: AsyncSession) -> bytes:
+    """Plantilla profesional multi-hoja con instrucciones + referencias."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    hints = await _template_hints(db)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "SellOut"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1E3A8A")
+    center = Alignment(horizontal="center")
+
+    ws.append(TEMPLATE_HEADERS)
+    for col_idx, _h in enumerate(TEMPLATE_HEADERS, start=1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+
+    widths = [14, 26, 14, 26, 16, 30, 12, 14, 14, 14, 14, 14, 30]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # Fila-guía
+    example_channel = hints["cadenas"][0]["nombre"] if hints["cadenas"] else "Walmart"
+    example_channel_code = hints["cadenas"][0]["codigo"] if hints["cadenas"] and hints["cadenas"][0]["codigo"] else "WMT"
+    example_store = hints["tiendas"][0]["nombre"] if hints["tiendas"] else "Sucursal Centro"
+    example_store_code = hints["tiendas"][0]["codigo_externo"] if hints["tiendas"] and hints["tiendas"][0]["codigo_externo"] else "1001"
+    example_sku = hints["productos"][0]["sku"] if hints["productos"] else "SKU-001"
+    example_prod = hints["productos"][0]["nombre"] if hints["productos"] else "Producto de ejemplo"
+
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+
+    example_row = [
+        example_channel_code, example_channel,
+        example_store_code, example_store,
+        example_sku, example_prod,
+        "week", week_start.isoformat(), week_end.isoformat(),
+        12, 45, 12 * 1290.0,
+        "Ejemplo — puedes borrar esta fila",
+    ]
+    ws.append(example_row)
+    grey = PatternFill("solid", fgColor="F1F5F9")
+    italic = Font(italic=True, color="64748B")
+    for col_idx in range(1, len(example_row) + 1):
+        cell = ws.cell(row=2, column=col_idx)
+        cell.fill = grey
+        cell.font = italic
+    ws.freeze_panes = "A2"
+
+    def _add_ref_sheet(name: str, rows: List[dict], headers: List[str]):
+        s = wb.create_sheet(name)
+        s.append(headers)
+        for c in s[1]:
+            c.font = header_font
+            c.fill = header_fill
+        for r in rows:
+            s.append([r.get(h.lower().replace(" ", "_"), "") for h in headers])
+        for i, h in enumerate(headers, start=1):
+            s.column_dimensions[get_column_letter(i)].width = max(14, len(h) + 4)
+
+    _add_ref_sheet("Cadenas", hints["cadenas"], ["nombre", "codigo"])
+    _add_ref_sheet(
+        "Tiendas", hints["tiendas"],
+        ["cadena", "nombre", "codigo_interno", "codigo_externo", "ciudad", "estado"],
+    )
+    _add_ref_sheet("Productos", hints["productos"], ["sku", "nombre", "precio_sugerido"])
+
+    ws_i = wb.create_sheet("Instrucciones", 0)
+    lines = [
+        "Plantilla de Sell-out Retail",
+        "",
+        "Cómo llenarla:",
+        "  1) Una fila = una venta reportada de UN SKU en UNA tienda en UN periodo.",
+        "  2) Matcheo de cadena: por 'cadena_codigo' (recomendado); si no, por 'cadena_nombre' exacto.",
+        "  3) Matcheo de tienda: por 'tienda_codigo' (el nº de tienda del cliente); si no, por nombre.",
+        "  4) SKU: se busca en tu catálogo. Si no existe, se guarda como snapshot con el nombre que pongas.",
+        "  5) 'periodo_tipo' acepta: day, week o month. Default: week.",
+        "  6) Fechas en formato YYYY-MM-DD. Si dejas 'periodo_fin' vacío, se calcula según el tipo.",
+        "  7) Si vuelves a subir una fila con el mismo (tienda, sku, periodo_inicio, periodo_tipo), se actualiza (no se duplica).",
+        "  8) Consulta las hojas 'Cadenas', 'Tiendas' y 'Productos' para copiar los códigos exactos.",
+    ]
+    for row_ix, line in enumerate(lines, start=1):
+        c = ws_i.cell(row=row_ix, column=1, value=line)
+        if row_ix == 1:
+            c.font = Font(bold=True, size=14, color="1E3A8A")
+    ws_i.column_dimensions["A"].width = 110
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def build_sellout_template_csv() -> bytes:
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(TEMPLATE_HEADERS)
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+    writer.writerow([
+        "WMT", "Walmart",
+        "1001", "Sucursal Centro",
+        "SKU-001", "Producto de ejemplo",
+        "week", week_start.isoformat(), week_end.isoformat(),
+        12, 45, 12 * 1290.0,
+        "Ejemplo — puedes borrar esta fila",
+    ])
+    return buf.getvalue().encode("utf-8-sig")
+
+
+def _parse_int(v: Any) -> int:
+    if v is None or v == "":
+        return 0
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _parse_float(v: Any) -> float:
+    if v is None or v == "":
+        return 0.0
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _parse_iso_date(v: Any) -> Optional[datetime]:
+    if v is None or v == "":
+        return None
+    if isinstance(v, datetime):
+        return v.replace(tzinfo=v.tzinfo or timezone.utc)
+    if isinstance(v, date):
+        return datetime(v.year, v.month, v.day, tzinfo=timezone.utc)
+    s = str(v).strip()
+    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _default_period_end(start: datetime, period_type: str) -> datetime:
+    if period_type == "day":
+        return start.replace(hour=23, minute=59, second=59)
+    if period_type == "month":
+        # último instante del mes calendario
+        y, m = start.year, start.month
+        if m == 12:
+            nxt = datetime(y + 1, 1, 1, tzinfo=start.tzinfo)
+        else:
+            nxt = datetime(y, m + 1, 1, tzinfo=start.tzinfo)
+        return nxt - timedelta(seconds=1)
+    # week (default): 6 días completos
+    return (start + timedelta(days=6)).replace(hour=23, minute=59, second=59)
+
+
+async def _resolve_import_hints(
+    db: AsyncSession,
+) -> Tuple[Dict[str, int], Dict[Tuple[int, str], int], Dict[Tuple[int, str], int],
+            Dict[str, Tuple[int, str, float]]]:
+    """Índices para matcheo rápido:
+      - chan_by_key: 'CODE' → channel_id, 'NAME::name lower' → channel_id
+      - store_by_ext: (channel_id, external_code upper) → store_id
+      - store_by_name: (channel_id, name lower) → store_id
+      - variant_by_sku: sku upper → (variant_id, product_name, price)
+    """
+    chans = (await db.execute(select(models.RetailChannel))).scalars().all()
+    chan_by_key: Dict[str, int] = {}
+    for c in chans:
+        if c.code:
+            chan_by_key[c.code.strip().upper()] = c.id
+        if c.name:
+            chan_by_key[f"NAME::{c.name.strip().lower()}"] = c.id
+
+    stores = (await db.execute(select(models.RetailStore))).scalars().all()
+    store_by_ext: Dict[Tuple[int, str], int] = {}
+    store_by_name: Dict[Tuple[int, str], int] = {}
+    for s in stores:
+        if s.external_code:
+            store_by_ext[(s.channel_id, s.external_code.strip().upper())] = s.id
+        if s.code:
+            store_by_ext[(s.channel_id, s.code.strip().upper())] = s.id
+        if s.name:
+            store_by_name[(s.channel_id, s.name.strip().lower())] = s.id
+
+    variants = (await db.execute(
+        select(inv_models.ProductVariant.id, inv_models.ProductVariant.sku,
+                inv_models.ProductVariant.price, inv_models.Product.name)
+        .join(inv_models.Product, inv_models.ProductVariant.product_id == inv_models.Product.id)
+    )).all()
+    variant_by_sku: Dict[str, Tuple[int, str, float]] = {}
+    for vid, sku, price, pname in variants:
+        if sku:
+            variant_by_sku[sku.strip().upper()] = (vid, pname or "", float(price or 0.0))
+
+    return chan_by_key, store_by_ext, store_by_name, variant_by_sku
+
+
+async def import_sellout(
+    db: AsyncSession, file_bytes: bytes, filename: str,
+    user_id: Optional[int] = None,
+) -> schemas.ImportSellOutResponse:
+    """Ingesta bulk de sell-out. Detecta xlsx/csv por extensión.
+
+    - Matchea cadena por código, luego por nombre.
+    - Matchea tienda por código externo/interno, luego por nombre.
+    - Vincula SKU si existe en catálogo; si no, guarda snapshot con el nombre.
+    - Upsert por (store, variant, period_start, period_type).
+    - Fila con datos vacíos → skipped.
+    - Fila con error → guarda en `errors`, sigue con las demás.
+    """
+    name_lower = (filename or "").lower()
+    is_xlsx = name_lower.endswith(".xlsx") or name_lower.endswith(".xlsm")
+
+    rows: List[Dict[str, Any]] = []
+    if is_xlsx:
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+        target = "SellOut" if "SellOut" in wb.sheetnames else wb.active.title
+        ws = wb[target]
+        header: Optional[List[str]] = None
+        for row in ws.iter_rows(values_only=True):
+            if header is None:
+                header = [str(c).strip().lower() if c is not None else "" for c in row]
+                continue
+            values = [c for c in row]
+            if all(v is None or v == "" for v in values):
+                continue
+            rows.append(dict(zip(header, values)))
+    else:
+        try:
+            text = file_bytes.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = file_bytes.decode("latin-1")
+        reader = csv.DictReader(io.StringIO(text))
+        for r in reader:
+            data = {k.strip().lower(): v for k, v in r.items() if k}
+            if all((v is None or str(v).strip() == "") for v in data.values()):
+                continue
+            rows.append(data)
+
+    chan_by_key, store_by_ext, store_by_name, variant_by_sku = await _resolve_import_hints(db)
+
+    created = 0
+    updated = 0
+    skipped = 0
+    errors: List[schemas.ImportRowError] = []
+
+    for row_idx, row in enumerate(rows, start=2):
+        chan_code = str(row.get("cadena_codigo") or "").strip().upper()
+        chan_name = str(row.get("cadena_nombre") or "").strip()
+        store_code = str(row.get("tienda_codigo") or "").strip().upper()
+        store_name = str(row.get("tienda_nombre") or "").strip()
+        sku = str(row.get("sku") or "").strip().upper()
+        product_name = str(row.get("producto_nombre") or "").strip()
+        period_type = str(row.get("periodo_tipo") or "week").strip().lower()
+        if period_type not in ("day", "week", "month"):
+            period_type = "week"
+
+        # Fila totalmente vacía → skip
+        if not (chan_code or chan_name or store_code or store_name or sku or product_name):
+            skipped += 1
+            continue
+
+        # Cadena
+        chan_id: Optional[int] = chan_by_key.get(chan_code) if chan_code else None
+        if chan_id is None and chan_name:
+            chan_id = chan_by_key.get(f"NAME::{chan_name.lower()}")
+        if chan_id is None:
+            errors.append(schemas.ImportRowError(
+                row=row_idx,
+                reason=f"Cadena no encontrada (código='{chan_code}', nombre='{chan_name}')",
+            ))
+            continue
+
+        # Tienda
+        store_id: Optional[int] = None
+        if store_code:
+            store_id = store_by_ext.get((chan_id, store_code))
+        if store_id is None and store_name:
+            store_id = store_by_name.get((chan_id, store_name.lower()))
+        if store_id is None:
+            errors.append(schemas.ImportRowError(
+                row=row_idx,
+                reason=f"Tienda no encontrada en cadena {chan_id} (código='{store_code}', nombre='{store_name}')",
+            ))
+            continue
+
+        # SKU (opcional en catálogo)
+        variant_id: Optional[int] = None
+        matched_pname: Optional[str] = None
+        if sku and sku in variant_by_sku:
+            variant_id, matched_pname, _price = variant_by_sku[sku]
+
+        final_name = matched_pname or product_name or f"SKU {sku}" if sku else product_name
+        if not final_name:
+            errors.append(schemas.ImportRowError(
+                row=row_idx, reason="Sin producto: pon SKU válido o producto_nombre.",
+            ))
+            continue
+
+        # Fechas
+        period_start = _parse_iso_date(row.get("periodo_inicio"))
+        if period_start is None:
+            errors.append(schemas.ImportRowError(
+                row=row_idx, reason="periodo_inicio inválido o vacío (formato YYYY-MM-DD).",
+            ))
+            continue
+        period_end = _parse_iso_date(row.get("periodo_fin"))
+        if period_end is None:
+            period_end = _default_period_end(period_start, period_type)
+
+        units_sold = _parse_int(row.get("unidades_vendidas"))
+        units_on_hand = _parse_int(row.get("unidades_stock"))
+        revenue = _parse_float(row.get("ingreso"))
+        notes = (str(row.get("notas") or "").strip() or None)
+
+        # Upsert
+        existing = (await db.execute(
+            select(models.SellOutReport).where(
+                models.SellOutReport.store_id == store_id,
+                models.SellOutReport.variant_id == variant_id,
+                models.SellOutReport.period_start == period_start,
+                models.SellOutReport.period_type == period_type,
+            )
+        )).scalars().first()
+
+        if existing:
+            existing.period_end = period_end
+            existing.units_sold = units_sold
+            existing.units_on_hand = units_on_hand
+            existing.revenue = revenue
+            existing.notes = notes
+            existing.product_name = final_name
+            existing.sku = sku or existing.sku
+            existing.source = "xlsx" if is_xlsx else "csv"
+            existing.uploaded_by_user_id = user_id or existing.uploaded_by_user_id
+            updated += 1
+        else:
+            r = models.SellOutReport(
+                store_id=store_id, variant_id=variant_id,
+                product_name=final_name, sku=sku or None,
+                period_start=period_start, period_end=period_end,
+                period_type=period_type,
+                units_sold=units_sold, units_on_hand=units_on_hand,
+                revenue=revenue, source="xlsx" if is_xlsx else "csv",
+                uploaded_by_user_id=user_id, notes=notes,
+            )
+            db.add(r)
+            created += 1
+
+    await db.commit()
+    return schemas.ImportSellOutResponse(
+        total_rows=len(rows), created=created, updated=updated,
+        skipped=skipped, errors=errors,
     )
