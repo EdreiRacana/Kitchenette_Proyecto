@@ -1,6 +1,8 @@
 """Lógica de Contabilidad — Fase 1: catálogo, pólizas (partida doble) y mayor."""
 from __future__ import annotations
 
+import json
+from calendar import monthrange
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
@@ -184,6 +186,20 @@ def _serialize_entry(e: models.JournalEntry) -> schemas.JournalEntryDetail:
 
 async def create_entry(db: AsyncSession, data: schemas.JournalEntryCreate,
                        user_id: Optional[int] = None, branch_id: Optional[int] = None) -> schemas.JournalEntryDetail:
+    # Validar período cerrado — no permitir pólizas en meses ya cerrados
+    entry_date = data.date or _now()
+    period_res = await db.execute(
+        select(models.PeriodClose).where(
+            models.PeriodClose.year == entry_date.year,
+            models.PeriodClose.month == entry_date.month,
+            models.PeriodClose.status == "closed",
+        )
+    )
+    if period_res.scalars().first():
+        raise ValueError(
+            f"El período {entry_date.year}-{entry_date.month:02d} está cerrado. "
+            f"Reábrelo desde Contabilidad → Cierres si necesitas editarlo."
+        )
     # Validar partidas
     total_debit = _r(sum(l.debit for l in data.lines))
     total_credit = _r(sum(l.credit for l in data.lines))
@@ -599,3 +615,121 @@ async def void_order(db: AsyncSession, *, order_id: int) -> None:
     for e in res.scalars().all():
         e.status = "cancelled"
         e.cancelled_at = _now()
+
+
+# ── Cierre de período contable ──────────────────────────────────────────
+
+async def is_period_closed(db: AsyncSession, date: datetime) -> bool:
+    """Devuelve True si el mes de la fecha dada está cerrado."""
+    res = await db.execute(
+        select(models.PeriodClose).where(
+            models.PeriodClose.year == date.year,
+            models.PeriodClose.month == date.month,
+            models.PeriodClose.status == "closed",
+        )
+    )
+    return res.scalars().first() is not None
+
+
+async def list_period_closes(db: AsyncSession) -> list[dict]:
+    """Historial de cierres, más recientes primero."""
+    res = await db.execute(
+        select(models.PeriodClose).order_by(
+            models.PeriodClose.year.desc(), models.PeriodClose.month.desc()
+        )
+    )
+    out = []
+    for pc in res.scalars().all():
+        out.append({
+            "id": pc.id,
+            "year": pc.year, "month": pc.month,
+            "period": f"{pc.year}-{pc.month:02d}",
+            "status": pc.status,
+            "closed_at": pc.closed_at.isoformat() if pc.closed_at else None,
+            "reopened_at": pc.reopened_at.isoformat() if pc.reopened_at else None,
+            "closed_by_id": pc.closed_by_id,
+            "notes": pc.notes,
+        })
+    return out
+
+
+async def close_period(db: AsyncSession, year: int, month: int,
+                       user_id: Optional[int] = None, notes: Optional[str] = None) -> dict:
+    """Cierra un período mensual.
+    - Valida que no esté ya cerrado.
+    - Congela: genera snapshot del trial balance del mes.
+    - Persiste PeriodClose con snapshot_json.
+    """
+    if month < 1 or month > 12:
+        raise ValueError("Mes inválido")
+    # ¿Ya cerrado?
+    existing = (await db.execute(
+        select(models.PeriodClose).where(
+            models.PeriodClose.year == year,
+            models.PeriodClose.month == month,
+            models.PeriodClose.status == "closed",
+        )
+    )).scalars().first()
+    if existing:
+        raise ValueError(f"El período {year}-{month:02d} ya está cerrado")
+
+    # Rango del mes
+    period_start = datetime(year, month, 1, tzinfo=timezone.utc)
+    _, last_day = monthrange(year, month)
+    period_end = datetime(year, month, last_day, 23, 59, 59, tzinfo=timezone.utc)
+
+    # Snapshot del trial balance y estado de resultados del mes
+    tb = await trial_balance(db, date_from=period_start, date_to=period_end)
+    try:
+        is_ = await income_statement(db, date_from=period_start, date_to=period_end)
+        is_dict = is_.model_dump() if hasattr(is_, "model_dump") else dict(is_)
+    except Exception:
+        is_dict = None
+    try:
+        bs = await balance_sheet(db, as_of=period_end)
+        bs_dict = bs.model_dump() if hasattr(bs, "model_dump") else dict(bs)
+    except Exception:
+        bs_dict = None
+    snapshot = {
+        "period": f"{year}-{month:02d}",
+        "trial_balance": tb.model_dump() if hasattr(tb, "model_dump") else None,
+        "income_statement": is_dict,
+        "balance_sheet": bs_dict,
+    }
+
+    pc = models.PeriodClose(
+        year=year, month=month, status="closed",
+        closed_by_id=user_id, notes=notes,
+        snapshot_json=json.dumps(snapshot, default=str),
+    )
+    db.add(pc)
+    await db.commit()
+    await db.refresh(pc)
+    return {
+        "id": pc.id, "year": pc.year, "month": pc.month,
+        "period": f"{pc.year}-{pc.month:02d}",
+        "status": pc.status, "closed_at": pc.closed_at.isoformat() if pc.closed_at else None,
+        "message": f"Período {year}-{month:02d} cerrado exitosamente",
+    }
+
+
+async def reopen_period(db: AsyncSession, year: int, month: int,
+                        user_id: Optional[int] = None, reason: Optional[str] = None) -> dict:
+    """Reabre un período cerrado (auditable — deja rastro con reopened_at)."""
+    pc = (await db.execute(
+        select(models.PeriodClose).where(
+            models.PeriodClose.year == year,
+            models.PeriodClose.month == month,
+            models.PeriodClose.status == "closed",
+        )
+    )).scalars().first()
+    if not pc:
+        raise ValueError(f"No hay cierre activo para {year}-{month:02d}")
+    pc.status = "reopened"
+    pc.reopened_at = _now()
+    pc.reopened_by_id = user_id
+    if reason:
+        pc.notes = (pc.notes or "") + f"\n\n[REAPERTURA]: {reason}"
+    await db.commit()
+    return {"period": f"{year}-{month:02d}", "status": "reopened",
+            "reopened_at": pc.reopened_at.isoformat()}

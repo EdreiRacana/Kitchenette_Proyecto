@@ -355,6 +355,26 @@ _BRANCH_STATEMENTS = [
     # Logo persistente en la DB (el filesystem de Render es efímero)
     "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS logo_bytes BYTEA",
     "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS logo_mime  VARCHAR",
+    # Cierre de período contable
+    """CREATE TABLE IF NOT EXISTS accounting_period_close (
+        id            SERIAL PRIMARY KEY,
+        year          INTEGER NOT NULL,
+        month         INTEGER NOT NULL,
+        status        VARCHAR NOT NULL DEFAULT 'closed',
+        closed_at     TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        reopened_at   TIMESTAMP WITH TIME ZONE,
+        closed_by_id  INTEGER REFERENCES users(id),
+        reopened_by_id INTEGER REFERENCES users(id),
+        snapshot_json TEXT,
+        notes         TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_period_close_year_month ON accounting_period_close (year, month)",
+    # Conciliación bancaria
+    "ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS bank_date TIMESTAMP WITH TIME ZONE",
+    "ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS matched_transaction_id INTEGER REFERENCES transactions(id)",
+    "ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS source VARCHAR DEFAULT 'manual'",
+    "ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS external_ref VARCHAR",
+    "CREATE INDEX IF NOT EXISTS ix_bank_tx_ext_ref ON bank_transactions (bank_account_id, external_ref)",
 ]
 
 

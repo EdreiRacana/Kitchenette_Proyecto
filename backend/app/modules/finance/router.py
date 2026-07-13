@@ -109,6 +109,94 @@ async def read_cxc(db: DB, current_user: CurrentUser):
     return await service.get_cxc(db, branch_warehouse_ids=ids)
 
 
+# ── Conciliación bancaria ──────────────────────────────────────────────
+from fastapi import UploadFile, File, Form  # noqa: E402
+
+
+@router.post("/reconciliation/import")
+async def import_bank_statement(
+    db: DB, current_user: CurrentUser,
+    bank_account_id: int = Form(...),
+    file: UploadFile = File(...),
+):
+    """Importa un extracto bancario (CSV o XLSX) y hace matching automático
+    contra las transacciones del sistema. Marca reconciliadas las que hagan
+    match por fecha (±3 días) + monto exacto + mismo signo."""
+    from app.modules.finance import reconciliation
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(400, "El archivo excede 10MB")
+    try:
+        return await reconciliation.import_statement(
+            db, bank_account_id, contents, file.filename or "",
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Error al procesar el extracto: {e}")
+
+
+@router.get("/reconciliation/{bank_account_id}/unreconciled")
+async def unreconciled_transactions(bank_account_id: int, db: DB, _: CurrentUser):
+    """Lista transacciones bancarias no conciliadas de una cuenta."""
+    from sqlalchemy.future import select
+    from app.modules.finance import models as fin_models
+    res = await db.execute(
+        select(fin_models.BankTransaction).where(
+            fin_models.BankTransaction.bank_account_id == bank_account_id,
+            fin_models.BankTransaction.reconciled == False,  # noqa: E712
+        ).order_by(fin_models.BankTransaction.bank_date.desc().nullslast())
+    )
+    return [{
+        "id": bt.id, "type": bt.type, "amount": bt.amount,
+        "description": bt.description, "reference": bt.reference,
+        "bank_date": bt.bank_date.isoformat() if bt.bank_date else None,
+        "external_ref": bt.external_ref,
+    } for bt in res.scalars().all()]
+
+
+@router.get("/cxc/aging-report.pdf")
+async def cxc_aging_pdf(db: DB, current_user: CurrentUser):
+    """PDF de aging de CxC listo para cobranza."""
+    from fastapi.responses import Response
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    from app.modules.sales.universal_service import _get_company_dict
+    from app.modules.finance import pdf_reports
+    from datetime import datetime as _dt
+    ids = await visible_warehouse_ids(db, current_user)
+    items_raw = await service.get_cxc(db, branch_warehouse_ids=ids)
+    items = [i.model_dump() if hasattr(i, "model_dump") else dict(i) for i in items_raw]
+    company = await _get_company_dict(db)
+    pdf = pdf_reports.build_aging_pdf(
+        company, items, title="Estado de cartera — Cuentas por cobrar",
+        kind="cxc", generated_at=_dt.utcnow(),
+    )
+    fname = f"cxc_{_dt.utcnow().strftime('%Y%m%d')}.pdf"
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/cxp/aging-report.pdf")
+async def cxp_aging_pdf(db: DB, current_user: CurrentUser):
+    """PDF de aging de CxP listo para tesorería."""
+    from fastapi.responses import Response
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    from app.modules.sales.universal_service import _get_company_dict
+    from app.modules.finance import pdf_reports
+    from datetime import datetime as _dt
+    ids = await visible_warehouse_ids(db, current_user)
+    items_raw = await service.get_cxp(db, branch_warehouse_ids=ids)
+    items = [i.model_dump() if hasattr(i, "model_dump") else dict(i) for i in items_raw]
+    company = await _get_company_dict(db)
+    pdf = pdf_reports.build_aging_pdf(
+        company, items, title="Cuentas por pagar — Programa de pagos",
+        kind="cxp", generated_at=_dt.utcnow(),
+    )
+    fname = f"cxp_{_dt.utcnow().strftime('%Y%m%d')}.pdf"
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
 @router.get("/cxc/aging-summary")
 async def cxc_aging_summary(db: DB, current_user: CurrentUser):
     """Resumen ejecutivo de cartera vencida por antigüedad.
