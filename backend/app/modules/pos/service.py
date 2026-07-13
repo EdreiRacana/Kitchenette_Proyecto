@@ -744,6 +744,26 @@ async def mark_session_reconciled(
     return await get_session_report(db, session_id)
 
 
+async def unmark_session_reconciled(
+    db: AsyncSession, session_id: int, user_id: Optional[int] = None,
+) -> Optional[dict]:
+    """Vuelve un turno reconciled a closed para permitir seguir editando."""
+    res = await db.execute(select(pos_models.POSSession).where(pos_models.POSSession.id == session_id))
+    s = res.scalars().first()
+    if not s:
+        return None
+    if s.status != "reconciled":
+        raise ValueError(
+            f"Sólo se puede deshacer un turno reconciliado (estado actual: {s.status})"
+        )
+    s.status = "closed"
+    await db.commit()
+    await _log(db, user_id, "POS_UNMARK_RECONCILED",
+                f"Turno {session_id} regresado a estado cerrado",
+                {"session_id": session_id})
+    return await get_session_report(db, session_id)
+
+
 async def list_active_bank_accounts(db: AsyncSession) -> List[dict]:
     """Selects list para el select de depósito en el UI."""
     from app.modules.finance import models as fin_models

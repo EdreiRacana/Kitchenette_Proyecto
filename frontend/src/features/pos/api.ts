@@ -111,6 +111,8 @@ export const posApi = {
     api.patch<PreviousSessionReport>(`/pos/session/${sessionId}/notes`, data).then(r => r.data),
   markReconciled: (sessionId: number) =>
     api.post<PreviousSessionReport>(`/pos/session/${sessionId}/mark-reconciled`).then(r => r.data),
+  unmarkReconciled: (sessionId: number) =>
+    api.post<PreviousSessionReport>(`/pos/session/${sessionId}/unmark-reconciled`).then(r => r.data),
 };
 
 export interface PosBankAccount {
