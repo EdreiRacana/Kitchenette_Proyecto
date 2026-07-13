@@ -142,4 +142,26 @@ export const accountingService = {
     downloadSatCatalogo: (params: any) => downloadXml('/accounting/sat/catalogo', params),
     downloadSatBalanza: (params: any) => downloadXml('/accounting/sat/balanza', params),
     downloadSatPolizas: (params: any) => downloadXml('/accounting/sat/polizas', params),
+
+    // Cierre de período
+    listPeriodCloses: async () =>
+        (await api.get<PeriodClose[]>('/accounting/period-close')).data,
+    closePeriod: async (year: number, month: number, notes?: string) =>
+        (await api.post<{ id: number; year: number; month: number; period: string; status: string; closed_at: string; message: string }>(
+            '/accounting/period-close', null, { params: { year, month, notes } })).data,
+    reopenPeriod: async (year: number, month: number, reason?: string) =>
+        (await api.post<{ period: string; status: string; reopened_at: string }>(
+            `/accounting/period-close/${year}/${month}/reopen`, null, { params: { reason } })).data,
 };
+
+export interface PeriodClose {
+    id: number;
+    year: number;
+    month: number;
+    period: string;
+    status: 'closed' | 'reopened';
+    closed_at: string;
+    reopened_at?: string;
+    closed_by_id?: number;
+    notes?: string;
+}
