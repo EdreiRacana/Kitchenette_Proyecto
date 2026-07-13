@@ -9,7 +9,7 @@ import {
   FileText, FileWarning, Mail, Bell, Maximize2, X, TrendingDown, Activity,
   Zap, Award, Eye, Check, IdCard, Settings, Plus, Search, Globe, Sun, Moon,
   Lock, LogOut, User as UserIcon, Menu, UserCircle2, ShoppingBag, Box,
-  Truck, ClipboardList, BookText, Store,
+  Truck, ClipboardList, BookText, Store, HelpCircle, Sparkles,
 } from "lucide-react";
 import SalesCRM from "./features/sales/SalesCRM";
 import CustomersModule from "./features/customers/CustomersModule";
@@ -1631,6 +1631,150 @@ function scheduledDueLabel(scheduledDate, lang) {
   return lang === "es" ? `Vence en ${diffDays} día(s)` : `Due in ${diffDays} day(s)`;
 }
 
+/* ============================ Help Menu ============================ */
+const HELP_GUIDES = [
+  {
+    id: "pos", title: "Cobrar en el POS", icon: Store, color: "#10B981",
+    steps: [
+      "Ve a Punto de venta y abre tu turno (fondo inicial).",
+      "Escanea el código de barras o teclea el SKU: se agrega solo al carrito.",
+      "Presiona 'Cobrar $XXX' y elige método (Efectivo · Tarjeta · Transferencia · Mixto).",
+      "Confirma → aparece la ventana con el folio y botones para imprimir 80mm / 58mm / descargar PDF.",
+      "Al final del día: 'Cerrar turno' → arqueo por denominación → descarga el Reporte Z."
+    ],
+  },
+  {
+    id: "reprint", title: "Reimprimir un ticket", icon: FileText, color: "#3B82F6",
+    steps: [
+      "En el POS, botón 'Ventas del turno' arriba a la derecha.",
+      "Busca por folio, cliente o monto. Presiona Imprimir 80mm/58mm o Descargar.",
+      "Alternativa: en Ventas / CRM, abre la orden con badge POS → botón 'Ticket 80mm/58mm'."
+    ],
+  },
+  {
+    id: "close-month", title: "Cerrar el mes contable", icon: Lock, color: "#8B5CF6",
+    steps: [
+      "Ve a Contabilidad → pestaña 'Cierre mensual'.",
+      "Selecciona año y mes, agrega notas si quieres, presiona 'Cerrar mes'.",
+      "Se guarda un snapshot del trial balance + estado de resultados + balance.",
+      "Las pólizas de ese mes quedan bloqueadas (nadie puede editarlas por error).",
+      "Si necesitas modificar algo: botón 'Reabrir' — pide razón que queda auditada."
+    ],
+  },
+  {
+    id: "recon", title: "Conciliar extracto bancario", icon: DollarSign, color: "#F59E0B",
+    steps: [
+      "Ve a Finanzas → pestaña Bancos → botón 'Conciliar extracto bancario'.",
+      "Selecciona la cuenta y sube el CSV/XLSX del banco (BBVA, Santander, etc.).",
+      "El sistema hace matching automático por fecha ±3 días + monto exacto.",
+      "Verás el resumen: importados / conciliados / sin match / duplicados.",
+      "Los movimientos sin match quedan disponibles en 'Ver movimientos' para conciliar a mano."
+    ],
+  },
+  {
+    id: "aging-pdf", title: "PDF de cartera para cobranza", icon: Download, color: "#EC4899",
+    steps: [
+      "Ve a Finanzas → Por cobrar → botón 'PDF de cartera'.",
+      "Descarga un PDF ejecutivo con logo, tabla por cliente y colores semáforo por antigüedad.",
+      "Para proveedores: Por pagar → botón 'PDF' (formato equivalente)."
+    ],
+  },
+  {
+    id: "settlement", title: "Conciliar depósito de marketplace", icon: DollarSign, color: "#F97316",
+    steps: [
+      "Ve a Clientes → abre el cliente marketplace (Liverpool, Amazon, etc.).",
+      "Botón 'Conciliar liquidación' en el footer del panel.",
+      "Elige rango de fechas, pega el monto depositado.",
+      "El sistema calcula: bruto − comisiones − devoluciones = esperado, y compara vs depositado.",
+      "Variance en verde = cuadra, rojo = faltante (reclama), amarillo = sobrante."
+    ],
+  },
+  {
+    id: "kardex", title: "Ver kardex de un producto", icon: Box, color: "#06B6D4",
+    steps: [
+      "Ve a Inventario → pestaña 'Kardex FIFO'.",
+      "Selecciona SKU y almacén (opcional). Auto-carga al elegir.",
+      "Verás saldo actual, valor de inventario, costo promedio + movimientos cronológicos.",
+      "Cada salida muestra el costo FIFO aplicado en ese momento."
+    ],
+  },
+];
+
+function HelpMenu({ t, lang }: any) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+  const guide = HELP_GUIDES.find(g => g.id === selected);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button onClick={() => setOpen(v => !v)} style={iconBtn(t)} title={lang === "es" ? "Ayuda / Guías" : "Help / Guides"}>
+        <HelpCircle size={18} />
+      </button>
+      {open && (
+        <>
+          <div onClick={() => { setOpen(false); setSelected(null); }} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
+          <div style={{ position: "absolute", top: 44, right: 0, width: "min(440px, 96vw)", maxHeight: "78vh", overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
+            <div style={{ padding: "14px 16px", borderBottom: `1px solid ${t.border}`, background: t.panel2, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {selected ? (
+                  <button onClick={() => setSelected(null)} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 2, display: "flex" }}>
+                    <ChevronLeft size={16} />
+                  </button>
+                ) : <Sparkles size={15} color={t.nova} />}
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi }}>
+                  {selected ? guide?.title : (lang === "es" ? "Guías rápidas" : "Quick guides")}
+                </div>
+              </div>
+              <button onClick={() => { setOpen(false); setSelected(null); }} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 2 }}>
+                <X size={16} />
+              </button>
+            </div>
+            {!selected ? (
+              <div style={{ padding: 6 }}>
+                {HELP_GUIDES.map(g => (
+                  <button key={g.id} onClick={() => setSelected(g.id)}
+                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", textAlign: "left", color: t.textHi }}
+                    onMouseEnter={e => (e.currentTarget.style.background = t.panel2)}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                    <div style={{ background: g.color + "22", color: g.color, borderRadius: 8, padding: 8, display: "flex", flexShrink: 0 }}>
+                      <g.icon size={15} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: t.textHi }}>{g.title}</div>
+                      <div style={{ fontSize: 11, color: t.textLo, marginTop: 1 }}>{g.steps.length} pasos</div>
+                    </div>
+                    <ChevronRight size={14} color={t.textLo} />
+                  </button>
+                ))}
+                <div style={{ padding: "10px 12px", fontSize: 11, color: t.textLo, textAlign: "center", borderTop: `1px solid ${t.border}`, marginTop: 4 }}>
+                  Sthenova ERP · v1.0
+                </div>
+              </div>
+            ) : guide && (
+              <div style={{ padding: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                  <div style={{ background: guide.color + "22", color: guide.color, borderRadius: 10, padding: 10, display: "flex" }}>
+                    <guide.icon size={20} />
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi }}>{guide.title}</div>
+                </div>
+                <ol style={{ margin: 0, padding: "0 0 0 22px", display: "flex", flexDirection: "column", gap: 10 }}>
+                  {guide.steps.map((s, i) => (
+                    <li key={i} style={{ fontSize: 13, color: t.textMid, lineHeight: 1.55 }}>
+                      {s}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+
 /* ============================ Notification Bell ============================ */
 const ORDERS_SEEN_KEY = "kitchenette_orders_last_seen";
 const DISMISSED_KEY = "sthenova_dismissed_alerts";
@@ -1830,6 +1974,7 @@ function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMe
           </button>
         )}
         <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title="Tema / Theme" style={iconBtn(t)}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
+        <HelpMenu t={t} lang={lang} />
         <NotificationBell t={t} lang={lang} onNavigate={onNavigate} />
         <div style={{ width: 1, height: 26, background: t.border, margin: "0 4px" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
