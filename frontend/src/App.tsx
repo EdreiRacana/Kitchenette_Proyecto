@@ -1633,74 +1633,68 @@ function scheduledDueLabel(scheduledDate, lang) {
 
 /* ============================ Notification Bell ============================ */
 const ORDERS_SEEN_KEY = "kitchenette_orders_last_seen";
+const DISMISSED_KEY = "sthenova_dismissed_alerts";
+
+const CATEGORY_META: Record<string, { label: string; page: string; color: string }> = {
+  inventory: { label: "Inventario", page: "inventario", color: "#F59E0B" },
+  cxc:       { label: "Cartera",    page: "finanzas",   color: "#3B82F6" },
+  cxp:       { label: "Por pagar",  page: "finanzas",   color: "#A78BFA" },
+  pos:       { label: "POS",        page: "pos",        color: "#10B981" },
+  hr:        { label: "Nómina",     page: "rh",         color: "#EC4899" },
+  tax:       { label: "Impuestos",  page: "rh",         color: "#EF4444" },
+  forecast:  { label: "Metas",      page: "forecast",   color: "#F97316" },
+  finance:   { label: "Finanzas",   page: "finanzas",   color: "#06B6D4" },
+};
 
 function NotificationBell({ t, lang, onNavigate }) {
   const [open, setOpen] = useState(false);
-  const [alerts, setAlerts] = useState([]);
-  const [financeAlerts, setFinanceAlerts] = useState([]);
-  const [scheduledAlerts, setScheduledAlerts] = useState([]);
-  const [newOrders, setNewOrders] = useState([]);
+  const [digest, setDigest] = useState<{ total: number; critical: number; warning: number; info: number; items: any[]; by_category: Record<string, number> } | null>(null);
+  const [dismissed, setDismissed] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(DISMISSED_KEY) || "[]")); }
+    catch { return new Set(); }
+  });
+  const [filter, setFilter] = useState<string>(""); // "" = todas
+  const [sendingEmail, setSendingEmail] = useState(false);
 
   useEffect(() => {
     let active = true;
-    const loadInventory = () => inventoryService.getReorderAlerts()
-      .then((data) => { if (active) setAlerts(data || []); })
-      .catch(() => { if (active) setAlerts([]); });
-    const loadOrders = () => salesApi.list({ sort_by: "created_at", sort_dir: "desc", limit: 10 })
-      .then((data) => {
-        if (!active) return;
-        const lastSeen = localStorage.getItem(ORDERS_SEEN_KEY);
-        if (!lastSeen) {
-          localStorage.setItem(ORDERS_SEEN_KEY, new Date().toISOString());
-          setNewOrders([]);
-          return;
-        }
-        const lastSeenTime = new Date(lastSeen).getTime();
-        const fresh = (data.items || []).filter((o) => new Date(o.created_at).getTime() > lastSeenTime);
-        setNewOrders(fresh);
-      })
-      .catch(() => { if (active) setNewOrders([]); });
-    const loadFinance = () => Promise.all([financeService.getCXC(), financeService.getCXP()])
-      .then(([cxc, cxp]) => {
-        if (!active) return;
-        const horizon = new Date();
-        horizon.setDate(horizon.getDate() + SCHEDULED_REMINDER_LEAD_DAYS);
-        const horizonStr = horizon.toISOString().slice(0, 10);
-        const relevant = (i) => i.status === "overdue" || (i.due_date && i.due_date.slice(0, 10) <= horizonStr);
-        const items = [
-          ...cxc.filter(relevant).map((i) => ({ ...i, kind: "cxc" })),
-          ...cxp.filter(relevant).map((i) => ({ ...i, kind: "cxp" })),
-        ];
-        setFinanceAlerts(items);
-      })
-      .catch(() => { if (active) setFinanceAlerts([]); });
-    const loadScheduled = () => financeService.getScheduledPayments("pending")
-      .then((data) => {
-        if (!active) return;
-        const horizon = new Date();
-        horizon.setDate(horizon.getDate() + SCHEDULED_REMINDER_LEAD_DAYS);
-        const horizonStr = horizon.toISOString().slice(0, 10);
-        const due = (data || []).filter((sp) => sp.scheduled_date && sp.scheduled_date.slice(0, 10) <= horizonStr);
-        setScheduledAlerts(due);
-      })
-      .catch(() => { if (active) setScheduledAlerts([]); });
-
-    loadInventory();
-    loadFinance();
-    loadScheduled();
-    loadOrders();
-    const interval = setInterval(() => { loadInventory(); loadFinance(); loadScheduled(); loadOrders(); }, 60000);
+    const load = () => api.get("/notifications/")
+      .then(({ data }) => { if (active) setDigest(data); })
+      .catch(() => { if (active) setDigest(null); });
+    load();
+    const interval = setInterval(load, 60000);
     return () => { active = false; clearInterval(interval); };
   }, []);
 
-  const count = alerts.length + financeAlerts.length + scheduledAlerts.length + newOrders.length;
+  const persistDismissed = (next: Set<string>) => {
+    setDismissed(next);
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...next]));
+  };
+  const dismiss = (id: string) => {
+    const next = new Set(dismissed); next.add(id); persistDismissed(next);
+  };
+  const clearAll = () => {
+    if (!digest) return;
+    const next = new Set(dismissed);
+    digest.items.forEach((i: any) => { if (i.id) next.add(i.id); });
+    persistDismissed(next);
+  };
+
+  const items = (digest?.items || []).filter((i: any) =>
+    !dismissed.has(i.id || "") && (!filter || i.kind === filter)
+  );
+  const count = items.length;
+  const criticalCount = items.filter((i: any) => i.severity === "critical").length;
+  const warningCount = items.filter((i: any) => i.severity === "warning").length;
+
+  const bellColor = criticalCount > 0 ? t.bad : warningCount > 0 ? t.warn : t.nova;
 
   return (
     <div style={{ position: "relative" }}>
-      <button onClick={() => setOpen((v) => { const next = !v; if (next && newOrders.length > 0) localStorage.setItem(ORDERS_SEEN_KEY, new Date().toISOString()); return next; })} style={iconBtn(t)}>
+      <button onClick={() => setOpen((v) => !v)} style={iconBtn(t)} title={lang === "es" ? `${count} avisos` : `${count} alerts`}>
         <Bell size={18} />
         {count > 0 && (
-          <span style={{ position: "absolute", top: 4, right: 4, minWidth: 15, height: 15, borderRadius: 999, background: t.bad, color: "#fff", fontSize: 9.5, fontWeight: 700, display: "grid", placeItems: "center", padding: "0 2px" }}>
+          <span style={{ position: "absolute", top: 4, right: 4, minWidth: 15, height: 15, borderRadius: 999, background: bellColor, color: "#fff", fontSize: 9.5, fontWeight: 700, display: "grid", placeItems: "center", padding: "0 3px" }}>
             {count > 9 ? "9+" : count}
           </span>
         )}
@@ -1708,116 +1702,111 @@ function NotificationBell({ t, lang, onNavigate }) {
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
-          <div style={{ position: "absolute", top: 44, right: 0, width: "min(360px, 90vw)", maxHeight: 420, overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 6, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
+          <div style={{ position: "absolute", top: 44, right: 0, width: "min(420px, 95vw)", maxHeight: "78vh", overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
+            {/* Header */}
+            <div style={{ padding: "12px 14px", borderBottom: `1px solid ${t.border}`, background: t.panel2 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Bell size={15} color={t.nova} />
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi }}>
+                    {lang === "es" ? "Centro de avisos" : "Alert center"}
+                  </div>
+                </div>
+                {count > 0 && (
+                  <button onClick={clearAll} style={{ background: "transparent", border: "none", color: t.textLo, fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                    {lang === "es" ? "Marcar todo leído" : "Mark all read"}
+                  </button>
+                )}
+              </div>
+              {count > 0 && (
+                <div style={{ display: "flex", gap: 6, marginBottom: 6, fontSize: 11, fontWeight: 700 }}>
+                  {criticalCount > 0 && (
+                    <span style={{ color: t.bad, background: t.bad + "22", padding: "3px 9px", borderRadius: 20 }}>
+                      {criticalCount} {lang === "es" ? "crítico" + (criticalCount === 1 ? "" : "s") : "critical"}
+                    </span>
+                  )}
+                  {warningCount > 0 && (
+                    <span style={{ color: t.warn, background: t.warn + "22", padding: "3px 9px", borderRadius: 20 }}>
+                      {warningCount} {lang === "es" ? "advertencia" + (warningCount === 1 ? "" : "s") : "warning"}
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* Filtro por categoría */}
+              {digest && Object.keys(digest.by_category).length > 1 && (
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 4 }}>
+                  <button onClick={() => setFilter("")}
+                    style={{ padding: "3px 9px", borderRadius: 20, border: `1px solid ${filter === "" ? t.nova : t.border}`, background: filter === "" ? t.nova + "22" : "transparent", color: filter === "" ? t.nova : t.textLo, fontSize: 10.5, cursor: "pointer", fontWeight: filter === "" ? 700 : 500 }}>
+                    Todas
+                  </button>
+                  {Object.entries(digest.by_category).map(([cat, n]) => {
+                    const meta = CATEGORY_META[cat] || { label: cat, page: "", color: t.nova };
+                    const on = filter === cat;
+                    return (
+                      <button key={cat} onClick={() => setFilter(cat)}
+                        style={{ padding: "3px 9px", borderRadius: 20, border: `1px solid ${on ? meta.color : t.border}`, background: on ? meta.color + "22" : "transparent", color: on ? meta.color : t.textLo, fontSize: 10.5, cursor: "pointer", fontWeight: on ? 700 : 500 }}>
+                        {meta.label} · {n}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Lista */}
+            <div style={{ padding: "6px 4px" }}>
+              {count === 0 && (
+                <div style={{ padding: 30, textAlign: "center", color: t.textLo }}>
+                  <Bell size={26} style={{ opacity: 0.3, marginBottom: 8 }} />
+                  <div style={{ fontSize: 13, fontWeight: 600, color: t.textMid }}>
+                    {lang === "es" ? "Todo al día" : "All clear"}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 3 }}>
+                    {lang === "es" ? "Sin avisos pendientes" : "No pending alerts"}
+                  </div>
+                </div>
+              )}
+              {items.map((n: any, idx: number) => {
+                const sevColor = n.severity === "critical" ? t.bad : n.severity === "warning" ? t.warn : t.nova;
+                const catMeta = CATEGORY_META[n.kind] || { label: n.kind, page: "", color: t.nova };
+                return (
+                  <div key={n.id || `${idx}-${n.title}`} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 9, margin: "2px 4px", background: "transparent", cursor: "pointer", position: "relative" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = t.panel2)}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                    <div style={{ width: 6, height: 6, borderRadius: 999, background: sevColor, marginTop: 7, flexShrink: 0 }} />
+                    <button onClick={() => { if (catMeta.page) onNavigate(catMeta.page, n.query || n.title); setOpen(false); }}
+                      style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", color: t.textHi, textAlign: "left", cursor: "pointer", padding: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: t.textHi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>{n.title}</span>
+                        <span style={{ fontSize: 9.5, fontWeight: 700, color: catMeta.color, background: catMeta.color + "22", padding: "1px 6px", borderRadius: 10 }}>{catMeta.label}</span>
+                      </div>
+                      <div style={{ fontSize: 11.5, color: t.textLo, lineHeight: 1.4 }}>{n.detail}</div>
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); if (n.id) dismiss(n.id); }} title={lang === "es" ? "Descartar" : "Dismiss"}
+                      style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 2, opacity: 0.5, flexShrink: 0 }}>
+                      <X size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer con email digest */}
             {count > 0 && (
-              <div style={{ display: "flex", justifyContent: "flex-end", padding: "4px 6px 2px" }}>
-                <button onClick={async () => {
+              <div style={{ padding: "10px 14px", borderTop: `1px solid ${t.border}`, background: t.panel2, display: "flex", justifyContent: "flex-end" }}>
+                <button disabled={sendingEmail} onClick={async () => {
+                  setSendingEmail(true);
                   try {
                     const { data } = await api.post("/notifications/email-digest");
                     alert(data.sent
                       ? (lang === "es" ? `Resumen enviado a ${data.to}` : `Digest sent to ${data.to}`)
                       : (lang === "es" ? "No se pudo enviar: configura el correo en Configuración > Integraciones." : "Could not send: set up email in Settings > Integrations."));
                   } catch { alert(lang === "es" ? "Error al enviar el resumen" : "Error sending digest"); }
-                }} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 9px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 11.5, fontWeight: 600 }}>
-                  <Mail size={13} /> {lang === "es" ? "Enviar resumen por correo" : "Email digest"}
+                  finally { setSendingEmail(false); }
+                }} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel, color: t.textMid, cursor: sendingEmail ? "wait" : "pointer", fontSize: 11.5, fontWeight: 600, opacity: sendingEmail ? 0.7 : 1 }}>
+                  <Mail size={12} /> {sendingEmail ? "…" : (lang === "es" ? "Enviar resumen por correo" : "Email digest")}
                 </button>
               </div>
-            )}
-            {count === 0 && (
-              <div style={{ padding: 16, fontSize: 13, color: t.textLo, textAlign: "center" }}>
-                {lang === "es" ? "Sin avisos pendientes" : "No pending alerts"}
-              </div>
-            )}
-            {newOrders.length > 0 && (
-              <>
-                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 6px" }}>
-                  {lang === "es" ? "PEDIDOS NUEVOS" : "NEW ORDERS"}
-                </div>
-                {newOrders.map((o) => (
-                  <button key={`order-${o.id}`} onClick={() => { onNavigate("ventas", o.folio || `#${o.id}`); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
-                    <span style={{ marginTop: 3, width: 8, height: 8, borderRadius: 999, background: t.nova, flex: "0 0 auto" }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {o.folio || `#${o.id}`}{o.customer?.full_name ? ` · ${o.customer.full_name}` : ""}
-                      </div>
-                      <div style={{ fontSize: 11, color: t.textLo }}>
-                        {lang === "es" ? `Nuevo pedido: ${mxn(o.total_amount)}` : `New order: ${mxn(o.total_amount)}`}
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </>
-            )}
-            {alerts.length > 0 && (
-              <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "10px 10px 6px" }}>
-                {lang === "es" ? "AVISOS DE INVENTARIO" : "INVENTORY ALERTS"}
-              </div>
-            )}
-            {alerts.map((a) => (
-              <button key={`${a.variant_id}-${a.warehouse_id}`} onClick={() => { onNavigate("inventario", a.product_name); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
-                <span style={{ marginTop: 3, width: 8, height: 8, borderRadius: 999, background: a.level === "red" ? t.bad : t.warn, flex: "0 0 auto" }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.product_name}</div>
-                  <div style={{ fontSize: 11, color: t.textLo }}>
-                    {a.available <= 0
-                      ? (lang === "es" ? "Agotado" : "Out of stock")
-                      : (lang === "es" ? `Stock bajo: ${a.available} disponibles` : `Low stock: ${a.available} available`)}
-                    {" · "}{a.warehouse_name}
-                  </div>
-                </div>
-              </button>
-            ))}
-            {financeAlerts.length > 0 && (
-              <>
-                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "10px 10px 6px" }}>
-                  {lang === "es" ? "CUENTAS VENCIDAS Y POR VENCER" : "OVERDUE & UPCOMING ACCOUNTS"}
-                </div>
-                {financeAlerts.map((a) => {
-                  const overdue = a.status === "overdue";
-                  return (
-                  <button key={`${a.kind}-${a.id}`} onClick={() => { onNavigate("finanzas", a.name); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
-                    <span style={{ marginTop: 3, width: 8, height: 8, borderRadius: 999, background: overdue ? t.bad : t.warn, flex: "0 0 auto" }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
-                      <div style={{ fontSize: 11, color: t.textLo }}>
-                        {a.kind === "cxc"
-                          ? (overdue
-                              ? (lang === "es" ? `Por cobrar vencido: ${mxn(a.balance)}` : `Overdue receivable: ${mxn(a.balance)}`)
-                              : (lang === "es" ? `Por cobrar próximo: ${mxn(a.balance)}` : `Receivable due soon: ${mxn(a.balance)}`))
-                          : (overdue
-                              ? (lang === "es" ? `Por pagar vencido: ${mxn(a.balance)}` : `Overdue payable: ${mxn(a.balance)}`)
-                              : (lang === "es" ? `Por pagar próximo: ${mxn(a.balance)}` : `Payable due soon: ${mxn(a.balance)}`))}
-                        {" · "}{a.reference}{a.due_date ? ` · ${scheduledDueLabel(a.due_date, lang)}` : ""}
-                      </div>
-                    </div>
-                  </button>
-                  );
-                })}
-              </>
-            )}
-            {scheduledAlerts.length > 0 && (
-              <>
-                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "10px 10px 6px" }}>
-                  {lang === "es" ? "PAGOS PROGRAMADOS POR EJECUTAR" : "SCHEDULED PAYMENTS DUE"}
-                </div>
-                {scheduledAlerts.map((sp) => {
-                  const overdue = new Date(sp.scheduled_date) < new Date(new Date().setHours(0, 0, 0, 0));
-                  return (
-                  <button key={`sp-${sp.id}`} onClick={() => { onNavigate("finanzas", sp.target_name); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", textAlign: "left", padding: "8px 10px", borderRadius: 9, border: "none", background: "transparent", color: t.textHi }}>
-                    <span style={{ marginTop: 3, width: 8, height: 8, borderRadius: 999, background: overdue ? t.bad : t.warn, flex: "0 0 auto" }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sp.target_name || `#${sp.target_id}`}</div>
-                      <div style={{ fontSize: 11, color: t.textLo }}>
-                        {sp.kind === "cxc"
-                          ? (lang === "es" ? `Cobro programado: ${mxn(sp.amount)}` : `Scheduled collection: ${mxn(sp.amount)}`)
-                          : (lang === "es" ? `Pago programado: ${mxn(sp.amount)}` : `Scheduled payment: ${mxn(sp.amount)}`)}
-                        {" · "}{scheduledDueLabel(sp.scheduled_date, lang)}
-                      </div>
-                    </div>
-                  </button>
-                  );
-                })}
-              </>
             )}
           </div>
         </>

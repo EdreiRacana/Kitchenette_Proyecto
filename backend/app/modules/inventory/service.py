@@ -158,12 +158,25 @@ async def update_variant(db: AsyncSession, variant_id: int, variant_in: schemas.
     return variant
 
 # --- Supplier Services ---
+async def _load_supplier(db: AsyncSession, supplier_id: int) -> Optional[Supplier]:
+    """Recarga el proveedor con `documents` eager-loaded — indispensable porque
+    SupplierInDB serializa esa relación y en async SQLAlchemy tocar un lazy
+    attribute revienta con 500 y hace pensar que la creación falló (aunque el
+    commit ya haya ocurrido). Este helper garantiza response válido."""
+    res = await db.execute(
+        select(Supplier).where(Supplier.id == supplier_id)
+        .options(selectinload(Supplier.documents))
+    )
+    return res.scalars().first()
+
+
 async def create_supplier(db: AsyncSession, supplier_in: schemas.SupplierCreate) -> Supplier:
     db_supplier = Supplier(**supplier_in.model_dump())
     db.add(db_supplier)
     await db.commit()
     await db.refresh(db_supplier)
-    return db_supplier
+    reloaded = await _load_supplier(db, db_supplier.id)
+    return reloaded or db_supplier
 
 async def get_suppliers(db: AsyncSession) -> List[Supplier]:
     result = await db.execute(
@@ -178,8 +191,8 @@ async def update_supplier(db: AsyncSession, supplier_id: int, supplier_in: schem
     for k, v in supplier_in.model_dump(exclude_unset=True).items():
         setattr(supplier, k, v)
     await db.commit()
-    await db.refresh(supplier)
-    return supplier
+    reloaded = await _load_supplier(db, supplier_id)
+    return reloaded or supplier
 
 async def delete_supplier(db: AsyncSession, supplier_id: int) -> bool:
     supplier = await db.get(Supplier, supplier_id)

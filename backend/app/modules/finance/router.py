@@ -109,6 +109,77 @@ async def read_cxc(db: DB, current_user: CurrentUser):
     return await service.get_cxc(db, branch_warehouse_ids=ids)
 
 
+@router.get("/cxc/aging-summary")
+async def cxc_aging_summary(db: DB, current_user: CurrentUser):
+    """Resumen ejecutivo de cartera vencida por antigüedad.
+    Retorna: totales por bucket, top clientes vencidos, total al corriente vs vencido."""
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    items = await service.get_cxc(db, branch_warehouse_ids=ids)
+    buckets = {"current": 0.0, "1-30": 0.0, "31-60": 0.0, "61-90": 0.0, "90+": 0.0}
+    by_customer: dict = {}
+    total = 0.0
+    total_overdue = 0.0
+    for i in items:
+        b = i.aging or "current"
+        buckets[b] = buckets.get(b, 0.0) + float(i.balance or 0.0)
+        total += float(i.balance or 0.0)
+        if b != "current":
+            total_overdue += float(i.balance or 0.0)
+        key = i.name or "Sin nombre"
+        by_customer[key] = by_customer.get(key, 0.0) + float(i.balance or 0.0)
+    top = sorted(by_customer.items(), key=lambda x: x[1], reverse=True)[:10]
+    return {
+        "buckets": [
+            {"bucket": "Al corriente", "amount": round(buckets["current"], 2)},
+            {"bucket": "1-30 días",   "amount": round(buckets["1-30"], 2)},
+            {"bucket": "31-60 días",  "amount": round(buckets["31-60"], 2)},
+            {"bucket": "61-90 días",  "amount": round(buckets["61-90"], 2)},
+            {"bucket": "+90 días",    "amount": round(buckets["90+"], 2)},
+        ],
+        "total": round(total, 2),
+        "total_overdue": round(total_overdue, 2),
+        "overdue_pct": round((total_overdue / total * 100) if total else 0.0, 1),
+        "top_debtors": [{"name": n, "balance": round(a, 2)} for n, a in top],
+        "count": len(items),
+    }
+
+
+@router.get("/cxp/aging-summary")
+async def cxp_aging_summary(db: DB, current_user: CurrentUser):
+    """Resumen ejecutivo de cuentas por pagar vencidas."""
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    items = await service.get_cxp(db, branch_warehouse_ids=ids)
+    buckets = {"current": 0.0, "1-30": 0.0, "31-60": 0.0, "61-90": 0.0, "90+": 0.0}
+    by_supplier: dict = {}
+    total = 0.0
+    total_overdue = 0.0
+    for i in items:
+        b = i.aging or "current"
+        buckets[b] = buckets.get(b, 0.0) + float(i.balance or 0.0)
+        total += float(i.balance or 0.0)
+        if b != "current":
+            total_overdue += float(i.balance or 0.0)
+        key = i.name or "Sin nombre"
+        by_supplier[key] = by_supplier.get(key, 0.0) + float(i.balance or 0.0)
+    top = sorted(by_supplier.items(), key=lambda x: x[1], reverse=True)[:10]
+    return {
+        "buckets": [
+            {"bucket": "Al corriente", "amount": round(buckets["current"], 2)},
+            {"bucket": "1-30 días",   "amount": round(buckets["1-30"], 2)},
+            {"bucket": "31-60 días",  "amount": round(buckets["31-60"], 2)},
+            {"bucket": "61-90 días",  "amount": round(buckets["61-90"], 2)},
+            {"bucket": "+90 días",    "amount": round(buckets["90+"], 2)},
+        ],
+        "total": round(total, 2),
+        "total_overdue": round(total_overdue, 2),
+        "overdue_pct": round((total_overdue / total * 100) if total else 0.0, 1),
+        "top_creditors": [{"name": n, "balance": round(a, 2)} for n, a in top],
+        "count": len(items),
+    }
+
+
 LARGE_PAYMENT_THRESHOLD = 10000.0
 
 
