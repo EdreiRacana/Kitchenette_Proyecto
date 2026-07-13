@@ -18,6 +18,7 @@ from app.modules.pos.router import router as pos_router
 from app.modules.search.router import router as search_router
 from app.modules.notifications.router import router as notifications_router
 from app.modules.forecast.router import router as forecast_router
+from app.modules.retail.router import router as retail_router
 from app.modules.bi.router import router as bi_router
 from app.api.v1.endpoints.system import router as system_router
 
@@ -32,6 +33,7 @@ api_router.include_router(customers_router, prefix="/customers",  tags=["custome
 api_router.include_router(returns_router,    prefix="/sales/returns", tags=["sales"], dependencies=[Depends(module_write_guard("sales"))])
 api_router.include_router(sales_router,     prefix="/sales",      tags=["sales"], dependencies=[Depends(module_write_guard("sales"))])
 api_router.include_router(forecast_router,  prefix="/forecast",   tags=["forecast"], dependencies=[Depends(module_write_guard("sales"))])
+api_router.include_router(retail_router,    prefix="/retail",     tags=["retail"], dependencies=[Depends(module_write_guard("sales"))])
 api_router.include_router(finance_router,   prefix="/finance",    tags=["finance"], dependencies=[Depends(module_write_guard("finance"))])
 api_router.include_router(accounting_router, prefix="/accounting", tags=["accounting"], dependencies=[Depends(module_write_guard("accounting"))])
 api_router.include_router(config_router,    prefix="/config",     tags=["configuration"])
