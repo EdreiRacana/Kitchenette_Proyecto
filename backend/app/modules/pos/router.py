@@ -211,6 +211,30 @@ async def mark_reconciled(session_id: int, db: DB, current_user: CurrentUser):
         raise HTTPException(400, str(e))
 
 
+@router.post("/session/{session_id}/recount")
+async def recount_session(
+    session_id: int,
+    data: schemas.RecountRequest,
+    db: DB,
+    current_user: CurrentUser,
+):
+    """Corrige el arqueo tras el cierre — cuando el cajero olvidó contar
+    el efectivo, se equivocó al capturar denominaciones o encontró el
+    dinero después. Recalcula actual_cash y variance con audit log."""
+    s = await service.get_session(db, session_id)
+    if not s:
+        raise HTTPException(404, "Sesión no encontrada")
+    if not _can_reconcile(s, current_user):
+        raise HTTPException(403, "No autorizado para corregir este turno")
+    try:
+        return await service.recount_session_cash(
+            db, session_id, denominations=data.denominations,
+            notes=data.notes, user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.post("/session/{session_id}/unmark-reconciled")
 async def unmark_reconciled(session_id: int, db: DB, current_user: CurrentUser):
     """Revierte un turno reconciliado a 'closed' para permitir editar más

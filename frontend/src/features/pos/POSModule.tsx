@@ -1059,6 +1059,7 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
   const [reprint, setReprint] = useState<number | null>(null);
   const [reconcileType, setReconcileType] = useState<"bank_deposit" | "float_next_shift" | "adjustment" | null>(null);
   const [editingNotes, setEditingNotes] = useState(false);
+  const [recounting, setRecounting] = useState(false);
   const [markingReconciled, setMarkingReconciled] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
 
@@ -1264,8 +1265,37 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
                 <StatMini t={t} label="Diferencia" value={mxn(report.variance)} color={varianceColor} />
               </div>
 
+              {(() => {
+                const netVar = (report.variance || 0) + (report.total_adjustments || 0);
+                const bigMiss = Math.abs(netVar) >= 100
+                  || (report.expected_cash > 0 && Math.abs(netVar) / report.expected_cash >= 0.01);
+                if (!bigMiss) return null;
+                return (
+                  <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, background: t.bad + "22", border: `1px solid ${t.bad}55`, color: t.bad, fontSize: 12.5, display: "flex", alignItems: "flex-start", gap: 8 }}>
+                    <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <div>
+                      <div style={{ fontWeight: 800 }}>
+                        Diferencia sin justificar: {mxn(netVar)}
+                      </div>
+                      <div style={{ marginTop: 3, color: t.textMid, fontSize: 11.5 }}>
+                        Si contaste mal el efectivo al cerrar, usa <b>Corregir arqueo</b>. Si el faltante es real, regístralo con <b>Ajuste con motivo</b>.
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div style={{ marginTop: 14, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
-                <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Arqueo</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Arqueo</div>
+                  {(report.status === "closed" || report.status === "reconciled") && (
+                    <button onClick={() => setRecounting(true)}
+                      title="Reingresar denominaciones para corregir un mal conteo"
+                      style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
+                      <RefreshCw size={11} /> Corregir arqueo
+                    </button>
+                  )}
+                </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, fontSize: 13 }}>
                   <div>
                     <div style={{ color: t.textLo, fontSize: 10.5 }}>Esperado</div>
@@ -1463,6 +1493,19 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
               setEditingNotes(false);
               await loadReport(report.id);
               flashOk("Notas actualizadas");
+            }}
+          />
+        )}
+        {report && recounting && (
+          <RecountModal t={t}
+            sessionId={report.id}
+            initialDenominations={report.denominations_json || {}}
+            expectedCash={report.expected_cash}
+            onClose={() => setRecounting(false)}
+            onDone={async () => {
+              setRecounting(false);
+              await loadReport(report.id);
+              flashOk("Arqueo corregido");
             }}
           />
         )}
@@ -1712,4 +1755,129 @@ function StatMini({ t, label, value, sub, color }: {
       {sub && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2 }}>{sub}</div>}
     </div>
   );
+}
+
+
+// ── Corregir arqueo posterior al cierre ──────────────────────────────────
+function RecountModal({ t, sessionId, initialDenominations, expectedCash, onClose, onDone }: {
+  t: any;
+  sessionId: number;
+  initialDenominations: Record<string, number>;
+  expectedCash: number;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [dens, setDens] = useState<Record<string, number>>(() => {
+    const seed: Record<string, number> = {};
+    for (const d of DENOMINATIONS) seed[String(d)] = Number(initialDenominations?.[String(d)] || 0);
+    return seed;
+  });
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const total = DENOMINATIONS.reduce((sum, d) => sum + d * (dens[String(d)] || 0), 0);
+  const diff = total - expectedCash;
+  const diffColor = Math.abs(diff) < 0.01 ? t.good : diff > 0 ? t.nova : t.bad;
+
+  const submit = async () => {
+    setSaving(true); setErr(null);
+    try {
+      const cleaned: Record<string, number> = {};
+      for (const [k, v] of Object.entries(dens)) {
+        if (Number(v) > 0) cleaned[k] = Number(v);
+      }
+      await posApi.recountSession(sessionId, {
+        denominations: cleaned,
+        notes: notes || undefined,
+      });
+      onDone();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error");
+    } finally { setSaving(false); }
+  };
+
+  const modal = (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: 560, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 8, background: t.warn + "22", color: t.warn, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <RefreshCw size={16} />
+          </div>
+          <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>Corregir arqueo</h3>
+        </div>
+        <div style={{ fontSize: 12, color: t.textLo, marginBottom: 14 }}>
+          Reingresa las denominaciones si contaste mal el efectivo al cerrar. Se actualiza el total contado y la diferencia se recalcula automáticamente.
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {DENOMINATIONS.map(d => (
+            <div key={d} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", background: t.panel2, borderRadius: 6 }}>
+              <div style={{ minWidth: 60, fontSize: 12.5, color: t.textMid, fontWeight: 700 }}>{mxn(d)}</div>
+              <div style={{ color: t.textLo, fontSize: 11 }}>×</div>
+              <input type="number" min={0} step={1} value={dens[String(d)] || 0}
+                onChange={e => setDens(prev => ({ ...prev, [String(d)]: Math.max(0, parseInt(e.target.value || "0", 10)) }))}
+                style={{ flex: 1, padding: "6px 10px", borderRadius: 5, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13 }} />
+              <div style={{ minWidth: 80, textAlign: "right", fontSize: 12, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>
+                {mxn(d * (dens[String(d)] || 0))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, background: t.panel2, border: `1px solid ${t.border}` }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, fontSize: 12 }}>
+            <div>
+              <div style={{ color: t.textLo, fontSize: 10.5 }}>Esperado</div>
+              <div style={{ color: t.textHi, fontWeight: 700, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{mxn(expectedCash)}</div>
+            </div>
+            <div>
+              <div style={{ color: t.textLo, fontSize: 10.5 }}>Nuevo contado</div>
+              <div style={{ color: t.textHi, fontWeight: 700, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{mxn(total)}</div>
+            </div>
+            <div>
+              <div style={{ color: t.textLo, fontSize: 10.5 }}>Diferencia</div>
+              <div style={{ color: diffColor, fontWeight: 800, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
+                {diff >= 0 ? "+" : ""}{mxn(diff)}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <label style={{ fontSize: 11.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Motivo (opcional)</label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
+            placeholder="Ej. Encontré el efectivo que había quedado en la caja fuerte"
+            style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, marginTop: 4, fontFamily: "inherit", resize: "vertical" }} />
+        </div>
+
+        {err && (
+          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 6, background: t.bad + "18", color: t.bad, fontSize: 12 }}>
+            {err}
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button onClick={onClose}
+            style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button disabled={saving} onClick={submit}
+            style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", cursor: saving ? "wait" : "pointer", fontWeight: 800 }}>
+            {saving ? "Guardando…" : "Guardar re-arqueo"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(modal, document.body);
 }

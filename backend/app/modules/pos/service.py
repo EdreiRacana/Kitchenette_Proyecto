@@ -764,6 +764,74 @@ async def unmark_session_reconciled(
     return await get_session_report(db, session_id)
 
 
+async def recount_session_cash(
+    db: AsyncSession,
+    session_id: int,
+    denominations: dict,
+    notes: Optional[str] = None,
+    user_id: Optional[int] = None,
+) -> Optional[dict]:
+    """Corrige el arqueo tras el cierre: reingresa denominaciones y
+    recalcula actual_cash + variance. Guarda una POSTransaction 'adjustment'
+    con la diferencia respecto al arqueo anterior para dejar rastro.
+    """
+    res = await db.execute(select(pos_models.POSSession).where(pos_models.POSSession.id == session_id))
+    s = res.scalars().first()
+    if not s:
+        return None
+    if s.status not in ("closed", "reconciled"):
+        raise ValueError(
+            f"Sólo se puede recontar un turno cerrado (estado actual: {s.status})"
+        )
+
+    # Validar que lo ya reconciliado (depósitos + floats) no supere el nuevo total
+    res_out = await db.execute(select(pos_models.POSTransaction).where(
+        pos_models.POSTransaction.session_id == session_id,
+        pos_models.POSTransaction.type.in_(("bank_deposit", "float_next_shift")),
+    ))
+    already_out = sum(t.amount for t in res_out.scalars().all())
+
+    new_actual = 0.0
+    for den, qty in (denominations or {}).items():
+        try:
+            new_actual += float(den) * int(qty)
+        except (ValueError, TypeError):
+            continue
+    new_actual = round(new_actual, 2)
+
+    if new_actual + 0.005 < already_out:
+        raise ValueError(
+            f"El nuevo arqueo (${new_actual:,.2f}) es menor que lo ya "
+            f"reconciliado (${already_out:,.2f}) en depósitos + floats. "
+            "Deshaz esos movimientos antes de reingresar el arqueo."
+        )
+
+    prev_actual = s.actual_cash or 0.0
+    diff = round(new_actual - prev_actual, 2)
+
+    s.actual_cash = new_actual
+    s.variance = round(new_actual - (s.expected_cash or 0.0), 2)
+    s.denominations_json = denominations
+
+    # Deja rastro visible en la bitácora del turno
+    tag = f"Re-arqueo: ${prev_actual:,.2f} → ${new_actual:,.2f} (Δ ${diff:+,.2f})"
+    tx_notes = f"{tag}. {notes}" if notes else tag
+    db.add(pos_models.POSTransaction(
+        session_id=session_id, type="closing", amount=new_actual,
+        notes=tx_notes,
+    ))
+    await db.commit()
+    await _log(
+        db, user_id, "POS_RECOUNT",
+        f"Arqueo del turno {session_id} corregido",
+        {
+            "session_id": session_id, "previous_actual": prev_actual,
+            "new_actual": new_actual, "delta": diff, "new_variance": s.variance,
+        },
+    )
+    return await get_session_report(db, session_id)
+
+
 async def list_active_bank_accounts(db: AsyncSession) -> List[dict]:
     """Selects list para el select de depósito en el UI."""
     from app.modules.finance import models as fin_models
