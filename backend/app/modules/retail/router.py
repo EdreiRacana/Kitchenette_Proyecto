@@ -264,3 +264,64 @@ async def import_sellout(
 async def replenishment(db: DB, _: CurrentUser,
                           channel_id: Optional[int] = Query(None)):
     return await service.replenishment(db, channel_id=channel_id)
+
+
+# ── Alerts ──────────────────────────────────────────────────────────────
+
+@router.get("/alerts", response_model=List[schemas.RetailAlertOut])
+async def list_alerts(db: DB, _: CurrentUser,
+                        channel_id: Optional[int] = Query(None),
+                        status: Optional[str] = Query(None, pattern="^(open|acknowledged|resolved|dismissed)$"),
+                        severity: Optional[str] = Query(None, pattern="^(urgent|high|medium|low)$"),
+                        limit: int = Query(500, ge=1, le=2000)):
+    return await service.list_alerts(
+        db, channel_id=channel_id, status=status, severity=severity, limit=limit,
+    )
+
+
+@router.get("/alerts/summary", response_model=schemas.AlertsSummary)
+async def alerts_summary(db: DB, _: CurrentUser,
+                           channel_id: Optional[int] = Query(None)):
+    return await service.alerts_summary(db, channel_id=channel_id)
+
+
+@router.post("/alerts/evaluate", response_model=schemas.EvaluateAlertsResponse)
+async def evaluate_alerts_route(db: DB, _: CurrentUser,
+                                 channel_id: Optional[int] = Query(None)):
+    return await service.evaluate_alerts(db, channel_id=channel_id)
+
+
+@router.post("/alerts/{alert_id}/acknowledge", response_model=schemas.RetailAlertOut)
+async def acknowledge_alert(alert_id: int, payload: schemas.AlertActionRequest,
+                              db: DB, current_user: CurrentUser):
+    try:
+        a = await service.acknowledge_alert(db, alert_id, user_id=current_user.id, notes=payload.notes)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if a is None:
+        raise HTTPException(404, "Alerta no encontrada")
+    return await service._alert_to_schema(db, a)
+
+
+@router.post("/alerts/{alert_id}/resolve", response_model=schemas.RetailAlertOut)
+async def resolve_alert(alert_id: int, payload: schemas.AlertActionRequest,
+                          db: DB, current_user: CurrentUser):
+    try:
+        a = await service.resolve_alert(db, alert_id, user_id=current_user.id, notes=payload.notes)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if a is None:
+        raise HTTPException(404, "Alerta no encontrada")
+    return await service._alert_to_schema(db, a)
+
+
+@router.post("/alerts/{alert_id}/dismiss", response_model=schemas.RetailAlertOut)
+async def dismiss_alert(alert_id: int, payload: schemas.AlertActionRequest,
+                          db: DB, current_user: CurrentUser):
+    try:
+        a = await service.dismiss_alert(db, alert_id, user_id=current_user.id, notes=payload.notes)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if a is None:
+        raise HTTPException(404, "Alerta no encontrada")
+    return await service._alert_to_schema(db, a)

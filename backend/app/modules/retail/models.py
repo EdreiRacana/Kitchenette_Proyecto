@@ -41,6 +41,10 @@ class RetailChannel(Base):
     target_wos_weeks = Column(Float, default=4.0, nullable=False)
     critical_wos_weeks = Column(Float, default=2.0, nullable=False)
     overstock_wos_weeks = Column(Float, default=12.0, nullable=False)
+    # Reglas de alertas específicas
+    no_movement_days = Column(Integer, default=21, nullable=False)
+    sell_through_min_pct = Column(Float, default=20.0, nullable=False)
+    alerts_enabled = Column(Boolean, default=True, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     notes = Column(Text, nullable=True)
 
@@ -131,3 +135,69 @@ class SellOutReport(Base):
     store = relationship("RetailStore", back_populates="sellout_reports")
     variant = relationship("ProductVariant")
     uploaded_by = relationship("User")
+
+
+ALERT_TYPES = (
+    "stockout_imminent",   # WOS < critical
+    "stockout",             # on_hand == 0 con ventas recientes
+    "overstock",            # WOS > overstock
+    "no_movement",          # sin ventas por N días con on_hand > 0
+    "sell_through_low",     # sell_out/sell_in < umbral
+)
+ALERT_SEVERITIES = ("urgent", "high", "medium", "low")
+ALERT_STATUSES = ("open", "acknowledged", "resolved", "dismissed")
+
+
+class RetailAlert(Base):
+    """Alertas persistentes con dedupe + resolución automática.
+
+    Cada regla genera a lo más una alerta abierta por (type, store, variant).
+    Cuando la condición vuelve a la zona sana, se auto-resuelve.
+    """
+    __tablename__ = "retail_alerts"
+    __table_args__ = (
+        Index("ix_retail_alerts_status", "status"),
+        Index(
+            "ix_retail_alerts_type_store_variant",
+            "alert_type", "store_id", "variant_id",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    channel_id = Column(
+        Integer, ForeignKey("retail_channels.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    store_id = Column(
+        Integer, ForeignKey("retail_stores.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    variant_id = Column(
+        Integer, ForeignKey("product_variants.id"),
+        nullable=True, index=True,
+    )
+    alert_type = Column(String, nullable=False)
+    severity = Column(String, default="medium", nullable=False)
+    message = Column(Text, nullable=False)
+    # Snapshot en el momento de la creación
+    wos_snapshot = Column(Float, nullable=True)
+    on_hand_snapshot = Column(Integer, nullable=True)
+    weekly_velocity_snapshot = Column(Float, nullable=True)
+    # Snapshots textuales para preservar contexto tras cambios de catálogo
+    store_name = Column(String, nullable=True)
+    product_name = Column(String, nullable=True)
+    sku = Column(String, nullable=True)
+
+    status = Column(String, default="open", nullable=False)
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True)
+    acknowledged_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    resolution_notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    channel = relationship("RetailChannel")
+    store = relationship("RetailStore")
+    variant = relationship("ProductVariant")

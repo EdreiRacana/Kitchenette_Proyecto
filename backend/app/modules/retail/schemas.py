@@ -16,6 +16,9 @@ class RetailChannelBase(BaseModel):
     target_wos_weeks: float = Field(default=4.0, ge=0)
     critical_wos_weeks: float = Field(default=2.0, ge=0)
     overstock_wos_weeks: float = Field(default=12.0, ge=0)
+    no_movement_days: int = Field(default=21, ge=1)
+    sell_through_min_pct: float = Field(default=20.0, ge=0, le=100)
+    alerts_enabled: bool = True
     is_active: bool = True
     notes: Optional[str] = None
 
@@ -31,6 +34,9 @@ class RetailChannelUpdate(BaseModel):
     target_wos_weeks: Optional[float] = None
     critical_wos_weeks: Optional[float] = None
     overstock_wos_weeks: Optional[float] = None
+    no_movement_days: Optional[int] = None
+    sell_through_min_pct: Optional[float] = None
+    alerts_enabled: Optional[bool] = None
     is_active: Optional[bool] = None
     notes: Optional[str] = None
 
@@ -245,3 +251,50 @@ class ImportSellOutResponse(BaseModel):
     updated: int
     skipped: int
     errors: List[ImportRowError] = Field(default_factory=list)
+
+
+# ── Alerts ──────────────────────────────────────────────────────────────
+
+class RetailAlertOut(BaseModel):
+    id: int
+    channel_id: int
+    channel_name: Optional[str] = None
+    store_id: int
+    store_name: Optional[str] = None
+    variant_id: Optional[int] = None
+    product_name: Optional[str] = None
+    sku: Optional[str] = None
+    alert_type: str
+    severity: str
+    message: str
+    wos_snapshot: Optional[float] = None
+    on_hand_snapshot: Optional[int] = None
+    weekly_velocity_snapshot: Optional[float] = None
+    status: str
+    acknowledged_at: Optional[datetime] = None
+    acknowledged_by_user_id: Optional[int] = None
+    resolved_at: Optional[datetime] = None
+    resolved_by_user_id: Optional[int] = None
+    resolution_notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AlertActionRequest(BaseModel):
+    notes: Optional[str] = None
+
+
+class EvaluateAlertsResponse(BaseModel):
+    created: int
+    auto_resolved: int
+    total_open: int
+    urgent_open: int
+
+
+class AlertsSummary(BaseModel):
+    open: int
+    urgent: int
+    high: int
+    medium: int
+    low: int
+    acknowledged: int
