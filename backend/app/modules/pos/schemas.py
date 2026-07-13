@@ -125,3 +125,10 @@ class ReconcileMovementRequest(BaseModel):
 class UpdateSessionNotesRequest(BaseModel):
     closing_notes: Optional[str] = None
     opening_notes: Optional[str] = None
+
+
+class RecountRequest(BaseModel):
+    """Reingresa el arqueo tras el cierre — cuando el cajero olvidó o
+    contó mal. Recalcula actual_cash y variance con audit log."""
+    denominations: Dict[str, int]  # {"500": 4, "200": 5, ...}
+    notes: Optional[str] = None
