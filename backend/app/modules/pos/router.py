@@ -211,6 +211,23 @@ async def mark_reconciled(session_id: int, db: DB, current_user: CurrentUser):
         raise HTTPException(400, str(e))
 
 
+@router.post("/session/{session_id}/unmark-reconciled")
+async def unmark_reconciled(session_id: int, db: DB, current_user: CurrentUser):
+    """Revierte un turno reconciliado a 'closed' para permitir editar más
+    movimientos post-cierre. Deja rastro en el audit log."""
+    s = await service.get_session(db, session_id)
+    if not s:
+        raise HTTPException(404, "Sesión no encontrada")
+    if not _can_reconcile(s, current_user):
+        raise HTTPException(403, "No autorizado")
+    try:
+        return await service.unmark_session_reconciled(
+            db, session_id, user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.post("/session/cash-movement")
 async def cash_movement(data: schemas.CashMovementRequest, db: DB, current_user: CurrentUser):
     try:

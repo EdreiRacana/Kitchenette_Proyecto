@@ -1109,12 +1109,25 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
 
   const doMarkReconciled = async () => {
     if (!report) return;
-    if (!confirm("¿Marcar este turno como reconciliado? Ya no podrás editarlo salvo por admin.")) return;
+    if (!confirm("¿Marcar este turno como reconciliado? Podrás seguir agregando movimientos o deshacerlo si necesitas.")) return;
     setMarkingReconciled(true);
     try {
       const r = await posApi.markReconciled(report.id);
       setReport(r);
       flashOk("Turno marcado como reconciliado");
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "Error");
+    } finally { setMarkingReconciled(false); }
+  };
+
+  const doUnmarkReconciled = async () => {
+    if (!report) return;
+    if (!confirm("¿Volver el turno a 'Cerrado' para seguir editando?")) return;
+    setMarkingReconciled(true);
+    try {
+      const r = await posApi.unmarkReconciled(report.id);
+      setReport(r);
+      flashOk("Turno de vuelta a 'Cerrado'");
     } catch (e: any) {
       alert(e?.response?.data?.detail || "Error");
     } finally { setMarkingReconciled(false); }
@@ -1295,37 +1308,53 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
                   </div>
                 </div>
 
-                {report.status === "closed" && (
+                {(report.status === "closed" || report.status === "reconciled") ? (
                   <>
+                    {report.status === "reconciled" && (
+                      <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 6, background: t.good + "18", color: t.good, fontSize: 11.5, display: "flex", alignItems: "center", gap: 6 }}>
+                        <Check size={13} /> Turno ya reconciliado. Puedes seguir agregando movimientos o deshacer para editar de nuevo.
+                      </div>
+                    )}
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                       <button onClick={() => setReconcileType("bank_deposit")}
+                        title="Registrar el efectivo que se llevó al banco"
                         style={{ padding: "8px 12px", borderRadius: 7, border: `1px solid ${t.nova}55`, background: t.nova + "18", color: t.nova, cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
                         <Banknote size={13} /> Depósito banco
                       </button>
                       <button onClick={() => setReconcileType("float_next_shift")}
+                        title="Registrar el efectivo dejado como fondo del siguiente turno"
                         style={{ padding: "8px 12px", borderRadius: 7, border: `1px solid ${t.warn}55`, background: t.warn + "18", color: t.warn, cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
                         <ArrowLeftRight size={13} /> Fondo próximo turno
                       </button>
                       <button onClick={() => setReconcileType("adjustment")}
+                        title="Registrar un ajuste con motivo (sobrante o faltante justificado)"
                         style={{ padding: "8px 12px", borderRadius: 7, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
                         <AlertTriangle size={13} /> Ajuste con motivo
                       </button>
                       <button onClick={() => setEditingNotes(true)}
+                        title="Corregir notas de apertura o cierre"
                         style={{ padding: "8px 12px", borderRadius: 7, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
                         <Receipt size={13} /> Editar notas
                       </button>
                     </div>
-                    {(report.cash_remaining_after || 0) <= 0.01 && (
-                      <button disabled={markingReconciled} onClick={doMarkReconciled}
-                        style={{ marginTop: 10, padding: "9px 14px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: markingReconciled ? "wait" : "pointer", fontWeight: 800, fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
-                        <Check size={14} /> {markingReconciled ? "Marcando…" : "Marcar como reconciliado"}
-                      </button>
-                    )}
+                    <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {report.status === "closed" && (report.cash_remaining_after || 0) <= 0.01 && (
+                        <button disabled={markingReconciled} onClick={doMarkReconciled}
+                          style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: markingReconciled ? "wait" : "pointer", fontWeight: 800, fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+                          <Check size={14} /> {markingReconciled ? "Marcando…" : "Marcar como reconciliado"}
+                        </button>
+                      )}
+                      {report.status === "reconciled" && (
+                        <button disabled={markingReconciled} onClick={doUnmarkReconciled}
+                          style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, cursor: markingReconciled ? "wait" : "pointer", fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+                          <RefreshCw size={13} /> {markingReconciled ? "…" : "Deshacer reconciliación"}
+                        </button>
+                      )}
+                    </div>
                   </>
-                )}
-                {report.status === "reconciled" && (
-                  <div style={{ marginTop: 4, fontSize: 11.5, color: t.good, display: "flex", alignItems: "center", gap: 6 }}>
-                    <Check size={13} /> Turno cerrado y reconciliado — todo el efectivo justificado.
+                ) : (
+                  <div style={{ padding: "10px 12px", borderRadius: 6, background: t.warn + "18", color: t.warn, fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                    <AlertTriangle size={13} /> Este turno no está cerrado (estado: {report.status}). La reconciliación solo aplica a turnos cerrados.
                   </div>
                 )}
                 {flash && (
