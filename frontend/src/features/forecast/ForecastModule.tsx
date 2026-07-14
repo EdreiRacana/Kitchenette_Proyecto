@@ -209,12 +209,19 @@ export default function ForecastModule({ t, s }: Props) {
     void refreshDerived();
   };
 
-  const onGenerateBaseline = async (replace: boolean, yearSource?: number, growthPct?: number) => {
+  const onGenerateBaseline = async (
+    replace: boolean, yearSource?: number, growthPct?: number,
+    opts?: { source_type?: "sell_in" | "sell_out" | "wos_target";
+              retail_channel_id?: number; wos_target_weeks?: number },
+  ) => {
     if (selectedPlanId == null) return null;
     const res = await forecastApi.baseline({
       plan_id: selectedPlanId,
       year_source: yearSource,
       growth_pct: growthPct,
+      source_type: opts?.source_type,
+      retail_channel_id: opts?.retail_channel_id,
+      wos_target_weeks: opts?.wos_target_weeks,
       replace,
     });
     await loadPlanData(selectedPlanId);
@@ -658,7 +665,11 @@ function LineGrid({
   loading: boolean;
   error: string | null;
   onAdd: () => void;
-  onGenerateBaseline: (replace: boolean, yearSource?: number, growthPct?: number) => Promise<unknown>;
+  onGenerateBaseline: (
+    replace: boolean, yearSource?: number, growthPct?: number,
+    opts?: { source_type?: "sell_in" | "sell_out" | "wos_target";
+              retail_channel_id?: number; wos_target_weeks?: number },
+  ) => Promise<unknown>;
   onUpdateLine: (id: number, patch: Partial<ForecastLineDraft>) => Promise<void>;
   onDeleteLine: (id: number) => Promise<void>;
   plan: ForecastPlan;
@@ -668,17 +679,37 @@ function LineGrid({
   const [busyBaseline, setBusyBaseline] = useState(false);
   const [busyExport, setBusyExport] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showBaselineMenu, setShowBaselineMenu] = useState(false);
+  const [showRetailBaseline, setShowRetailBaseline] = useState<null | "sell_out" | "wos_target">(null);
+  const [baselineResult, setBaselineResult] = useState<string | null>(null);
 
   const grandUnits = lines.reduce((a, l) => a + l.total_units, 0);
   const grandAmount = lines.reduce((a, l) => a + l.total_amount, 0);
 
-  const runBaseline = async (replace: boolean) => {
+  const runBaselineSellIn = async () => {
+    setShowBaselineMenu(false);
     setBusyBaseline(true);
     try {
-      await onGenerateBaseline(replace);
-    } finally {
-      setBusyBaseline(false);
-    }
+      const r = await onGenerateBaseline(false) as { lines_created?: number };
+      setBaselineResult(`${r?.lines_created ?? 0} líneas creadas (sell-in)`);
+      setTimeout(() => setBaselineResult(null), 3000);
+    } finally { setBusyBaseline(false); }
+  };
+
+  const runBaselineWithOpts = async (opts: {
+    source_type: "sell_out" | "wos_target"; retail_channel_id?: number; wos_target_weeks?: number;
+  }) => {
+    setBusyBaseline(true);
+    try {
+      const r = await onGenerateBaseline(false, undefined, undefined, opts) as { lines_created?: number };
+      setBaselineResult(
+        opts.source_type === "sell_out"
+          ? `${r?.lines_created ?? 0} líneas creadas (sell-out)`
+          : `${r?.lines_created ?? 0} líneas creadas (WOS objetivo)`
+      );
+      setShowRetailBaseline(null);
+      setTimeout(() => setBaselineResult(null), 4000);
+    } finally { setBusyBaseline(false); }
   };
 
   const download = async (format: "xlsx" | "csv", mode: "template" | "export") => {
@@ -735,18 +766,57 @@ function LineGrid({
             <Upload size={14} color={tk.accent} />
             {tr("forecast.import", "Cargar Excel/CSV")}
           </button>
-          <button
-            onClick={() => runBaseline(false)}
-            disabled={busyBaseline}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 6, background: tk.panel2, color: tk.textHi,
-              border: `1px solid ${tk.border}`, borderRadius: 8, padding: "8px 12px", cursor: "pointer",
-              fontSize: 12.5, fontWeight: 600, opacity: busyBaseline ? 0.6 : 1,
-            }}
-          >
-            <Sparkles size={14} color={tk.accent} />
-            {tr("forecast.baselineAdd", "Generar desde historial")}
-          </button>
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setShowBaselineMenu(v => !v)}
+              disabled={busyBaseline}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6, background: tk.panel2, color: tk.textHi,
+                border: `1px solid ${tk.border}`, borderRadius: 8, padding: "8px 12px", cursor: "pointer",
+                fontSize: 12.5, fontWeight: 600, opacity: busyBaseline ? 0.6 : 1,
+              }}
+            >
+              <Sparkles size={14} color={tk.accent} />
+              {busyBaseline ? "Generando…" : tr("forecast.baselineAdd", "Generar baseline")}
+              <span style={{ fontSize: 10, opacity: 0.7 }}>▾</span>
+            </button>
+            {showBaselineMenu && (
+              <>
+                <div onClick={() => setShowBaselineMenu(false)}
+                  style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+                <div style={{
+                  position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 50,
+                  minWidth: 280, background: tk.panel, border: `1px solid ${tk.border}`,
+                  borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,.35)", overflow: "hidden",
+                }}>
+                  <BaselineOption
+                    tk={tk} icon="📊"
+                    title="Sell-in (ventas históricas)"
+                    subtitle="Del año anterior. Facturación al cliente."
+                    onClick={runBaselineSellIn}
+                  />
+                  <BaselineOption
+                    tk={tk} icon="🏪"
+                    title="Sell-out (retail)"
+                    subtitle="Demanda real de las tiendas. Más preciso."
+                    onClick={() => { setShowBaselineMenu(false); setShowRetailBaseline("sell_out"); }}
+                  />
+                  <BaselineOption
+                    tk={tk} icon="🎯"
+                    title="WOS objetivo"
+                    subtitle="Proyecta para mantener N semanas de stock."
+                    onClick={() => { setShowBaselineMenu(false); setShowRetailBaseline("wos_target"); }}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+          {baselineResult && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "6px 10px",
+              background: tk.good + "22", color: tk.good, borderRadius: 6, fontSize: 11.5, fontWeight: 700 }}>
+              ✓ {baselineResult}
+            </span>
+          )}
           <button
             onClick={onAdd}
             style={{
@@ -781,6 +851,15 @@ function LineGrid({
           tk={tk} tr={tr} planId={plan.id}
           onClose={() => setShowImport(false)}
           onImported={(res) => { onImported(); if (res.errors.length === 0) setShowImport(false); }}
+        />
+      )}
+
+      {showRetailBaseline && (
+        <RetailBaselineModal
+          tk={tk} tr={tr} kind={showRetailBaseline}
+          busy={busyBaseline}
+          onClose={() => setShowRetailBaseline(null)}
+          onRun={runBaselineWithOpts}
         />
       )}
 
@@ -1496,6 +1575,117 @@ function ImportModal({
         <button onClick={onClose} style={secondaryBtn(tk)}>{tr("forecast.close", "Cerrar")}</button>
         <button disabled={busy || !file} onClick={submit} style={primaryBtn(tk)}>
           {busy ? tr("forecast.uploading", "Subiendo…") : tr("forecast.upload", "Subir")}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+
+// ── Baseline: opción del menú y modal Sell-out/WOS ─────────────────────────
+
+function BaselineOption({ tk, icon, title, subtitle, onClick }: {
+  tk: Tokens; icon: string; title: string; subtitle: string; onClick: () => void;
+}) {
+  return (
+    <button onClick={onClick}
+      style={{
+        display: "flex", alignItems: "center", gap: 10, width: "100%",
+        padding: "10px 14px", background: "transparent", border: "none",
+        borderBottom: `1px solid ${tk.border}55`, cursor: "pointer",
+        textAlign: "left",
+      }}>
+      <div style={{ fontSize: 20, width: 26, textAlign: "center" }}>{icon}</div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: tk.textHi }}>{title}</div>
+        <div style={{ fontSize: 11, color: tk.textLo, marginTop: 2 }}>{subtitle}</div>
+      </div>
+    </button>
+  );
+}
+
+
+function RetailBaselineModal({ tk, tr, kind, busy, onClose, onRun }: {
+  tk: Tokens; tr: (k: string, fb: string) => string;
+  kind: "sell_out" | "wos_target"; busy: boolean;
+  onClose: () => void;
+  onRun: (opts: { source_type: "sell_out" | "wos_target"; retail_channel_id?: number; wos_target_weeks?: number }) => Promise<void>;
+}) {
+  const [channels, setChannels] = useState<Array<{ id: number; name: string; target_wos_weeks: number }>>([]);
+  const [channelId, setChannelId] = useState<number | null>(null);
+  const [wosWeeks, setWosWeeks] = useState<number>(4);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const mod = await import("../retail/api");
+        const list = await mod.retailApi.listChannels();
+        setChannels(list.map((c: any) => ({ id: c.id, name: c.name, target_wos_weeks: c.target_wos_weeks })));
+      } catch {
+        setErr("No se pudieron cargar las cadenas de retail. Registra al menos una en el módulo Retail.");
+      } finally { setLoading(false); }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (channelId && kind === "wos_target") {
+      const c = channels.find(x => x.id === channelId);
+      if (c) setWosWeeks(c.target_wos_weeks);
+    }
+  }, [channelId, kind, channels]);
+
+  const title = kind === "sell_out"
+    ? tr("forecast.baselineSellOutTitle", "Baseline por sell-out (retail)")
+    : tr("forecast.baselineWosTitle", "Baseline por WOS objetivo");
+  const hint = kind === "sell_out"
+    ? "Usa la demanda real reportada por las tiendas del año anterior. Más preciso que sell-in porque no refleja distorsiones de embarques."
+    : "Proyecta 12 meses para mantener el nivel de stock que quieres en la red. Basado en la velocidad de los últimos 3 meses.";
+
+  const submit = async () => {
+    if (kind === "wos_target" && (!wosWeeks || wosWeeks <= 0)) return;
+    await onRun({
+      source_type: kind,
+      retail_channel_id: channelId || undefined,
+      wos_target_weeks: kind === "wos_target" ? wosWeeks : undefined,
+    });
+  };
+
+  return (
+    <ModalShell tk={tk} title={title} onClose={onClose}>
+      <div style={{ padding: "0 4px 8px", color: tk.textLo, fontSize: 12.5 }}>{hint}</div>
+
+      {loading && <div style={{ padding: 20, textAlign: "center", color: tk.textLo }}>Cargando cadenas…</div>}
+      {err && <div style={{ padding: 12, background: tk.warn + "18", color: tk.warn, borderRadius: 8, fontSize: 12, marginBottom: 10 }}>{err}</div>}
+
+      {!loading && !err && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <Field tk={tk} label="Cadena (opcional — todas si no eliges)">
+            <select value={channelId ?? ""} onChange={e => setChannelId(e.target.value ? Number(e.target.value) : null)}
+              style={inputStyle(tk)}>
+              <option value="">— Todas las cadenas —</option>
+              {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </Field>
+          {kind === "wos_target" && (
+            <Field tk={tk} label="Semanas de stock objetivo por SKU">
+              <input type="number" min={0.5} step={0.5} value={wosWeeks || ""}
+                onChange={e => setWosWeeks(Number(e.target.value) || 0)}
+                style={inputStyle(tk)} />
+              <div style={{ fontSize: 11, color: tk.textLo, marginTop: 4 }}>
+                Con 4 semanas mantienes un mes de inventario en la red.
+              </div>
+            </Field>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+        <button onClick={onClose} style={secondaryBtn(tk)}>Cancelar</button>
+        <button disabled={busy || loading || !!err} onClick={submit} style={primaryBtn(tk)}>
+          {busy ? "Generando…" : "Generar líneas"}
         </button>
       </div>
     </ModalShell>

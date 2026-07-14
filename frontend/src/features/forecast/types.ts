@@ -79,19 +79,27 @@ export interface AttainmentResponse {
   attainment_year_pct: number;
 }
 
+export type BaselineSource = "sell_in" | "sell_out" | "wos_target";
+
 export interface BaselineRequest {
   plan_id: number;
+  source_type?: BaselineSource;
   year_source?: number;
   growth_pct?: number;
   customer_id?: number;
   salesperson_id?: number;
+  retail_channel_id?: number;
+  wos_target_weeks?: number;
   replace?: boolean;
 }
 
 export interface BaselineResponse {
   plan_id: number;
+  source_type: BaselineSource;
   year_source: number;
   growth_pct: number;
+  wos_target_weeks?: number | null;
+  retail_channel_id?: number | null;
   lines_created: number;
   lines_deleted: number;
   lines: ForecastLine[];
