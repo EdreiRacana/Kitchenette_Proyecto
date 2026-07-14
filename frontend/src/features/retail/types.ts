@@ -79,6 +79,71 @@ export interface ConsignmentReconResponse {
   rows: ConsignmentReconRow[];
 }
 
+// Heatmap
+export type HeatmapMetric = "wos" | "units_sold" | "on_hand";
+export interface HeatmapCell {
+  store_id: number;
+  variant_id: number;
+  value?: number | null;
+  on_hand: number;
+  units_sold: number;
+  status: WosStatus;
+}
+export interface HeatmapStoreRef { id: number; name: string; channel_name?: string | null; }
+export interface HeatmapVariantRef { id: number; sku?: string | null; product_name?: string | null; }
+export interface HeatmapResponse {
+  channel_id?: number | null;
+  metric: HeatmapMetric;
+  stores: HeatmapStoreRef[];
+  variants: HeatmapVariantRef[];
+  cells: HeatmapCell[];
+}
+
+// ABC
+export type ABCClass = "A" | "B" | "C";
+export interface ABCRow {
+  rank: number;
+  variant_id?: number | null;
+  sku?: string | null;
+  product_name?: string | null;
+  stores_count: number;
+  total_units: number;
+  total_revenue: number;
+  revenue_pct: number;
+  cumulative_pct: number;
+  abc_class: ABCClass;
+}
+export interface ABCResponse {
+  channel_id?: number | null;
+  total_revenue: number;
+  class_a_count: number;
+  class_b_count: number;
+  class_c_count: number;
+  rows: ABCRow[];
+}
+
+// Transfer
+export interface SourceWarehouseOption { id: number; name: string; location?: string | null; type: string; }
+export interface TransferItem { store_id: number; variant_id: number; units: number; notes?: string; }
+export interface TransferItemResult {
+  store_id: number;
+  variant_id: number;
+  units_requested: number;
+  units_transferred: number;
+  status: "transferred" | "insufficient_stock" | "no_consignment" | "error";
+  message?: string | null;
+  out_movement_id?: number | null;
+  in_movement_id?: number | null;
+}
+export interface TransferResponse {
+  source_warehouse_id: number;
+  source_warehouse_name: string;
+  transferred_lines: number;
+  warnings: number;
+  total_units: number;
+  results: TransferItemResult[];
+}
+
 export interface RetailStoreCreate extends Omit<RetailStore, "id" | "channel_name" | "created_at"> {}
 
 export interface SellOutReport {

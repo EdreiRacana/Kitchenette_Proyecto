@@ -335,3 +335,99 @@ class ConsignmentReconResponse(BaseModel):
     matched: int
     with_diff: int
     rows: List[ConsignmentReconRow]
+
+
+# ── Analytics: heatmap ──────────────────────────────────────────────────
+
+class HeatmapCell(BaseModel):
+    store_id: int
+    variant_id: int
+    value: Optional[float] = None
+    on_hand: int = 0
+    units_sold: int = 0
+    status: str  # critical | replenish | healthy | overstock | no_data
+
+
+class HeatmapStoreRef(BaseModel):
+    id: int
+    name: str
+    channel_name: Optional[str] = None
+
+
+class HeatmapVariantRef(BaseModel):
+    id: int
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+
+
+class HeatmapResponse(BaseModel):
+    channel_id: Optional[int] = None
+    metric: str  # wos | units_sold | on_hand
+    stores: List[HeatmapStoreRef]
+    variants: List[HeatmapVariantRef]
+    cells: List[HeatmapCell]
+
+
+# ── Analytics: ABC ──────────────────────────────────────────────────────
+
+class ABCRow(BaseModel):
+    rank: int
+    variant_id: Optional[int] = None
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    stores_count: int
+    total_units: int
+    total_revenue: float
+    revenue_pct: float
+    cumulative_pct: float
+    abc_class: str  # A | B | C
+
+
+class ABCResponse(BaseModel):
+    channel_id: Optional[int] = None
+    total_revenue: float
+    class_a_count: int
+    class_b_count: int
+    class_c_count: int
+    rows: List[ABCRow]
+
+
+# ── Replenishment: transfer ─────────────────────────────────────────────
+
+class SourceWarehouseOption(BaseModel):
+    id: int
+    name: str
+    location: Optional[str] = None
+    type: str  # own, marketplace, etc.
+
+
+class TransferItem(BaseModel):
+    store_id: int
+    variant_id: int
+    units: int = Field(ge=1)
+    notes: Optional[str] = None
+
+
+class TransferRequest(BaseModel):
+    source_warehouse_id: int
+    items: List[TransferItem]
+
+
+class TransferItemResult(BaseModel):
+    store_id: int
+    variant_id: int
+    units_requested: int
+    units_transferred: int
+    status: str      # transferred | insufficient_stock | no_consignment | error
+    message: Optional[str] = None
+    out_movement_id: Optional[int] = None
+    in_movement_id: Optional[int] = None
+
+
+class TransferResponse(BaseModel):
+    source_warehouse_id: int
+    source_warehouse_name: str
+    transferred_lines: int
+    warnings: int
+    total_units: int
+    results: List[TransferItemResult]

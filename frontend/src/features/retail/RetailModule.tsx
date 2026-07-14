@@ -9,7 +9,7 @@ import {
   Store, LayoutDashboard, Building2, ShoppingBag, Package, Truck,
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
-  Bell, EyeOff, CheckCircle2, Zap, Warehouse,
+  Bell, EyeOff, CheckCircle2, Zap, Warehouse, Grid3x3, BarChart3, ArrowRight,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -20,6 +20,7 @@ import type {
   ReplenishmentSuggestion, WosStatus, ImportSellOutResponse,
   RetailAlert, AlertStatus, AlertSeverity, AlertsSummary,
   ConsignmentWarehouseOption, ConsignmentReconResponse, ConsignmentReconRow,
+  HeatmapResponse, HeatmapMetric, ABCResponse, SourceWarehouseOption, TransferResponse,
 } from "./types";
 
 type Tokens = any;
@@ -51,7 +52,7 @@ function statusInfo(t: Tokens, status: WosStatus) {
   }
 }
 
-type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment" | "alerts" | "consignment";
+type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment" | "alerts" | "consignment" | "analytics";
 
 export default function RetailModule({ t }: { t: Tokens }) {
   const [tab, setTab] = useState<TabId>("dashboard");
@@ -89,6 +90,7 @@ export default function RetailModule({ t }: { t: Tokens }) {
       badgeColor: (alertsSummary?.urgent ?? 0) > 0 ? "urgent" : "normal",
     },
     { id: "consignment", label: "Consignación", icon: Warehouse },
+    { id: "analytics", label: "Analíticas", icon: BarChart3 },
   ];
 
   return (
@@ -163,6 +165,7 @@ export default function RetailModule({ t }: { t: Tokens }) {
             {tab === "replenishment" && <ReplenishmentView t={t} channelId={selectedChannel} />}
             {tab === "alerts" && <AlertsView t={t} channelId={selectedChannel} onChanged={refreshAlertsSummary} />}
             {tab === "consignment" && <ConsignmentView t={t} channelId={selectedChannel} />}
+            {tab === "analytics" && <AnalyticsView t={t} channelId={selectedChannel} />}
           </>
         )}
       </div>
@@ -1453,15 +1456,28 @@ function SellOutModal({ t, channels, defaultChannel, onClose, onSaved }: {
 function ReplenishmentView({ t, channelId }: { t: Tokens; channelId: number | null }) {
   const [data, setData] = useState<ReplenishmentResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [showTransfer, setShowTransfer] = useState(false);
 
   const load = async () => {
     setLoading(true);
     try {
       const r = await retailApi.replenishment(channelId || undefined);
       setData(r);
+      setSelected({});
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, [channelId]);
+
+  const keyOf = (s: ReplenishmentSuggestion) => `${s.store_id}:${s.variant_id ?? "x"}`;
+  const eligibleForTransfer = (data?.suggestions || []).filter(s => s.variant_id);
+  const selectedItems = eligibleForTransfer.filter(s => selected[keyOf(s)]);
+  const allSelected = eligibleForTransfer.length > 0 && selectedItems.length === eligibleForTransfer.length;
+  const toggleAll = () => {
+    const next: Record<string, boolean> = {};
+    if (!allSelected) eligibleForTransfer.forEach(s => { next[keyOf(s)] = true; });
+    setSelected(next);
+  };
 
   if (loading) return <div style={{ padding: 40, color: t.textLo, textAlign: "center" }}>Calculando sugerencias…</div>;
   if (!data) return null;
@@ -1479,9 +1495,16 @@ function ReplenishmentView({ t, channelId }: { t: Tokens; channelId: number | nu
           Meta {data.target_wos_weeks} sem · Mínimo {data.critical_wos_weeks} sem ·
           Generado {new Date(data.generated_at).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })}
         </div>
-        <button onClick={load} style={btnGhost(t)}>
-          <RefreshCw size={13} /> Recalcular
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button disabled={selectedItems.length === 0} onClick={() => setShowTransfer(true)}
+            style={{ ...btnPrimary(t), opacity: selectedItems.length === 0 ? 0.5 : 1 }}
+            title="Crea el movimiento de inventario del almacén origen al de consignación de cada tienda">
+            <ArrowRight size={13} /> Generar traslado ({selectedItems.length})
+          </button>
+          <button onClick={load} style={btnGhost(t)}>
+            <RefreshCw size={13} /> Recalcular
+          </button>
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 14 }}>
@@ -1511,6 +1534,10 @@ function ReplenishmentView({ t, channelId }: { t: Tokens; channelId: number | nu
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
           <thead>
             <tr style={{ background: t.panel2 }}>
+              <th style={{ ...thStyle(t), width: 30 }}>
+                <input type="checkbox" checked={allSelected} onChange={toggleAll}
+                  title="Seleccionar todas las que pueden trasladarse (con SKU)" />
+              </th>
               <th style={thStyle(t)}>Prioridad</th>
               <th style={thStyle(t)}>Tienda</th>
               <th style={thStyle(t)}>Producto</th>
@@ -1525,8 +1552,16 @@ function ReplenishmentView({ t, channelId }: { t: Tokens; channelId: number | nu
             {data.suggestions.map((s, i) => {
               const meta = prioMeta(s.priority);
               const Icon = meta.icon;
+              const k = keyOf(s);
+              const eligible = !!s.variant_id;
               return (
                 <tr key={i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                  <td style={{ ...tdStyle(t), textAlign: "center" }}>
+                    <input type="checkbox" disabled={!eligible}
+                      checked={!!selected[k]}
+                      onChange={e => setSelected(prev => ({ ...prev, [k]: e.target.checked }))}
+                      title={eligible ? "Incluir en traslado" : "Sin SKU en catálogo"} />
+                  </td>
                   <td style={tdStyle(t)}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: meta.color, background: meta.color + "22", padding: "2px 8px", borderRadius: 10 }}>
                       <Icon size={11} /> {meta.label}
@@ -1551,8 +1586,189 @@ function ReplenishmentView({ t, channelId }: { t: Tokens; channelId: number | nu
           </tbody>
         </table>
       </div>
+
+      {showTransfer && (
+        <TransferModal t={t}
+          items={selectedItems}
+          onClose={() => setShowTransfer(false)}
+          onDone={() => { setShowTransfer(false); load(); }}
+        />
+      )}
     </div>
   );
+}
+
+
+function TransferModal({ t, items, onClose, onDone }: {
+  t: Tokens; items: ReplenishmentSuggestion[]; onClose: () => void; onDone: () => void;
+}) {
+  const [warehouses, setWarehouses] = useState<SourceWarehouseOption[]>([]);
+  const [sourceId, setSourceId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [result, setResult] = useState<TransferResponse | null>(null);
+  const [qty, setQty] = useState<Record<string, number>>(() => {
+    const o: Record<string, number> = {};
+    items.forEach(s => { o[`${s.store_id}:${s.variant_id ?? "x"}`] = s.suggested_units; });
+    return o;
+  });
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const ws = await retailApi.listSourceWarehouses();
+        setWarehouses(ws);
+        if (ws.length > 0) setSourceId(ws[0].id);
+      } catch { setErr("No pude cargar los almacenes origen."); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  const totalUnits = items.reduce((a, s) => a + (qty[`${s.store_id}:${s.variant_id ?? "x"}`] || 0), 0);
+
+  const submit = async () => {
+    if (!sourceId) return;
+    setSaving(true); setErr(null);
+    try {
+      const payload = items
+        .filter(s => s.variant_id)
+        .map(s => ({
+          store_id: s.store_id, variant_id: s.variant_id!,
+          units: qty[`${s.store_id}:${s.variant_id}`] || 0,
+        }))
+        .filter(x => x.units > 0);
+      if (payload.length === 0) { setErr("Nada por trasladar"); return; }
+      const r = await retailApi.createTransfer(sourceId, payload);
+      setResult(r);
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al crear traslado");
+    } finally { setSaving(false); }
+  };
+
+  const modal = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 720, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 8, background: t.nova + "22", color: t.nova, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Truck size={16} />
+          </div>
+          <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>Generar traslado a consignación</h3>
+        </div>
+        <p style={{ color: t.textLo, fontSize: 12, marginTop: 0 }}>
+          Se crea un par de movimientos de inventario (salida del origen + entrada al almacén de consignación de cada tienda). El costo unitario se toma FIFO del origen.
+        </p>
+
+        {!result && (
+          <>
+            <div style={{ marginBottom: 12 }}>
+              <label style={labelStyle(t)}>Almacén origen</label>
+              {loading ? (
+                <div style={{ color: t.textLo, fontSize: 12, padding: 8 }}>Cargando…</div>
+              ) : warehouses.length === 0 ? (
+                <div style={errStyle(t)}>No hay almacenes disponibles como origen. Crea uno en Inventario.</div>
+              ) : (
+                <select value={sourceId ?? ""} onChange={e => setSourceId(Number(e.target.value))} style={inputStyle(t)}>
+                  {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}{w.location ? ` · ${w.location}` : ""}</option>)}
+                </select>
+              )}
+            </div>
+
+            <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8, overflow: "hidden", marginBottom: 12 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ background: t.panel3 }}>
+                    <th style={thStyle(t)}>Tienda</th>
+                    <th style={thStyle(t)}>Producto</th>
+                    <th style={thStyle(t)}>Sugerido</th>
+                    <th style={thStyle(t)}>A trasladar</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((s, i) => {
+                    const k = `${s.store_id}:${s.variant_id ?? "x"}`;
+                    return (
+                      <tr key={i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                        <td style={tdStyle(t)}>
+                          <b style={{ color: t.textHi }}>{s.store_name}</b>
+                          <div style={{ fontSize: 10.5, color: t.textLo }}>{s.channel_name}</div>
+                        </td>
+                        <td style={tdStyle(t)}>
+                          <div style={{ color: t.textHi }}>{s.product_name}</div>
+                          <div style={{ fontSize: 10.5, color: t.textLo, fontFamily: "monospace" }}>{s.sku}</div>
+                        </td>
+                        <td style={{ ...tdStyle(t), textAlign: "right", color: t.textMid }}>{num(s.suggested_units)}</td>
+                        <td style={{ ...tdStyle(t), textAlign: "right" }}>
+                          <input type="number" min={0} value={qty[k] || 0}
+                            onChange={e => setQty(prev => ({ ...prev, [k]: Math.max(0, parseInt(e.target.value || "0", 10)) }))}
+                            style={{ ...inputStyle(t), textAlign: "right", width: 90 }} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ padding: 10, background: t.panel2, borderRadius: 6, fontSize: 12.5, color: t.textMid, marginBottom: 12 }}>
+              Total a trasladar: <b style={{ color: t.textHi }}>{num(totalUnits)}</b> unidades en {items.length} línea{items.length !== 1 ? "s" : ""}.
+            </div>
+
+            {err && <div style={errStyle(t)}>{err}</div>}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={onClose} style={btnGhost(t)}>Cancelar</button>
+              <button disabled={saving || !sourceId || totalUnits === 0} onClick={submit} style={btnPrimary(t)}>
+                {saving ? "Trasladando…" : "Confirmar traslado"}
+              </button>
+            </div>
+          </>
+        )}
+
+        {result && (
+          <>
+            <div style={{ marginTop: 8, padding: 14, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <Check size={16} color={t.good} />
+                <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi }}>Traslado registrado desde {result.source_warehouse_name}</div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                <StatMini t={t} label="Líneas trasladadas" value={result.transferred_lines.toString()} color={t.good} />
+                <StatMini t={t} label="Unidades" value={num(result.total_units)} />
+                <StatMini t={t} label="Advertencias" value={result.warnings.toString()} color={result.warnings > 0 ? t.warn : t.textLo} />
+              </div>
+            </div>
+
+            {result.warnings > 0 && (
+              <div style={{ marginTop: 12, padding: 12, background: t.warn + "18", border: `1px solid ${t.warn}55`, borderRadius: 8 }}>
+                <div style={{ color: t.warn, fontWeight: 700, fontSize: 12.5, marginBottom: 6 }}>Líneas con problema</div>
+                <div style={{ maxHeight: 200, overflowY: "auto", fontSize: 11.5, display: "flex", flexDirection: "column", gap: 4 }}>
+                  {result.results.filter(r => r.status !== "transferred").map((r, i) => (
+                    <div key={i} style={{ padding: "5px 8px", background: t.panel3, borderRadius: 5, color: t.textMid }}>
+                      Tienda #{r.store_id} · SKU #{r.variant_id}: <b style={{ color: t.textHi }}>{r.status}</b> — {r.message || "—"}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+              <button onClick={onDone} style={btnPrimary(t)}>Listo</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  return createPortal(modal, document.body);
 }
 
 
@@ -1710,6 +1926,277 @@ function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null
                     <td style={tdStyle(t)}>
                       <span style={{ fontSize: 10.5, fontWeight: 700, color: info.color, background: info.bg, padding: "2px 8px", borderRadius: 10 }}>
                         {info.label}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Analíticas: Heatmap + ABC ────────────────────────────────────────────
+function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [sub, setSub] = useState<"heatmap" | "abc">("heatmap");
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
+        <button onClick={() => setSub("heatmap")}
+          style={{
+            display: "flex", alignItems: "center", gap: 5,
+            padding: "8px 14px", borderRadius: 8,
+            border: `1px solid ${sub === "heatmap" ? t.nova : t.border}`,
+            background: sub === "heatmap" ? t.nova + "22" : "transparent",
+            color: sub === "heatmap" ? t.nova : t.textMid,
+            cursor: "pointer", fontSize: 12.5, fontWeight: 700,
+          }}>
+          <Grid3x3 size={13} /> Heatmap tiendas × SKUs
+        </button>
+        <button onClick={() => setSub("abc")}
+          style={{
+            display: "flex", alignItems: "center", gap: 5,
+            padding: "8px 14px", borderRadius: 8,
+            border: `1px solid ${sub === "abc" ? t.nova : t.border}`,
+            background: sub === "abc" ? t.nova + "22" : "transparent",
+            color: sub === "abc" ? t.nova : t.textMid,
+            cursor: "pointer", fontSize: 12.5, fontWeight: 700,
+          }}>
+          <TrendingUp size={13} /> Clasificación ABC
+        </button>
+      </div>
+      {sub === "heatmap" && <HeatmapView t={t} channelId={channelId} />}
+      {sub === "abc" && <ABCView t={t} channelId={channelId} />}
+    </div>
+  );
+}
+
+
+function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<HeatmapResponse | null>(null);
+  const [metric, setMetric] = useState<HeatmapMetric>("wos");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.heatmap({
+          channel_id: channelId || undefined, metric, limit_variants: 40,
+        });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, metric]);
+
+  const cellMap = new Map<string, HeatmapResponse["cells"][number]>();
+  data?.cells.forEach(c => cellMap.set(`${c.store_id}:${c.variant_id}`, c));
+
+  const cellBg = (c?: HeatmapResponse["cells"][number]) => {
+    if (!c || c.status === "no_data") return t.panel3;
+    if (c.status === "critical") return t.bad;
+    if (c.status === "replenish") return t.warn;
+    if (c.status === "overstock") return t.nova;
+    return t.good;
+  };
+
+  const fmt = (c?: HeatmapResponse["cells"][number]) => {
+    if (!c) return "";
+    if (metric === "units_sold") return num(c.units_sold);
+    if (metric === "on_hand") return num(c.on_hand);
+    return c.value != null ? `${c.value.toFixed(1)}` : "∞";
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          <FilterPill t={t} label="WOS" active={metric === "wos"} onClick={() => setMetric("wos")} />
+          <FilterPill t={t} label="Unidades vendidas" active={metric === "units_sold"} onClick={() => setMetric("units_sold")} />
+          <FilterPill t={t} label="Stock actual" active={metric === "on_hand"} onClick={() => setMetric("on_hand")} />
+        </div>
+        <div style={{ display: "flex", gap: 8, fontSize: 10.5, color: t.textLo, alignItems: "center", flexWrap: "wrap" }}>
+          <LegendDot t={t} color={t.bad} label="Crítico" />
+          <LegendDot t={t} color={t.warn} label="Resurtir" />
+          <LegendDot t={t} color={t.good} label="Sano" />
+          <LegendDot t={t} color={t.nova} label="Sobreinventario" />
+          <LegendDot t={t} color={t.panel3} label="Sin datos" />
+        </div>
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+      {!loading && data && (data.stores.length === 0 || data.variants.length === 0) && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <Grid3x3 size={28} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin suficientes datos para dibujar el heatmap</div>
+          <div style={{ fontSize: 11 }}>Registra sell-out por tienda × SKU para verlo.</div>
+        </div>
+      )}
+      {!loading && data && data.stores.length > 0 && data.variants.length > 0 && (
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: 10, overflowX: "auto" }}>
+          <div style={{ display: "inline-block", minWidth: "100%" }}>
+            <div style={{ display: "grid", gridTemplateColumns: `220px repeat(${data.variants.length}, 60px)`, gap: 3, alignItems: "stretch" }}>
+              <div />
+              {data.variants.map(v => (
+                <div key={v.id}
+                  title={`${v.product_name || ""} · ${v.sku || ""}`}
+                  style={{
+                    fontSize: 9.5, color: t.textLo, textAlign: "center",
+                    padding: 4, wordBreak: "break-word", fontFamily: "monospace",
+                    background: t.panel2, borderRadius: 4,
+                  }}>
+                  {(v.sku || v.product_name || "—").slice(0, 8)}
+                </div>
+              ))}
+              {data.stores.map(s => (
+                <>
+                  <div key={`s${s.id}`} style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: "3px 8px", background: t.panel2, borderRadius: 4 }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {s.name}
+                    </div>
+                    <div style={{ fontSize: 9.5, color: t.textLo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {s.channel_name}
+                    </div>
+                  </div>
+                  {data.variants.map(v => {
+                    const c = cellMap.get(`${s.id}:${v.id}`);
+                    const bg = cellBg(c);
+                    return (
+                      <div key={`c${s.id}-${v.id}`}
+                        title={c ? `${s.name} · ${v.sku || v.product_name || ""}\nStock ${c.on_hand} · Vend ${c.units_sold} · WOS ${c.value ?? "∞"}` : ""}
+                        style={{
+                          background: bg, color: c && c.status !== "no_data" ? "#fff" : t.textLo,
+                          borderRadius: 4, padding: 4, textAlign: "center",
+                          fontSize: 10.5, fontWeight: 700, minHeight: 34,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                        {fmt(c)}
+                      </div>
+                    );
+                  })}
+                </>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function LegendDot({ t, color, label }: { t: Tokens; color: string; label: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+      <span style={{ width: 10, height: 10, borderRadius: 2, background: color, display: "inline-block" }} />
+      {label}
+    </span>
+  );
+}
+
+
+function ABCView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<ABCResponse | null>(null);
+  const [days, setDays] = useState(90);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.abc({ channel_id: channelId || undefined, days });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, days]);
+
+  if (loading) return <div style={{ padding: 40, color: t.textLo, textAlign: "center" }}>Calculando ABC…</div>;
+  if (!data) return null;
+
+  const classInfo = (c: "A" | "B" | "C") => c === "A"
+    ? { color: t.good, bg: t.good + "22", desc: "80% del ingreso · productos ancla" }
+    : c === "B"
+    ? { color: t.nova, bg: t.nova + "22", desc: "Siguiente 15% · complementarios" }
+    : { color: t.textLo, bg: t.panel3, desc: "Últimos 5% · long tail" };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          {[30, 90, 180, 365].map(d => (
+            <FilterPill key={d} t={t} label={`${d}d`} active={days === d} onClick={() => setDays(d)} />
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: t.textLo }}>
+          Ingreso total: <b style={{ color: t.textHi }}>{mxn(data.total_revenue)}</b>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 14 }}>
+        {(["A", "B", "C"] as const).map(cls => {
+          const info = classInfo(cls);
+          const count = cls === "A" ? data.class_a_count : cls === "B" ? data.class_b_count : data.class_c_count;
+          return (
+            <div key={cls} style={{ padding: 14, background: t.panel, border: `1px solid ${info.color}55`, borderRadius: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 20, fontWeight: 800, color: info.color, background: info.bg, width: 32, height: 32, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {cls}
+                </span>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: t.textHi }}>{count} SKUs</div>
+                  <div style={{ fontSize: 11, color: t.textLo }}>{info.desc}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {data.rows.length === 0 ? (
+        <div style={{ padding: 30, textAlign: "center", color: t.textLo, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10 }}>
+          Sin ventas registradas en la ventana seleccionada.
+        </div>
+      ) : (
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ background: t.panel2 }}>
+                <th style={thStyle(t)}>Rank</th>
+                <th style={thStyle(t)}>Producto</th>
+                <th style={thStyle(t)}>Tiendas</th>
+                <th style={thStyle(t)}>Unidades</th>
+                <th style={thStyle(t)}>Ingreso</th>
+                <th style={thStyle(t)}>%</th>
+                <th style={thStyle(t)}>Acum.</th>
+                <th style={thStyle(t)}>Clase</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map(r => {
+                const info = classInfo(r.abc_class);
+                return (
+                  <tr key={r.rank} style={{ borderTop: `1px solid ${t.border}55` }}>
+                    <td style={{ ...tdStyle(t), color: t.textLo, fontFamily: "monospace" }}>#{r.rank}</td>
+                    <td style={tdStyle(t)}>
+                      <div style={{ color: t.textHi }}>{r.product_name || "—"}</div>
+                      <div style={{ fontSize: 10.5, color: t.textLo, fontFamily: "monospace" }}>{r.sku || ""}</div>
+                    </td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.stores_count}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.total_units)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: t.textHi, fontWeight: 700 }}>{mxn(r.total_revenue)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.revenue_pct.toFixed(1)}%</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: t.textLo }}>{r.cumulative_pct.toFixed(1)}%</td>
+                    <td style={tdStyle(t)}>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: info.color, background: info.bg, padding: "2px 8px", borderRadius: 10 }}>
+                        {r.abc_class}
                       </span>
                     </td>
                   </tr>
