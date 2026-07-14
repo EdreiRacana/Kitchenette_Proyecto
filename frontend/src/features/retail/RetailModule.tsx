@@ -1046,6 +1046,22 @@ function ImportSellOutModal({ t, channels, defaultChannel, onClose, onDone }: {
 
         {step === "upload" && (
           <>
+            <div style={{ marginBottom: 12, padding: "8px 12px",
+              background: t.warn + "18", border: `1px dashed ${t.warn}55`,
+              borderRadius: 6, fontSize: 11.5, color: t.textMid,
+              display: "flex", alignItems: "flex-start", gap: 8,
+            }}
+              title="Fase 8 pendiente: API keys por perfil, endpoints públicos, cron scheduler y log de ejecuciones. Ver notas del roadmap."
+            >
+              <span style={{ fontSize: 14 }}>🔌</span>
+              <div>
+                <b style={{ color: t.warn }}>Automatización por API — próximamente</b>
+                <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2 }}>
+                  Fase 8: consumo directo de portales (Amazon SP-API, Retail Link, Vendor Portals) con API keys por perfil, cron y log de ejecuciones. Hoy: subida manual del archivo.
+                </div>
+              </div>
+            </div>
+
             <div style={{ marginBottom: 14 }}>
               <label style={labelStyle(t)}>Cadena</label>
               <select value={channelId ?? ""} onChange={e => setChannelId(e.target.value ? Number(e.target.value) : null)}

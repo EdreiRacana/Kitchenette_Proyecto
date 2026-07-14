@@ -25,10 +25,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import and_, delete, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger
 from app.modules.customers import models as cust_models
 from app.modules.inventory import models as inv_models
 
 from . import models, schemas
+
+log = get_logger(__name__)
 
 
 # ── Constantes de análisis ───────────────────────────────────────────────
@@ -321,8 +324,8 @@ async def create_sellout(db: AsyncSession, data: schemas.SellOutReportCreate,
     await _apply_consignment_movement(db, r, user_id)
     try:
         await evaluate_alerts(db)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("evaluate_alerts falló tras create_sellout %s: %s", r.id, e)
     return r
 
 
@@ -371,10 +374,13 @@ async def _apply_consignment_movement(
         await inv_service.adjust_stock(db, mov, user_id=user_id)
         report.stock_consumed = target
         await db.commit()
-    except Exception:
+    except Exception as e:
         # No revertir el sell-out si el ajuste de stock falla — deja constancia
         # y sigue. La reconciliación reportará el descuadre.
-        pass
+        log.warning(
+            "consignment_movement falló para report=%s store=%s variant=%s: %s",
+            report.id, report.store_id, report.variant_id, e,
+        )
 
 
 async def list_consignment_warehouses(db: AsyncSession) -> List[schemas.ConsignmentWarehouseOption]:
@@ -1330,6 +1336,7 @@ async def import_sellout(
     updated = 0
     skipped = 0
     errors: List[schemas.ImportRowError] = []
+    touched_reports: List[models.SellOutReport] = []
 
     for row_idx, row in enumerate(rows, start=2):
         chan_code = str(row.get("cadena_codigo") or "").strip().upper()
@@ -1421,6 +1428,7 @@ async def import_sellout(
             existing.source = "xlsx" if is_xlsx else "csv"
             existing.uploaded_by_user_id = user_id or existing.uploaded_by_user_id
             updated += 1
+            touched_reports.append(existing)
         else:
             r = models.SellOutReport(
                 store_id=store_id, variant_id=variant_id,
@@ -1433,31 +1441,37 @@ async def import_sellout(
             )
             db.add(r)
             created += 1
+            touched_reports.append(r)
 
     await db.commit()
 
-    # Aplicar movimientos de consignación por reporte creado/actualizado
-    from sqlalchemy import select as _select
-    fresh = (await db.execute(
-        _select(models.SellOutReport).where(
-            models.SellOutReport.store_id.in_(
-                _select(models.RetailStore.id).where(
-                    models.RetailStore.consignment_warehouse_id.isnot(None)
-                )
+    # Aplicar movimientos de consignación SOLO a los reports afectados por
+    # este import (los que quedaron actualizados o creados con store en
+    # consignación). Idempotente por stock_consumed, así que reprocesar no
+    # duplica descuentos; el filtro es para no barrer 2000 reports en cada
+    # import cuando la base crece.
+    touched_ids = [r.id for r in touched_reports if r is not None]
+    if touched_ids:
+        fresh = (await db.execute(
+            select(models.SellOutReport)
+            .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+            .where(
+                models.SellOutReport.id.in_(touched_ids),
+                models.RetailStore.consignment_warehouse_id.isnot(None),
             )
-        ).order_by(models.SellOutReport.id.desc()).limit(2000)
-    )).scalars().all()
-    for r in fresh:
-        try:
-            await _apply_consignment_movement(db, r, user_id)
-        except Exception:
-            continue
+        )).scalars().all()
+        for r in fresh:
+            try:
+                await _apply_consignment_movement(db, r, user_id)
+            except Exception as e:
+                log.warning("consignment hook falló en import row report=%s: %s", r.id, e)
+                continue
 
     # Auto-evalúa alertas para las cadenas tocadas
     try:
         await evaluate_alerts(db)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("evaluate_alerts falló tras import_sellout: %s", e)
 
     return schemas.ImportSellOutResponse(
         total_rows=len(rows), created=created, updated=updated,
@@ -2231,6 +2245,7 @@ async def create_transfer(
             warnings_ct += 1; continue
 
         ref = f"retail_transfer:store:{store.id}"
+        out = None
         try:
             out = await inv_service.adjust_stock(db, inv_schemas.StockMovementCreate(
                 variant_id=item.variant_id,
@@ -2257,10 +2272,35 @@ async def create_transfer(
             transferred_lines += 1
             total_units += item.units
         except Exception as e:
+            # Si el OUT ya se aplicó pero el IN falló, el stock salió
+            # sin llegar al destino. Compensación: reingresar al origen
+            # con un adjustment para evitar pérdida fantasma.
+            rollback_note = None
+            if out is not None:
+                try:
+                    await inv_service.adjust_stock(db, inv_schemas.StockMovementCreate(
+                        variant_id=item.variant_id,
+                        warehouse_id=req.source_warehouse_id,
+                        quantity=item.units, movement_type="adjustment",
+                        unit_cost=out.unit_cost or 0.0,
+                        reference=f"{ref}:rollback",
+                        notes="Reversión: OUT aplicado pero IN falló",
+                    ), user_id=user_id)
+                    rollback_note = " (stock devuelto al origen)"
+                except Exception as re:
+                    log.error(
+                        "transfer rollback FAILED store=%s variant=%s: %s",
+                        item.store_id, item.variant_id, re,
+                    )
+                    rollback_note = " (ROLLBACK MANUAL REQUERIDO)"
+            log.warning(
+                "transfer falló store=%s variant=%s: %s%s",
+                item.store_id, item.variant_id, e, rollback_note or "",
+            )
             results.append(schemas.TransferItemResult(
                 store_id=item.store_id, variant_id=item.variant_id,
                 units_requested=item.units, units_transferred=0,
-                status="error", message=str(e),
+                status="error", message=f"{e}{rollback_note or ''}",
             ))
             warnings_ct += 1
 
@@ -2459,12 +2499,6 @@ async def create_profile(db: AsyncSession,
     payload = data.model_dump(exclude_unset=True)
     if payload.get("is_default"):
         # Al marcar como default, desmarcar los otros del mismo canal
-        await db.execute(
-            select(models.RetailImportProfile).where(
-                models.RetailImportProfile.channel_id == data.channel_id,
-                models.RetailImportProfile.is_default.is_(True),
-            )
-        )
         others = (await db.execute(
             select(models.RetailImportProfile).where(
                 models.RetailImportProfile.channel_id == data.channel_id,
