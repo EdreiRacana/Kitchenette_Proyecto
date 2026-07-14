@@ -86,4 +86,18 @@ export const retailApi = {
     api.get<import("./types").ConsignmentWarehouseOption[]>("/retail/consignment/warehouses").then(r => r.data),
   consignmentReconciliation: (channel_id?: number) =>
     api.get<import("./types").ConsignmentReconResponse>("/retail/consignment/reconciliation", { params: { channel_id } }).then(r => r.data),
+
+  // Analíticas
+  heatmap: (opts?: { channel_id?: number; metric?: "wos" | "units_sold" | "on_hand"; limit_variants?: number }) =>
+    api.get<import("./types").HeatmapResponse>("/retail/analytics/heatmap", { params: opts }).then(r => r.data),
+  abc: (opts?: { channel_id?: number; days?: number }) =>
+    api.get<import("./types").ABCResponse>("/retail/analytics/abc", { params: opts }).then(r => r.data),
+
+  // Traslados
+  listSourceWarehouses: () =>
+    api.get<import("./types").SourceWarehouseOption[]>("/retail/replenishment/source-warehouses").then(r => r.data),
+  createTransfer: (source_warehouse_id: number, items: import("./types").TransferItem[]) =>
+    api.post<import("./types").TransferResponse>("/retail/replenishment/transfer", {
+      source_warehouse_id, items,
+    }).then(r => r.data),
 };

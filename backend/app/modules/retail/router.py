@@ -272,6 +272,46 @@ async def replenishment(db: DB, _: CurrentUser,
     return await service.replenishment(db, channel_id=channel_id)
 
 
+# ── Analytics: heatmap y ABC ────────────────────────────────────────────
+
+@router.get("/analytics/heatmap", response_model=schemas.HeatmapResponse)
+async def analytics_heatmap(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    metric: str = Query("wos", pattern="^(wos|units_sold|on_hand)$"),
+    limit_variants: int = Query(40, ge=1, le=200),
+):
+    return await service.heatmap(
+        db, channel_id=channel_id, metric=metric, limit_variants=limit_variants,
+    )
+
+
+@router.get("/analytics/abc", response_model=schemas.ABCResponse)
+async def analytics_abc(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=1, le=365),
+):
+    return await service.abc_classification(db, channel_id=channel_id, days=days)
+
+
+# ── Traslados desde reabasto ────────────────────────────────────────────
+
+@router.get("/replenishment/source-warehouses",
+             response_model=List[schemas.SourceWarehouseOption])
+async def source_warehouses(db: DB, _: CurrentUser):
+    return await service.list_source_warehouses(db)
+
+
+@router.post("/replenishment/transfer", response_model=schemas.TransferResponse)
+async def create_transfer(payload: schemas.TransferRequest,
+                            db: DB, current_user: CurrentUser):
+    try:
+        return await service.create_transfer(db, payload, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 # ── Consignación ────────────────────────────────────────────────────────
 
 @router.get("/consignment/warehouses",

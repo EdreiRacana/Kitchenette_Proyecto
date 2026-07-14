@@ -1952,3 +1952,323 @@ async def _alert_to_schema(db: AsyncSession, a: models.RetailAlert) -> schemas.R
         resolution_notes=a.resolution_notes,
         created_at=a.created_at,
     )
+
+
+# ── Analytics: heatmap tiendas × SKUs ────────────────────────────────────
+
+async def heatmap(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    metric: str = "wos", limit_variants: int = 40,
+) -> schemas.HeatmapResponse:
+    """Matriz tienda × SKU. Métrica: wos | units_sold | on_hand.
+
+    Se limita a los top N variants por unidades vendidas en la ventana para
+    mantener la matriz legible (default 40 columnas).
+    """
+    now = datetime.now(timezone.utc)
+    velocity_from = now - timedelta(days=VELOCITY_WINDOW_DAYS)
+
+    # Umbrales por store para el status del heatmap
+    stores_stmt = (
+        select(models.RetailStore, models.RetailChannel)
+        .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(models.RetailStore.is_active.is_(True))
+    )
+    if channel_id is not None:
+        stores_stmt = stores_stmt.where(models.RetailStore.channel_id == channel_id)
+    stores_rows = (await db.execute(stores_stmt)).all()
+    store_map = {s.id: (s, ch) for s, ch in stores_rows}
+
+    # Top N variants por unidades vendidas en la ventana
+    top_stmt = (
+        select(
+            models.SellOutReport.variant_id,
+            func.max(models.SellOutReport.sku).label("sku"),
+            func.max(models.SellOutReport.product_name).label("product_name"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .where(
+            models.SellOutReport.period_start >= velocity_from,
+            models.SellOutReport.variant_id.isnot(None),
+        )
+        .group_by(models.SellOutReport.variant_id)
+        .order_by(func.sum(models.SellOutReport.units_sold).desc())
+        .limit(limit_variants)
+    )
+    if channel_id is not None:
+        top_stmt = top_stmt.where(models.RetailStore.channel_id == channel_id)
+    top = (await db.execute(top_stmt)).all()
+
+    variants = [
+        schemas.HeatmapVariantRef(id=int(v.variant_id), sku=v.sku, product_name=v.product_name)
+        for v in top if v.variant_id
+    ]
+    variant_ids = [v.id for v in variants]
+    if not variant_ids or not store_map:
+        return schemas.HeatmapResponse(
+            channel_id=channel_id, metric=metric,
+            stores=[schemas.HeatmapStoreRef(id=s.id, name=s.name, channel_name=ch.name) for s, ch in stores_rows],
+            variants=variants, cells=[],
+        )
+
+    # Ventas por (store, variant) en ventana
+    sales_rows = (await db.execute(
+        select(
+            models.SellOutReport.store_id,
+            models.SellOutReport.variant_id,
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units"),
+        )
+        .where(
+            models.SellOutReport.period_start >= velocity_from,
+            models.SellOutReport.variant_id.in_(variant_ids),
+            models.SellOutReport.store_id.in_(list(store_map.keys())),
+        )
+        .group_by(models.SellOutReport.store_id, models.SellOutReport.variant_id)
+    )).all()
+    sales_map: Dict[Tuple[int, int], int] = {}
+    for r in sales_rows:
+        sales_map[(int(r.store_id), int(r.variant_id))] = int(r.units or 0)
+
+    # On-hand: último period_start por (store, variant), sumado
+    last_stmt = (
+        select(
+            models.SellOutReport.store_id,
+            models.SellOutReport.variant_id,
+            func.max(models.SellOutReport.period_start).label("last_period"),
+        )
+        .where(
+            models.SellOutReport.variant_id.in_(variant_ids),
+            models.SellOutReport.store_id.in_(list(store_map.keys())),
+        )
+        .group_by(models.SellOutReport.store_id, models.SellOutReport.variant_id)
+    )
+    last_rows = (await db.execute(last_stmt)).all()
+    on_hand_map: Dict[Tuple[int, int], int] = {}
+    for r in last_rows:
+        if r.last_period is None:
+            continue
+        oh = (await db.execute(
+            select(func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0))
+            .where(
+                models.SellOutReport.store_id == r.store_id,
+                models.SellOutReport.variant_id == r.variant_id,
+                models.SellOutReport.period_start == r.last_period,
+            )
+        )).scalar() or 0
+        on_hand_map[(int(r.store_id), int(r.variant_id))] = int(oh)
+
+    cells: List[schemas.HeatmapCell] = []
+    for sid, (store, ch) in store_map.items():
+        for v in variants:
+            units = sales_map.get((sid, v.id), 0)
+            on_hand = on_hand_map.get((sid, v.id), 0)
+            velocity = units / (VELOCITY_WINDOW_DAYS / 7.0) if units > 0 else 0.0
+            wos = (on_hand / velocity) if velocity > 0 else WOS_INFINITY
+            status = _wos_status(
+                wos, ch.critical_wos_weeks, ch.target_wos_weeks,
+                ch.overstock_wos_weeks, has_sales=velocity > 0,
+            )
+            if metric == "units_sold":
+                value: Optional[float] = float(units)
+            elif metric == "on_hand":
+                value = float(on_hand)
+            else:  # wos
+                value = round(wos, 2) if wos < WOS_INFINITY else None
+            cells.append(schemas.HeatmapCell(
+                store_id=sid, variant_id=v.id,
+                value=value, on_hand=on_hand, units_sold=units,
+                status=status,
+            ))
+
+    stores_out = [
+        schemas.HeatmapStoreRef(id=s.id, name=s.name, channel_name=ch.name)
+        for s, ch in stores_rows
+    ]
+    return schemas.HeatmapResponse(
+        channel_id=channel_id, metric=metric,
+        stores=stores_out, variants=variants, cells=cells,
+    )
+
+
+# ── Analytics: clasificación ABC ─────────────────────────────────────────
+
+async def abc_classification(
+    db: AsyncSession, channel_id: Optional[int] = None, days: int = 90,
+) -> schemas.ABCResponse:
+    """SKUs ordenados por revenue descendente. Suma acumulada:
+    hasta 80% → clase A, hasta 95% → B, resto → C."""
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+
+    stmt = (
+        select(
+            models.SellOutReport.variant_id,
+            func.max(models.SellOutReport.sku).label("sku"),
+            func.max(models.SellOutReport.product_name).label("product_name"),
+            func.count(func.distinct(models.SellOutReport.store_id)).label("stores"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units"),
+            func.coalesce(func.sum(models.SellOutReport.revenue), 0.0).label("revenue"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .where(models.SellOutReport.period_start >= since)
+        .group_by(models.SellOutReport.variant_id)
+        .order_by(func.sum(models.SellOutReport.revenue).desc())
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailStore.channel_id == channel_id)
+    rows = (await db.execute(stmt)).all()
+
+    total_rev = float(sum(float(r.revenue or 0.0) for r in rows))
+    result: List[schemas.ABCRow] = []
+    if total_rev <= 0:
+        return schemas.ABCResponse(
+            channel_id=channel_id, total_revenue=0.0,
+            class_a_count=0, class_b_count=0, class_c_count=0, rows=[],
+        )
+
+    cum = 0.0
+    a_count = b_count = c_count = 0
+    for i, r in enumerate(rows, start=1):
+        rev = float(r.revenue or 0.0)
+        pct = round(rev / total_rev * 100.0, 2)
+        # Clasificación por acumulado ANTES de este SKU: si el previo era
+        # <=80%, el SKU está dentro del top-80 → A. Regla clásica de Pareto:
+        # el SKU cuya suma cruza la frontera aún cuenta en la clase donde
+        # cayó su base.
+        prev_pct = round(cum / total_rev * 100.0, 2)
+        cum += rev
+        cum_pct = round(cum / total_rev * 100.0, 2)
+        if prev_pct < 80.0:
+            cls = "A"; a_count += 1
+        elif prev_pct < 95.0:
+            cls = "B"; b_count += 1
+        else:
+            cls = "C"; c_count += 1
+        result.append(schemas.ABCRow(
+            rank=i,
+            variant_id=int(r.variant_id) if r.variant_id else None,
+            sku=r.sku, product_name=r.product_name,
+            stores_count=int(r.stores or 0),
+            total_units=int(r.units or 0),
+            total_revenue=round(rev, 2),
+            revenue_pct=pct,
+            cumulative_pct=cum_pct,
+            abc_class=cls,
+        ))
+    return schemas.ABCResponse(
+        channel_id=channel_id, total_revenue=round(total_rev, 2),
+        class_a_count=a_count, class_b_count=b_count, class_c_count=c_count,
+        rows=result,
+    )
+
+
+# ── Replenishment: crear traslado ────────────────────────────────────────
+
+async def list_source_warehouses(db: AsyncSession) -> List[schemas.SourceWarehouseOption]:
+    """Warehouses de origen para traslados (typical: type=own)."""
+    res = await db.execute(
+        select(inv_models.Warehouse)
+        .where(inv_models.Warehouse.is_active.is_(True),
+                inv_models.Warehouse.type != "consignment")
+        .order_by(inv_models.Warehouse.name)
+    )
+    return [
+        schemas.SourceWarehouseOption(
+            id=w.id, name=w.name, location=w.location, type=w.type or "own",
+        ) for w in res.scalars().all()
+    ]
+
+
+async def create_transfer(
+    db: AsyncSession, req: schemas.TransferRequest, user_id: Optional[int] = None,
+) -> schemas.TransferResponse:
+    """Crea un par OUT+IN de StockMovements por cada item, del warehouse de
+    origen al consignment_warehouse de la tienda. Cada item se procesa
+    aisladamente: si falla uno, los demás siguen y se reporta status."""
+    from app.modules.inventory import schemas as inv_schemas, service as inv_service
+
+    src = await db.get(inv_models.Warehouse, req.source_warehouse_id)
+    if src is None:
+        raise ValueError("Almacén origen no encontrado")
+
+    results: List[schemas.TransferItemResult] = []
+    transferred_lines = 0
+    warnings_ct = 0
+    total_units = 0
+
+    for item in req.items:
+        store = await db.get(models.RetailStore, item.store_id)
+        if store is None:
+            results.append(schemas.TransferItemResult(
+                store_id=item.store_id, variant_id=item.variant_id,
+                units_requested=item.units, units_transferred=0,
+                status="error", message="Tienda no encontrada",
+            ))
+            warnings_ct += 1; continue
+        if store.consignment_warehouse_id is None:
+            results.append(schemas.TransferItemResult(
+                store_id=item.store_id, variant_id=item.variant_id,
+                units_requested=item.units, units_transferred=0,
+                status="no_consignment",
+                message="La tienda no tiene almacén de consignación asignado",
+            ))
+            warnings_ct += 1; continue
+        # Verifica stock origen
+        stock = int((await db.execute(
+            select(inv_models.StockLevel.quantity).where(
+                inv_models.StockLevel.variant_id == item.variant_id,
+                inv_models.StockLevel.warehouse_id == req.source_warehouse_id,
+            )
+        )).scalar() or 0)
+        if stock < item.units:
+            results.append(schemas.TransferItemResult(
+                store_id=item.store_id, variant_id=item.variant_id,
+                units_requested=item.units, units_transferred=0,
+                status="insufficient_stock",
+                message=f"Stock en origen {stock} < solicitado {item.units}",
+            ))
+            warnings_ct += 1; continue
+
+        ref = f"retail_transfer:store:{store.id}"
+        try:
+            out = await inv_service.adjust_stock(db, inv_schemas.StockMovementCreate(
+                variant_id=item.variant_id,
+                warehouse_id=req.source_warehouse_id,
+                quantity=item.units, movement_type="out",
+                reference=ref,
+                notes=f"Traslado a consignación · {store.name}"
+                       + (f" · {item.notes}" if item.notes else ""),
+            ), user_id=user_id)
+            in_ = await inv_service.adjust_stock(db, inv_schemas.StockMovementCreate(
+                variant_id=item.variant_id,
+                warehouse_id=store.consignment_warehouse_id,
+                quantity=item.units, movement_type="in",
+                unit_cost=out.unit_cost or 0.0,
+                reference=ref,
+                notes=f"Entrada por traslado desde {src.name}",
+            ), user_id=user_id)
+            results.append(schemas.TransferItemResult(
+                store_id=item.store_id, variant_id=item.variant_id,
+                units_requested=item.units, units_transferred=item.units,
+                status="transferred",
+                out_movement_id=out.id, in_movement_id=in_.id,
+            ))
+            transferred_lines += 1
+            total_units += item.units
+        except Exception as e:
+            results.append(schemas.TransferItemResult(
+                store_id=item.store_id, variant_id=item.variant_id,
+                units_requested=item.units, units_transferred=0,
+                status="error", message=str(e),
+            ))
+            warnings_ct += 1
+
+    return schemas.TransferResponse(
+        source_warehouse_id=req.source_warehouse_id,
+        source_warehouse_name=src.name,
+        transferred_lines=transferred_lines,
+        warnings=warnings_ct,
+        total_units=total_units,
+        results=results,
+    )
