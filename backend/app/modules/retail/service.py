@@ -2272,3 +2272,518 @@ async def create_transfer(
         total_units=total_units,
         results=results,
     )
+
+
+# ── Perfiles de importación ──────────────────────────────────────────────
+
+# Diccionario de heurísticas: para cada campo estándar, patrones (lowercase)
+# que si aparecen dentro del nombre de columna del archivo, sugieren ese
+# campo. Se elige el primer match. Cubre los portales típicos:
+#   Walmart Retail Link, Costco POL, HEB, Chedraui, Amazon Vendor,
+#   Soriana, Bodega Aurrera, Fresko, City Market, además de exports
+#   genéricos en español e inglés.
+_HEURISTICS: Dict[str, List[str]] = {
+    "cadena_codigo": [
+        "chain code", "banner code", "codigo cadena", "cadena_codigo",
+    ],
+    "cadena_nombre": [
+        "chain", "banner", "cadena", "retailer",
+    ],
+    "tienda_codigo": [
+        "store nbr", "store number", "store #", "store id", "store code",
+        "warehouse nbr", "warehouse #", "warehouse id",
+        "site id", "site nbr", "location id", "location code",
+        "tienda_codigo", "codigo tienda", "num tienda", "num_tienda",
+        "sucursal codigo", "sucursal_id", "no tienda", "clave tienda",
+        "tienda id",
+    ],
+    "tienda_nombre": [
+        "store name", "warehouse name", "location name",
+        "tienda", "sucursal", "nombre tienda", "nombre_sucursal",
+    ],
+    "sku": [
+        "item nbr", "item number", "item #", "item id", "item code",
+        "product id", "product code", "product number",
+        "sku", "upc", "gtin", "ean", "barcode", "codigo articulo",
+        "codigo_producto", "codigo material", "material",
+        "clave producto", "clave articulo",
+    ],
+    "producto_nombre": [
+        "item desc", "item description", "product desc", "description",
+        "product name", "producto", "descripcion", "nombre producto",
+        "articulo",
+    ],
+    "periodo_inicio": [
+        "week", "week ending", "week beginning", "period", "week start",
+        "date", "fecha", "semana", "periodo", "fecha inicio",
+        "fecha_inicio", "start date", "from date",
+    ],
+    "periodo_fin": [
+        "week end", "period end", "fecha fin", "fecha_fin",
+        "end date", "to date", "fin periodo",
+    ],
+    "periodo_tipo": [
+        "period type", "tipo periodo", "granularity", "granularidad",
+    ],
+    "unidades_vendidas": [
+        "pos sales units", "pos sales qty", "sold units", "units sold",
+        "units", "qty", "quantity", "sales qty", "sales units",
+        "unidades vendidas", "unidades_vendidas", "piezas vendidas",
+        "venta unidades", "cantidad", "ventas",
+    ],
+    "unidades_stock": [
+        "store on hand", "on hand", "on-hand", "onh", "inventory on hand",
+        "current inventory", "inventory", "stock",
+        "unidades stock", "unidades_stock", "inventario", "stock final",
+        "existencia", "existencias",
+    ],
+    "ingreso": [
+        "pos sales", "sales dollars", "sales amount", "revenue",
+        "net sales", "gross sales", "total sales",
+        "importe", "ingreso", "ventas totales", "monto", "total",
+    ],
+    "notas": ["notes", "notas", "observaciones", "comentarios", "comment"],
+}
+
+
+def _normalize_column_name(s: str) -> str:
+    """Lowercase, sin espacios extras, sin acentos comunes."""
+    s = (s or "").strip().lower()
+    for a, b in [("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u"),
+                  ("ñ", "n")]:
+        s = s.replace(a, b)
+    # colapsa espacios
+    s = " ".join(s.split())
+    return s
+
+
+def auto_detect_column_map(headers: List[str]) -> Dict[str, str]:
+    """Recibe los encabezados del archivo, devuelve mapeo propuesto:
+    standard_field → column_del_archivo (usando los nombres originales).
+
+    Reglas para evitar falsos positivos con nombres solapados como
+    "POS Sales" vs "POS Sales Units":
+      1) Prioriza match EXACTO sobre parcial.
+      2) Una columna sólo puede ser asignada a UN campo estándar.
+      3) Cuando hay que romper empate por parcial, gana el patrón MÁS
+         LARGO (más específico).
+    """
+    proposed: Dict[str, str] = {}
+    used_columns: set = set()
+    normalized_headers = [(h, _normalize_column_name(h)) for h in headers if h]
+
+    # Pasada 1: match exacto para cada campo (usando el patrón más largo).
+    for field, patterns in _HEURISTICS.items():
+        best: Optional[Tuple[str, int]] = None  # (col_original, len_patrón)
+        for pat in patterns:
+            for orig, norm in normalized_headers:
+                if orig in used_columns:
+                    continue
+                if norm == pat:
+                    if best is None or len(pat) > best[1]:
+                        best = (orig, len(pat))
+        if best:
+            proposed[field] = best[0]
+            used_columns.add(best[0])
+
+    # Pasada 2: match parcial (patrón contenido en el encabezado), con
+    # patrón más largo primero, para "POS Sales Units" preferir el patrón
+    # "pos sales units" a "pos sales".
+    for field, patterns in _HEURISTICS.items():
+        if field in proposed:
+            continue
+        sorted_pats = sorted(patterns, key=lambda p: -len(p))
+        best_col: Optional[str] = None
+        best_pat_len = 0
+        for pat in sorted_pats:
+            for orig, norm in normalized_headers:
+                if orig in used_columns:
+                    continue
+                if pat in norm and len(pat) > best_pat_len:
+                    best_col = orig
+                    best_pat_len = len(pat)
+                    break
+            if best_col:
+                break
+        if best_col:
+            proposed[field] = best_col
+            used_columns.add(best_col)
+
+    return proposed
+
+
+async def list_profiles(db: AsyncSession, channel_id: Optional[int] = None
+                          ) -> List[schemas.RetailImportProfileOut]:
+    stmt = select(models.RetailImportProfile, models.RetailChannel.name).join(
+        models.RetailChannel,
+        models.RetailImportProfile.channel_id == models.RetailChannel.id,
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailImportProfile.channel_id == channel_id)
+    stmt = stmt.order_by(
+        models.RetailChannel.name.asc(),
+        models.RetailImportProfile.is_default.desc(),
+        models.RetailImportProfile.name.asc(),
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        schemas.RetailImportProfileOut(
+            id=p.id, channel_id=p.channel_id, channel_name=cn,
+            name=p.name, notes=p.notes,
+            is_active=p.is_active, is_default=p.is_default,
+            file_format=p.file_format, sheet_name=p.sheet_name,
+            header_row=p.header_row, encoding=p.encoding,
+            delimiter=p.delimiter, date_format=p.date_format,
+            decimal_separator=p.decimal_separator,
+            thousands_separator=p.thousands_separator,
+            units_multiplier=p.units_multiplier,
+            revenue_multiplier=p.revenue_multiplier,
+            default_period_type=p.default_period_type,
+            column_map=dict(p.column_map or {}),
+            ignore_row_pattern=p.ignore_row_pattern,
+            default_channel_code=p.default_channel_code,
+            created_at=p.created_at,
+        )
+        for p, cn in rows
+    ]
+
+
+async def get_profile(db: AsyncSession, profile_id: int
+                        ) -> Optional[models.RetailImportProfile]:
+    return await db.get(models.RetailImportProfile, profile_id)
+
+
+async def create_profile(db: AsyncSession,
+                          data: schemas.RetailImportProfileCreate
+                          ) -> models.RetailImportProfile:
+    payload = data.model_dump(exclude_unset=True)
+    if payload.get("is_default"):
+        # Al marcar como default, desmarcar los otros del mismo canal
+        await db.execute(
+            select(models.RetailImportProfile).where(
+                models.RetailImportProfile.channel_id == data.channel_id,
+                models.RetailImportProfile.is_default.is_(True),
+            )
+        )
+        others = (await db.execute(
+            select(models.RetailImportProfile).where(
+                models.RetailImportProfile.channel_id == data.channel_id,
+                models.RetailImportProfile.is_default.is_(True),
+            )
+        )).scalars().all()
+        for o in others:
+            o.is_default = False
+    p = models.RetailImportProfile(**payload)
+    db.add(p); await db.commit(); await db.refresh(p)
+    return p
+
+
+async def update_profile(db: AsyncSession, profile_id: int,
+                          data: schemas.RetailImportProfileUpdate
+                          ) -> Optional[models.RetailImportProfile]:
+    p = await db.get(models.RetailImportProfile, profile_id)
+    if p is None:
+        return None
+    payload = data.model_dump(exclude_unset=True)
+    if payload.get("is_default"):
+        others = (await db.execute(
+            select(models.RetailImportProfile).where(
+                models.RetailImportProfile.channel_id == p.channel_id,
+                models.RetailImportProfile.id != profile_id,
+                models.RetailImportProfile.is_default.is_(True),
+            )
+        )).scalars().all()
+        for o in others:
+            o.is_default = False
+    for k, v in payload.items():
+        setattr(p, k, v)
+    await db.commit(); await db.refresh(p)
+    return p
+
+
+async def delete_profile(db: AsyncSession, profile_id: int) -> bool:
+    p = await db.get(models.RetailImportProfile, profile_id)
+    if p is None:
+        return False
+    await db.delete(p); await db.commit()
+    return True
+
+
+# ── Helpers de parsing con perfil ────────────────────────────────────────
+
+def _read_file_rows(file_bytes: bytes, filename: str,
+                     profile: Optional[models.RetailImportProfile] = None
+                     ) -> Tuple[List[str], List[Dict[str, Any]], List[str]]:
+    """Lee el archivo respetando el perfil (hoja, fila de encabezado,
+    delimiter, encoding, decimal). Devuelve (headers, rows, sheet_names)."""
+    name_lower = (filename or "").lower()
+    is_xlsx = name_lower.endswith(".xlsx") or name_lower.endswith(".xlsm")
+    if profile:
+        is_xlsx = profile.file_format == "xlsx"
+
+    sheet_names: List[str] = []
+    header_row = int(getattr(profile, "header_row", 1) or 1) if profile else 1
+    delimiter = getattr(profile, "delimiter", ",") if profile else ","
+    encoding = getattr(profile, "encoding", "utf-8") if profile else "utf-8"
+
+    if is_xlsx:
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+        sheet_names = list(wb.sheetnames)
+        target = None
+        if profile and profile.sheet_name and profile.sheet_name in sheet_names:
+            target = profile.sheet_name
+        elif "SellOut" in sheet_names:
+            target = "SellOut"
+        else:
+            target = wb.active.title
+        ws = wb[target]
+        rows_all = list(ws.iter_rows(values_only=True))
+        if header_row - 1 >= len(rows_all):
+            return [], [], sheet_names
+        header = [str(c).strip() if c is not None else "" for c in rows_all[header_row - 1]]
+        rows_out: List[Dict[str, Any]] = []
+        for row in rows_all[header_row:]:
+            if all(v is None or v == "" for v in row):
+                continue
+            data = {}
+            for i, h in enumerate(header):
+                if not h:
+                    continue
+                data[h] = row[i] if i < len(row) else None
+            rows_out.append(data)
+        return header, rows_out, sheet_names
+
+    # CSV
+    try:
+        text = file_bytes.decode(encoding, errors="ignore")
+    except LookupError:
+        text = file_bytes.decode("utf-8", errors="ignore")
+    text = text.lstrip("﻿")  # BOM
+    lines = text.splitlines()
+    if header_row - 1 >= len(lines):
+        return [], [], []
+    reader = csv.reader(io.StringIO(text), delimiter=(delimiter or ","))
+    all_rows = list(reader)
+    if not all_rows or header_row - 1 >= len(all_rows):
+        return [], [], []
+    header = [c.strip() for c in all_rows[header_row - 1]]
+    rows_out = []
+    for r in all_rows[header_row:]:
+        if all((c is None or str(c).strip() == "") for c in r):
+            continue
+        data = {}
+        for i, h in enumerate(header):
+            if not h:
+                continue
+            data[h] = r[i] if i < len(r) else None
+        rows_out.append(data)
+    return header, rows_out, []
+
+
+def _apply_multipliers(v: Any, mul: float) -> float:
+    x = _parse_float(v)
+    return round(x * mul, 4)
+
+
+def _parse_date_flex(v: Any, fmt: str) -> Optional[datetime]:
+    if v is None or v == "":
+        return None
+    if isinstance(v, datetime):
+        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+    if isinstance(v, date):
+        return datetime(v.year, v.month, v.day, tzinfo=timezone.utc)
+    s = str(v).strip()
+    if fmt == "auto":
+        return _parse_iso_date(s)
+    tries = {
+        "YYYY-MM-DD": "%Y-%m-%d",
+        "DD/MM/YYYY": "%d/%m/%Y",
+        "MM/DD/YYYY": "%m/%d/%Y",
+        "YYYY/MM/DD": "%Y/%m/%d",
+    }
+    fmt_str = tries.get(fmt)
+    if fmt_str:
+        try:
+            return datetime.strptime(s[:10], fmt_str).replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    # Fallback auto
+    return _parse_iso_date(s)
+
+
+def _normalize_row_with_profile(
+    row: Dict[str, Any], profile: models.RetailImportProfile,
+) -> Tuple[Dict[str, Any], List[str]]:
+    """Aplica el mapeo del perfil a una fila cruda. Devuelve
+    (fila_normalizada, lista_de_errores)."""
+    errors: List[str] = []
+    normalized: Dict[str, Any] = {}
+    cmap = profile.column_map or {}
+
+    def _get(field: str) -> Any:
+        col = cmap.get(field)
+        return row.get(col) if col else None
+
+    # Cadena
+    chan_code = str(_get("cadena_codigo") or profile.default_channel_code or "").strip()
+    normalized["cadena_codigo"] = chan_code
+    normalized["cadena_nombre"] = str(_get("cadena_nombre") or "").strip()
+
+    # Tienda
+    normalized["tienda_codigo"] = str(_get("tienda_codigo") or "").strip()
+    normalized["tienda_nombre"] = str(_get("tienda_nombre") or "").strip()
+
+    # Producto
+    normalized["sku"] = str(_get("sku") or "").strip()
+    normalized["producto_nombre"] = str(_get("producto_nombre") or "").strip()
+
+    # Periodo
+    period_type_raw = str(_get("periodo_tipo") or "").strip().lower()
+    if period_type_raw not in ("day", "week", "month"):
+        period_type_raw = profile.default_period_type
+    normalized["periodo_tipo"] = period_type_raw
+
+    period_start = _parse_date_flex(_get("periodo_inicio"), profile.date_format)
+    if period_start is None:
+        errors.append("periodo_inicio inválido")
+    normalized["periodo_inicio"] = period_start.isoformat() if period_start else None
+
+    period_end = _parse_date_flex(_get("periodo_fin"), profile.date_format)
+    if period_end is None and period_start is not None:
+        period_end = _default_period_end(period_start, period_type_raw)
+    normalized["periodo_fin"] = period_end.isoformat() if period_end else None
+
+    # Cantidades
+    normalized["unidades_vendidas"] = int(round(
+        _apply_multipliers(_get("unidades_vendidas"), profile.units_multiplier)
+    ))
+    normalized["unidades_stock"] = int(round(
+        _apply_multipliers(_get("unidades_stock"), profile.units_multiplier)
+    ))
+    normalized["ingreso"] = round(
+        _apply_multipliers(_get("ingreso"), profile.revenue_multiplier), 2,
+    )
+    normalized["notas"] = str(_get("notas") or "").strip() or None
+
+    # Validación mínima
+    if not chan_code and not normalized["cadena_nombre"]:
+        errors.append("sin cadena identificable")
+    if not normalized["tienda_codigo"] and not normalized["tienda_nombre"]:
+        errors.append("sin tienda identificable")
+    if not normalized["sku"] and not normalized["producto_nombre"]:
+        errors.append("sin producto identificable")
+    return normalized, errors
+
+
+# ── Endpoints principales del wizard ─────────────────────────────────────
+
+async def detect_columns(
+    db: AsyncSession, file_bytes: bytes, filename: str,
+    profile_id: Optional[int] = None,
+) -> schemas.DetectColumnsResponse:
+    profile = await get_profile(db, profile_id) if profile_id else None
+    headers, _rows, sheets = _read_file_rows(file_bytes, filename, profile)
+    proposed = auto_detect_column_map(headers)
+    active_sheet = None
+    if profile and profile.sheet_name:
+        active_sheet = profile.sheet_name
+    elif sheets:
+        active_sheet = sheets[0]
+    return schemas.DetectColumnsResponse(
+        detected_columns=headers,
+        sheet_names=sheets,
+        active_sheet=active_sheet,
+        proposed_map=proposed,
+    )
+
+
+async def preview_with_profile(
+    db: AsyncSession, profile_id: int, file_bytes: bytes, filename: str,
+    limit: int = 10,
+) -> schemas.PreviewResponse:
+    profile = await get_profile(db, profile_id)
+    if profile is None:
+        raise ValueError("Perfil no encontrado")
+    headers, rows, _ = _read_file_rows(file_bytes, filename, profile)
+    warnings: List[str] = []
+    if not headers:
+        warnings.append("El archivo no tiene encabezados legibles con esta configuración.")
+
+    required = ["tienda_codigo", "sku", "periodo_inicio", "unidades_vendidas"]
+    cmap = profile.column_map or {}
+    unmapped = []
+    for field in required:
+        col = cmap.get(field)
+        if not col:
+            # tienda_nombre / producto_nombre son fallbacks
+            if field == "tienda_codigo" and cmap.get("tienda_nombre"):
+                continue
+            if field == "sku" and cmap.get("producto_nombre"):
+                continue
+            unmapped.append(field)
+
+    preview_rows: List[schemas.PreviewRow] = []
+    for i, r in enumerate(rows[:limit], start=int(profile.header_row) + 1):
+        normalized, errs = _normalize_row_with_profile(r, profile)
+        preview_rows.append(schemas.PreviewRow(
+            row_number=i,
+            raw={k: (str(v) if v is not None else "") for k, v in r.items()},
+            normalized=normalized,
+            errors=errs,
+        ))
+
+    return schemas.PreviewResponse(
+        total_rows=len(rows),
+        preview_rows=preview_rows,
+        unmapped_required_fields=unmapped,
+        warnings=warnings,
+    )
+
+
+async def import_with_profile(
+    db: AsyncSession, profile_id: int, file_bytes: bytes, filename: str,
+    user_id: Optional[int] = None,
+) -> schemas.ImportSellOutResponse:
+    """Aplica el perfil al archivo y llama a import_sellout con las filas
+    normalizadas. Devuelve el mismo response que la ruta clásica."""
+    profile = await get_profile(db, profile_id)
+    if profile is None:
+        raise ValueError("Perfil no encontrado")
+    channel = await db.get(models.RetailChannel, profile.channel_id)
+
+    headers, rows, _ = _read_file_rows(file_bytes, filename, profile)
+    if not rows:
+        return schemas.ImportSellOutResponse(
+            total_rows=0, created=0, updated=0, skipped=0, errors=[],
+        )
+
+    # Convierte las filas al formato interno (nombres estándar) y arma un
+    # CSV en memoria para reutilizar import_sellout con toda su lógica de
+    # matcheo/upsert.
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(TEMPLATE_HEADERS)
+    for r in rows:
+        norm, _errs = _normalize_row_with_profile(r, profile)
+        if not norm.get("cadena_codigo") and not norm.get("cadena_nombre"):
+            norm["cadena_codigo"] = channel.code or ""
+            norm["cadena_nombre"] = channel.name if channel else ""
+        writer.writerow([
+            norm.get("cadena_codigo") or "",
+            norm.get("cadena_nombre") or "",
+            norm.get("tienda_codigo") or "",
+            norm.get("tienda_nombre") or "",
+            norm.get("sku") or "",
+            norm.get("producto_nombre") or "",
+            norm.get("periodo_tipo") or "",
+            norm.get("periodo_inicio") or "",
+            norm.get("periodo_fin") or "",
+            norm.get("unidades_vendidas") or 0,
+            norm.get("unidades_stock") or 0,
+            norm.get("ingreso") or 0,
+            norm.get("notas") or "",
+        ])
+    csv_bytes = buf.getvalue().encode("utf-8-sig")
+    fake_name = f"profile_{profile.id}.csv"
+    return await import_sellout(db, csv_bytes, fake_name, user_id=user_id)

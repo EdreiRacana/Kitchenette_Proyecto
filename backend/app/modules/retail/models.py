@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from sqlalchemy import (
     Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Text,
-    UniqueConstraint, Index,
+    UniqueConstraint, Index, JSON,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -211,3 +211,63 @@ class RetailAlert(Base):
     channel = relationship("RetailChannel")
     store = relationship("RetailStore")
     variant = relationship("ProductVariant")
+
+
+class RetailImportProfile(Base):
+    """Perfil de importación de sell-out por cadena.
+
+    Cada cadena descarga su reporte de un portal distinto (Walmart Retail
+    Link, Costco POL, HEB Vendor Portal, portales genéricos). Cada portal
+    tiene su propio formato: nombres de columnas, orden de fechas,
+    separador decimal, columnas extras a ignorar, etc.
+
+    Este perfil captura toda esa configuración una vez por cadena y se
+    reusa en cada importación posterior. Blinda el flujo contra errores:
+      - Auto-detección al primer archivo.
+      - Preview antes de escribir.
+      - Reusable y versionable.
+    """
+    __tablename__ = "retail_import_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    channel_id = Column(
+        Integer, ForeignKey("retail_channels.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    name = Column(String, nullable=False)
+    notes = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    is_default = Column(Boolean, default=False, nullable=False)
+
+    # Configuración del formato del archivo
+    file_format = Column(String, default="xlsx", nullable=False)  # xlsx | csv
+    sheet_name = Column(String, nullable=True)
+    header_row = Column(Integer, default=1, nullable=False)  # 1-indexed
+    encoding = Column(String, default="utf-8", nullable=False)
+    delimiter = Column(String, default=",", nullable=False)
+    date_format = Column(String, default="auto", nullable=False)
+    #   auto | YYYY-MM-DD | DD/MM/YYYY | MM/DD/YYYY
+    decimal_separator = Column(String, default=".", nullable=False)  # . | ,
+    thousands_separator = Column(String, default="", nullable=False)  # "" | , | .
+
+    # Ajustes numéricos
+    units_multiplier = Column(Float, default=1.0, nullable=False)
+    revenue_multiplier = Column(Float, default=1.0, nullable=False)
+
+    # Default para period_type cuando el archivo no lo trae
+    default_period_type = Column(String, default="week", nullable=False)
+
+    # Mapeo columna_del_archivo → campo_estandar
+    # Formato: {"cadena_codigo": "Chain Code", "sku": "Item Nbr", ...}
+    column_map = Column(JSON, nullable=False, default=dict)
+
+    # Reglas opcionales (regex de filas a ignorar, valores especiales, etc.)
+    ignore_row_pattern = Column(String, nullable=True)   # regex opcional
+    default_channel_code = Column(String, nullable=True)  # si el archivo no
+                                                            # trae la cadena
+                                                            # en cada fila
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    channel = relationship("RetailChannel")

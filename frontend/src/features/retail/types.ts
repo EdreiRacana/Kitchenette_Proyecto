@@ -144,6 +144,55 @@ export interface TransferResponse {
   results: TransferItemResult[];
 }
 
+export interface RetailImportProfile {
+  id: number;
+  channel_id: number;
+  channel_name?: string | null;
+  name: string;
+  notes?: string | null;
+  is_active: boolean;
+  is_default: boolean;
+  file_format: "xlsx" | "csv";
+  sheet_name?: string | null;
+  header_row: number;
+  encoding: string;
+  delimiter: string;
+  date_format: "auto" | "YYYY-MM-DD" | "DD/MM/YYYY" | "MM/DD/YYYY" | "YYYY/MM/DD";
+  decimal_separator: "." | ",";
+  thousands_separator: "" | "," | ".";
+  units_multiplier: number;
+  revenue_multiplier: number;
+  default_period_type: "day" | "week" | "month";
+  column_map: Record<string, string>;
+  ignore_row_pattern?: string | null;
+  default_channel_code?: string | null;
+  created_at?: string | null;
+}
+
+export interface RetailImportProfileCreate extends Omit<RetailImportProfile, "id" | "channel_name" | "created_at"> {}
+
+export interface DetectColumnsResponse {
+  detected_columns: string[];
+  sheet_names: string[];
+  active_sheet?: string | null;
+  proposed_map: Record<string, string>;
+  standard_fields: string[];
+}
+
+export interface PreviewRow {
+  row_number: number;
+  raw: Record<string, any>;
+  normalized: Record<string, any>;
+  errors: string[];
+}
+
+export interface PreviewResponse {
+  total_rows: number;
+  preview_rows: PreviewRow[];
+  unmapped_required_fields: string[];
+  warnings: string[];
+}
+
 export interface RetailStoreCreate extends Omit<RetailStore, "id" | "channel_name" | "created_at"> {}
 
 export interface SellOutReport {

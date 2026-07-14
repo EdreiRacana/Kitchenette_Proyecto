@@ -312,6 +312,127 @@ async def create_transfer(payload: schemas.TransferRequest,
         raise HTTPException(400, str(e))
 
 
+# ── Perfiles de importación ─────────────────────────────────────────────
+
+@router.get("/import-profiles",
+             response_model=List[schemas.RetailImportProfileOut])
+async def list_import_profiles(db: DB, _: CurrentUser,
+                                 channel_id: Optional[int] = Query(None)):
+    return await service.list_profiles(db, channel_id=channel_id)
+
+
+@router.post("/import-profiles",
+              response_model=schemas.RetailImportProfileOut, status_code=201)
+async def create_import_profile(payload: schemas.RetailImportProfileCreate,
+                                  db: DB, _: CurrentUser):
+    ch = await service.get_channel(db, payload.channel_id)
+    if ch is None:
+        raise HTTPException(400, "Cadena no encontrada")
+    p = await service.create_profile(db, payload)
+    return schemas.RetailImportProfileOut(
+        id=p.id, channel_id=p.channel_id, channel_name=ch.name,
+        name=p.name, notes=p.notes,
+        is_active=p.is_active, is_default=p.is_default,
+        file_format=p.file_format, sheet_name=p.sheet_name,
+        header_row=p.header_row, encoding=p.encoding,
+        delimiter=p.delimiter, date_format=p.date_format,
+        decimal_separator=p.decimal_separator,
+        thousands_separator=p.thousands_separator,
+        units_multiplier=p.units_multiplier,
+        revenue_multiplier=p.revenue_multiplier,
+        default_period_type=p.default_period_type,
+        column_map=dict(p.column_map or {}),
+        ignore_row_pattern=p.ignore_row_pattern,
+        default_channel_code=p.default_channel_code,
+        created_at=p.created_at,
+    )
+
+
+@router.patch("/import-profiles/{profile_id}",
+                response_model=schemas.RetailImportProfileOut)
+async def update_import_profile(profile_id: int,
+                                  payload: schemas.RetailImportProfileUpdate,
+                                  db: DB, _: CurrentUser):
+    p = await service.update_profile(db, profile_id, payload)
+    if p is None:
+        raise HTTPException(404, "Perfil no encontrado")
+    ch = await service.get_channel(db, p.channel_id)
+    return schemas.RetailImportProfileOut(
+        id=p.id, channel_id=p.channel_id, channel_name=ch.name if ch else None,
+        name=p.name, notes=p.notes,
+        is_active=p.is_active, is_default=p.is_default,
+        file_format=p.file_format, sheet_name=p.sheet_name,
+        header_row=p.header_row, encoding=p.encoding,
+        delimiter=p.delimiter, date_format=p.date_format,
+        decimal_separator=p.decimal_separator,
+        thousands_separator=p.thousands_separator,
+        units_multiplier=p.units_multiplier,
+        revenue_multiplier=p.revenue_multiplier,
+        default_period_type=p.default_period_type,
+        column_map=dict(p.column_map or {}),
+        ignore_row_pattern=p.ignore_row_pattern,
+        default_channel_code=p.default_channel_code,
+        created_at=p.created_at,
+    )
+
+
+@router.delete("/import-profiles/{profile_id}", status_code=204)
+async def delete_import_profile(profile_id: int, db: DB, _: CurrentUser):
+    ok = await service.delete_profile(db, profile_id)
+    if not ok:
+        raise HTTPException(404, "Perfil no encontrado")
+
+
+@router.post("/import-profiles/detect-columns",
+              response_model=schemas.DetectColumnsResponse)
+async def detect_columns(
+    db: DB, _: CurrentUser,
+    profile_id: Optional[int] = Query(None),
+    file: UploadFile = File(...),
+):
+    """Detecta encabezados del archivo y propone mapeo automático heurístico."""
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Archivo vacío")
+    return await service.detect_columns(db, content, file.filename or "", profile_id=profile_id)
+
+
+@router.post("/import-profiles/{profile_id}/preview",
+              response_model=schemas.PreviewResponse)
+async def preview_import(
+    profile_id: int, db: DB, _: CurrentUser,
+    file: UploadFile = File(...),
+    limit: int = Query(10, ge=1, le=50),
+):
+    """Aplica el perfil al archivo y devuelve las primeras filas normalizadas
+    para revisar ANTES de importar. No escribe nada en la base."""
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Archivo vacío")
+    try:
+        return await service.preview_with_profile(db, profile_id, content, file.filename or "", limit=limit)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/import-profiles/{profile_id}/import",
+              response_model=schemas.ImportSellOutResponse)
+async def import_with_profile(
+    profile_id: int, db: DB, current_user: CurrentUser,
+    file: UploadFile = File(...),
+):
+    """Ejecuta la importación aplicando el perfil (mapeo + normalización)."""
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Archivo vacío")
+    try:
+        return await service.import_with_profile(
+            db, profile_id, content, file.filename or "", user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 # ── Consignación ────────────────────────────────────────────────────────
 
 @router.get("/consignment/warehouses",

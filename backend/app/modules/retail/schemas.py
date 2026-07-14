@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -431,3 +431,96 @@ class TransferResponse(BaseModel):
     warnings: int
     total_units: int
     results: List[TransferItemResult]
+
+
+# ── Perfiles de importación por cadena ──────────────────────────────────
+
+# Los 13 campos estándar que el sistema entiende (los mismos de la plantilla).
+STANDARD_FIELDS = [
+    "cadena_codigo", "cadena_nombre",
+    "tienda_codigo", "tienda_nombre",
+    "sku", "producto_nombre",
+    "periodo_tipo", "periodo_inicio", "periodo_fin",
+    "unidades_vendidas", "unidades_stock", "ingreso",
+    "notas",
+]
+
+
+class RetailImportProfileBase(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    notes: Optional[str] = None
+    is_active: bool = True
+    is_default: bool = False
+    file_format: str = Field(default="xlsx", pattern="^(xlsx|csv)$")
+    sheet_name: Optional[str] = None
+    header_row: int = Field(default=1, ge=1, le=50)
+    encoding: str = Field(default="utf-8")
+    delimiter: str = Field(default=",", min_length=1, max_length=3)
+    date_format: str = Field(
+        default="auto",
+        pattern="^(auto|YYYY-MM-DD|DD/MM/YYYY|MM/DD/YYYY|YYYY/MM/DD)$",
+    )
+    decimal_separator: str = Field(default=".", pattern="^[.,]$")
+    thousands_separator: str = Field(default="", pattern="^(|,|\\.)$")
+    units_multiplier: float = Field(default=1.0)
+    revenue_multiplier: float = Field(default=1.0)
+    default_period_type: str = Field(default="week", pattern="^(day|week|month)$")
+    column_map: Dict[str, str] = Field(default_factory=dict)
+    ignore_row_pattern: Optional[str] = None
+    default_channel_code: Optional[str] = None
+
+
+class RetailImportProfileCreate(RetailImportProfileBase):
+    channel_id: int
+
+
+class RetailImportProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_default: Optional[bool] = None
+    file_format: Optional[str] = Field(default=None, pattern="^(xlsx|csv)$")
+    sheet_name: Optional[str] = None
+    header_row: Optional[int] = Field(default=None, ge=1, le=50)
+    encoding: Optional[str] = None
+    delimiter: Optional[str] = None
+    date_format: Optional[str] = None
+    decimal_separator: Optional[str] = None
+    thousands_separator: Optional[str] = None
+    units_multiplier: Optional[float] = None
+    revenue_multiplier: Optional[float] = None
+    default_period_type: Optional[str] = None
+    column_map: Optional[Dict[str, str]] = None
+    ignore_row_pattern: Optional[str] = None
+    default_channel_code: Optional[str] = None
+
+
+class RetailImportProfileOut(RetailImportProfileBase):
+    id: int
+    channel_id: int
+    channel_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DetectColumnsResponse(BaseModel):
+    """Encabezados detectados en el archivo + propuesta de mapeo."""
+    detected_columns: List[str]
+    sheet_names: List[str] = Field(default_factory=list)
+    active_sheet: Optional[str] = None
+    proposed_map: Dict[str, str]  # standard_field → column_del_archivo
+    standard_fields: List[str] = Field(default_factory=lambda: list(STANDARD_FIELDS))
+
+
+class PreviewRow(BaseModel):
+    row_number: int
+    raw: Dict[str, Any] = Field(default_factory=dict)         # tal como viene del archivo
+    normalized: Dict[str, Any] = Field(default_factory=dict)  # tras aplicar el mapeo
+    errors: List[str] = Field(default_factory=list)
+
+
+class PreviewResponse(BaseModel):
+    total_rows: int
+    preview_rows: List[PreviewRow]
+    unmapped_required_fields: List[str]  # campos esenciales no mapeados
+    warnings: List[str] = Field(default_factory=list)

@@ -386,6 +386,32 @@ _RETAIL_STATEMENTS = [
     # Consignación (Fase 4)
     "ALTER TABLE retail_stores          ADD COLUMN IF NOT EXISTS consignment_warehouse_id INTEGER REFERENCES warehouses(id)",
     "ALTER TABLE retail_sellout_reports ADD COLUMN IF NOT EXISTS stock_consumed           INTEGER DEFAULT 0 NOT NULL",
+    # Perfiles de importación por cadena (Fase 7)
+    """CREATE TABLE IF NOT EXISTS retail_import_profiles (
+        id                    SERIAL PRIMARY KEY,
+        channel_id            INTEGER NOT NULL REFERENCES retail_channels(id) ON DELETE CASCADE,
+        name                  VARCHAR NOT NULL,
+        notes                 TEXT,
+        is_active             BOOLEAN DEFAULT TRUE NOT NULL,
+        is_default            BOOLEAN DEFAULT FALSE NOT NULL,
+        file_format           VARCHAR DEFAULT 'xlsx' NOT NULL,
+        sheet_name            VARCHAR,
+        header_row            INTEGER DEFAULT 1 NOT NULL,
+        encoding              VARCHAR DEFAULT 'utf-8' NOT NULL,
+        delimiter             VARCHAR DEFAULT ',' NOT NULL,
+        date_format           VARCHAR DEFAULT 'auto' NOT NULL,
+        decimal_separator     VARCHAR DEFAULT '.' NOT NULL,
+        thousands_separator   VARCHAR DEFAULT '' NOT NULL,
+        units_multiplier      DOUBLE PRECISION DEFAULT 1.0 NOT NULL,
+        revenue_multiplier    DOUBLE PRECISION DEFAULT 1.0 NOT NULL,
+        default_period_type   VARCHAR DEFAULT 'week' NOT NULL,
+        column_map            JSONB DEFAULT '{}'::jsonb NOT NULL,
+        ignore_row_pattern    VARCHAR,
+        default_channel_code  VARCHAR,
+        created_at            TIMESTAMPTZ DEFAULT now(),
+        updated_at            TIMESTAMPTZ
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_retail_import_profiles_channel_id ON retail_import_profiles(channel_id)",
 ]
 
 

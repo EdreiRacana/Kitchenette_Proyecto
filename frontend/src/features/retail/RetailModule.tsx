@@ -21,6 +21,7 @@ import type {
   RetailAlert, AlertStatus, AlertSeverity, AlertsSummary,
   ConsignmentWarehouseOption, ConsignmentReconResponse, ConsignmentReconRow,
   HeatmapResponse, HeatmapMetric, ABCResponse, SourceWarehouseOption, TransferResponse,
+  RetailImportProfile, DetectColumnsResponse, PreviewResponse,
 } from "./types";
 
 type Tokens = any;
@@ -885,6 +886,7 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
       )}
       {importing && (
         <ImportSellOutModal t={t}
+          channels={channels} defaultChannel={selectedChannel}
           onClose={() => setImporting(false)}
           onDone={() => { setImporting(false); reload(); }} />
       )}
@@ -893,14 +895,30 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
 }
 
 
-function ImportSellOutModal({ t, onClose, onDone }: {
-  t: Tokens; onClose: () => void; onDone: () => void;
+function ImportSellOutModal({ t, channels, defaultChannel, onClose, onDone }: {
+  t: Tokens; channels: RetailChannel[]; defaultChannel: number | null;
+  onClose: () => void; onDone: () => void;
 }) {
+  type Step = "upload" | "map" | "preview" | "done";
+  const [step, setStep] = useState<Step>("upload");
   const [dragOver, setDragOver] = useState(false);
   const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [result, setResult] = useState<ImportSellOutResponse | null>(null);
+  const [channelId, setChannelId] = useState<number | null>(defaultChannel || channels[0]?.id || null);
+  const [profiles, setProfiles] = useState<RetailImportProfile[]>([]);
+  const [profileId, setProfileId] = useState<number | null>(null);
+  const [profileName, setProfileName] = useState("");
+  const [detected, setDetected] = useState<DetectColumnsResponse | null>(null);
+  const [columnMap, setColumnMap] = useState<Record<string, string>>({});
+  const [fileFormat, setFileFormat] = useState<"xlsx" | "csv">("xlsx");
+  const [dateFormat, setDateFormat] = useState<"auto" | "YYYY-MM-DD" | "DD/MM/YYYY" | "MM/DD/YYYY" | "YYYY/MM/DD">("auto");
+  const [defaultPeriodType, setDefaultPeriodType] = useState<"day" | "week" | "month">("week");
+  const [unitsMultiplier, setUnitsMultiplier] = useState(1);
+  const [revenueMultiplier, setRevenueMultiplier] = useState(1);
+  const [saveAsProfile, setSaveAsProfile] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [preview, setPreview] = useState<PreviewResponse | null>(null);
+  const [result, setResult] = useState<ImportSellOutResponse | null>(null);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -908,41 +926,139 @@ function ImportSellOutModal({ t, onClose, onDone }: {
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
 
-  const handleFile = (f: File) => {
+  useEffect(() => {
+    if (!channelId) return;
+    retailApi.listImportProfiles(channelId).then(ps => {
+      setProfiles(ps);
+      const def = ps.find(p => p.is_default) || ps[0];
+      if (def) {
+        setProfileId(def.id);
+        setProfileName(def.name);
+        setColumnMap(def.column_map || {});
+        setFileFormat(def.file_format);
+        setDateFormat(def.date_format);
+        setDefaultPeriodType(def.default_period_type);
+        setUnitsMultiplier(def.units_multiplier);
+        setRevenueMultiplier(def.revenue_multiplier);
+      } else {
+        setProfileId(null);
+      }
+    }).catch(() => setProfiles([]));
+  }, [channelId]);
+
+  const handleFile = async (f: File) => {
     const ok = /\.(xlsx|xlsm|csv)$/i.test(f.name);
     if (!ok) { setErr("Solo se acepta .xlsx, .xlsm o .csv"); return; }
-    setErr(null);
-    setFile(f);
-  };
-
-  const submit = async () => {
-    if (!file) return;
-    setUploading(true); setErr(null); setResult(null);
+    setErr(null); setFile(f);
+    const isCsv = /\.csv$/i.test(f.name);
+    setFileFormat(isCsv ? "csv" : "xlsx");
+    // Auto-detect columnas
+    setBusy(true);
     try {
-      const r = await retailApi.importSellOut(file);
-      setResult(r);
+      const d = await retailApi.detectColumns(f, profileId || undefined);
+      setDetected(d);
+      // Si el perfil ya tiene mapeo, respeta; si no, usa el propuesto
+      const existing = columnMap && Object.keys(columnMap).length > 0 ? columnMap : d.proposed_map;
+      setColumnMap(existing);
+      setStep("map");
     } catch (e: any) {
-      setErr(e?.response?.data?.detail || e?.message || "Error al importar");
-    } finally { setUploading(false); }
+      setErr(e?.response?.data?.detail || "No pude leer el archivo");
+    } finally { setBusy(false); }
   };
 
-  const done = () => { onDone(); };
+  const runPreview = async () => {
+    if (!file || !channelId) return;
+    setBusy(true); setErr(null);
+    try {
+      let pid = profileId;
+      const cfg = {
+        channel_id: channelId, name: profileName || `Perfil ${new Date().toLocaleDateString("es-MX")}`,
+        file_format: fileFormat, date_format: dateFormat,
+        default_period_type: defaultPeriodType,
+        units_multiplier: unitsMultiplier, revenue_multiplier: revenueMultiplier,
+        column_map: columnMap,
+        is_active: true, is_default: false,
+        header_row: 1, encoding: "utf-8", delimiter: ",",
+        decimal_separator: "." as const, thousands_separator: "" as const,
+      };
+      if (pid) {
+        await retailApi.updateImportProfile(pid, cfg);
+      } else if (saveAsProfile) {
+        const p = await retailApi.createImportProfile(cfg);
+        pid = p.id; setProfileId(p.id);
+      } else {
+        // crear efímero, borrar tras usar
+        const p = await retailApi.createImportProfile({ ...cfg, name: `_tmp_${Date.now()}` });
+        pid = p.id;
+      }
+      const pv = await retailApi.previewImport(pid!, file, 10);
+      setPreview(pv);
+      setStep("preview");
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error en preview");
+    } finally { setBusy(false); }
+  };
+
+  const runImport = async () => {
+    if (!file || !profileId) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await retailApi.importWithProfile(profileId, file);
+      setResult(r);
+      setStep("done");
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al importar");
+    } finally { setBusy(false); }
+  };
+
+  const stdFieldLabels: Record<string, string> = {
+    cadena_codigo: "Código cadena", cadena_nombre: "Nombre cadena",
+    tienda_codigo: "Código tienda (nº externo)", tienda_nombre: "Nombre tienda",
+    sku: "SKU", producto_nombre: "Nombre producto",
+    periodo_tipo: "Tipo periodo", periodo_inicio: "Inicio periodo",
+    periodo_fin: "Fin periodo",
+    unidades_vendidas: "Unidades vendidas *", unidades_stock: "Stock",
+    ingreso: "Ingreso", notas: "Notas",
+  };
+
+  const requiredFields = ["tienda_codigo", "sku", "periodo_inicio", "unidades_vendidas"];
+  const mappedCount = Object.keys(columnMap).filter(k => !!columnMap[k]).length;
+  const missingRequired = requiredFields.filter(f => !columnMap[f] && !(f === "tienda_codigo" && columnMap["tienda_nombre"]) && !(f === "sku" && columnMap["producto_nombre"]));
 
   const modal = (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: 620, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 820, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+
+        {/* Stepper */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
           <div style={{ width: 34, height: 34, borderRadius: 8, background: t.nova + "22", color: t.nova, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Upload size={16} />
           </div>
-          <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>Importar sell-out desde archivo</h3>
+          <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>Importar sell-out (asistente)</h3>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", fontSize: 11, color: t.textLo }}>
+            <StepDot t={t} num={1} label="Subir" active={step === "upload"} done={step !== "upload"} />
+            <ChevronRight size={12} />
+            <StepDot t={t} num={2} label="Mapear" active={step === "map"} done={step === "preview" || step === "done"} />
+            <ChevronRight size={12} />
+            <StepDot t={t} num={3} label="Preview" active={step === "preview"} done={step === "done"} />
+          </div>
         </div>
-        <p style={{ color: t.textLo, fontSize: 12, marginTop: 8 }}>
-          Sube el archivo Excel o CSV siguiendo la plantilla. Se matchea la cadena por código o nombre, la tienda por código externo/interno o nombre, y el SKU contra tu catálogo. Filas repetidas (misma tienda + SKU + periodo) se actualizan.
-        </p>
 
-        {!result && (
+        {step === "upload" && (
           <>
+            <div style={{ marginBottom: 14 }}>
+              <label style={labelStyle(t)}>Cadena</label>
+              <select value={channelId ?? ""} onChange={e => setChannelId(e.target.value ? Number(e.target.value) : null)}
+                style={inputStyle(t)}>
+                {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <div style={{ fontSize: 11, color: t.textLo, marginTop: 4 }}>
+                {profiles.length > 0
+                  ? `Esta cadena tiene ${profiles.length} perfil${profiles.length !== 1 ? "es" : ""} guardado${profiles.length !== 1 ? "s" : ""}. Se detectará automáticamente el mapeo.`
+                  : "Primera importación de esta cadena — te guiaré paso a paso para configurar el mapeo de columnas."}
+              </div>
+            </div>
+
             <label
               onDragOver={e => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
@@ -952,20 +1068,21 @@ function ImportSellOutModal({ t, onClose, onDone }: {
                 if (f) handleFile(f);
               }}
               style={{
-                display: "block", marginTop: 14, padding: "30px 20px",
+                display: "block", padding: "40px 20px",
                 border: `2px dashed ${dragOver ? t.nova : t.border}`,
                 borderRadius: 12, background: dragOver ? t.nova + "12" : t.panel2,
-                textAlign: "center", cursor: "pointer",
-                transition: "background .15s, border-color .15s",
+                textAlign: "center", cursor: busy ? "wait" : "pointer",
+                transition: "background .15s, border-color .15s", opacity: busy ? 0.6 : 1,
               }}>
               <input type="file" accept=".xlsx,.xlsm,.csv" style={{ display: "none" }}
+                disabled={busy}
                 onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
-              <Upload size={26} color={dragOver ? t.nova : t.textLo} />
-              <div style={{ marginTop: 8, color: t.textHi, fontSize: 13.5, fontWeight: 600 }}>
-                {file ? file.name : "Arrastra el archivo aquí o haz clic para seleccionar"}
+              <Upload size={30} color={dragOver ? t.nova : t.textLo} />
+              <div style={{ marginTop: 10, color: t.textHi, fontSize: 14, fontWeight: 600 }}>
+                {busy ? "Detectando columnas…" : file ? file.name : "Arrastra el archivo tal como te lo entregó el cliente"}
               </div>
               <div style={{ marginTop: 4, color: t.textLo, fontSize: 11 }}>
-                .xlsx, .xlsm o .csv (usa la plantilla)
+                .xlsx, .xlsm o .csv · No necesitas usar la plantilla, cualquier formato sirve
               </div>
             </label>
 
@@ -973,20 +1090,186 @@ function ImportSellOutModal({ t, onClose, onDone }: {
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
               <button onClick={onClose} style={btnGhost(t)}>Cancelar</button>
-              <button disabled={!file || uploading} onClick={submit} style={btnPrimary(t)}>
-                {uploading ? "Importando…" : "Importar"}
-              </button>
             </div>
           </>
         )}
 
-        {result && (
+        {step === "map" && detected && (
           <>
-            <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: t.panel2, border: `1px solid ${t.border}` }}>
-              <div style={{ fontSize: 13, color: t.textHi, fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                <Check size={16} color={t.good} /> Importación terminada
+            <div style={{ marginBottom: 12, padding: "8px 12px", background: t.nova + "18", borderRadius: 6, fontSize: 12, color: t.textMid }}>
+              Detecté <b style={{ color: t.textHi }}>{detected.detected_columns.length}</b> columnas en tu archivo. Ya asigné <b style={{ color: t.textHi }}>{mappedCount}</b> automáticamente. Revisa y ajusta si es necesario.
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
+              <div>
+                <label style={labelStyle(t)}>Formato fechas</label>
+                <select value={dateFormat} onChange={e => setDateFormat(e.target.value as any)} style={inputStyle(t)}>
+                  <option value="auto">Auto</option>
+                  <option value="YYYY-MM-DD">2026-07-13</option>
+                  <option value="DD/MM/YYYY">13/07/2026</option>
+                  <option value="MM/DD/YYYY">07/13/2026</option>
+                  <option value="YYYY/MM/DD">2026/07/13</option>
+                </select>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, fontSize: 12 }}>
+              <div>
+                <label style={labelStyle(t)}>Periodo default</label>
+                <select value={defaultPeriodType} onChange={e => setDefaultPeriodType(e.target.value as any)} style={inputStyle(t)}>
+                  <option value="day">Diario</option>
+                  <option value="week">Semanal</option>
+                  <option value="month">Mensual</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle(t)}>Multiplicador ingreso</label>
+                <input type="number" step={0.01} min={0} value={revenueMultiplier}
+                  onChange={e => setRevenueMultiplier(Number(e.target.value) || 1)} style={inputStyle(t)} />
+              </div>
+            </div>
+
+            <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8, overflow: "hidden", marginBottom: 12 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ background: t.panel3 }}>
+                    <th style={thStyle(t)}>Campo Sthenova</th>
+                    <th style={thStyle(t)}>Columna del archivo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(detected.standard_fields || Object.keys(stdFieldLabels)).map(f => {
+                    const isRequired = requiredFields.includes(f);
+                    const val = columnMap[f] || "";
+                    return (
+                      <tr key={f} style={{ borderTop: `1px solid ${t.border}55` }}>
+                        <td style={{ ...tdStyle(t), width: "45%" }}>
+                          <span style={{ color: isRequired ? t.textHi : t.textMid, fontWeight: isRequired ? 700 : 500 }}>
+                            {stdFieldLabels[f] || f}
+                          </span>
+                          {isRequired && <span style={{ color: t.bad, marginLeft: 4 }}>*</span>}
+                        </td>
+                        <td style={tdStyle(t)}>
+                          <select value={val}
+                            onChange={e => setColumnMap(prev => ({ ...prev, [f]: e.target.value }))}
+                            style={{ ...inputStyle(t), background: val ? t.nova + "12" : t.inputBg }}>
+                            <option value="">— No mapear —</option>
+                            {detected.detected_columns.filter(c => c).map(c => (
+                              <option key={c} value={c}>{c}</option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ marginBottom: 10 }}>
+              <label style={labelStyle(t)}>Nombre del perfil (para guardar)</label>
+              <input value={profileName} onChange={e => setProfileName(e.target.value)}
+                placeholder="Ej. Walmart Retail Link — reporte semanal" style={inputStyle(t)} />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <input type="checkbox" id="save-profile" checked={saveAsProfile} onChange={e => setSaveAsProfile(e.target.checked)} />
+              <label htmlFor="save-profile" style={{ fontSize: 12.5, color: t.textMid, cursor: "pointer" }}>
+                Guardar como perfil para reusar (recomendado)
+              </label>
+            </div>
+
+            {missingRequired.length > 0 && (
+              <div style={{ padding: "8px 10px", background: t.warn + "18", color: t.warn, borderRadius: 6, fontSize: 12, marginBottom: 10 }}>
+                <AlertTriangle size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
+                Falta mapear campos requeridos: {missingRequired.map(f => stdFieldLabels[f]).join(", ")}
+              </div>
+            )}
+
+            {err && <div style={errStyle(t)}>{err}</div>}
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <button onClick={() => setStep("upload")} style={btnGhost(t)}>← Cambiar archivo</button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={onClose} style={btnGhost(t)}>Cancelar</button>
+                <button disabled={busy || missingRequired.length > 0} onClick={runPreview} style={btnPrimary(t)}>
+                  {busy ? "Preparando…" : "Ver preview →"}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {step === "preview" && preview && (
+          <>
+            <div style={{ padding: "10px 12px", background: t.nova + "18", borderRadius: 6, fontSize: 12, color: t.textMid, marginBottom: 12 }}>
+              El archivo tiene <b style={{ color: t.textHi }}>{preview.total_rows}</b> filas. Estas son las primeras {preview.preview_rows.length} normalizadas. Verifica y confirma para importar todas.
+            </div>
+
+            {preview.unmapped_required_fields.length > 0 && (
+              <div style={{ padding: "8px 10px", background: t.warn + "18", color: t.warn, borderRadius: 6, fontSize: 12, marginBottom: 10 }}>
+                Falta mapear: {preview.unmapped_required_fields.join(", ")}
+              </div>
+            )}
+
+            <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8, overflow: "auto", marginBottom: 12, maxHeight: 350 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                <thead>
+                  <tr style={{ background: t.panel3, position: "sticky", top: 0 }}>
+                    <th style={thStyle(t)}>#</th>
+                    <th style={thStyle(t)}>Cadena</th>
+                    <th style={thStyle(t)}>Tienda</th>
+                    <th style={thStyle(t)}>SKU</th>
+                    <th style={thStyle(t)}>Producto</th>
+                    <th style={thStyle(t)}>Inicio</th>
+                    <th style={thStyle(t)}>Vend</th>
+                    <th style={thStyle(t)}>Stock</th>
+                    <th style={thStyle(t)}>Ingreso</th>
+                    <th style={thStyle(t)}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.preview_rows.map((r, i) => (
+                    <tr key={i} style={{ borderTop: `1px solid ${t.border}55`, background: r.errors.length > 0 ? t.bad + "12" : undefined }}>
+                      <td style={{ ...tdStyle(t), color: t.textLo, fontFamily: "monospace" }}>{r.row_number}</td>
+                      <td style={tdStyle(t)}>{r.normalized.cadena_codigo || r.normalized.cadena_nombre || "—"}</td>
+                      <td style={tdStyle(t)}>{r.normalized.tienda_codigo || r.normalized.tienda_nombre || "—"}</td>
+                      <td style={{ ...tdStyle(t), fontFamily: "monospace" }}>{r.normalized.sku || "—"}</td>
+                      <td style={tdStyle(t)}>{r.normalized.producto_nombre || "—"}</td>
+                      <td style={tdStyle(t)}>{r.normalized.periodo_inicio ? new Date(r.normalized.periodo_inicio).toLocaleDateString("es-MX") : "—"}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{r.normalized.unidades_vendidas ?? 0}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.normalized.unidades_stock ?? 0}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right" }}>{mxn(r.normalized.ingreso ?? 0)}</td>
+                      <td style={tdStyle(t)}>
+                        {r.errors.length > 0 && (
+                          <span title={r.errors.join("; ")} style={{ color: t.bad, cursor: "help" }}>
+                            <AlertTriangle size={12} />
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {err && <div style={errStyle(t)}>{err}</div>}
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <button onClick={() => setStep("map")} style={btnGhost(t)}>← Ajustar mapeo</button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={onClose} style={btnGhost(t)}>Cancelar</button>
+                <button disabled={busy || preview.unmapped_required_fields.length > 0} onClick={runImport} style={btnPrimary(t)}>
+                  {busy ? "Importando…" : `Confirmar e importar ${preview.total_rows} filas`}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {step === "done" && result && (
+          <>
+            <div style={{ padding: 14, borderRadius: 10, background: t.panel2, border: `1px solid ${t.border}` }}>
+              <div style={{ fontSize: 14, color: t.textHi, fontWeight: 700, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                <Check size={16} color={t.good} /> Importación completada
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
                 <StatMini t={t} label="Filas" value={result.total_rows.toString()} />
                 <StatMini t={t} label="Creadas" value={result.created.toString()} color={t.good} />
                 <StatMini t={t} label="Actualizadas" value={result.updated.toString()} color={t.nova} />
@@ -999,7 +1282,7 @@ function ImportSellOutModal({ t, onClose, onDone }: {
                 <div style={{ color: t.bad, fontWeight: 700, fontSize: 12.5, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
                   <AlertTriangle size={13} /> {result.errors.length} fila{result.errors.length !== 1 ? "s" : ""} con problema
                 </div>
-                <div style={{ maxHeight: 220, overflowY: "auto", fontSize: 11.5, display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ maxHeight: 200, overflowY: "auto", fontSize: 11.5, display: "flex", flexDirection: "column", gap: 4 }}>
                   {result.errors.map((e, i) => (
                     <div key={i} style={{ padding: "5px 8px", borderRadius: 5, background: t.panel3, color: t.textMid }}>
                       <b style={{ color: t.textHi }}>Fila {e.row}:</b> {e.reason}
@@ -1010,9 +1293,7 @@ function ImportSellOutModal({ t, onClose, onDone }: {
             )}
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
-              <button onClick={done} style={btnPrimary(t)}>
-                Listo
-              </button>
+              <button onClick={onDone} style={btnPrimary(t)}>Listo</button>
             </div>
           </>
         )}
@@ -1021,6 +1302,22 @@ function ImportSellOutModal({ t, onClose, onDone }: {
   );
 
   return createPortal(modal, document.body);
+}
+
+
+function StepDot({ t, num, label, active, done }: { t: Tokens; num: number; label: string; active: boolean; done: boolean }) {
+  const bg = active ? t.nova : done ? t.good : t.panel3;
+  const fg = active || done ? "#fff" : t.textLo;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <span style={{
+        width: 20, height: 20, borderRadius: 10, background: bg, color: fg,
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        fontSize: 11, fontWeight: 800,
+      }}>{done ? "✓" : num}</span>
+      <span style={{ color: active ? t.nova : done ? t.good : t.textLo, fontWeight: active ? 700 : 500 }}>{label}</span>
+    </span>
+  );
 }
 
 
