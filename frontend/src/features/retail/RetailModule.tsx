@@ -9,7 +9,7 @@ import {
   Store, LayoutDashboard, Building2, ShoppingBag, Package, Truck,
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
-  Bell, EyeOff, CheckCircle2, Zap,
+  Bell, EyeOff, CheckCircle2, Zap, Warehouse,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -19,6 +19,7 @@ import type {
   StoreVelocityRow, SKUVelocityRow, ReplenishmentResponse,
   ReplenishmentSuggestion, WosStatus, ImportSellOutResponse,
   RetailAlert, AlertStatus, AlertSeverity, AlertsSummary,
+  ConsignmentWarehouseOption, ConsignmentReconResponse, ConsignmentReconRow,
 } from "./types";
 
 type Tokens = any;
@@ -50,7 +51,7 @@ function statusInfo(t: Tokens, status: WosStatus) {
   }
 }
 
-type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment" | "alerts";
+type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment" | "alerts" | "consignment";
 
 export default function RetailModule({ t }: { t: Tokens }) {
   const [tab, setTab] = useState<TabId>("dashboard");
@@ -87,6 +88,7 @@ export default function RetailModule({ t }: { t: Tokens }) {
       badge: alertsSummary?.open,
       badgeColor: (alertsSummary?.urgent ?? 0) > 0 ? "urgent" : "normal",
     },
+    { id: "consignment", label: "Consignación", icon: Warehouse },
   ];
 
   return (
@@ -160,6 +162,7 @@ export default function RetailModule({ t }: { t: Tokens }) {
             {tab === "sellout" && <SellOutView t={t} channels={channels} selectedChannel={selectedChannel} onChanged={refreshAlertsSummary} />}
             {tab === "replenishment" && <ReplenishmentView t={t} channelId={selectedChannel} />}
             {tab === "alerts" && <AlertsView t={t} channelId={selectedChannel} onChanged={refreshAlertsSummary} />}
+            {tab === "consignment" && <ConsignmentView t={t} channelId={selectedChannel} />}
           </>
         )}
       </div>
@@ -537,13 +540,14 @@ function StoresView({ t, channels, selectedChannel }: {
                 <th style={thStyle(t)}>Ciudad / Estado</th>
                 <th style={thStyle(t)}>Código externo</th>
                 <th style={thStyle(t)}>Formato</th>
+                <th style={thStyle(t)}>Consignación</th>
                 <th style={thStyle(t)}>Estado</th>
                 <th style={thStyle(t)}></th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && (
-                <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: t.textLo }}>
+                <tr><td colSpan={8} style={{ padding: 30, textAlign: "center", color: t.textLo }}>
                   {stores.length === 0 ? "Sin tiendas. Da de alta la primera." : "Sin resultados"}
                 </td></tr>
               )}
@@ -557,6 +561,13 @@ function StoresView({ t, channels, selectedChannel }: {
                   <td style={tdStyle(t)}>{[s.city, s.state].filter(Boolean).join(", ") || "—"}</td>
                   <td style={tdStyle(t)}>{s.external_code || "—"}</td>
                   <td style={tdStyle(t)}>{s.store_format || "—"}</td>
+                  <td style={tdStyle(t)}>
+                    {s.consignment_warehouse_name ? (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: t.nova, background: t.nova + "22", padding: "2px 8px", borderRadius: 10 }}>
+                        <Warehouse size={10} /> {s.consignment_warehouse_name}
+                      </span>
+                    ) : <span style={{ color: t.textLo, fontSize: 11 }}>—</span>}
+                  </td>
                   <td style={tdStyle(t)}>
                     <span style={{ fontSize: 10.5, fontWeight: 700,
                       color: s.is_active ? t.good : t.textLo,
@@ -604,11 +615,19 @@ function StoreModal({ t, channels, store, defaultChannel, onClose, onSaved }: {
     address: store?.address || "",
     contact_name: store?.contact_name || "",
     contact_phone: store?.contact_phone || "",
+    consignment_warehouse_id: store?.consignment_warehouse_id ?? null as number | null,
     is_active: store?.is_active ?? true,
     notes: store?.notes || "",
   });
+  const [warehouses, setWarehouses] = useState<ConsignmentWarehouseOption[]>([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    retailApi.listConsignmentWarehouses()
+      .then(ws => setWarehouses(ws.filter(w => w.is_active || w.id === store?.consignment_warehouse_id)))
+      .catch(() => setWarehouses([]));
+  }, [store?.consignment_warehouse_id]);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -685,6 +704,32 @@ function StoreModal({ t, channels, store, defaultChannel, onClose, onSaved }: {
             <input value={f.contact_phone} onChange={e => update("contact_phone", e.target.value)} style={inputStyle(t)} />
           </div>
         </div>
+        <div style={{ marginTop: 14, padding: 12, background: t.panel2, borderRadius: 8, border: `1px solid ${t.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+            <Warehouse size={13} color={t.nova} />
+            <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Consignación (opcional)</div>
+          </div>
+          <div style={{ fontSize: 11, color: t.textLo, marginBottom: 8 }}>
+            Vincula un almacén de consignación. Cada sell-out reportado descuenta stock automáticamente y se conserva la trazabilidad para la reconciliación.
+          </div>
+          {warehouses.length === 0 ? (
+            <div style={{ padding: "8px 10px", borderRadius: 6, background: t.warn + "18", color: t.warn, fontSize: 11.5 }}>
+              No hay almacenes de tipo "consignación" en Inventario. Créalos en el módulo Inventario para poder vincularlos aquí.
+            </div>
+          ) : (
+            <select value={f.consignment_warehouse_id ?? ""}
+              onChange={e => update("consignment_warehouse_id", e.target.value ? Number(e.target.value) : null)}
+              style={inputStyle(t)}>
+              <option value="">— Sin consignación —</option>
+              {warehouses.map(w => (
+                <option key={w.id} value={w.id}>
+                  {w.name}{w.location ? ` · ${w.location}` : ""}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
         <div style={{ marginTop: 10 }}>
           <label style={labelStyle(t)}>Notas</label>
           <textarea value={f.notes} onChange={e => update("notes", e.target.value)} rows={2}
@@ -1548,3 +1593,132 @@ const iconBtn = (t: Tokens): React.CSSProperties => ({
   background: "transparent", color: t.textMid, cursor: "pointer",
   marginLeft: 4,
 });
+
+
+// ── Consignación ─────────────────────────────────────────────────────────
+function reconStatusInfo(t: Tokens, s: string) {
+  switch (s) {
+    case "match": return { label: "Cuadra", color: t.good, bg: t.good + "22" };
+    case "short_at_warehouse": return { label: "Faltante en tu almacén", color: t.bad, bg: t.bad + "22" };
+    case "over_at_warehouse": return { label: "Sobrante en tu almacén", color: t.nova, bg: t.nova + "22" };
+    default: return { label: "Sin datos", color: t.textLo, bg: t.panel3 };
+  }
+}
+
+function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<ConsignmentReconResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<"all" | "diffs" | "shorts">("diffs");
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await retailApi.consignmentReconciliation(channelId || undefined);
+      setData(r);
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [channelId]);
+
+  if (loading) return <div style={{ padding: 40, color: t.textLo, textAlign: "center" }}>Calculando reconciliación…</div>;
+  if (!data) return null;
+
+  const rows = data.rows.filter(r =>
+    filter === "all" ? true
+      : filter === "shorts" ? r.status === "short_at_warehouse"
+      : r.status !== "match"
+  );
+
+  const totalStores = new Set(data.rows.map(r => r.store_id)).size;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <SumTile t={t} label="Tiendas con consignación" value={totalStores} color={t.textHi} />
+          <SumTile t={t} label="SKUs revisados" value={data.total_rows} color={t.textHi} />
+          <SumTile t={t} label="Cuadran" value={data.matched} color={t.good} />
+          <SumTile t={t} label="Con descuadre" value={data.with_diff} color={t.bad} />
+        </div>
+        <button onClick={load} style={btnGhost(t)}>
+          <RefreshCw size={13} /> Recalcular
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+        <FilterPill t={t} label="Sólo descuadres" active={filter === "diffs"} onClick={() => setFilter("diffs")} color={t.bad} />
+        <FilterPill t={t} label="Sólo faltantes" active={filter === "shorts"} onClick={() => setFilter("shorts")} color={t.bad} />
+        <FilterPill t={t} label="Todo" active={filter === "all"} onClick={() => setFilter("all")} />
+      </div>
+
+      {totalStores === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10 }}>
+          <Warehouse size={30} color={t.textLo} />
+          <div style={{ marginTop: 10, color: t.textHi, fontSize: 14 }}>Ninguna tienda tiene almacén de consignación asignado</div>
+          <div style={{ marginTop: 4, color: t.textLo, fontSize: 12 }}>
+            Edita una tienda y vincula un almacén con tipo "consignación" del módulo Inventario para activar la trazabilidad automática.
+          </div>
+        </div>
+      )}
+
+      {rows.length === 0 && totalStores > 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10 }}>
+          <CheckCircle2 size={30} color={t.good} />
+          <div style={{ marginTop: 10, color: t.textHi, fontSize: 14 }}>Todo cuadra en este filtro</div>
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ background: t.panel2 }}>
+                <th style={thStyle(t)}>Tienda</th>
+                <th style={thStyle(t)}>Almacén</th>
+                <th style={thStyle(t)}>SKU</th>
+                <th style={thStyle(t)}>Reportado</th>
+                <th style={thStyle(t)}>En almacén</th>
+                <th style={thStyle(t)}>Diferencia</th>
+                <th style={thStyle(t)}>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => {
+                const info = reconStatusInfo(t, r.status);
+                return (
+                  <tr key={i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                    <td style={tdStyle(t)}>
+                      <b style={{ color: t.textHi }}>{r.store_name}</b>
+                      <div style={{ fontSize: 10.5, color: t.textLo }}>{r.channel_name}</div>
+                    </td>
+                    <td style={tdStyle(t)}>{r.warehouse_name}</td>
+                    <td style={tdStyle(t)}>
+                      <div style={{ color: t.textHi }}>{r.product_name || "—"}</div>
+                      <div style={{ fontSize: 10.5, color: t.textLo, fontFamily: "monospace" }}>{r.sku || ""}</div>
+                    </td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>
+                      <div>{num(r.reported_on_hand)}</div>
+                      {r.reported_at && (
+                        <div style={{ fontSize: 10, color: t.textLo }}>
+                          {new Date(r.reported_at).toLocaleDateString("es-MX", { day: "2-digit", month: "short" })}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.warehouse_stock)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: info.color, fontWeight: 800 }}>
+                      {r.difference >= 0 ? "+" : ""}{num(r.difference)}
+                    </td>
+                    <td style={tdStyle(t)}>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: info.color, background: info.bg, padding: "2px 8px", borderRadius: 10 }}>
+                        {info.label}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

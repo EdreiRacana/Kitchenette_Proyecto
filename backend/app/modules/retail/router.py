@@ -75,20 +75,34 @@ async def list_stores(db: DB, _: CurrentUser,
     return await service.list_stores(db, channel_id=channel_id, active_only=active_only)
 
 
+async def _store_to_schema(db: AsyncSession, s, ch=None) -> schemas.RetailStoreOut:
+    from app.modules.inventory import models as inv_models
+    if ch is None and s.channel_id:
+        ch = await service.get_channel(db, s.channel_id)
+    wh_name = None
+    if s.consignment_warehouse_id:
+        w = await db.get(inv_models.Warehouse, s.consignment_warehouse_id)
+        wh_name = w.name if w else None
+    return schemas.RetailStoreOut(
+        id=s.id, channel_id=s.channel_id,
+        channel_name=ch.name if ch else None,
+        name=s.name, code=s.code, external_code=s.external_code,
+        city=s.city, state=s.state, region=s.region,
+        store_format=s.store_format, address=s.address,
+        contact_name=s.contact_name, contact_phone=s.contact_phone,
+        consignment_warehouse_id=s.consignment_warehouse_id,
+        consignment_warehouse_name=wh_name,
+        is_active=s.is_active, notes=s.notes, created_at=s.created_at,
+    )
+
+
 @router.post("/stores", response_model=schemas.RetailStoreOut, status_code=201)
 async def create_store(payload: schemas.RetailStoreCreate, db: DB, _: CurrentUser):
     ch = await service.get_channel(db, payload.channel_id)
     if ch is None:
         raise HTTPException(400, "Cadena no encontrada")
     s = await service.create_store(db, payload)
-    return schemas.RetailStoreOut(
-        id=s.id, channel_id=s.channel_id, channel_name=ch.name,
-        name=s.name, code=s.code, external_code=s.external_code,
-        city=s.city, state=s.state, region=s.region,
-        store_format=s.store_format, address=s.address,
-        contact_name=s.contact_name, contact_phone=s.contact_phone,
-        is_active=s.is_active, notes=s.notes, created_at=s.created_at,
-    )
+    return await _store_to_schema(db, s, ch)
 
 
 @router.post("/stores/bulk", response_model=schemas.BulkStoresResponse, status_code=201)
@@ -105,15 +119,7 @@ async def update_store(store_id: int, payload: schemas.RetailStoreUpdate,
     s = await service.update_store(db, store_id, payload)
     if s is None:
         raise HTTPException(404, "Tienda no encontrada")
-    ch = await service.get_channel(db, s.channel_id)
-    return schemas.RetailStoreOut(
-        id=s.id, channel_id=s.channel_id, channel_name=ch.name if ch else None,
-        name=s.name, code=s.code, external_code=s.external_code,
-        city=s.city, state=s.state, region=s.region,
-        store_format=s.store_format, address=s.address,
-        contact_name=s.contact_name, contact_phone=s.contact_phone,
-        is_active=s.is_active, notes=s.notes, created_at=s.created_at,
-    )
+    return await _store_to_schema(db, s)
 
 
 @router.delete("/stores/{store_id}", status_code=204)
@@ -264,6 +270,24 @@ async def import_sellout(
 async def replenishment(db: DB, _: CurrentUser,
                           channel_id: Optional[int] = Query(None)):
     return await service.replenishment(db, channel_id=channel_id)
+
+
+# ── Consignación ────────────────────────────────────────────────────────
+
+@router.get("/consignment/warehouses",
+             response_model=List[schemas.ConsignmentWarehouseOption])
+async def list_consignment_warehouses(db: DB, _: CurrentUser):
+    """Warehouses con type=consignment, para asignar a tiendas retail."""
+    return await service.list_consignment_warehouses(db)
+
+
+@router.get("/consignment/reconciliation",
+             response_model=schemas.ConsignmentReconResponse)
+async def consignment_reconciliation(db: DB, _: CurrentUser,
+                                       channel_id: Optional[int] = Query(None)):
+    """Compara on_hand reportado por cada tienda vs stock en su almacén de
+    consignación asignado. Sólo tiendas con warehouse."""
+    return await service.consignment_reconciliation(db, channel_id=channel_id)
 
 
 # ── Alerts ──────────────────────────────────────────────────────────────

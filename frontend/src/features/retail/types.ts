@@ -38,9 +38,45 @@ export interface RetailStore {
   address?: string | null;
   contact_name?: string | null;
   contact_phone?: string | null;
+  consignment_warehouse_id?: number | null;
+  consignment_warehouse_name?: string | null;
   is_active: boolean;
   notes?: string | null;
   created_at?: string | null;
+}
+
+export interface ConsignmentWarehouseOption {
+  id: number;
+  name: string;
+  location?: string | null;
+  is_active: boolean;
+}
+
+export type ReconStatus = "match" | "over_at_warehouse" | "short_at_warehouse" | "no_data";
+
+export interface ConsignmentReconRow {
+  store_id: number;
+  store_name: string;
+  channel_name?: string | null;
+  warehouse_id: number;
+  warehouse_name: string;
+  variant_id?: number | null;
+  product_name?: string | null;
+  sku?: string | null;
+  reported_on_hand: number;
+  reported_at?: string | null;
+  warehouse_stock: number;
+  difference: number;
+  status: ReconStatus;
+}
+
+export interface ConsignmentReconResponse {
+  generated_at: string;
+  channel_id?: number | null;
+  total_rows: number;
+  matched: number;
+  with_diff: number;
+  rows: ConsignmentReconRow[];
 }
 
 export interface RetailStoreCreate extends Omit<RetailStore, "id" | "channel_name" | "created_at"> {}
