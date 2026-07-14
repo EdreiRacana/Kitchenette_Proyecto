@@ -174,31 +174,11 @@ async def delete_line(db: AsyncSession, line_id: int) -> bool:
 
 # ── Baseline ────────────────────────────────────────────────────────────────
 
-async def build_baseline(
-    db: AsyncSession, req: schemas.BaselineRequest
-) -> schemas.BaselineResponse:
-    """Genera líneas del plan a partir del historial real del año anterior."""
-    plan = await db.get(models.ForecastPlan, req.plan_id)
-    if plan is None:
-        raise ValueError("Plan no encontrado")
-
-    year_source = req.year_source if req.year_source is not None else (plan.year - 1)
-    growth_pct = req.growth_pct if req.growth_pct is not None else float(plan.growth_pct or 0.0)
-    factor = 1.0 + (growth_pct / 100.0)
-
-    lines_deleted = 0
-    if req.replace:
-        # Recuento antes de borrar (para el reporte de la respuesta)
-        cnt = await db.execute(
-            select(func.count(models.ForecastLine.id)).where(
-                models.ForecastLine.plan_id == plan.id
-            )
-        )
-        lines_deleted = int(cnt.scalar() or 0)
-        await db.execute(
-            delete(models.ForecastLine).where(models.ForecastLine.plan_id == plan.id)
-        )
-
+async def _build_baseline_sell_in(
+    db: AsyncSession, req: schemas.BaselineRequest, plan: models.ForecastPlan,
+    year_source: int,
+) -> Dict[tuple, Dict]:
+    """Fuente clásica: facturación (orders + order_items) del año anterior."""
     O = sales_models.Order
     OI = sales_models.OrderItem
 
@@ -228,43 +208,223 @@ async def build_baseline(
         .join(O, OI.order_id == O.id)
         .where(and_(*conds))
         .group_by(
-            O.customer_id,
-            OI.variant_id,
-            O.user_id,
-            OI.product_name,
-            OI.sku,
-            month_expr,
+            O.customer_id, OI.variant_id, O.user_id,
+            OI.product_name, OI.sku, month_expr,
         )
     )
-
     rows = (await db.execute(stmt)).all()
 
-    # Agrupación por (customer, variant, salesperson, product_name, sku) para
-    # construir una línea con las 12 columnas de mes.
     grouped: Dict[tuple, Dict] = {}
     for r in rows:
-        key = (
-            r.customer_id,
-            r.variant_id,
-            r.salesperson_id,
-            r.product_name,
-            r.sku,
-        )
-        g = grouped.setdefault(
-            key,
-            {
-                "customer_id": r.customer_id,
-                "variant_id": r.variant_id,
-                "salesperson_id": r.salesperson_id,
-                "product_name": r.product_name or "—",
-                "sku": r.sku or "",
-                "unit_price": float(r.unit_price or 0.0),
-                "months": [0] * 12,
-            },
-        )
+        key = (r.customer_id, r.variant_id, r.salesperson_id, r.product_name, r.sku)
+        g = grouped.setdefault(key, {
+            "customer_id": r.customer_id,
+            "variant_id": r.variant_id,
+            "salesperson_id": r.salesperson_id,
+            "product_name": r.product_name or "—",
+            "sku": r.sku or "",
+            "unit_price": float(r.unit_price or 0.0),
+            "months": [0] * 12,
+        })
         m = int(r.month or 0)
         if 1 <= m <= 12:
             g["months"][m - 1] += int(r.units or 0)
+    return grouped
+
+
+async def _build_baseline_sell_out(
+    db: AsyncSession, req: schemas.BaselineRequest, plan: models.ForecastPlan,
+    year_source: int,
+) -> Dict[tuple, Dict]:
+    """Fuente sell-out: demanda real reportada por las tiendas retail.
+
+    Toma retail_sellout_reports del año fuente, agrupa por (channel.customer,
+    variant, mes calendario del period_start). Precio unitario de revenue/units
+    cuando venga, si no, del catálogo. Salesperson = None (a nivel canal).
+    """
+    from app.modules.retail import models as retail_models
+
+    SR = retail_models.SellOutReport
+    RS = retail_models.RetailStore
+    RC = retail_models.RetailChannel
+
+    month_expr = func.extract("month", SR.period_start).label("month")
+
+    conds = [
+        func.extract("year", SR.period_start) == year_source,
+    ]
+    if req.retail_channel_id is not None:
+        conds.append(RS.channel_id == req.retail_channel_id)
+    if req.customer_id is not None:
+        conds.append(RC.customer_id == req.customer_id)
+
+    stmt = (
+        select(
+            RC.customer_id.label("customer_id"),
+            SR.variant_id.label("variant_id"),
+            func.coalesce(SR.product_name, "—").label("product_name"),
+            func.coalesce(SR.sku, "").label("sku"),
+            month_expr,
+            func.coalesce(func.sum(SR.units_sold), 0).label("units"),
+            func.coalesce(func.sum(SR.revenue), 0.0).label("revenue"),
+        )
+        .join(RS, SR.store_id == RS.id)
+        .join(RC, RS.channel_id == RC.id)
+        .where(and_(*conds))
+        .group_by(
+            RC.customer_id, SR.variant_id, SR.product_name, SR.sku, month_expr,
+        )
+    )
+    rows = (await db.execute(stmt)).all()
+
+    grouped: Dict[tuple, Dict] = {}
+    for r in rows:
+        key = (r.customer_id, r.variant_id, None, r.product_name, r.sku)
+        g = grouped.setdefault(key, {
+            "customer_id": r.customer_id,
+            "variant_id": r.variant_id,
+            "salesperson_id": None,
+            "product_name": r.product_name or "—",
+            "sku": r.sku or "",
+            "unit_price": 0.0,
+            "months": [0] * 12,
+            "_rev_num": 0.0,
+            "_rev_den": 0,
+        })
+        m = int(r.month or 0)
+        u = int(r.units or 0)
+        if 1 <= m <= 12:
+            g["months"][m - 1] += u
+        if u > 0 and float(r.revenue or 0) > 0:
+            g["_rev_num"] += float(r.revenue)
+            g["_rev_den"] += u
+
+    # Cierre: unit_price ponderado por unidades
+    for g in grouped.values():
+        if g["_rev_den"] > 0:
+            g["unit_price"] = round(g["_rev_num"] / g["_rev_den"], 2)
+        g.pop("_rev_num", None); g.pop("_rev_den", None)
+    return grouped
+
+
+async def _build_baseline_wos_target(
+    db: AsyncSession, req: schemas.BaselineRequest, plan: models.ForecastPlan,
+) -> Tuple[Dict[tuple, Dict], float]:
+    """Proyecta necesidades para MANTENER el WOS objetivo en las tiendas retail.
+
+    Idea: si tu SKU vende V unidades/semana en toda la red y quieres tener
+    siempre N semanas de stock, cada mes debes reabastecer aproximadamente
+    V × 4.33 semanas (para reponer lo consumido). No hay estacionalidad
+    hasta que haya suficiente historial — modelo aplanado.
+
+    Requiere haber cargado sell-out al menos para calcular la velocidad.
+    """
+    from app.modules.retail import models as retail_models
+
+    SR = retail_models.SellOutReport
+    RS = retail_models.RetailStore
+    RC = retail_models.RetailChannel
+
+    # Ventana de referencia: últimas 12 semanas (~ un trimestre)
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(weeks=12)
+
+    # Determinar wos_target:
+    if req.wos_target_weeks is not None:
+        target = float(req.wos_target_weeks)
+    elif req.retail_channel_id is not None:
+        ch = await db.get(retail_models.RetailChannel, req.retail_channel_id)
+        target = float(ch.target_wos_weeks) if ch else 4.0
+    else:
+        target = 4.0
+
+    conds = [SR.period_start >= since]
+    if req.retail_channel_id is not None:
+        conds.append(RS.channel_id == req.retail_channel_id)
+    if req.customer_id is not None:
+        conds.append(RC.customer_id == req.customer_id)
+
+    stmt = (
+        select(
+            RC.customer_id.label("customer_id"),
+            SR.variant_id.label("variant_id"),
+            func.coalesce(SR.product_name, "—").label("product_name"),
+            func.coalesce(SR.sku, "").label("sku"),
+            func.coalesce(func.sum(SR.units_sold), 0).label("units"),
+            func.coalesce(func.sum(SR.revenue), 0.0).label("revenue"),
+        )
+        .join(RS, SR.store_id == RS.id)
+        .join(RC, RS.channel_id == RC.id)
+        .where(and_(*conds))
+        .group_by(
+            RC.customer_id, SR.variant_id, SR.product_name, SR.sku,
+        )
+    )
+    rows = (await db.execute(stmt)).all()
+
+    grouped: Dict[tuple, Dict] = {}
+    # Velocidad semanal → unidades mensuales requeridas.
+    # 4.345 semanas/mes = 52.14 / 12.
+    weeks_per_month = 52.1428 / 12.0
+    for r in rows:
+        units = int(r.units or 0)
+        if units <= 0:
+            continue
+        weekly = units / 12.0
+        monthly_units = int(round(weekly * weeks_per_month))
+        if monthly_units <= 0:
+            continue
+        unit_price = 0.0
+        if float(r.revenue or 0) > 0 and units > 0:
+            unit_price = round(float(r.revenue) / units, 2)
+        key = (r.customer_id, r.variant_id, None, r.product_name, r.sku)
+        g = grouped.setdefault(key, {
+            "customer_id": r.customer_id,
+            "variant_id": r.variant_id,
+            "salesperson_id": None,
+            "product_name": r.product_name or "—",
+            "sku": r.sku or "",
+            "unit_price": unit_price,
+            "months": [0] * 12,
+        })
+        g["months"] = [monthly_units] * 12
+    return grouped, target
+
+
+async def build_baseline(
+    db: AsyncSession, req: schemas.BaselineRequest
+) -> schemas.BaselineResponse:
+    """Genera líneas del plan según la fuente elegida: sell_in, sell_out o wos_target."""
+    plan = await db.get(models.ForecastPlan, req.plan_id)
+    if plan is None:
+        raise ValueError("Plan no encontrado")
+
+    year_source = req.year_source if req.year_source is not None else (plan.year - 1)
+    growth_pct = req.growth_pct if req.growth_pct is not None else float(plan.growth_pct or 0.0)
+    factor = 1.0 + (growth_pct / 100.0)
+    wos_target_used: Optional[float] = None
+
+    lines_deleted = 0
+    if req.replace:
+        cnt = await db.execute(
+            select(func.count(models.ForecastLine.id)).where(
+                models.ForecastLine.plan_id == plan.id
+            )
+        )
+        lines_deleted = int(cnt.scalar() or 0)
+        await db.execute(
+            delete(models.ForecastLine).where(models.ForecastLine.plan_id == plan.id)
+        )
+
+    # Ruta según fuente
+    source = req.source_type or "sell_in"
+    if source == "sell_out":
+        grouped = await _build_baseline_sell_out(db, req, plan, year_source)
+    elif source == "wos_target":
+        grouped, wos_target_used = await _build_baseline_wos_target(db, req, plan)
+    else:
+        grouped = await _build_baseline_sell_in(db, req, plan, year_source)
 
     # Snapshots de nombres — cache local para no hacer N queries.
     cust_ids = {g["customer_id"] for g in grouped.values() if g["customer_id"]}
@@ -290,9 +450,27 @@ async def build_baseline(
         )
         user_name_by_id = {row.id: (row.full_name or row.email) for row in ures}
 
+    # Fallback de unit_price desde catálogo si sigue en 0
+    variants_missing_price = {g["variant_id"] for g in grouped.values()
+                                if g["variant_id"] and not g["unit_price"]}
+    price_by_variant: Dict[int, float] = {}
+    if variants_missing_price:
+        vres = await db.execute(
+            select(inv_models.ProductVariant.id, inv_models.ProductVariant.price)
+            .where(inv_models.ProductVariant.id.in_(variants_missing_price))
+        )
+        price_by_variant = {r.id: float(r.price or 0.0) for r in vres}
+
     created_lines: List[models.ForecastLine] = []
+    # wos_target NO aplica growth_pct (proyecta directo desde velocidad real);
+    # sell_in y sell_out sí aplican.
+    apply_growth = source != "wos_target"
     for g in grouped.values():
-        months_grown = [max(0, int(round(u * factor))) for u in g["months"]]
+        if apply_growth:
+            months_out = [max(0, int(round(u * factor))) for u in g["months"]]
+        else:
+            months_out = [max(0, int(u)) for u in g["months"]]
+        unit_price = g["unit_price"] or price_by_variant.get(g["variant_id"] or -1, 0.0)
         line = models.ForecastLine(
             plan_id=plan.id,
             customer_id=g["customer_id"],
@@ -302,10 +480,10 @@ async def build_baseline(
             sku=g["sku"] or None,
             customer_name=cust_name_by_id.get(g["customer_id"]) if g["customer_id"] else None,
             salesperson_name=user_name_by_id.get(g["salesperson_id"]) if g["salesperson_id"] else None,
-            unit_price=g["unit_price"],
+            unit_price=unit_price,
         )
         for i, col in enumerate(MONTH_COLS):
-            setattr(line, col, months_grown[i])
+            setattr(line, col, months_out[i])
         db.add(line)
         created_lines.append(line)
 
@@ -315,8 +493,11 @@ async def build_baseline(
 
     return schemas.BaselineResponse(
         plan_id=plan.id,
+        source_type=source,
         year_source=year_source,
-        growth_pct=growth_pct,
+        growth_pct=growth_pct if apply_growth else 0.0,
+        wos_target_weeks=wos_target_used,
+        retail_channel_id=req.retail_channel_id,
         lines_created=len(created_lines),
         lines_deleted=lines_deleted,
         lines=[_line_to_schema(l) for l in created_lines],

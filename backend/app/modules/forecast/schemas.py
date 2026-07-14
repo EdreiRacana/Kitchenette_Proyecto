@@ -103,6 +103,16 @@ class ForecastLineInDB(ForecastLineBase):
 
 class BaselineRequest(BaseModel):
     plan_id: int
+    source_type: str = Field(
+        default="sell_in",
+        pattern="^(sell_in|sell_out|wos_target)$",
+        description=(
+            "Origen del baseline:\n"
+            "• sell_in: historial de facturación al cliente (comportamiento actual)\n"
+            "• sell_out: demanda real reportada por las tiendas (módulo Retail)\n"
+            "• wos_target: proyección para mantener N semanas de stock"
+        ),
+    )
     year_source: Optional[int] = Field(
         default=None,
         description="Año calendario a leer del historial. Si es None se usa (year del plan)-1.",
@@ -113,6 +123,18 @@ class BaselineRequest(BaseModel):
     )
     customer_id: Optional[int] = None
     salesperson_id: Optional[int] = None
+    # Filtros/parámetros específicos por fuente
+    retail_channel_id: Optional[int] = Field(
+        default=None,
+        description="Solo para sell_out y wos_target: limita el análisis a esta cadena.",
+    )
+    wos_target_weeks: Optional[float] = Field(
+        default=None, ge=0.5,
+        description=(
+            "Solo para wos_target: semanas de stock objetivo a mantener por SKU en la red. "
+            "Si no viene, usa el target de la cadena o 4."
+        ),
+    )
     replace: bool = Field(
         default=False,
         description=(
@@ -124,8 +146,11 @@ class BaselineRequest(BaseModel):
 
 class BaselineResponse(BaseModel):
     plan_id: int
+    source_type: str = "sell_in"
     year_source: int
     growth_pct: float
+    wos_target_weeks: Optional[float] = None
+    retail_channel_id: Optional[int] = None
     lines_created: int
     lines_deleted: int
     lines: List[ForecastLineInDB]
