@@ -80,4 +80,10 @@ export const retailApi = {
     api.post<RetailAlert>(`/retail/alerts/${id}/resolve`, { notes: notes || undefined }).then(r => r.data),
   dismissAlert: (id: number, notes?: string) =>
     api.post<RetailAlert>(`/retail/alerts/${id}/dismiss`, { notes: notes || undefined }).then(r => r.data),
+
+  // Consignación
+  listConsignmentWarehouses: () =>
+    api.get<import("./types").ConsignmentWarehouseOption[]>("/retail/consignment/warehouses").then(r => r.data),
+  consignmentReconciliation: (channel_id?: number) =>
+    api.get<import("./types").ConsignmentReconResponse>("/retail/consignment/reconciliation", { params: { channel_id } }).then(r => r.data),
 };

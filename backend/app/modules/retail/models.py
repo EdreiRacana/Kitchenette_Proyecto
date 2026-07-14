@@ -76,6 +76,12 @@ class RetailStore(Base):
     address = Column(Text, nullable=True)
     contact_name = Column(String, nullable=True)
     contact_phone = Column(String, nullable=True)
+    # Almacén de consignación asociado. Si viene, cada sell-out reportado
+    # descuenta stock de este warehouse. Debe ser un Warehouse con
+    # type=CONSIGNMENT (validado en la UI, no forzado en DB).
+    consignment_warehouse_id = Column(
+        Integer, ForeignKey("warehouses.id"), nullable=True, index=True,
+    )
     is_active = Column(Boolean, default=True, nullable=False)
     notes = Column(Text, nullable=True)
 
@@ -128,6 +134,10 @@ class SellOutReport(Base):
     source = Column(String, default="manual", nullable=False)
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     notes = Column(Text, nullable=True)
+    # Tracking de consignación — cuántas unidades ya se descontaron del
+    # almacén de consignación. Permite reimportar sin doble descuento y
+    # calcular deltas cuando el reporte se actualiza.
+    stock_consumed = Column(Integer, default=0, nullable=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

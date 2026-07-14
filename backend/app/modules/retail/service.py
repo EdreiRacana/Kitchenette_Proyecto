@@ -132,6 +132,17 @@ async def list_stores(db: AsyncSession, channel_id: Optional[int] = None,
         models.RetailChannel.name.asc(), models.RetailStore.name.asc()
     )
     rows = (await db.execute(stmt)).all()
+
+    # Cargar nombres de warehouses referenciados
+    wh_ids = {s.consignment_warehouse_id for s, _ in rows if s.consignment_warehouse_id}
+    wh_names: Dict[int, str] = {}
+    if wh_ids:
+        wres = await db.execute(
+            select(inv_models.Warehouse.id, inv_models.Warehouse.name)
+            .where(inv_models.Warehouse.id.in_(wh_ids))
+        )
+        wh_names = {r.id: r.name for r in wres}
+
     return [
         schemas.RetailStoreOut(
             id=s.id, channel_id=s.channel_id, channel_name=cname,
@@ -139,6 +150,8 @@ async def list_stores(db: AsyncSession, channel_id: Optional[int] = None,
             city=s.city, state=s.state, region=s.region,
             store_format=s.store_format, address=s.address,
             contact_name=s.contact_name, contact_phone=s.contact_phone,
+            consignment_warehouse_id=s.consignment_warehouse_id,
+            consignment_warehouse_name=wh_names.get(s.consignment_warehouse_id or -1),
             is_active=s.is_active, notes=s.notes, created_at=s.created_at,
         ) for s, cname in rows
     ]
@@ -297,6 +310,7 @@ async def create_sellout(db: AsyncSession, data: schemas.SellOutReportCreate,
         await _fill_variant_snapshot(db, existing)
         existing.uploaded_by_user_id = user_id or existing.uploaded_by_user_id
         await db.commit(); await db.refresh(existing)
+        await _apply_consignment_movement(db, existing, user_id)
         return existing
     r = models.SellOutReport(
         **data.model_dump(exclude_unset=True),
@@ -304,11 +318,203 @@ async def create_sellout(db: AsyncSession, data: schemas.SellOutReportCreate,
     )
     await _fill_variant_snapshot(db, r)
     db.add(r); await db.commit(); await db.refresh(r)
+    await _apply_consignment_movement(db, r, user_id)
     try:
         await evaluate_alerts(db)
     except Exception:
         pass
     return r
+
+
+async def _apply_consignment_movement(
+    db: AsyncSession, report: models.SellOutReport, user_id: Optional[int],
+) -> None:
+    """Si la tienda tiene warehouse de consignación asignado y hay variant en
+    catálogo, ajusta el stock: descuenta el DELTA entre units_sold reportadas
+    y stock_consumed previo. Idempotente: reimportar el mismo reporte no dobla
+    el descuento; incrementar el reporte descuenta la diferencia; disminuirlo
+    reingresa (adjustment +).
+    """
+    if not report.variant_id:
+        return
+    store = await db.get(models.RetailStore, report.store_id)
+    if store is None or store.consignment_warehouse_id is None:
+        return
+    already = int(report.stock_consumed or 0)
+    target = int(report.units_sold or 0)
+    delta = target - already
+    if delta == 0:
+        return
+
+    from app.modules.inventory import schemas as inv_schemas, service as inv_service
+    try:
+        if delta > 0:
+            mov = inv_schemas.StockMovementCreate(
+                variant_id=report.variant_id,
+                warehouse_id=store.consignment_warehouse_id,
+                quantity=delta,
+                movement_type="out",
+                reference=f"retail_sellout:{report.id}",
+                notes=(f"Venta consignación — tienda {store.name} · "
+                        f"{report.product_name or report.sku or ''}"),
+            )
+        else:
+            # Reversión: si el reporte bajó, reingresa stock como adjustment +
+            mov = inv_schemas.StockMovementCreate(
+                variant_id=report.variant_id,
+                warehouse_id=store.consignment_warehouse_id,
+                quantity=abs(delta),
+                movement_type="adjustment",
+                reference=f"retail_sellout:{report.id}:reverse",
+                notes=("Reversión de sell-out reportado a la baja"),
+            )
+        await inv_service.adjust_stock(db, mov, user_id=user_id)
+        report.stock_consumed = target
+        await db.commit()
+    except Exception:
+        # No revertir el sell-out si el ajuste de stock falla — deja constancia
+        # y sigue. La reconciliación reportará el descuadre.
+        pass
+
+
+async def list_consignment_warehouses(db: AsyncSession) -> List[schemas.ConsignmentWarehouseOption]:
+    res = await db.execute(
+        select(inv_models.Warehouse)
+        .where(inv_models.Warehouse.type == "consignment")
+        .order_by(inv_models.Warehouse.name)
+    )
+    return [
+        schemas.ConsignmentWarehouseOption(
+            id=w.id, name=w.name, location=w.location, is_active=w.is_active,
+        ) for w in res.scalars().all()
+    ]
+
+
+async def consignment_reconciliation(
+    db: AsyncSession, channel_id: Optional[int] = None,
+) -> schemas.ConsignmentReconResponse:
+    """Compara on_hand reportado por la tienda vs stock actual del almacén
+    de consignación asignado, por (store, variant). Sólo tiendas con warehouse."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+
+    stores_stmt = (
+        select(models.RetailStore, models.RetailChannel.name)
+        .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(models.RetailStore.consignment_warehouse_id.isnot(None),
+                models.RetailStore.is_active.is_(True))
+    )
+    if channel_id is not None:
+        stores_stmt = stores_stmt.where(models.RetailStore.channel_id == channel_id)
+    stores = (await db.execute(stores_stmt)).all()
+    if not stores:
+        return schemas.ConsignmentReconResponse(
+            generated_at=now, channel_id=channel_id, total_rows=0,
+            matched=0, with_diff=0, rows=[],
+        )
+
+    warehouse_ids = {s.consignment_warehouse_id for s, _ in stores}
+    wh_names = {
+        w.id: w.name for w in (await db.execute(
+            select(inv_models.Warehouse).where(inv_models.Warehouse.id.in_(warehouse_ids))
+        )).scalars().all()
+    }
+
+    rows: List[schemas.ConsignmentReconRow] = []
+    matched = 0
+    with_diff = 0
+
+    for store, channel_name in stores:
+        # Últimos on_hand reportados por (variant) — el reporte más reciente
+        last_stmt = (
+            select(
+                models.SellOutReport.variant_id,
+                models.SellOutReport.product_name,
+                models.SellOutReport.sku,
+                func.max(models.SellOutReport.period_start).label("last_period"),
+            )
+            .where(models.SellOutReport.store_id == store.id,
+                    models.SellOutReport.variant_id.isnot(None))
+            .group_by(
+                models.SellOutReport.variant_id,
+                models.SellOutReport.product_name,
+                models.SellOutReport.sku,
+            )
+        )
+        last_rows = (await db.execute(last_stmt)).all()
+
+        # Stock actual del warehouse por variant
+        stock_rows = (await db.execute(
+            select(inv_models.StockLevel.variant_id, inv_models.StockLevel.quantity)
+            .where(inv_models.StockLevel.warehouse_id == store.consignment_warehouse_id)
+        )).all()
+        stock_by_variant: Dict[int, int] = {int(vid): int(q) for vid, q in stock_rows}
+
+        for lr in last_rows:
+            vid = int(lr.variant_id) if lr.variant_id else None
+            if vid is None:
+                continue
+            oh_report = int((await db.execute(
+                select(func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0))
+                .where(models.SellOutReport.store_id == store.id,
+                        models.SellOutReport.variant_id == vid,
+                        models.SellOutReport.period_start == lr.last_period)
+            )).scalar() or 0)
+            wh_stock = stock_by_variant.get(vid, 0)
+            diff = wh_stock - oh_report
+            if abs(diff) < 1:
+                status = "match"; matched += 1
+            elif diff > 0:
+                status = "over_at_warehouse"; with_diff += 1
+            else:
+                status = "short_at_warehouse"; with_diff += 1
+            rows.append(schemas.ConsignmentReconRow(
+                store_id=store.id, store_name=store.name,
+                channel_name=channel_name,
+                warehouse_id=store.consignment_warehouse_id,
+                warehouse_name=wh_names.get(store.consignment_warehouse_id, "—"),
+                variant_id=vid,
+                product_name=lr.product_name, sku=lr.sku,
+                reported_on_hand=oh_report,
+                reported_at=lr.last_period,
+                warehouse_stock=wh_stock,
+                difference=diff,
+                status=status,
+            ))
+        # Además, cualquier variant con stock en warehouse pero sin reporte
+        for vid, qty in stock_by_variant.items():
+            if any(r.variant_id == vid for r in rows if r.store_id == store.id):
+                continue
+            v = await db.get(inv_models.ProductVariant, vid)
+            pname = None
+            if v and v.product_id:
+                p = await db.get(inv_models.Product, v.product_id)
+                if p:
+                    pname = p.name
+            rows.append(schemas.ConsignmentReconRow(
+                store_id=store.id, store_name=store.name,
+                channel_name=channel_name,
+                warehouse_id=store.consignment_warehouse_id,
+                warehouse_name=wh_names.get(store.consignment_warehouse_id, "—"),
+                variant_id=vid, product_name=pname, sku=v.sku if v else None,
+                reported_on_hand=0, reported_at=None,
+                warehouse_stock=qty, difference=qty,
+                status="no_data" if qty == 0 else "over_at_warehouse",
+            ))
+            if qty > 0:
+                with_diff += 1
+
+    rows.sort(key=lambda r: (
+        0 if r.status == "short_at_warehouse" else 1 if r.status == "over_at_warehouse"
+        else 2 if r.status == "match" else 3,
+        -abs(r.difference),
+    ))
+    return schemas.ConsignmentReconResponse(
+        generated_at=now, channel_id=channel_id,
+        total_rows=len(rows), matched=matched, with_diff=with_diff,
+        rows=rows,
+    )
 
 
 async def update_sellout(db: AsyncSession, report_id: int,
@@ -1230,11 +1436,25 @@ async def import_sellout(
 
     await db.commit()
 
+    # Aplicar movimientos de consignación por reporte creado/actualizado
+    from sqlalchemy import select as _select
+    fresh = (await db.execute(
+        _select(models.SellOutReport).where(
+            models.SellOutReport.store_id.in_(
+                _select(models.RetailStore.id).where(
+                    models.RetailStore.consignment_warehouse_id.isnot(None)
+                )
+            )
+        ).order_by(models.SellOutReport.id.desc()).limit(2000)
+    )).scalars().all()
+    for r in fresh:
+        try:
+            await _apply_consignment_movement(db, r, user_id)
+        except Exception:
+            continue
+
     # Auto-evalúa alertas para las cadenas tocadas
     try:
-        touched_channels = set()
-        # (Reutilizamos hint indirectamente; podríamos recorrer created rows, pero
-        # basta con evaluar todo para simplicidad y consistencia global.)
         await evaluate_alerts(db)
     except Exception:
         pass

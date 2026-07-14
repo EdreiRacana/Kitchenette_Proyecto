@@ -383,6 +383,9 @@ _RETAIL_STATEMENTS = [
     "ALTER TABLE retail_channels ADD COLUMN IF NOT EXISTS no_movement_days     INTEGER DEFAULT 21 NOT NULL",
     "ALTER TABLE retail_channels ADD COLUMN IF NOT EXISTS sell_through_min_pct DOUBLE PRECISION DEFAULT 20.0 NOT NULL",
     "ALTER TABLE retail_channels ADD COLUMN IF NOT EXISTS alerts_enabled       BOOLEAN DEFAULT TRUE NOT NULL",
+    # Consignación (Fase 4)
+    "ALTER TABLE retail_stores          ADD COLUMN IF NOT EXISTS consignment_warehouse_id INTEGER REFERENCES warehouses(id)",
+    "ALTER TABLE retail_sellout_reports ADD COLUMN IF NOT EXISTS stock_consumed           INTEGER DEFAULT 0 NOT NULL",
 ]
 
 

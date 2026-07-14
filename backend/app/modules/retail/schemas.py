@@ -62,6 +62,7 @@ class RetailStoreBase(BaseModel):
     address: Optional[str] = None
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
+    consignment_warehouse_id: Optional[int] = None
     is_active: bool = True
     notes: Optional[str] = None
 
@@ -82,6 +83,7 @@ class RetailStoreUpdate(BaseModel):
     address: Optional[str] = None
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
+    consignment_warehouse_id: Optional[int] = None
     is_active: Optional[bool] = None
     notes: Optional[str] = None
 
@@ -90,6 +92,7 @@ class RetailStoreOut(RetailStoreBase):
     id: int
     channel_id: int
     channel_name: Optional[str] = None
+    consignment_warehouse_name: Optional[str] = None
     created_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -298,3 +301,37 @@ class AlertsSummary(BaseModel):
     medium: int
     low: int
     acknowledged: int
+
+
+# ── Consignación ────────────────────────────────────────────────────────
+
+class ConsignmentWarehouseOption(BaseModel):
+    id: int
+    name: str
+    location: Optional[str] = None
+    is_active: bool
+
+
+class ConsignmentReconRow(BaseModel):
+    store_id: int
+    store_name: str
+    channel_name: Optional[str] = None
+    warehouse_id: int
+    warehouse_name: str
+    variant_id: Optional[int] = None
+    product_name: Optional[str] = None
+    sku: Optional[str] = None
+    reported_on_hand: int          # último on_hand reportado por la tienda
+    reported_at: Optional[datetime] = None
+    warehouse_stock: int           # stock actual en el almacén de consignación
+    difference: int                # warehouse_stock - reported_on_hand
+    status: str                    # match | over_at_warehouse | short_at_warehouse | no_data
+
+
+class ConsignmentReconResponse(BaseModel):
+    generated_at: datetime
+    channel_id: Optional[int] = None
+    total_rows: int
+    matched: int
+    with_diff: int
+    rows: List[ConsignmentReconRow]
