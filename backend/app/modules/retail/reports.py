@@ -1,0 +1,686 @@
+"""Generadores de reportes Excel + PDF del módulo Retail.
+
+Todos los archivos comparten un header con branding (color, logo, empresa,
+periodo) y estilo consistente (Helvetica-Bold para totales, backgrounds
+por status, freeze panes).
+"""
+from __future__ import annotations
+
+import io
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+from openpyxl.utils import get_column_letter
+
+
+BRAND_BLUE = "1E3A8A"
+HEADER_FONT = Font(bold=True, color="FFFFFF", size=11)
+HEADER_FILL = PatternFill("solid", fgColor=BRAND_BLUE)
+TOTAL_FONT = Font(bold=True, size=11)
+GREY_ROW = PatternFill("solid", fgColor="F1F5F9")
+CENTER = Alignment(horizontal="center", vertical="center")
+LEFT = Alignment(horizontal="left", vertical="center")
+RIGHT = Alignment(horizontal="right", vertical="center")
+
+# Fills por status WOS
+STATUS_FILL = {
+    "critical": PatternFill("solid", fgColor="FEE2E2"),
+    "replenish": PatternFill("solid", fgColor="FEF3C7"),
+    "healthy": PatternFill("solid", fgColor="D1FAE5"),
+    "overstock": PatternFill("solid", fgColor="DBEAFE"),
+    "no_data": PatternFill("solid", fgColor="F3F4F6"),
+}
+STATUS_LABEL = {
+    "critical": "Crítico",
+    "replenish": "Resurtir",
+    "healthy": "Sano",
+    "overstock": "Sobreinventario",
+    "no_data": "Sin datos",
+}
+SEV_FILL = {
+    "urgent": PatternFill("solid", fgColor="FEE2E2"),
+    "high": PatternFill("solid", fgColor="FEF3C7"),
+    "medium": PatternFill("solid", fgColor="DBEAFE"),
+    "low": PatternFill("solid", fgColor="F3F4F6"),
+}
+
+
+def _style_header(ws, ncols: int) -> None:
+    for i in range(1, ncols + 1):
+        c = ws.cell(row=1, column=i)
+        c.font = HEADER_FONT
+        c.fill = HEADER_FILL
+        c.alignment = CENTER
+    ws.freeze_panes = "A2"
+
+
+def _autosize(ws, min_w: int = 10, max_w: int = 42) -> None:
+    for col in ws.columns:
+        col_letter = get_column_letter(col[0].column)
+        length = max((len(str(c.value)) if c.value is not None else 0) for c in col)
+        ws.column_dimensions[col_letter].width = max(min_w, min(length + 2, max_w))
+
+
+def _company_header(ws, title: str, subtitle: str, ncols: int) -> None:
+    """Fila 1 con nombre del reporte + fecha de emisión (grey)."""
+    ws.insert_rows(1)
+    ws.insert_rows(1)
+    cell = ws.cell(row=1, column=1, value=title)
+    cell.font = Font(bold=True, size=14, color=BRAND_BLUE)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
+    cell.alignment = LEFT
+    sub = ws.cell(row=2, column=1,
+                    value=f"{subtitle} · Emitido {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    sub.font = Font(size=9, color="64748B")
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncols)
+    ws.freeze_panes = "A4"
+
+
+def _to_bytes(wb: Workbook) -> bytes:
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# ── Reporte 1: Sell-out crudo ────────────────────────────────────────────
+
+def build_sellout_report(rows: List[Any]) -> bytes:
+    """rows son SellOutReportOut (o similares) — se usa como filas de export."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sell-out"
+    headers = [
+        "Cadena", "Tienda", "SKU", "Producto",
+        "Tipo periodo", "Inicio", "Fin",
+        "Unidades vendidas", "Stock final", "Ingreso",
+        "Fuente", "Notas",
+    ]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    total_units = 0
+    total_stock = 0
+    total_rev = 0.0
+    for r in rows:
+        total_units += int(r.units_sold or 0)
+        total_stock += int(r.units_on_hand or 0)
+        total_rev += float(r.revenue or 0.0)
+        ws.append([
+            r.channel_name or "", r.store_name or "",
+            r.sku or "", r.product_name or "",
+            r.period_type or "",
+            r.period_start.strftime("%Y-%m-%d") if r.period_start else "",
+            r.period_end.strftime("%Y-%m-%d") if r.period_end else "",
+            int(r.units_sold or 0),
+            int(r.units_on_hand or 0),
+            float(r.revenue or 0.0),
+            r.source or "",
+            r.notes or "",
+        ])
+
+    # Fila de totales
+    total_row = ws.max_row + 1
+    ws.cell(row=total_row, column=1, value="TOTAL").font = TOTAL_FONT
+    ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=7)
+    for col in (8, 9, 10):
+        c = ws.cell(row=total_row, column=col,
+                     value=total_units if col == 8 else total_stock if col == 9 else round(total_rev, 2))
+        c.font = TOTAL_FONT
+        c.fill = GREY_ROW
+
+    _autosize(ws)
+    _company_header(
+        ws, "Reporte de Sell-out",
+        f"{len(rows)} filas · {total_units:,} unidades · $ {total_rev:,.2f}",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 2: Dashboard KPIs + Stores + SKUs ────────────────────────────
+
+def build_dashboard_report(kpis: Any, stores: List[Any], skus: List[Any]) -> bytes:
+    wb = Workbook()
+
+    # Hoja 1: KPIs
+    ws = wb.active
+    ws.title = "KPIs"
+    ws.append(["Métrica", "Valor"])
+    _style_header(ws, 2)
+    ws.append(["Sell-out unidades", kpis.total_sell_out_units])
+    ws.append(["Sell-out ingreso", round(kpis.total_sell_out_revenue, 2)])
+    ws.append(["Sell-in unidades", kpis.total_sell_in_units])
+    ws.append(["Sell-in ingreso", round(kpis.total_sell_in_revenue, 2)])
+    ws.append(["Sell-through (%)", kpis.sell_through_pct])
+    ws.append(["Stock on-hand total", kpis.total_on_hand])
+    ws.append(["WOS promedio (sem)", kpis.avg_wos_weeks])
+    ws.append(["Tiendas críticas", kpis.critical_stores_count])
+    ws.append(["Tiendas sobreinventario", kpis.overstock_stores_count])
+    ws.append(["Tiendas activas", kpis.stores_active_count])
+    ws.append(["SKUs activos", kpis.skus_active_count])
+    _autosize(ws)
+    _company_header(
+        ws, "Dashboard Retail",
+        f"Cadena: {kpis.channel_name or 'Todas'} · Periodo {kpis.period_start.strftime('%d/%m/%Y')} → {kpis.period_end.strftime('%d/%m/%Y')}",
+        2,
+    )
+
+    # Hoja 2: Tiendas por WOS
+    ws2 = wb.create_sheet("Tiendas por WOS")
+    ws2.append(["Tienda", "Cadena", "Vendidas (4 sem)", "Vel semanal",
+                 "Stock", "WOS", "Status"])
+    _style_header(ws2, 7)
+    for s in stores:
+        row = [
+            s.store_name, s.channel_name or "",
+            int(s.total_units_sold or 0), float(s.avg_weekly_units or 0),
+            int(s.total_on_hand or 0), float(s.wos_weeks or 0),
+            STATUS_LABEL.get(s.status, s.status),
+        ]
+        ws2.append(row)
+        fill = STATUS_FILL.get(s.status)
+        if fill:
+            for col in range(1, len(row) + 1):
+                ws2.cell(row=ws2.max_row, column=col).fill = fill
+    _autosize(ws2)
+
+    # Hoja 3: SKUs velocidad
+    ws3 = wb.create_sheet("SKUs velocidad")
+    ws3.append(["SKU", "Producto", "Tiendas",
+                 "Vendidas (4 sem)", "Vel semanal", "Stock", "WOS", "Status"])
+    _style_header(ws3, 8)
+    for k in skus:
+        row = [
+            k.sku or "", k.product_name or "", k.stores_count,
+            int(k.total_units_sold or 0), float(k.avg_weekly_units or 0),
+            int(k.total_on_hand or 0), float(k.wos_weeks or 0),
+            STATUS_LABEL.get(k.status, k.status),
+        ]
+        ws3.append(row)
+        fill = STATUS_FILL.get(k.status)
+        if fill:
+            for col in range(1, len(row) + 1):
+                ws3.cell(row=ws3.max_row, column=col).fill = fill
+    _autosize(ws3)
+
+    return _to_bytes(wb)
+
+
+# ── Reporte 3: Reabasto (sugerencias) ────────────────────────────────────
+
+PRIO_FILL = {
+    "urgent": PatternFill("solid", fgColor="FEE2E2"),
+    "high":   PatternFill("solid", fgColor="FEF3C7"),
+    "normal": PatternFill("solid", fgColor="DBEAFE"),
+}
+PRIO_LABEL = {"urgent": "Urgente", "high": "Alta", "normal": "Normal"}
+
+
+def build_replenishment_report(resp: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Reabasto"
+    headers = ["Prioridad", "Cadena", "Tienda", "SKU", "Producto",
+                "Stock", "Vel. semanal", "WOS", "Sugerido", "Motivo"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for s in resp.suggestions:
+        row = [
+            PRIO_LABEL.get(s.priority, s.priority),
+            s.channel_name, s.store_name,
+            s.sku or "", s.product_name or "",
+            int(s.current_on_hand or 0),
+            float(s.avg_weekly_units or 0),
+            float(s.wos_weeks or 0),
+            int(s.suggested_units or 0),
+            s.reason,
+        ]
+        ws.append(row)
+        fill = PRIO_FILL.get(s.priority)
+        if fill:
+            ws.cell(row=ws.max_row, column=1).fill = fill
+
+    _autosize(ws)
+    _company_header(
+        ws, "Sugerencias de reabasto",
+        f"Urgentes {resp.urgent_count} · Alta {resp.high_count} · Normal {resp.normal_count} · Meta {resp.target_wos_weeks} sem",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 4: Heatmap tiendas × SKUs ────────────────────────────────────
+
+def build_heatmap_report(hm: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Heatmap"
+
+    # Fila header: tienda + una col por variant
+    headers = ["Tienda", "Cadena"] + [
+        (v.sku or v.product_name or "—")[:20] for v in hm.variants
+    ]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    # Index cells por store x variant
+    cells_by = {}
+    for c in hm.cells:
+        cells_by[(c.store_id, c.variant_id)] = c
+
+    metric = hm.metric
+
+    for s in hm.stores:
+        row = [s.name, s.channel_name or ""]
+        for v in hm.variants:
+            c = cells_by.get((s.id, v.id))
+            if c is None:
+                row.append("")
+                continue
+            if metric == "units_sold":
+                row.append(int(c.units_sold or 0))
+            elif metric == "on_hand":
+                row.append(int(c.on_hand or 0))
+            else:
+                row.append(float(c.value) if c.value is not None else "∞")
+        ws.append(row)
+        r_idx = ws.max_row
+        for i, v in enumerate(hm.variants, start=3):
+            c = cells_by.get((s.id, v.id))
+            if c is None:
+                continue
+            fill = STATUS_FILL.get(c.status)
+            if fill:
+                ws.cell(row=r_idx, column=i).fill = fill
+
+    _autosize(ws, min_w=6, max_w=16)
+    _company_header(
+        ws, f"Heatmap Retail ({metric})",
+        f"{len(hm.stores)} tiendas × {len(hm.variants)} SKUs",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 5: Clasificación ABC ─────────────────────────────────────────
+
+ABC_FILL = {
+    "A": PatternFill("solid", fgColor="D1FAE5"),
+    "B": PatternFill("solid", fgColor="DBEAFE"),
+    "C": PatternFill("solid", fgColor="F3F4F6"),
+}
+
+
+def build_abc_report(abc: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ABC"
+    headers = ["Rank", "SKU", "Producto", "Tiendas",
+                "Unidades", "Ingreso", "%", "% Acumulado", "Clase"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for r in abc.rows:
+        row = [
+            r.rank, r.sku or "", r.product_name or "",
+            r.stores_count, r.total_units, r.total_revenue,
+            r.revenue_pct, r.cumulative_pct, r.abc_class,
+        ]
+        ws.append(row)
+        fill = ABC_FILL.get(r.abc_class)
+        if fill:
+            ws.cell(row=ws.max_row, column=9).fill = fill
+
+    _autosize(ws)
+    _company_header(
+        ws, "Clasificación ABC (Pareto)",
+        f"A: {abc.class_a_count} · B: {abc.class_b_count} · C: {abc.class_c_count} · Total $ {abc.total_revenue:,.2f}",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 6: Alertas ───────────────────────────────────────────────────
+
+SEV_LABEL = {"urgent": "Urgente", "high": "Alta", "medium": "Media", "low": "Baja"}
+ALERT_TYPE_LABEL = {
+    "stockout_imminent": "Stock crítico",
+    "stockout": "Sin stock",
+    "overstock": "Sobreinventario",
+    "no_movement": "Sin movimiento",
+    "sell_through_low": "Sell-through bajo",
+}
+
+
+def build_alerts_report(alerts: List[Any]) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Alertas"
+    headers = ["Severidad", "Tipo", "Cadena", "Tienda", "SKU", "Producto",
+                "Stock", "Vel sem", "WOS", "Mensaje", "Estado", "Creada"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for a in alerts:
+        row = [
+            SEV_LABEL.get(a.severity, a.severity),
+            ALERT_TYPE_LABEL.get(a.alert_type, a.alert_type),
+            a.channel_name or "", a.store_name or "",
+            a.sku or "", a.product_name or "",
+            int(a.on_hand_snapshot) if a.on_hand_snapshot is not None else "",
+            float(a.weekly_velocity_snapshot) if a.weekly_velocity_snapshot is not None else "",
+            float(a.wos_snapshot) if a.wos_snapshot is not None else "",
+            a.message,
+            a.status,
+            a.created_at.strftime("%Y-%m-%d %H:%M") if a.created_at else "",
+        ]
+        ws.append(row)
+        fill = SEV_FILL.get(a.severity)
+        if fill:
+            ws.cell(row=ws.max_row, column=1).fill = fill
+
+    _autosize(ws)
+    _company_header(
+        ws, "Alertas de Retail",
+        f"{len(alerts)} alertas en el filtro solicitado",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 7: Reconciliación de consignación ───────────────────────────
+
+RECON_FILL = {
+    "match":              PatternFill("solid", fgColor="D1FAE5"),
+    "short_at_warehouse": PatternFill("solid", fgColor="FEE2E2"),
+    "over_at_warehouse":  PatternFill("solid", fgColor="DBEAFE"),
+    "no_data":            PatternFill("solid", fgColor="F3F4F6"),
+}
+RECON_LABEL = {
+    "match": "Cuadra",
+    "short_at_warehouse": "Faltante en tu almacén",
+    "over_at_warehouse": "Sobrante en tu almacén",
+    "no_data": "Sin datos",
+}
+
+
+def build_consignment_report(recon: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Consignación"
+    headers = ["Tienda", "Cadena", "Almacén", "SKU", "Producto",
+                "Reportado tienda", "Fecha reporte",
+                "En almacén", "Diferencia", "Status"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for r in recon.rows:
+        row = [
+            r.store_name, r.channel_name or "", r.warehouse_name,
+            r.sku or "", r.product_name or "",
+            int(r.reported_on_hand or 0),
+            r.reported_at.strftime("%Y-%m-%d") if r.reported_at else "",
+            int(r.warehouse_stock or 0),
+            int(r.difference or 0),
+            RECON_LABEL.get(r.status, r.status),
+        ]
+        ws.append(row)
+        fill = RECON_FILL.get(r.status)
+        if fill:
+            ws.cell(row=ws.max_row, column=10).fill = fill
+
+    _autosize(ws)
+    _company_header(
+        ws, "Reconciliación de consignación",
+        f"Total {recon.total_rows} · Cuadran {recon.matched} · Con descuadre {recon.with_diff}",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte ejecutivo PDF semanal ────────────────────────────────────────
+
+def build_executive_pdf(
+    company: dict, kpis: Any, stores: List[Any], skus: List[Any],
+    alerts: List[Any], repl: Any,
+) -> bytes:
+    """Reporte ejecutivo semanal para el gerente comercial.
+
+    Estructura:
+      Header con logo y branding.
+      Bloque KPIs: sell-in, sell-out, sell-through, WOS, tiendas críticas.
+      Top 5 tiendas y bottom 5 (por WOS).
+      Top 10 SKUs por unidades vendidas.
+      Alertas urgentes activas.
+      Top sugerencias de reabasto.
+      Firmas.
+    """
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+        KeepTogether,
+    )
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=LETTER,
+        leftMargin=15 * mm, rightMargin=15 * mm,
+        topMargin=12 * mm, bottomMargin=12 * mm,
+        title=f"Reporte ejecutivo Retail",
+    )
+    styles = getSampleStyleSheet()
+    story = []
+
+    brand_hex = company.get("brand_color") or "#1E3A8A"
+    brand = colors.HexColor(brand_hex)
+    grey_bg = colors.HexColor("#F0F3F8")
+    grey_border = colors.HexColor("#CCCCCC")
+    grey_grid = colors.HexColor("#EEEEEE")
+    label_grey = colors.HexColor("#666666")
+
+    h1 = ParagraphStyle("h1", parent=styles["Normal"], fontSize=10.5,
+                        textColor=brand, spaceAfter=2, fontName="Helvetica-Bold")
+
+    # Header
+    empresa_lines = []
+    if company.get("commercial_name"):
+        empresa_lines.append(f"<b>{company['commercial_name']}</b>")
+    if company.get("legal_name"):
+        empresa_lines.append(company["legal_name"])
+    p_empresa = Paragraph("<br/>".join(empresa_lines), ParagraphStyle(
+        "e", parent=styles["Normal"], fontSize=8.5, leading=11,
+        textColor=colors.HexColor("#333")))
+    p_titulo = Paragraph(
+        f"<font size='18' color='{brand_hex}'><b>REPORTE EJECUTIVO</b></font><br/>"
+        f"<font size='9' color='#666'>Retail Analytics</font>",
+        ParagraphStyle("t", parent=styles["Normal"], alignment=TA_RIGHT))
+    header = Table([[p_empresa, p_titulo]], colWidths=[110 * mm, 70 * mm])
+    header.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBELOW", (0, 0), (-1, 0), 1.5, brand),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+    ]))
+    story.append(header)
+    story.append(Spacer(1, 4 * mm))
+
+    # Meta
+    meta = [
+        ["Cadena:", kpis.channel_name or "Todas",
+         "Periodo:", f"{kpis.period_start.strftime('%d/%m/%Y')} → {kpis.period_end.strftime('%d/%m/%Y')}"],
+        ["Emitido:", datetime.now().strftime("%d/%m/%Y %H:%M"),
+         "Ventana KPI:", "Últimas 4 semanas"],
+    ]
+    t_meta = Table(meta, colWidths=[22 * mm, 65 * mm, 22 * mm, 65 * mm])
+    t_meta.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("TEXTCOLOR", (0, 0), (0, -1), label_grey),
+        ("TEXTCOLOR", (2, 0), (2, -1), label_grey),
+        ("FONTNAME", (1, 0), (1, -1), "Helvetica-Bold"),
+        ("FONTNAME", (3, 0), (3, -1), "Helvetica-Bold"),
+    ]))
+    story.append(t_meta)
+    story.append(Spacer(1, 5 * mm))
+
+    # KPIs
+    def _mxn(n: float) -> str:
+        return "$" + f"{n:,.2f}"
+
+    kpi_rows = [
+        ["Indicador", "Valor"],
+        ["Sell-out (unidades)", f"{kpis.total_sell_out_units:,}"],
+        ["Sell-out (ingreso)", _mxn(kpis.total_sell_out_revenue)],
+        ["Sell-in (unidades)", f"{kpis.total_sell_in_units:,}"],
+        ["Sell-in (ingreso)", _mxn(kpis.total_sell_in_revenue)],
+        ["Sell-through %", f"{kpis.sell_through_pct:.1f}%"],
+        ["Stock on-hand total", f"{kpis.total_on_hand:,}"],
+        ["WOS promedio", f"{kpis.avg_wos_weeks:.1f} sem"],
+        ["Tiendas en crítico", f"{kpis.critical_stores_count}"],
+        ["Tiendas en sobreinventario", f"{kpis.overstock_stores_count}"],
+        ["Tiendas activas", f"{kpis.stores_active_count}"],
+        ["SKUs activos", f"{kpis.skus_active_count}"],
+    ]
+    story.append(Paragraph("KPIs DEL PERIODO", h1))
+    t_kpi = Table(kpi_rows, colWidths=[110 * mm, 60 * mm])
+    t_kpi.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("BACKGROUND", (0, 0), (-1, 0), grey_bg),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("BOX", (0, 0), (-1, -1), 0.4, grey_border),
+        ("INNERGRID", (0, 0), (-1, -1), 0.3, grey_grid),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    story.append(KeepTogether(t_kpi))
+    story.append(Spacer(1, 4 * mm))
+
+    # Top 5 tiendas críticas
+    critical_stores = [s for s in stores if s.status in ("critical", "replenish")][:8]
+    if critical_stores:
+        story.append(Paragraph("TIENDAS QUE REQUIEREN ATENCIÓN", h1))
+        rows = [["Tienda", "Cadena", "Stock", "Vel sem", "WOS", "Status"]]
+        for s in critical_stores:
+            rows.append([
+                s.store_name[:35], s.channel_name or "",
+                str(int(s.total_on_hand or 0)),
+                f"{float(s.avg_weekly_units or 0):.1f}",
+                f"{float(s.wos_weeks or 0):.1f}",
+                STATUS_LABEL.get(s.status, s.status),
+            ])
+        t = Table(rows, colWidths=[60 * mm, 40 * mm, 18 * mm, 20 * mm, 15 * mm, 27 * mm])
+        t.setStyle(TableStyle([
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("BACKGROUND", (0, 0), (-1, 0), grey_bg),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ALIGN", (2, 1), (5, -1), "RIGHT"),
+            ("BOX", (0, 0), (-1, -1), 0.4, grey_border),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, grey_grid),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.append(KeepTogether(t))
+        story.append(Spacer(1, 4 * mm))
+
+    # Top 10 SKUs
+    if skus:
+        story.append(Paragraph("TOP SKUs POR VENTAS (4 SEMANAS)", h1))
+        rows = [["SKU", "Producto", "Tiendas", "Unidades", "Vel sem"]]
+        for k in skus[:10]:
+            rows.append([
+                (k.sku or "")[:20], (k.product_name or "")[:38],
+                str(k.stores_count),
+                str(int(k.total_units_sold or 0)),
+                f"{float(k.avg_weekly_units or 0):.1f}",
+            ])
+        t = Table(rows, colWidths=[35 * mm, 75 * mm, 20 * mm, 22 * mm, 22 * mm])
+        t.setStyle(TableStyle([
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("BACKGROUND", (0, 0), (-1, 0), grey_bg),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTNAME", (0, 1), (0, -1), "Courier"),
+            ("ALIGN", (2, 1), (4, -1), "RIGHT"),
+            ("BOX", (0, 0), (-1, -1), 0.4, grey_border),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, grey_grid),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.append(KeepTogether(t))
+        story.append(Spacer(1, 4 * mm))
+
+    # Alertas urgentes
+    urgent_alerts = [a for a in alerts if a.severity in ("urgent", "high") and a.status == "open"][:10]
+    if urgent_alerts:
+        story.append(Paragraph("ALERTAS ACTIVAS URGENTES / ALTA", h1))
+        rows = [["Severidad", "Tipo", "Tienda / Producto", "Mensaje"]]
+        for a in urgent_alerts:
+            product_line = f"{a.store_name or ''} · {a.product_name or a.sku or '—'}"
+            rows.append([
+                SEV_LABEL.get(a.severity, a.severity),
+                ALERT_TYPE_LABEL.get(a.alert_type, a.alert_type),
+                product_line[:45],
+                (a.message or "")[:60],
+            ])
+        t = Table(rows, colWidths=[22 * mm, 30 * mm, 60 * mm, 62 * mm])
+        t.setStyle(TableStyle([
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("BACKGROUND", (0, 0), (-1, 0), grey_bg),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("BOX", (0, 0), (-1, -1), 0.4, grey_border),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, grey_grid),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.append(KeepTogether(t))
+        story.append(Spacer(1, 4 * mm))
+
+    # Reabasto urgente
+    if repl and repl.urgent_count + repl.high_count > 0:
+        story.append(Paragraph("SUGERENCIAS DE REABASTO URGENTE / ALTA", h1))
+        rows = [["Prio", "Tienda", "SKU", "Stock", "Sugerido", "Motivo"]]
+        for s in repl.suggestions[:15]:
+            if s.priority not in ("urgent", "high"):
+                continue
+            rows.append([
+                PRIO_LABEL.get(s.priority, s.priority),
+                (s.store_name or "")[:22],
+                (s.sku or "")[:18],
+                str(int(s.current_on_hand or 0)),
+                str(int(s.suggested_units or 0)),
+                (s.reason or "")[:40],
+            ])
+        if len(rows) > 1:
+            t = Table(rows, colWidths=[18 * mm, 40 * mm, 32 * mm, 15 * mm, 22 * mm, 47 * mm])
+            t.setStyle(TableStyle([
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("BACKGROUND", (0, 0), (-1, 0), grey_bg),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (2, 1), (2, -1), "Courier"),
+                ("ALIGN", (3, 1), (4, -1), "RIGHT"),
+                ("BOX", (0, 0), (-1, -1), 0.4, grey_border),
+                ("INNERGRID", (0, 0), (-1, -1), 0.3, grey_grid),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            story.append(KeepTogether(t))
+
+    story.append(Spacer(1, 6 * mm))
+    story.append(Paragraph(
+        f"<font size='7' color='#999'>STHENOVA ERP · Retail Analytics · "
+        f"Emitido {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</font>",
+        ParagraphStyle("f", parent=styles["Normal"], alignment=TA_CENTER)))
+
+    doc.build(story)
+    return buf.getvalue()
