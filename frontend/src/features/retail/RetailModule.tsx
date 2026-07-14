@@ -10,6 +10,7 @@ import {
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
   Bell, EyeOff, CheckCircle2, Zap, Warehouse, Grid3x3, BarChart3, ArrowRight,
+  FileSpreadsheet, FileDown,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -28,6 +29,15 @@ type Tokens = any;
 
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const num = (n: number) => (n || 0).toLocaleString("es-MX");
+
+async function downloadBlob(fetcher: () => Promise<Blob>, filename: string) {
+  const blob = await fetcher();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 function isoWeekStart(): string {
   const d = new Date();
@@ -214,9 +224,9 @@ function DashboardView({ t, channelId }: { t: Tokens; channelId: number | null }
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
         <div style={{ fontSize: 13, color: t.textLo }}>Últimos {days} días</div>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           {[7, 30, 90].map(d => (
             <button key={d} onClick={() => setDays(d)}
               style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${t.border}`,
@@ -225,6 +235,19 @@ function DashboardView({ t, channelId }: { t: Tokens; channelId: number | null }
               {d}d
             </button>
           ))}
+          <div style={{ width: 8 }} />
+          <ExcelBtn t={t} label="Excel"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.dashboard({ channel_id: channelId || undefined, days }),
+              `retail_dashboard_${days}d.xlsx`,
+            )}
+          />
+          <ExcelBtn t={t} label="Reporte ejecutivo (PDF)" icon={FileDown}
+            onClick={() => downloadBlob(
+              () => retailApi.reports.executivePdf({ channel_id: channelId || undefined, days }),
+              `retail_reporte_ejecutivo.pdf`,
+            )}
+          />
         </div>
       </div>
 
@@ -817,6 +840,12 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
           <button disabled={downloading} onClick={() => downloadTemplate("csv")} style={btnGhost(t)} title="Descargar plantilla CSV mínima">
             <Download size={13} /> CSV
           </button>
+          <ExcelBtn t={t} label="Exportar datos"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.sellout({ channel_id: selectedChannel || undefined, limit: 5000 }),
+              `retail_sellout.xlsx`,
+            )}
+          />
           <button disabled={channels.length === 0} onClick={() => setImporting(true)} style={{ ...btnGhost(t), background: t.nova + "18", borderColor: t.nova + "55", color: t.nova }}>
             <Upload size={13} /> Importar archivo
           </button>
@@ -1347,6 +1376,26 @@ function StatMini({ t, label, value, color }: { t: Tokens; label: string; value:
 }
 
 
+function ExcelBtn({ t, label, onClick, icon }: { t: Tokens; label: string; onClick: () => void; icon?: any }) {
+  const [busy, setBusy] = useState(false);
+  const Icon = icon || FileSpreadsheet;
+  return (
+    <button disabled={busy}
+      onClick={async () => { setBusy(true); try { await onClick(); } finally { setBusy(false); } }}
+      style={{
+        padding: "6px 12px", borderRadius: 7,
+        border: `1px solid ${t.good}55`, background: t.good + "18",
+        color: t.good, cursor: busy ? "wait" : "pointer",
+        fontSize: 12, fontWeight: 600,
+        display: "inline-flex", alignItems: "center", gap: 5,
+      }}
+      title={label}>
+      <Icon size={13} /> {busy ? "Descargando…" : label}
+    </button>
+  );
+}
+
+
 // ── Alertas ──────────────────────────────────────────────────────────────
 function severityInfo(t: Tokens, s: AlertSeverity) {
   switch (s) {
@@ -1441,9 +1490,21 @@ function AlertsView({ t, channelId, onChanged }: {
           <SumTile t={t} label="Media" value={summary?.medium ?? 0} color={t.nova} />
           <SumTile t={t} label="Reconocidas" value={summary?.acknowledged ?? 0} color={t.textMid} />
         </div>
-        <button disabled={evaluating} onClick={doEvaluate} style={btnPrimary(t)} title="Recorrer todas las cadenas y regenerar alertas">
-          <Zap size={14} /> {evaluating ? "Evaluando…" : "Evaluar ahora"}
-        </button>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <ExcelBtn t={t} label="Excel"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.alerts({
+                channel_id: channelId || undefined,
+                status: statusFilter === "all" ? undefined : statusFilter,
+                severity: sevFilter === "all" ? undefined : sevFilter,
+              }),
+              `retail_alertas.xlsx`,
+            )}
+          />
+          <button disabled={evaluating} onClick={doEvaluate} style={btnPrimary(t)} title="Recorrer todas las cadenas y regenerar alertas">
+            <Zap size={14} /> {evaluating ? "Evaluando…" : "Evaluar ahora"}
+          </button>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
@@ -1814,6 +1875,12 @@ function ReplenishmentView({ t, channelId }: { t: Tokens; channelId: number | nu
             title="Crea el movimiento de inventario del almacén origen al de consignación de cada tienda">
             <ArrowRight size={13} /> Generar traslado ({selectedItems.length})
           </button>
+          <ExcelBtn t={t} label="Excel"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.replenishment({ channel_id: channelId || undefined }),
+              `retail_reabasto.xlsx`,
+            )}
+          />
           <button onClick={load} style={btnGhost(t)}>
             <RefreshCw size={13} /> Recalcular
           </button>
@@ -2168,9 +2235,17 @@ function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null
           <SumTile t={t} label="Cuadran" value={data.matched} color={t.good} />
           <SumTile t={t} label="Con descuadre" value={data.with_diff} color={t.bad} />
         </div>
-        <button onClick={load} style={btnGhost(t)}>
-          <RefreshCw size={13} /> Recalcular
-        </button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <ExcelBtn t={t} label="Excel"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.consignment({ channel_id: channelId || undefined }),
+              `retail_consignacion.xlsx`,
+            )}
+          />
+          <button onClick={load} style={btnGhost(t)}>
+            <RefreshCw size={13} /> Recalcular
+          </button>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
@@ -2329,10 +2404,17 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <FilterPill t={t} label="WOS" active={metric === "wos"} onClick={() => setMetric("wos")} />
           <FilterPill t={t} label="Unidades vendidas" active={metric === "units_sold"} onClick={() => setMetric("units_sold")} />
           <FilterPill t={t} label="Stock actual" active={metric === "on_hand"} onClick={() => setMetric("on_hand")} />
+          <div style={{ width: 6 }} />
+          <ExcelBtn t={t} label="Excel"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.heatmap({ channel_id: channelId || undefined, metric, limit_variants: 40 }),
+              `retail_heatmap_${metric}.xlsx`,
+            )}
+          />
         </div>
         <div style={{ display: "flex", gap: 8, fontSize: 10.5, color: t.textLo, alignItems: "center", flexWrap: "wrap" }}>
           <LegendDot t={t} color={t.bad} label="Crítico" />
@@ -2443,10 +2525,17 @@ function ABCView({ t, channelId }: { t: Tokens; channelId: number | null }) {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {[30, 90, 180, 365].map(d => (
             <FilterPill key={d} t={t} label={`${d}d`} active={days === d} onClick={() => setDays(d)} />
           ))}
+          <div style={{ width: 6 }} />
+          <ExcelBtn t={t} label="Excel"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.abc({ channel_id: channelId || undefined, days }),
+              `retail_abc_${days}d.xlsx`,
+            )}
+          />
         </div>
         <div style={{ fontSize: 12, color: t.textLo }}>
           Ingreso total: <b style={{ color: t.textHi }}>{mxn(data.total_revenue)}</b>

@@ -272,6 +272,130 @@ async def replenishment(db: DB, _: CurrentUser,
     return await service.replenishment(db, channel_id=channel_id)
 
 
+# ── Reportes descargables (Excel + PDF ejecutivo) ──────────────────────
+
+from fastapi.responses import Response
+from . import reports as retail_reports
+
+
+def _xlsx_response(content: bytes, filename: str) -> Response:
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/reports/sellout.xlsx")
+async def report_sellout_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    store_id: Optional[int] = Query(None),
+    variant_id: Optional[int] = Query(None),
+    period_start_gte: Optional[datetime] = Query(None),
+    period_start_lt: Optional[datetime] = Query(None),
+    limit: int = Query(5000, ge=1, le=20000),
+):
+    rows = await service.list_sellout(
+        db, channel_id=channel_id, store_id=store_id, variant_id=variant_id,
+        period_start_gte=period_start_gte, period_start_lt=period_start_lt,
+        limit=limit,
+    )
+    content = retail_reports.build_sellout_report(rows)
+    return _xlsx_response(content, "retail_sellout.xlsx")
+
+
+@router.get("/reports/dashboard.xlsx")
+async def report_dashboard_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(30, ge=1, le=365),
+):
+    kpis = await service.dashboard_kpis(db, channel_id=channel_id, days=days)
+    stores = await service.stores_velocity(db, channel_id=channel_id)
+    skus = await service.skus_velocity(db, channel_id=channel_id, limit=100)
+    content = retail_reports.build_dashboard_report(kpis, stores, skus)
+    return _xlsx_response(content, "retail_dashboard.xlsx")
+
+
+@router.get("/reports/replenishment.xlsx")
+async def report_replenishment_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+):
+    resp = await service.replenishment(db, channel_id=channel_id)
+    content = retail_reports.build_replenishment_report(resp)
+    return _xlsx_response(content, "retail_reabasto.xlsx")
+
+
+@router.get("/reports/heatmap.xlsx")
+async def report_heatmap_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    metric: str = Query("wos", pattern="^(wos|units_sold|on_hand)$"),
+    limit_variants: int = Query(40, ge=1, le=200),
+):
+    hm = await service.heatmap(db, channel_id=channel_id, metric=metric,
+                                 limit_variants=limit_variants)
+    content = retail_reports.build_heatmap_report(hm)
+    return _xlsx_response(content, "retail_heatmap.xlsx")
+
+
+@router.get("/reports/abc.xlsx")
+async def report_abc_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=1, le=365),
+):
+    abc = await service.abc_classification(db, channel_id=channel_id, days=days)
+    content = retail_reports.build_abc_report(abc)
+    return _xlsx_response(content, "retail_abc.xlsx")
+
+
+@router.get("/reports/alerts.xlsx")
+async def report_alerts_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None, pattern="^(open|acknowledged|resolved|dismissed)$"),
+    severity: Optional[str] = Query(None, pattern="^(urgent|high|medium|low)$"),
+):
+    alerts = await service.list_alerts(db, channel_id=channel_id,
+                                          status=status, severity=severity, limit=2000)
+    content = retail_reports.build_alerts_report(alerts)
+    return _xlsx_response(content, "retail_alertas.xlsx")
+
+
+@router.get("/reports/consignment.xlsx")
+async def report_consignment_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+):
+    recon = await service.consignment_reconciliation(db, channel_id=channel_id)
+    content = retail_reports.build_consignment_report(recon)
+    return _xlsx_response(content, "retail_consignacion.xlsx")
+
+
+@router.get("/reports/executive.pdf")
+async def report_executive_pdf(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(30, ge=1, le=90),
+):
+    """Reporte ejecutivo semanal en PDF (para mandar al gerente comercial)."""
+    kpis = await service.dashboard_kpis(db, channel_id=channel_id, days=days)
+    stores = await service.stores_velocity(db, channel_id=channel_id)
+    skus = await service.skus_velocity(db, channel_id=channel_id, limit=50)
+    alerts = await service.list_alerts(db, channel_id=channel_id, limit=100)
+    repl = await service.replenishment(db, channel_id=channel_id)
+    from app.modules.sales.universal_service import _get_company_dict
+    company = await _get_company_dict(db)
+    pdf = retail_reports.build_executive_pdf(company, kpis, stores, skus, alerts, repl)
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="retail_reporte_ejecutivo.pdf"'},
+    )
+
+
 # ── Analytics: heatmap y ABC ────────────────────────────────────────────
 
 @router.get("/analytics/heatmap", response_model=schemas.HeatmapResponse)

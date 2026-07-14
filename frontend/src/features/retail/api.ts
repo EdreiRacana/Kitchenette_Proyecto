@@ -132,4 +132,25 @@ export const retailApi = {
       headers: { "Content-Type": "multipart/form-data" },
     }).then(r => r.data);
   },
+
+  // Reportes descargables
+  reports: {
+    sellout: (params?: { channel_id?: number; store_id?: number; variant_id?: number;
+                          period_start_gte?: string; period_start_lt?: string; limit?: number }) =>
+      api.get(`/retail/reports/sellout.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    dashboard: (params?: { channel_id?: number; days?: number }) =>
+      api.get(`/retail/reports/dashboard.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    heatmap: (params?: { channel_id?: number; metric?: "wos" | "units_sold" | "on_hand"; limit_variants?: number }) =>
+      api.get(`/retail/reports/heatmap.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    abc: (params?: { channel_id?: number; days?: number }) =>
+      api.get(`/retail/reports/abc.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    replenishment: (params?: { channel_id?: number }) =>
+      api.get(`/retail/reports/replenishment.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    alerts: (params?: { channel_id?: number; status?: string; severity?: string }) =>
+      api.get(`/retail/reports/alerts.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    consignment: (params?: { channel_id?: number }) =>
+      api.get(`/retail/reports/consignment.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    executivePdf: (params?: { channel_id?: number; days?: number }) =>
+      api.get(`/retail/reports/executive.pdf`, { params, responseType: "blob" }).then(r => r.data as Blob),
+  },
 };
