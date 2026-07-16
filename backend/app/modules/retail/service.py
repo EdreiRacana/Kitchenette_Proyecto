@@ -1973,27 +1973,71 @@ async def _alert_to_schema(db: AsyncSession, a: models.RetailAlert) -> schemas.R
 async def heatmap(
     db: AsyncSession, channel_id: Optional[int] = None,
     metric: str = "wos", limit_variants: int = 40,
+    store_search: Optional[str] = None,
+    region: Optional[str] = None,
+    state: Optional[str] = None,
+    store_format: Optional[str] = None,
+    store_offset: int = 0,
+    store_limit: int = 100,
+    sort_stores_by: str = "name",  # name | worst_wos | best_wos | most_sales
 ) -> schemas.HeatmapResponse:
-    """Matriz tienda × SKU. Métrica: wos | units_sold | on_hand.
+    """Matriz tienda × SKU escalable para catálogos grandes.
 
-    Se limita a los top N variants por unidades vendidas en la ventana para
-    mantener la matriz legible (default 40 columnas).
+    Diseño para soportar cadenas tipo Coppel (1100+ tiendas) y catálogos
+    de 1000+ SKUs sin colapsar el frontend:
+      - Paginación server-side de tiendas (default 100 por página).
+      - Filtros por región, estado, formato de tienda y búsqueda por
+        nombre/código externo.
+      - Ordenamiento server-side por worst_wos (para atender primero
+        las críticas), best_wos, most_sales o name.
+      - Top-N variants (default 40) por ventas totales — el resto del
+        catálogo queda oculto pero el UI puede pedir más con
+        limit_variants más alto.
+    El response incluye total_stores/total_variants para el paginador y
+    para saber si hay que sugerir refinar el filtro.
     """
     now = datetime.now(timezone.utc)
     velocity_from = now - timedelta(days=VELOCITY_WINDOW_DAYS)
 
-    # Umbrales por store para el status del heatmap
-    stores_stmt = (
+    # 1) Base de tiendas + facetas
+    base_stmt = (
         select(models.RetailStore, models.RetailChannel)
         .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
         .where(models.RetailStore.is_active.is_(True))
     )
     if channel_id is not None:
-        stores_stmt = stores_stmt.where(models.RetailStore.channel_id == channel_id)
-    stores_rows = (await db.execute(stores_stmt)).all()
-    store_map = {s.id: (s, ch) for s, ch in stores_rows}
+        base_stmt = base_stmt.where(models.RetailStore.channel_id == channel_id)
+    if region:
+        base_stmt = base_stmt.where(models.RetailStore.region == region)
+    if state:
+        base_stmt = base_stmt.where(models.RetailStore.state == state)
+    if store_format:
+        base_stmt = base_stmt.where(models.RetailStore.store_format == store_format)
+    if store_search:
+        needle = f"%{store_search.strip()}%"
+        base_stmt = base_stmt.where(
+            or_(
+                models.RetailStore.name.ilike(needle),
+                models.RetailStore.external_code.ilike(needle),
+                models.RetailStore.code.ilike(needle),
+                models.RetailStore.city.ilike(needle),
+            )
+        )
 
-    # Top N variants por unidades vendidas en la ventana
+    all_stores = (await db.execute(base_stmt)).all()
+    total_stores = len(all_stores)
+
+    if total_stores == 0:
+        return schemas.HeatmapResponse(
+            channel_id=channel_id, metric=metric,
+            stores=[], variants=[], cells=[],
+            total_stores=0, total_variants=0,
+            store_offset=0, store_limit=store_limit,
+        )
+
+    # 2) Top-N variants por ventas en la ventana (restringido al mismo scope)
+    all_store_ids = [s.id for s, _ in all_stores]
+
     top_stmt = (
         select(
             models.SellOutReport.variant_id,
@@ -2001,32 +2045,40 @@ async def heatmap(
             func.max(models.SellOutReport.product_name).label("product_name"),
             func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units"),
         )
-        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
         .where(
             models.SellOutReport.period_start >= velocity_from,
             models.SellOutReport.variant_id.isnot(None),
+            models.SellOutReport.store_id.in_(all_store_ids),
         )
         .group_by(models.SellOutReport.variant_id)
         .order_by(func.sum(models.SellOutReport.units_sold).desc())
-        .limit(limit_variants)
     )
-    if channel_id is not None:
-        top_stmt = top_stmt.where(models.RetailStore.channel_id == channel_id)
-    top = (await db.execute(top_stmt)).all()
-
+    all_top = (await db.execute(top_stmt)).all()
+    total_variants = len(all_top)
+    top_slice = all_top[:limit_variants]
     variants = [
-        schemas.HeatmapVariantRef(id=int(v.variant_id), sku=v.sku, product_name=v.product_name)
-        for v in top if v.variant_id
+        schemas.HeatmapVariantRef(
+            id=int(v.variant_id), sku=v.sku, product_name=v.product_name,
+        ) for v in top_slice if v.variant_id
     ]
     variant_ids = [v.id for v in variants]
-    if not variant_ids or not store_map:
+
+    if not variant_ids:
+        # Sin ventas todavía en el scope; devuelve tiendas para que el UI
+        # las muestre y ayude al usuario a entender el estado.
+        page = all_stores[store_offset:store_offset + store_limit]
         return schemas.HeatmapResponse(
             channel_id=channel_id, metric=metric,
-            stores=[schemas.HeatmapStoreRef(id=s.id, name=s.name, channel_name=ch.name) for s, ch in stores_rows],
-            variants=variants, cells=[],
+            stores=[schemas.HeatmapStoreRef(
+                id=s.id, name=s.name, channel_name=ch.name,
+            ) for s, ch in page],
+            variants=[], cells=[],
+            total_stores=total_stores, total_variants=0,
+            store_offset=store_offset, store_limit=store_limit,
         )
 
-    # Ventas por (store, variant) en ventana
+    # 3) Ventas por (store, variant) en la ventana — solo top variants
+    sales_map: Dict[Tuple[int, int], int] = {}
     sales_rows = (await db.execute(
         select(
             models.SellOutReport.store_id,
@@ -2036,15 +2088,14 @@ async def heatmap(
         .where(
             models.SellOutReport.period_start >= velocity_from,
             models.SellOutReport.variant_id.in_(variant_ids),
-            models.SellOutReport.store_id.in_(list(store_map.keys())),
+            models.SellOutReport.store_id.in_(all_store_ids),
         )
         .group_by(models.SellOutReport.store_id, models.SellOutReport.variant_id)
     )).all()
-    sales_map: Dict[Tuple[int, int], int] = {}
     for r in sales_rows:
         sales_map[(int(r.store_id), int(r.variant_id))] = int(r.units or 0)
 
-    # On-hand: último period_start por (store, variant), sumado
+    # 4) On-hand del último period_start por (store, variant)
     last_stmt = (
         select(
             models.SellOutReport.store_id,
@@ -2053,30 +2104,80 @@ async def heatmap(
         )
         .where(
             models.SellOutReport.variant_id.in_(variant_ids),
-            models.SellOutReport.store_id.in_(list(store_map.keys())),
+            models.SellOutReport.store_id.in_(all_store_ids),
         )
         .group_by(models.SellOutReport.store_id, models.SellOutReport.variant_id)
     )
     last_rows = (await db.execute(last_stmt)).all()
     on_hand_map: Dict[Tuple[int, int], int] = {}
-    for r in last_rows:
-        if r.last_period is None:
-            continue
-        oh = (await db.execute(
-            select(func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0))
-            .where(
-                models.SellOutReport.store_id == r.store_id,
-                models.SellOutReport.variant_id == r.variant_id,
-                models.SellOutReport.period_start == r.last_period,
-            )
-        )).scalar() or 0
-        on_hand_map[(int(r.store_id), int(r.variant_id))] = int(oh)
+    # Consolidar en una sola query para rendir con muchos combos
+    if last_rows:
+        # Construimos WHERE ((store_id=?, variant_id=?, period_start=?), ...)
+        # con expresión SQL general: uso subquery IN para simplicidad.
+        keys = [(int(r.store_id), int(r.variant_id), r.last_period) for r in last_rows if r.last_period]
+        if keys:
+            store_ids_k = list({k[0] for k in keys})
+            variant_ids_k = list({k[1] for k in keys})
+            oh_rows = (await db.execute(
+                select(
+                    models.SellOutReport.store_id,
+                    models.SellOutReport.variant_id,
+                    models.SellOutReport.period_start,
+                    func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0).label("oh"),
+                )
+                .where(
+                    models.SellOutReport.store_id.in_(store_ids_k),
+                    models.SellOutReport.variant_id.in_(variant_ids_k),
+                )
+                .group_by(
+                    models.SellOutReport.store_id,
+                    models.SellOutReport.variant_id,
+                    models.SellOutReport.period_start,
+                )
+            )).all()
+            oh_by_key = {(int(r.store_id), int(r.variant_id), r.period_start): int(r.oh) for r in oh_rows}
+            for (sid, vid, last_period) in keys:
+                on_hand_map[(sid, vid)] = oh_by_key.get((sid, vid, last_period), 0)
 
+    # 5) Métricas agregadas por tienda para ordenar
+    def _store_score(store) -> Tuple[float, float, float]:
+        """Regresa (worst_wos_finite, total_units, name_hash) del store en el
+        conjunto de top variants. worst_wos = mínimo WOS de las celdas con
+        ventas (rojo primero); ∞ si no hay ventas. total_units para
+        most_sales."""
+        min_wos = WOS_INFINITY
+        tot = 0
+        for vid in variant_ids:
+            u = sales_map.get((store.id, vid), 0)
+            oh = on_hand_map.get((store.id, vid), 0)
+            v = (u / (VELOCITY_WINDOW_DAYS / 7.0)) if u > 0 else 0.0
+            if v > 0:
+                w = oh / v
+                if w < min_wos:
+                    min_wos = w
+            tot += u
+        return (min_wos, float(tot), 0.0)
+
+    stores_with_score = [(s, ch, _store_score(s)) for (s, ch) in all_stores]
+
+    if sort_stores_by == "worst_wos":
+        stores_with_score.sort(key=lambda x: (x[2][0], -x[2][1]))
+    elif sort_stores_by == "best_wos":
+        stores_with_score.sort(key=lambda x: (-x[2][0], -x[2][1]))
+    elif sort_stores_by == "most_sales":
+        stores_with_score.sort(key=lambda x: (-x[2][1], x[2][0]))
+    else:  # name
+        stores_with_score.sort(key=lambda x: (x[0].name or "").lower())
+
+    # 6) Paginar tiendas
+    page_slice = stores_with_score[store_offset:store_offset + store_limit]
+
+    # 7) Cells solo para la página
     cells: List[schemas.HeatmapCell] = []
-    for sid, (store, ch) in store_map.items():
+    for store, ch, _sc in page_slice:
         for v in variants:
-            units = sales_map.get((sid, v.id), 0)
-            on_hand = on_hand_map.get((sid, v.id), 0)
+            units = sales_map.get((store.id, v.id), 0)
+            on_hand = on_hand_map.get((store.id, v.id), 0)
             velocity = units / (VELOCITY_WINDOW_DAYS / 7.0) if units > 0 else 0.0
             wos = (on_hand / velocity) if velocity > 0 else WOS_INFINITY
             status = _wos_status(
@@ -2087,22 +2188,42 @@ async def heatmap(
                 value: Optional[float] = float(units)
             elif metric == "on_hand":
                 value = float(on_hand)
-            else:  # wos
+            else:
                 value = round(wos, 2) if wos < WOS_INFINITY else None
             cells.append(schemas.HeatmapCell(
-                store_id=sid, variant_id=v.id,
+                store_id=store.id, variant_id=v.id,
                 value=value, on_hand=on_hand, units_sold=units,
                 status=status,
             ))
 
     stores_out = [
         schemas.HeatmapStoreRef(id=s.id, name=s.name, channel_name=ch.name)
-        for s, ch in stores_rows
+        for s, ch, _sc in page_slice
     ]
     return schemas.HeatmapResponse(
         channel_id=channel_id, metric=metric,
         stores=stores_out, variants=variants, cells=cells,
+        total_stores=total_stores, total_variants=total_variants,
+        store_offset=store_offset, store_limit=store_limit,
     )
+
+
+async def heatmap_filters(
+    db: AsyncSession, channel_id: Optional[int] = None,
+) -> schemas.HeatmapFilters:
+    """Devuelve valores únicos de region/state/store_format para las tiendas
+    activas del scope, para poblar los selects del filtro."""
+    stmt = select(
+        models.RetailStore.region, models.RetailStore.state,
+        models.RetailStore.store_format,
+    ).where(models.RetailStore.is_active.is_(True))
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailStore.channel_id == channel_id)
+    rows = (await db.execute(stmt)).all()
+    regions = sorted({r.region for r in rows if r.region})
+    states = sorted({r.state for r in rows if r.state})
+    formats = sorted({r.store_format for r in rows if r.store_format})
+    return schemas.HeatmapFilters(regions=regions, states=states, formats=formats)
 
 
 # ── Analytics: clasificación ABC ─────────────────────────────────────────

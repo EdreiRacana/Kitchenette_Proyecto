@@ -88,8 +88,21 @@ export const retailApi = {
     api.get<import("./types").ConsignmentReconResponse>("/retail/consignment/reconciliation", { params: { channel_id } }).then(r => r.data),
 
   // Analíticas
-  heatmap: (opts?: { channel_id?: number; metric?: "wos" | "units_sold" | "on_hand"; limit_variants?: number }) =>
+  heatmap: (opts?: {
+    channel_id?: number;
+    metric?: "wos" | "units_sold" | "on_hand";
+    limit_variants?: number;
+    store_search?: string;
+    region?: string;
+    state?: string;
+    store_format?: string;
+    store_offset?: number;
+    store_limit?: number;
+    sort_stores_by?: import("./types").HeatmapSortStores;
+  }) =>
     api.get<import("./types").HeatmapResponse>("/retail/analytics/heatmap", { params: opts }).then(r => r.data),
+  heatmapFilters: (channel_id?: number) =>
+    api.get<import("./types").HeatmapFilters>("/retail/analytics/heatmap/filters", { params: { channel_id } }).then(r => r.data),
   abc: (opts?: { channel_id?: number; days?: number }) =>
     api.get<import("./types").ABCResponse>("/retail/analytics/abc", { params: opts }).then(r => r.data),
 

@@ -403,11 +403,31 @@ async def analytics_heatmap(
     db: DB, _: CurrentUser,
     channel_id: Optional[int] = Query(None),
     metric: str = Query("wos", pattern="^(wos|units_sold|on_hand)$"),
-    limit_variants: int = Query(40, ge=1, le=200),
+    limit_variants: int = Query(40, ge=1, le=500),
+    store_search: Optional[str] = Query(None, max_length=100),
+    region: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    store_format: Optional[str] = Query(None),
+    store_offset: int = Query(0, ge=0),
+    store_limit: int = Query(100, ge=10, le=500),
+    sort_stores_by: str = Query("worst_wos", pattern="^(name|worst_wos|best_wos|most_sales)$"),
 ):
     return await service.heatmap(
-        db, channel_id=channel_id, metric=metric, limit_variants=limit_variants,
+        db, channel_id=channel_id, metric=metric,
+        limit_variants=limit_variants,
+        store_search=store_search, region=region, state=state,
+        store_format=store_format,
+        store_offset=store_offset, store_limit=store_limit,
+        sort_stores_by=sort_stores_by,
     )
+
+
+@router.get("/analytics/heatmap/filters", response_model=schemas.HeatmapFilters)
+async def analytics_heatmap_filters(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+):
+    return await service.heatmap_filters(db, channel_id=channel_id)
 
 
 @router.get("/analytics/abc", response_model=schemas.ABCResponse)

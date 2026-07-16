@@ -21,7 +21,8 @@ import type {
   ReplenishmentSuggestion, WosStatus, ImportSellOutResponse,
   RetailAlert, AlertStatus, AlertSeverity, AlertsSummary,
   ConsignmentWarehouseOption, ConsignmentReconResponse, ConsignmentReconRow,
-  HeatmapResponse, HeatmapMetric, ABCResponse, SourceWarehouseOption, TransferResponse,
+  HeatmapResponse, HeatmapMetric, HeatmapFilters, HeatmapSortStores,
+  ABCResponse, SourceWarehouseOption, TransferResponse,
   RetailImportProfile, DetectColumnsResponse, PreviewResponse,
 } from "./types";
 
@@ -2365,23 +2366,64 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
 
 
 function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  // Estado principal
   const [data, setData] = useState<HeatmapResponse | null>(null);
+  const [filters, setFilters] = useState<HeatmapFilters | null>(null);
   const [metric, setMetric] = useState<HeatmapMetric>("wos");
   const [loading, setLoading] = useState(true);
 
+  // Filtros
+  const [storeSearch, setStoreSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [region, setRegion] = useState<string>("");
+  const [state, setState] = useState<string>("");
+  const [storeFormat, setStoreFormat] = useState<string>("");
+  const [sortStores, setSortStores] = useState<HeatmapSortStores>("worst_wos");
+  const [limitVariants, setLimitVariants] = useState(30);
+  const [storeOffset, setStoreOffset] = useState(0);
+  const [storeLimit, setStoreLimit] = useState(50);
+
+  // Densidad visual: compacto (para escanear muchas tiendas) o normal
+  const [density, setDensity] = useState<"compact" | "normal">("normal");
+
+  // Debounce del search
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(storeSearch), 250);
+    return () => clearTimeout(t);
+  }, [storeSearch]);
+
+  // Reset offset cuando cambian filtros
+  useEffect(() => { setStoreOffset(0); }, [
+    channelId, debouncedSearch, region, state, storeFormat, sortStores, storeLimit,
+  ]);
+
+  // Cargar facetas al cambiar cadena
+  useEffect(() => {
+    retailApi.heatmapFilters(channelId || undefined).then(setFilters).catch(() => setFilters(null));
+  }, [channelId]);
+
+  // Cargar heatmap
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
         const r = await retailApi.heatmap({
-          channel_id: channelId || undefined, metric, limit_variants: 40,
+          channel_id: channelId || undefined,
+          metric, limit_variants: limitVariants,
+          store_search: debouncedSearch || undefined,
+          region: region || undefined,
+          state: state || undefined,
+          store_format: storeFormat || undefined,
+          store_offset: storeOffset, store_limit: storeLimit,
+          sort_stores_by: sortStores,
         });
         if (!cancelled) setData(r);
       } finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [channelId, metric]);
+  }, [channelId, metric, limitVariants, debouncedSearch, region, state,
+        storeFormat, sortStores, storeOffset, storeLimit]);
 
   const cellMap = new Map<string, HeatmapResponse["cells"][number]>();
   data?.cells.forEach(c => cellMap.set(`${c.store_id}:${c.variant_id}`, c));
@@ -2401,17 +2443,31 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
     return c.value != null ? `${c.value.toFixed(1)}` : "∞";
   };
 
+  const compact = density === "compact";
+  const cellW = compact ? 42 : 60;
+  const cellH = compact ? 26 : 36;
+  const nameW = compact ? 170 : 220;
+  const fontSize = compact ? 9 : 10.5;
+
+  const totalStores = data?.total_stores ?? 0;
+  const totalVariants = data?.total_variants ?? 0;
+  const shownStart = storeOffset + 1;
+  const shownEnd = Math.min(storeOffset + storeLimit, totalStores);
+  const canPrev = storeOffset > 0;
+  const canNext = storeOffset + storeLimit < totalStores;
+
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      {/* Barra de controles */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           <FilterPill t={t} label="WOS" active={metric === "wos"} onClick={() => setMetric("wos")} />
-          <FilterPill t={t} label="Unidades vendidas" active={metric === "units_sold"} onClick={() => setMetric("units_sold")} />
-          <FilterPill t={t} label="Stock actual" active={metric === "on_hand"} onClick={() => setMetric("on_hand")} />
-          <div style={{ width: 6 }} />
+          <FilterPill t={t} label="Vendidas" active={metric === "units_sold"} onClick={() => setMetric("units_sold")} />
+          <FilterPill t={t} label="Stock" active={metric === "on_hand"} onClick={() => setMetric("on_hand")} />
+          <div style={{ width: 8 }} />
           <ExcelBtn t={t} label="Excel"
             onClick={() => downloadBlob(
-              () => retailApi.reports.heatmap({ channel_id: channelId || undefined, metric, limit_variants: 40 }),
+              () => retailApi.reports.heatmap({ channel_id: channelId || undefined, metric, limit_variants: limitVariants }),
               `retail_heatmap_${metric}.xlsx`,
             )}
           />
@@ -2425,60 +2481,186 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
         </div>
       </div>
 
+      {/* Filtros avanzados */}
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", padding: 10, marginBottom: 10, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8 }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
+          <Search size={12} color={t.textLo} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+          <input value={storeSearch} onChange={e => setStoreSearch(e.target.value)}
+            placeholder="Buscar tienda, código o ciudad…"
+            style={{ ...inputStyle(t), paddingLeft: 30, marginTop: 0, fontSize: 12, height: 30 }} />
+        </div>
+        {filters && filters.regions.length > 0 && (
+          <select value={region} onChange={e => setRegion(e.target.value)}
+            style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}>
+            <option value="">Todas regiones</option>
+            {filters.regions.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        )}
+        {filters && filters.states.length > 0 && (
+          <select value={state} onChange={e => setState(e.target.value)}
+            style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}>
+            <option value="">Todos estados</option>
+            {filters.states.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        )}
+        {filters && filters.formats.length > 0 && (
+          <select value={storeFormat} onChange={e => setStoreFormat(e.target.value)}
+            style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}>
+            <option value="">Todos formatos</option>
+            {filters.formats.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        )}
+        <select value={sortStores} onChange={e => setSortStores(e.target.value as HeatmapSortStores)}
+          style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}
+          title="Ordenamiento de tiendas">
+          <option value="worst_wos">Ordenar por: peor WOS ↑</option>
+          <option value="best_wos">Ordenar por: mejor WOS ↓</option>
+          <option value="most_sales">Ordenar por: más ventas</option>
+          <option value="name">Ordenar por: nombre A-Z</option>
+        </select>
+        <select value={limitVariants} onChange={e => setLimitVariants(Number(e.target.value))}
+          style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}
+          title="Cuántos SKUs mostrar (top por ventas)">
+          <option value={20}>Top 20 SKUs</option>
+          <option value={30}>Top 30 SKUs</option>
+          <option value={40}>Top 40 SKUs</option>
+          <option value={60}>Top 60 SKUs</option>
+          <option value={100}>Top 100 SKUs</option>
+        </select>
+        <select value={density} onChange={e => setDensity(e.target.value as any)}
+          style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}
+          title="Densidad visual">
+          <option value="normal">Normal</option>
+          <option value="compact">Compacto</option>
+        </select>
+        {(region || state || storeFormat || storeSearch) && (
+          <button onClick={() => { setRegion(""); setState(""); setStoreFormat(""); setStoreSearch(""); }}
+            style={{ padding: "6px 10px", background: "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: t.textLo, fontSize: 11, cursor: "pointer" }}>
+            Limpiar filtros
+          </button>
+        )}
+      </div>
+
+      {/* Barra info + paginador */}
+      {data && (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8, fontSize: 12, color: t.textLo }}>
+          <div>
+            {totalStores === 0 ? "Sin tiendas en el filtro"
+              : `Mostrando ${shownStart}-${shownEnd} de ${totalStores.toLocaleString("es-MX")} tiendas × ${data.variants.length} de ${totalVariants.toLocaleString("es-MX")} SKUs`}
+          </div>
+          {totalStores > storeLimit && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button disabled={!canPrev}
+                onClick={() => setStoreOffset(Math.max(0, storeOffset - storeLimit))}
+                style={{ padding: "4px 10px", background: canPrev ? t.panel3 : "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: canPrev ? t.textMid : t.textLo, cursor: canPrev ? "pointer" : "not-allowed", fontSize: 11 }}>
+                ← Anterior
+              </button>
+              <select value={storeLimit} onChange={e => setStoreLimit(Number(e.target.value))}
+                style={{ ...inputStyle(t), width: "auto", fontSize: 11, height: 26, marginTop: 0 }}>
+                <option value={30}>30/pág</option>
+                <option value={50}>50/pág</option>
+                <option value={100}>100/pág</option>
+                <option value={200}>200/pág</option>
+              </select>
+              <button disabled={!canNext}
+                onClick={() => setStoreOffset(storeOffset + storeLimit)}
+                style={{ padding: "4px 10px", background: canNext ? t.panel3 : "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: canNext ? t.textMid : t.textLo, cursor: canNext ? "pointer" : "not-allowed", fontSize: 11 }}>
+                Siguiente →
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
       {!loading && data && (data.stores.length === 0 || data.variants.length === 0) && (
         <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
           <Grid3x3 size={28} />
-          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin suficientes datos para dibujar el heatmap</div>
-          <div style={{ fontSize: 11 }}>Registra sell-out por tienda × SKU para verlo.</div>
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>
+            {totalStores === 0 ? "Ninguna tienda coincide con los filtros" : "Sin ventas registradas para dibujar el heatmap"}
+          </div>
+          <div style={{ fontSize: 11 }}>Ajusta los filtros o registra sell-out para verlo.</div>
         </div>
       )}
       {!loading && data && data.stores.length > 0 && data.variants.length > 0 && (
-        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: 10, overflowX: "auto" }}>
-          <div style={{ display: "inline-block", minWidth: "100%" }}>
-            <div style={{ display: "grid", gridTemplateColumns: `220px repeat(${data.variants.length}, 60px)`, gap: 3, alignItems: "stretch" }}>
-              <div />
-              {data.variants.map(v => (
-                <div key={v.id}
-                  title={`${v.product_name || ""} · ${v.sku || ""}`}
-                  style={{
-                    fontSize: 9.5, color: t.textLo, textAlign: "center",
-                    padding: 4, wordBreak: "break-word", fontFamily: "monospace",
-                    background: t.panel2, borderRadius: 4,
-                  }}>
-                  {(v.sku || v.product_name || "—").slice(0, 8)}
-                </div>
-              ))}
+        <div style={{
+          background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10,
+          overflow: "auto", maxHeight: "70vh", position: "relative",
+        }}>
+          <table style={{
+            borderCollapse: "separate", borderSpacing: 0,
+            minWidth: nameW + data.variants.length * (cellW + 2),
+            fontSize,
+          }}>
+            <thead>
+              <tr>
+                <th style={{
+                  position: "sticky", top: 0, left: 0, zIndex: 3,
+                  background: t.panel2, color: t.textLo,
+                  padding: "6px 10px", textAlign: "left",
+                  fontWeight: 700, fontSize: fontSize + 0.5,
+                  borderRight: `1px solid ${t.border}`,
+                  borderBottom: `1px solid ${t.border}`,
+                  minWidth: nameW, width: nameW,
+                }}>Tienda</th>
+                {data.variants.map(v => (
+                  <th key={v.id}
+                    title={`${v.product_name || ""} · ${v.sku || ""}`}
+                    style={{
+                      position: "sticky", top: 0, zIndex: 2,
+                      background: t.panel2, color: t.textLo,
+                      padding: "6px 4px", textAlign: "center",
+                      fontFamily: "monospace", fontWeight: 700,
+                      borderBottom: `1px solid ${t.border}`,
+                      minWidth: cellW, width: cellW,
+                      verticalAlign: "bottom", whiteSpace: "nowrap",
+                    }}>
+                    <div style={{ transform: "rotate(-45deg)", transformOrigin: "left bottom",
+                                    width: cellH * 2, overflow: "hidden", textOverflow: "ellipsis",
+                                    fontSize: compact ? 8.5 : 9.5, height: cellH + 4 }}>
+                      {(v.sku || v.product_name || "—").slice(0, 20)}
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
               {data.stores.map(s => (
-                <>
-                  <div key={`s${s.id}`} style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: "3px 8px", background: t.panel2, borderRadius: 4 }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <tr key={s.id}>
+                  <td style={{
+                    position: "sticky", left: 0, zIndex: 1,
+                    background: t.panel, borderRight: `1px solid ${t.border}`,
+                    padding: compact ? "3px 8px" : "5px 10px",
+                    minWidth: nameW, width: nameW,
+                    borderBottom: `1px solid ${t.border}44`,
+                  }}>
+                    <div style={{ fontSize, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {s.name}
                     </div>
-                    <div style={{ fontSize: 9.5, color: t.textLo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <div style={{ fontSize: fontSize - 1.5, color: t.textLo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {s.channel_name}
                     </div>
-                  </div>
+                  </td>
                   {data.variants.map(v => {
                     const c = cellMap.get(`${s.id}:${v.id}`);
                     const bg = cellBg(c);
                     return (
-                      <div key={`c${s.id}-${v.id}`}
+                      <td key={v.id}
                         title={c ? `${s.name} · ${v.sku || v.product_name || ""}\nStock ${c.on_hand} · Vend ${c.units_sold} · WOS ${c.value ?? "∞"}` : ""}
                         style={{
                           background: bg, color: c && c.status !== "no_data" ? "#fff" : t.textLo,
-                          borderRadius: 4, padding: 4, textAlign: "center",
-                          fontSize: 10.5, fontWeight: 700, minHeight: 34,
-                          display: "flex", alignItems: "center", justifyContent: "center",
+                          textAlign: "center", fontWeight: 700,
+                          minWidth: cellW, width: cellW, height: cellH,
+                          padding: 2, borderBottom: `1px solid ${t.border}44`,
                         }}>
                         {fmt(c)}
-                      </div>
+                      </td>
                     );
                   })}
-                </>
+                </tr>
               ))}
-            </div>
-          </div>
+            </tbody>
+          </table>
         </div>
       )}
     </div>
