@@ -97,7 +97,19 @@ export interface HeatmapResponse {
   stores: HeatmapStoreRef[];
   variants: HeatmapVariantRef[];
   cells: HeatmapCell[];
+  total_stores: number;
+  total_variants: number;
+  store_offset: number;
+  store_limit: number;
 }
+
+export interface HeatmapFilters {
+  regions: string[];
+  states: string[];
+  formats: string[];
+}
+
+export type HeatmapSortStores = "name" | "worst_wos" | "best_wos" | "most_sales";
 
 // ABC
 export type ABCClass = "A" | "B" | "C";

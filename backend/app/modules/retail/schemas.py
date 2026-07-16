@@ -366,6 +366,18 @@ class HeatmapResponse(BaseModel):
     stores: List[HeatmapStoreRef]
     variants: List[HeatmapVariantRef]
     cells: List[HeatmapCell]
+    # Paginación (para catálogos grandes)
+    total_stores: int = 0
+    total_variants: int = 0
+    store_offset: int = 0
+    store_limit: int = 0
+
+
+class HeatmapFilters(BaseModel):
+    """Facetas disponibles para filtrar el heatmap."""
+    regions: List[str] = Field(default_factory=list)
+    states: List[str] = Field(default_factory=list)
+    formats: List[str] = Field(default_factory=list)
 
 
 # ── Analytics: ABC ──────────────────────────────────────────────────────
