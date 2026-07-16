@@ -44,6 +44,7 @@ class RetailChannel(Base):
     # Reglas de alertas específicas
     no_movement_days = Column(Integer, default=21, nullable=False)
     sell_through_min_pct = Column(Float, default=20.0, nullable=False)
+    return_rate_max_pct = Column(Float, default=5.0, nullable=False)
     alerts_enabled = Column(Boolean, default=True, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     notes = Column(Text, nullable=True)
@@ -128,8 +129,10 @@ class SellOutReport(Base):
     period_type = Column(String, default="week", nullable=False)  # day | week | month
 
     units_sold = Column(Integer, default=0, nullable=False)
+    units_returned = Column(Integer, default=0, nullable=False)
     units_on_hand = Column(Integer, default=0, nullable=False)
     revenue = Column(Float, default=0.0, nullable=False)
+    returns_amount = Column(Float, default=0.0, nullable=False)
 
     source = Column(String, default="manual", nullable=False)
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -153,6 +156,7 @@ ALERT_TYPES = (
     "overstock",            # WOS > overstock
     "no_movement",          # sin ventas por N días con on_hand > 0
     "sell_through_low",     # sell_out/sell_in < umbral
+    "high_return_rate",     # returns/sold > umbral por cadena
 )
 ALERT_SEVERITIES = ("urgent", "high", "medium", "low")
 ALERT_STATUSES = ("open", "acknowledged", "resolved", "dismissed")

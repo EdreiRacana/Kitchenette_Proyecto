@@ -213,8 +213,16 @@ function DashboardView({ t, channelId }: { t: Tokens; channelId: number | null }
   if (loading) return <div style={{ padding: 40, color: t.textLo, textAlign: "center" }}>Calculando KPIs…</div>;
   if (!kpis) return null;
 
+  const retUnits = kpis.total_returns_units ?? 0;
+  const retAmt = kpis.total_returns_amount ?? 0;
+  const retPct = kpis.return_rate_pct ?? 0;
+  const netU = kpis.net_units ?? Math.max(kpis.total_sell_out_units - retUnits, 0);
+  const netRev = kpis.net_revenue ?? Math.max(kpis.total_sell_out_revenue - retAmt, 0);
+  const retColor = retPct >= 10 ? t.bad : retPct >= 5 ? t.warn : t.good;
   const tiles = [
     { label: "Sell-out (unidades)", value: num(kpis.total_sell_out_units), sub: mxn(kpis.total_sell_out_revenue), color: t.textHi },
+    { label: "Devoluciones", value: num(retUnits), sub: `${retPct.toFixed(1)}% · ${mxn(retAmt)}`, color: retColor },
+    { label: "Neto", value: num(netU), sub: mxn(netRev), color: t.textHi },
     { label: "Sell-in (unidades)", value: num(kpis.total_sell_in_units), sub: mxn(kpis.total_sell_in_revenue), color: t.textHi },
     { label: "Sell-through", value: `${kpis.sell_through_pct.toFixed(1)}%`, sub: "Sell-out / Sell-in", color: kpis.sell_through_pct >= 70 ? t.good : kpis.sell_through_pct >= 40 ? t.warn : t.bad },
     { label: "On-hand total", value: num(kpis.total_on_hand), sub: `${kpis.stores_active_count} tiendas · ${kpis.skus_active_count} SKUs`, color: t.textHi },
@@ -411,6 +419,7 @@ function ChannelModal({ t, channel, onClose, onSaved }: {
   const [targetW, setTargetW] = useState(channel?.target_wos_weeks ?? 4);
   const [critW, setCritW] = useState(channel?.critical_wos_weeks ?? 2);
   const [overW, setOverW] = useState(channel?.overstock_wos_weeks ?? 12);
+  const [returnMaxPct, setReturnMaxPct] = useState(channel?.return_rate_max_pct ?? 5);
   const [active, setActive] = useState(channel?.is_active ?? true);
   const [notes, setNotes] = useState(channel?.notes || "");
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
@@ -432,6 +441,7 @@ function ChannelModal({ t, channel, onClose, onSaved }: {
         name: name.trim(), code: code || undefined,
         customer_id: customerId || undefined,
         target_wos_weeks: targetW, critical_wos_weeks: critW, overstock_wos_weeks: overW,
+        return_rate_max_pct: returnMaxPct,
         is_active: active, notes: notes || undefined,
       };
       if (channel) await retailApi.updateChannel(channel.id, payload);
@@ -483,6 +493,21 @@ function ChannelModal({ t, channel, onClose, onSaved }: {
           </div>
           <div style={{ marginTop: 6, fontSize: 10.5, color: t.textLo }}>
             Semanas de inventario objetivo. Debajo del mínimo = urgente resurtir. Arriba del máximo = riesgo de sobreinventario.
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, padding: 12, background: t.panel2, borderRadius: 8, border: `1px solid ${t.border}` }}>
+          <div style={{ fontSize: 12, color: t.textLo, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.4 }}>Devoluciones</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8, alignItems: "end" }}>
+            <div>
+              <label style={{ ...labelStyle(t), color: t.bad }}>Tasa máxima (%)</label>
+              <input type="number" step={0.5} min={0} max={100}
+                value={returnMaxPct} onChange={e => setReturnMaxPct(Number(e.target.value))}
+                style={inputStyle(t)} />
+            </div>
+            <div style={{ fontSize: 10.5, color: t.textLo }}>
+              Si las devoluciones superan este % de las ventas en los últimos 28 días, se levanta una alerta de la cadena.
+            </div>
           </div>
         </div>
 
@@ -868,19 +893,29 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
                 <th style={thStyle(t)}>Producto</th>
                 <th style={thStyle(t)}>SKU</th>
                 <th style={thStyle(t)}>Vendidas</th>
+                <th style={thStyle(t)}>Devueltas</th>
+                <th style={thStyle(t)}>Netas</th>
                 <th style={thStyle(t)}>Stock</th>
                 <th style={thStyle(t)}>Ingreso</th>
+                <th style={thStyle(t)}>Neto $</th>
                 <th style={thStyle(t)}>Fuente</th>
                 <th style={thStyle(t)}></th>
               </tr>
             </thead>
             <tbody>
               {reports.length === 0 && (
-                <tr><td colSpan={10} style={{ padding: 30, textAlign: "center", color: t.textLo }}>
+                <tr><td colSpan={13} style={{ padding: 30, textAlign: "center", color: t.textLo }}>
                   Sin reportes aún. Registra el primer sell-out.
                 </td></tr>
               )}
-              {reports.map(r => (
+              {reports.map(r => {
+                const ret = r.units_returned || 0;
+                const retAmt = r.returns_amount || 0;
+                const netU = Math.max((r.units_sold || 0) - ret, 0);
+                const netRev = Math.max((r.revenue || 0) - retAmt, 0);
+                const retPct = r.units_sold > 0 ? (ret / r.units_sold) * 100 : 0;
+                const retColor = retPct >= 10 ? t.bad : retPct >= 5 ? t.warn : t.textMid;
+                return (
                 <tr key={r.id} style={{ borderTop: `1px solid ${t.border}55` }}>
                   <td style={tdStyle(t)}>
                     {new Date(r.period_start).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "2-digit" })}
@@ -892,8 +927,13 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
                   <td style={tdStyle(t)}>{r.product_name || "—"}</td>
                   <td style={{ ...tdStyle(t), fontFamily: "monospace" }}>{r.sku || "—"}</td>
                   <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{num(r.units_sold)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", color: retColor }}>
+                    {ret > 0 ? `${num(ret)} (${retPct.toFixed(1)}%)` : "—"}
+                  </td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 600 }}>{num(netU)}</td>
                   <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.units_on_hand)}</td>
                   <td style={{ ...tdStyle(t), textAlign: "right" }}>{mxn(r.revenue)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{mxn(netRev)}</td>
                   <td style={tdStyle(t)}>
                     <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 10, background: t.panel3, color: t.textMid }}>
                       {r.source}
@@ -903,7 +943,8 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
                     <button onClick={() => del(r)} style={{ ...iconBtn(t), color: t.bad }}><Trash2 size={12} /></button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1047,8 +1088,12 @@ function ImportSellOutModal({ t, channels, defaultChannel, onClose, onDone }: {
     sku: "SKU", producto_nombre: "Nombre producto",
     periodo_tipo: "Tipo periodo", periodo_inicio: "Inicio periodo",
     periodo_fin: "Fin periodo",
-    unidades_vendidas: "Unidades vendidas *", unidades_stock: "Stock",
-    ingreso: "Ingreso", notas: "Notas",
+    unidades_vendidas: "Unidades vendidas *",
+    unidades_devueltas: "Unidades devueltas",
+    unidades_stock: "Stock",
+    ingreso: "Ingreso",
+    importe_devoluciones: "Importe devoluciones",
+    notas: "Notas",
   };
 
   const requiredFields = ["tienda_codigo", "sku", "periodo_inicio", "unidades_vendidas"];
@@ -1265,8 +1310,10 @@ function ImportSellOutModal({ t, channels, defaultChannel, onClose, onDone }: {
                     <th style={thStyle(t)}>Producto</th>
                     <th style={thStyle(t)}>Inicio</th>
                     <th style={thStyle(t)}>Vend</th>
+                    <th style={thStyle(t)}>Devuelt</th>
                     <th style={thStyle(t)}>Stock</th>
                     <th style={thStyle(t)}>Ingreso</th>
+                    <th style={thStyle(t)}>Devol $</th>
                     <th style={thStyle(t)}></th>
                   </tr>
                 </thead>
@@ -1280,8 +1327,10 @@ function ImportSellOutModal({ t, channels, defaultChannel, onClose, onDone }: {
                       <td style={tdStyle(t)}>{r.normalized.producto_nombre || "—"}</td>
                       <td style={tdStyle(t)}>{r.normalized.periodo_inicio ? new Date(r.normalized.periodo_inicio).toLocaleDateString("es-MX") : "—"}</td>
                       <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{r.normalized.unidades_vendidas ?? 0}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", color: (r.normalized.unidades_devueltas ?? 0) > 0 ? t.bad : t.textLo }}>{r.normalized.unidades_devueltas ?? 0}</td>
                       <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.normalized.unidades_stock ?? 0}</td>
                       <td style={{ ...tdStyle(t), textAlign: "right" }}>{mxn(r.normalized.ingreso ?? 0)}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", color: (r.normalized.importe_devoluciones ?? 0) > 0 ? t.bad : t.textLo }}>{mxn(r.normalized.importe_devoluciones ?? 0)}</td>
                       <td style={tdStyle(t)}>
                         {r.errors.length > 0 && (
                           <span title={r.errors.join("; ")} style={{ color: t.bad, cursor: "help" }}>
@@ -1413,6 +1462,7 @@ const ALERT_TYPE_LABEL: Record<string, string> = {
   overstock: "Sobreinventario",
   no_movement: "Sin movimiento",
   sell_through_low: "Sell-through bajo",
+  high_return_rate: "Devoluciones altas",
 };
 
 function AlertsView({ t, channelId, onChanged }: {
@@ -1654,8 +1704,10 @@ function SellOutModal({ t, channels, defaultChannel, onClose, onSaved }: {
   const [periodEnd, setPeriodEnd] = useState(isoWeekEnd(isoWeekStart()));
   const [periodType, setPeriodType] = useState<"day" | "week" | "month">("week");
   const [unitsSold, setUnitsSold] = useState(0);
+  const [unitsReturned, setUnitsReturned] = useState(0);
   const [unitsOnHand, setUnitsOnHand] = useState(0);
   const [revenue, setRevenue] = useState(0);
+  const [returnsAmount, setReturnsAmount] = useState(0);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -1714,8 +1766,10 @@ function SellOutModal({ t, channels, defaultChannel, onClose, onSaved }: {
         period_end: new Date(periodEnd + "T23:59:59").toISOString(),
         period_type: periodType,
         units_sold: unitsSold,
+        units_returned: unitsReturned || undefined,
         units_on_hand: unitsOnHand,
         revenue,
+        returns_amount: returnsAmount || undefined,
         notes: notes || undefined,
         source: "manual",
       });
@@ -1795,12 +1849,27 @@ function SellOutModal({ t, channels, defaultChannel, onClose, onSaved }: {
               <input type="number" min={0} value={unitsSold || ""} onChange={e => setUnitsSold(Number(e.target.value) || 0)} style={inputStyle(t)} />
             </div>
             <div>
+              <label style={{ ...labelStyle(t), color: t.bad }}>Unidades devueltas</label>
+              <input type="number" min={0} value={unitsReturned || ""} onChange={e => setUnitsReturned(Number(e.target.value) || 0)} style={inputStyle(t)} />
+            </div>
+            <div>
               <label style={{ ...labelStyle(t), color: t.nova }}>Stock final (on-hand)</label>
               <input type="number" min={0} value={unitsOnHand || ""} onChange={e => setUnitsOnHand(Number(e.target.value) || 0)} style={inputStyle(t)} />
             </div>
             <div>
-              <label style={labelStyle(t)}>Ingreso (MXN)</label>
+              <label style={labelStyle(t)}>Ingreso bruto (MXN)</label>
               <input type="number" step={0.01} min={0} value={revenue || ""} onChange={e => setRevenue(Number(e.target.value) || 0)} style={inputStyle(t)} />
+            </div>
+            <div>
+              <label style={{ ...labelStyle(t), color: t.bad }}>Importe devoluciones</label>
+              <input type="number" step={0.01} min={0} value={returnsAmount || ""} onChange={e => setReturnsAmount(Number(e.target.value) || 0)} style={inputStyle(t)} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+              <div style={{ fontSize: 10, color: t.textLo, marginBottom: 3 }}>Neto</div>
+              <div style={{ padding: "7px 10px", background: t.panel3, borderRadius: 6, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>
+                <div style={{ fontWeight: 700, color: t.textHi }}>{num(Math.max(unitsSold - unitsReturned, 0))} u</div>
+                <div style={{ color: t.textMid, fontSize: 11 }}>{mxn(Math.max(revenue - returnsAmount, 0))}</div>
+              </div>
             </div>
           </div>
         </div>

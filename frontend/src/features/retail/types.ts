@@ -7,6 +7,7 @@ export interface RetailChannel {
   target_wos_weeks: number;
   critical_wos_weeks: number;
   overstock_wos_weeks: number;
+  return_rate_max_pct?: number;
   is_active: boolean;
   notes?: string | null;
   stores_count: number;
@@ -20,6 +21,7 @@ export interface RetailChannelCreate {
   target_wos_weeks?: number;
   critical_wos_weeks?: number;
   overstock_wos_weeks?: number;
+  return_rate_max_pct?: number;
   is_active?: boolean;
   notes?: string | null;
 }
@@ -220,8 +222,10 @@ export interface SellOutReport {
   period_end: string;
   period_type: "day" | "week" | "month";
   units_sold: number;
+  units_returned: number;
   units_on_hand: number;
   revenue: number;
+  returns_amount: number;
   source: string;
   notes?: string | null;
   created_at?: string | null;
@@ -236,8 +240,10 @@ export interface SellOutReportCreate {
   period_end: string;
   period_type?: "day" | "week" | "month";
   units_sold: number;
+  units_returned?: number;
   units_on_hand: number;
   revenue?: number;
+  returns_amount?: number;
   notes?: string | null;
   source?: "manual" | "csv" | "excel" | "edi" | "api";
 }
@@ -252,6 +258,11 @@ export interface RetailKPIs {
   total_sell_in_units: number;
   total_sell_in_revenue: number;
   sell_through_pct: number;
+  total_returns_units?: number;
+  total_returns_amount?: number;
+  return_rate_pct?: number;
+  net_units?: number;
+  net_revenue?: number;
   total_on_hand: number;
   avg_wos_weeks: number;
   critical_stores_count: number;
@@ -327,7 +338,8 @@ export interface ImportSellOutResponse {
 }
 
 export type AlertType =
-  | "stockout" | "stockout_imminent" | "overstock" | "no_movement" | "sell_through_low";
+  | "stockout" | "stockout_imminent" | "overstock" | "no_movement"
+  | "sell_through_low" | "high_return_rate";
 export type AlertSeverity = "urgent" | "high" | "medium" | "low";
 export type AlertStatus = "open" | "acknowledged" | "resolved" | "dismissed";
 

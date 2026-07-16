@@ -18,6 +18,7 @@ class RetailChannelBase(BaseModel):
     overstock_wos_weeks: float = Field(default=12.0, ge=0)
     no_movement_days: int = Field(default=21, ge=1)
     sell_through_min_pct: float = Field(default=20.0, ge=0, le=100)
+    return_rate_max_pct: float = Field(default=5.0, ge=0, le=100)
     alerts_enabled: bool = True
     is_active: bool = True
     notes: Optional[str] = None
@@ -36,6 +37,7 @@ class RetailChannelUpdate(BaseModel):
     overstock_wos_weeks: Optional[float] = None
     no_movement_days: Optional[int] = None
     sell_through_min_pct: Optional[float] = None
+    return_rate_max_pct: Optional[float] = None
     alerts_enabled: Optional[bool] = None
     is_active: Optional[bool] = None
     notes: Optional[str] = None
@@ -119,8 +121,10 @@ class SellOutReportBase(BaseModel):
     period_end: datetime
     period_type: str = Field(default="week", pattern="^(day|week|month)$")
     units_sold: int = Field(default=0, ge=0)
+    units_returned: int = Field(default=0, ge=0)
     units_on_hand: int = Field(default=0, ge=0)
     revenue: float = Field(default=0.0, ge=0)
+    returns_amount: float = Field(default=0.0, ge=0)
     notes: Optional[str] = None
 
 
@@ -130,8 +134,10 @@ class SellOutReportCreate(SellOutReportBase):
 
 class SellOutReportUpdate(BaseModel):
     units_sold: Optional[int] = Field(default=None, ge=0)
+    units_returned: Optional[int] = Field(default=None, ge=0)
     units_on_hand: Optional[int] = Field(default=None, ge=0)
     revenue: Optional[float] = Field(default=None, ge=0)
+    returns_amount: Optional[float] = Field(default=None, ge=0)
     notes: Optional[str] = None
 
 
@@ -157,6 +163,11 @@ class RetailKPIs(BaseModel):
     total_sell_in_units: int
     total_sell_in_revenue: float
     sell_through_pct: float           # sell_out / sell_in
+    total_returns_units: int = 0
+    total_returns_amount: float = 0.0
+    return_rate_pct: float = 0.0      # devoluciones / venta bruta × 100
+    net_units: int = 0                 # unidades vendidas − devueltas
+    net_revenue: float = 0.0           # ingreso − importe_devoluciones
     total_on_hand: int
     avg_wos_weeks: float              # promedio ponderado
     critical_stores_count: int        # tiendas con al menos 1 SKU en WOS < critical
