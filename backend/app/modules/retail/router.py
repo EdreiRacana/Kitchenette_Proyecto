@@ -825,6 +825,13 @@ async def evaluate_alerts_route(db: DB, _: CurrentUser,
     return await service.evaluate_alerts(db, channel_id=channel_id)
 
 
+@router.post("/alerts/notify", response_model=schemas.NotifyAlertsResponse)
+async def notify_alerts_route(payload: schemas.NotifyAlertsRequest,
+                              db: DB, _: CurrentUser):
+    """Envía las alertas abiertas por correo y/o WhatsApp."""
+    return await service.notify_alerts(db, payload)
+
+
 @router.post("/alerts/{alert_id}/acknowledge", response_model=schemas.RetailAlertOut)
 async def acknowledge_alert(alert_id: int, payload: schemas.AlertActionRequest,
                               db: DB, current_user: CurrentUser):

@@ -339,6 +339,17 @@ export interface ServiceLevelResponse {
   rows: ServiceLevelRow[];
 }
 
+// Notificación de alertas
+export interface NotifyAlertsResponse {
+  alerts_included: number;
+  email_sent: boolean;
+  email_error?: string | null;
+  whatsapp_sent: boolean;
+  whatsapp_error?: string | null;
+  email_configured: boolean;
+  whatsapp_configured: boolean;
+}
+
 // Transfer
 export interface SourceWarehouseOption { id: number; name: string; location?: string | null; type: string; }
 export interface TransferItem { store_id: number; variant_id: number; units: number; notes?: string; }

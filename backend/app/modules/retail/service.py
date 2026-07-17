@@ -3438,6 +3438,114 @@ async def service_level(
     )
 
 
+# ── Notificaciones de alertas (correo / WhatsApp) ────────────────────────
+
+_ALERT_TYPE_LABEL_ES = {
+    "stockout": "Sin stock", "stockout_imminent": "Stock crítico",
+    "overstock": "Sobreinventario", "no_movement": "Sin movimiento",
+    "sell_through_low": "Sell-through bajo", "high_return_rate": "Devoluciones altas",
+}
+_SEV_ORDER = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _alerts_notification_html(alerts: List[schemas.RetailAlertOut], company_name: str) -> str:
+    sev_color = {"urgent": "#e5484d", "high": "#f5a623", "medium": "#2563eb", "low": "#64748b"}
+    rows = []
+    for a in alerts[:60]:
+        color = sev_color.get(a.severity, "#64748b")
+        rows.append(
+            f'<tr>'
+            f'<td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;color:{color};font-weight:700;vertical-align:top;white-space:nowrap;">'
+            f'{_ALERT_TYPE_LABEL_ES.get(a.alert_type, a.alert_type)}</td>'
+            f'<td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;">'
+            f'<b style="color:#0f172a;">{a.store_name or a.channel_name or ""}</b>'
+            f'{" · " + (a.sku or "") if a.sku else ""}<br>'
+            f'<span style="color:#475569;font-size:13px;">{a.message}</span>'
+            f'</td></tr>'
+        )
+    urgent = sum(1 for a in alerts if a.severity == "urgent")
+    high = sum(1 for a in alerts if a.severity == "high")
+    return (
+        f'<h2 style="color:#1e293b;margin-bottom:4px;">Alertas de Retail · {company_name}</h2>'
+        f'<p style="color:#64748b;margin-top:0;">{len(alerts)} alertas abiertas · '
+        f'{urgent} urgentes · {high} de prioridad alta</p>'
+        f'<table style="border-collapse:collapse;width:100%;max-width:680px;">{"".join(rows)}</table>'
+        f'<p style="color:#94a3b8;font-size:12px;margin-top:14px;">Enviado por Sthenova ERP · módulo Retail Analytics.</p>'
+    )
+
+
+def _alerts_notification_text(alerts: List[schemas.RetailAlertOut], company_name: str) -> str:
+    urgent = sum(1 for a in alerts if a.severity == "urgent")
+    lines = [f"*Alertas de Retail · {company_name}*",
+             f"{len(alerts)} abiertas ({urgent} urgentes)", ""]
+    for a in alerts[:20]:
+        tag = _ALERT_TYPE_LABEL_ES.get(a.alert_type, a.alert_type)
+        where = a.store_name or a.channel_name or ""
+        lines.append(f"• [{tag}] {where}{(' · ' + a.sku) if a.sku else ''}: {a.message}")
+    if len(alerts) > 20:
+        lines.append(f"… y {len(alerts) - 20} más.")
+    return "\n".join(lines)
+
+
+async def notify_alerts(
+    db: AsyncSession, req: schemas.NotifyAlertsRequest,
+) -> schemas.NotifyAlertsResponse:
+    """Envía las alertas abiertas (por encima de la severidad mínima) por
+    correo y/o WhatsApp. Reutiliza la infraestructura de correo del ERP
+    (Resend/SendGrid/SMTP) y un webhook saliente para WhatsApp."""
+    from app.core.email import send_email, _platform_provider, get_active_email_integration
+    from app.core.whatsapp import send_whatsapp, whatsapp_configured
+
+    threshold = _SEV_ORDER.get(req.min_severity, 1)
+    all_open = await list_alerts(db, channel_id=req.channel_id, status="open", limit=500)
+    alerts = [a for a in all_open if _SEV_ORDER.get(a.severity, 3) <= threshold]
+    alerts.sort(key=lambda a: (_SEV_ORDER.get(a.severity, 3),))
+
+    # ¿Hay correo configurado? (proveedor plataforma o SMTP por empresa)
+    provider, _k, _f = _platform_provider()
+    email_configured = bool(provider) or (await get_active_email_integration(db)) is not None
+    wa_configured = whatsapp_configured()
+
+    resp = schemas.NotifyAlertsResponse(
+        alerts_included=len(alerts),
+        email_configured=email_configured,
+        whatsapp_configured=wa_configured,
+    )
+    if not alerts:
+        return resp
+
+    try:
+        from app.modules.core_config import service as config_service
+        company = await config_service.get_company_profile(db)
+        company_name = getattr(company, "legal_name", None) or getattr(company, "name", None) or "Sthenova"
+    except Exception:
+        company_name = "Sthenova"
+
+    if req.send_email and req.email:
+        if not email_configured:
+            resp.email_error = ("No hay correo configurado. Define un proveedor "
+                                "(RESEND_API_KEY/SENDGRID_API_KEY + MAIL_FROM) o un SMTP por empresa.")
+        else:
+            html = _alerts_notification_html(alerts, company_name)
+            urgent = sum(1 for a in alerts if a.severity == "urgent")
+            subject = f"⚠ {len(alerts)} alertas de Retail ({urgent} urgentes) · {company_name}"
+            try:
+                sent = await send_email(db, to=req.email, subject=subject, body_html=html)
+                resp.email_sent = bool(sent)
+                if not sent:
+                    resp.email_error = "El proveedor de correo rechazó el envío (revisa configuración)."
+            except Exception as e:
+                resp.email_error = f"{type(e).__name__}: {e}"
+
+    if req.send_whatsapp:
+        text = _alerts_notification_text(alerts, company_name)
+        ok, err = await send_whatsapp(text, to=req.whatsapp_to)
+        resp.whatsapp_sent = ok
+        resp.whatsapp_error = err
+
+    return resp
+
+
 # ── Replenishment: crear traslado ────────────────────────────────────────
 
 async def list_source_warehouses(db: AsyncSession) -> List[schemas.SourceWarehouseOption]:

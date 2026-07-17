@@ -632,6 +632,27 @@ class ServiceLevelResponse(BaseModel):
     rows: List[ServiceLevelRow]
 
 
+# ── Notificaciones de alertas (correo / WhatsApp) ───────────────────────
+
+class NotifyAlertsRequest(BaseModel):
+    email: Optional[str] = None
+    whatsapp_to: Optional[str] = None
+    send_email: bool = True
+    send_whatsapp: bool = False
+    channel_id: Optional[int] = None
+    min_severity: str = Field(default="high", pattern="^(urgent|high|medium|low)$")
+
+
+class NotifyAlertsResponse(BaseModel):
+    alerts_included: int
+    email_sent: bool = False
+    email_error: Optional[str] = None
+    whatsapp_sent: bool = False
+    whatsapp_error: Optional[str] = None
+    email_configured: bool = False
+    whatsapp_configured: bool = False
+
+
 # ── Replenishment: transfer ─────────────────────────────────────────────
 
 class SourceWarehouseOption(BaseModel):

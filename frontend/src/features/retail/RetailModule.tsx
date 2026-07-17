@@ -1469,6 +1469,117 @@ const ALERT_TYPE_LABEL: Record<string, string> = {
   high_return_rate: "Devoluciones altas",
 };
 
+function NotifyAlertsModal({ t, channelId, onClose }: {
+  t: Tokens; channelId: number | null; onClose: () => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [useEmail, setUseEmail] = useState(true);
+  const [useWhatsapp, setUseWhatsapp] = useState(false);
+  const [minSev, setMinSev] = useState<"urgent" | "high" | "medium">("high");
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<import("./types").NotifyAlertsResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const send = async () => {
+    setSending(true); setErr(null); setResult(null);
+    try {
+      const r = await retailApi.notifyAlerts({
+        channel_id: channelId || undefined,
+        email: useEmail ? email || undefined : undefined,
+        whatsapp_to: useWhatsapp ? whatsapp || undefined : undefined,
+        send_email: useEmail, send_whatsapp: useWhatsapp,
+        min_severity: minSev,
+      });
+      setResult(r);
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al enviar");
+    } finally { setSending(false); }
+  };
+
+  const modal = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 480, maxWidth: "100%", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>Notificar alertas</h3>
+        <p style={{ color: t.textLo, fontSize: 12, marginTop: 4 }}>
+          Envía las alertas abiertas por correo y/o WhatsApp al responsable.
+        </p>
+
+        <div style={{ marginTop: 14 }}>
+          <label style={labelStyle(t)}>Severidad mínima a incluir</label>
+          <select value={minSev} onChange={e => setMinSev(e.target.value as any)} style={inputStyle(t)}>
+            <option value="urgent">Solo urgentes</option>
+            <option value="high">Urgentes + alta</option>
+            <option value="medium">Urgentes + alta + media</option>
+          </select>
+        </div>
+
+        <div style={{ marginTop: 14, padding: 12, background: t.panel2, borderRadius: 8, border: `1px solid ${t.border}` }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+            <input type="checkbox" checked={useEmail} onChange={e => setUseEmail(e.target.checked)} />
+            <span style={{ fontSize: 13, color: t.textMid, fontWeight: 600 }}>Correo electrónico</span>
+          </label>
+          {useEmail && (
+            <input value={email} onChange={e => setEmail(e.target.value)} type="email"
+              placeholder="gerente@empresa.com"
+              style={{ ...inputStyle(t), marginTop: 8 }} />
+          )}
+        </div>
+
+        <div style={{ marginTop: 10, padding: 12, background: t.panel2, borderRadius: 8, border: `1px solid ${t.border}` }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+            <input type="checkbox" checked={useWhatsapp} onChange={e => setUseWhatsapp(e.target.checked)} />
+            <span style={{ fontSize: 13, color: t.textMid, fontWeight: 600 }}>WhatsApp</span>
+          </label>
+          {useWhatsapp && (
+            <>
+              <input value={whatsapp} onChange={e => setWhatsapp(e.target.value)}
+                placeholder="+52 1 55 1234 5678"
+                style={{ ...inputStyle(t), marginTop: 8 }} />
+              <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 6 }}>
+                Requiere configurar el webhook de WhatsApp (Twilio, Meta, n8n…) en el servidor.
+              </div>
+            </>
+          )}
+        </div>
+
+        {result && (
+          <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: t.panel2, border: `1px solid ${t.border}`, fontSize: 12 }}>
+            <div style={{ color: t.textMid, marginBottom: 6 }}>{result.alerts_included} alertas incluidas</div>
+            {useEmail && (
+              <div style={{ color: result.email_sent ? t.good : t.bad, display: "flex", gap: 6, alignItems: "center" }}>
+                {result.email_sent ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
+                Correo: {result.email_sent ? "enviado ✓" : (result.email_error || "no enviado")}
+              </div>
+            )}
+            {useWhatsapp && (
+              <div style={{ color: result.whatsapp_sent ? t.good : t.bad, display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+                {result.whatsapp_sent ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
+                WhatsApp: {result.whatsapp_sent ? "enviado ✓" : (result.whatsapp_error || "no enviado")}
+              </div>
+            )}
+          </div>
+        )}
+        {err && <div style={errStyle(t)}>{err}</div>}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button onClick={onClose} style={btnGhost(t)}>Cerrar</button>
+          <button disabled={sending || (!useEmail && !useWhatsapp)} onClick={send} style={btnPrimary(t)}>
+            <Bell size={14} /> {sending ? "Enviando…" : "Enviar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+  return createPortal(modal, document.body);
+}
+
 function AlertsView({ t, channelId, onChanged }: {
   t: Tokens; channelId: number | null; onChanged: () => void;
 }) {
@@ -1486,6 +1597,7 @@ function AlertsView({ t, channelId, onChanged }: {
   const [evaluating, setEvaluating] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [actioning, setActioning] = useState<{ id: number; kind: "ack" | "resolve" | "dismiss" } | null>(null);
+  const [notifyOpen, setNotifyOpen] = useState(false);
 
   useEffect(() => {
     const h = setTimeout(() => setDebSearch(search), 250);
@@ -1573,11 +1685,18 @@ function AlertsView({ t, channelId, onChanged }: {
               `retail_alertas.xlsx`,
             )}
           />
+          <button onClick={() => setNotifyOpen(true)} style={btnGhost(t)} title="Enviar alertas por correo o WhatsApp">
+            <Bell size={14} /> Notificar
+          </button>
           <button disabled={evaluating} onClick={doEvaluate} style={btnPrimary(t)} title="Recorrer todas las cadenas y regenerar alertas">
             <Zap size={14} /> {evaluating ? "Evaluando…" : "Evaluar ahora"}
           </button>
         </div>
       </div>
+
+      {notifyOpen && (
+        <NotifyAlertsModal t={t} channelId={channelId} onClose={() => setNotifyOpen(false)} />
+      )}
 
       <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
         <FilterPill t={t} label="Todas" active={statusFilter === "all"} onClick={() => setStatusFilter("all")} />

@@ -79,6 +79,10 @@ export const retailApi = {
     api.get<AlertsSummary>("/retail/alerts/summary", { params: { channel_id } }).then(r => r.data),
   evaluateAlerts: (channel_id?: number) =>
     api.post<EvaluateAlertsResponse>("/retail/alerts/evaluate", null, { params: { channel_id } }).then(r => r.data),
+  notifyAlerts: (data: {
+    email?: string; whatsapp_to?: string; send_email?: boolean; send_whatsapp?: boolean;
+    channel_id?: number; min_severity?: "urgent" | "high" | "medium" | "low";
+  }) => api.post<import("./types").NotifyAlertsResponse>("/retail/alerts/notify", data).then(r => r.data),
   acknowledgeAlert: (id: number, notes?: string) =>
     api.post<RetailAlert>(`/retail/alerts/${id}/acknowledge`, { notes: notes || undefined }).then(r => r.data),
   resolveAlert: (id: number, notes?: string) =>
