@@ -721,6 +721,61 @@ def build_excess_inventory_report(exc: Any) -> bytes:
     return _to_bytes(wb)
 
 
+# ── Reporte 13: Antigüedad de inventario (aging) ────────────────────────
+
+AGING_FILL = {
+    "0-30":  PatternFill("solid", fgColor="D1FAE5"),
+    "31-60": PatternFill("solid", fgColor="DBEAFE"),
+    "61-90": PatternFill("solid", fgColor="FEF3C7"),
+    "90+":   PatternFill("solid", fgColor="FEE2E2"),
+    "never": PatternFill("solid", fgColor="FECACA"),
+}
+
+
+def build_aging_report(aging: Any) -> bytes:
+    wb = Workbook()
+    # Hoja 1: resumen por cubeta
+    ws = wb.active
+    ws.title = "Resumen"
+    ws.append(["Antigüedad", "Unidades", "Valor a costo", "% del valor"])
+    _style_header(ws, 4)
+    for b in aging.buckets:
+        ws.append([b.label, int(b.units or 0), float(b.value or 0.0), float(b.pct_of_value or 0.0)])
+        fill = AGING_FILL.get(b.bucket)
+        if fill:
+            ws.cell(row=ws.max_row, column=1).fill = fill
+    _autosize(ws)
+    _company_header(
+        ws, "Antigüedad de inventario",
+        f"Inventario a costo $ {aging.total_stock_value:,.2f} · "
+        f"En riesgo de obsolescencia $ {aging.obsolete_value:,.2f} ({aging.obsolete_pct:.1f}%)",
+        4,
+    )
+
+    # Hoja 2: detalle por SKU
+    ws2 = wb.create_sheet("Detalle")
+    headers = ["Antigüedad", "Cadena", "Tienda", "SKU", "Producto",
+                "On-hand", "Última venta", "Días sin vender", "Costo u.", "Valor"]
+    ws2.append(headers)
+    _style_header(ws2, len(headers))
+    bucket_label = {b.bucket: b.label for b in aging.buckets}
+    for r in aging.rows:
+        ws2.append([
+            bucket_label.get(r.bucket, r.bucket),
+            r.channel_name or "", r.store_name or "",
+            r.sku or "", r.product_name or "",
+            int(r.on_hand or 0),
+            r.last_sale_date.strftime("%Y-%m-%d") if r.last_sale_date else "Nunca",
+            r.days_since_last_sale if r.days_since_last_sale is not None else "—",
+            float(r.unit_cost or 0.0), float(r.stock_value or 0.0),
+        ])
+        fill = AGING_FILL.get(r.bucket)
+        if fill:
+            ws2.cell(row=ws2.max_row, column=1).fill = fill
+    _autosize(ws2)
+    return _to_bytes(wb)
+
+
 # ── Reporte ejecutivo PDF semanal ────────────────────────────────────────
 
 def build_executive_pdf(

@@ -274,6 +274,42 @@ export interface ExcessInventoryResponse {
   rows: ExcessInventoryRow[];
 }
 
+// Antigüedad de inventario (aging)
+export type AgingBucketKey = "0-30" | "31-60" | "61-90" | "90+" | "never";
+export interface AgingRow {
+  store_id: number;
+  store_name: string;
+  channel_id?: number | null;
+  channel_name?: string | null;
+  variant_id?: number | null;
+  sku?: string | null;
+  product_name?: string | null;
+  on_hand: number;
+  last_sale_date?: string | null;
+  days_since_last_sale?: number | null;
+  bucket: AgingBucketKey;
+  unit_cost: number;
+  stock_value: number;
+  obsolescence_risk: boolean;
+}
+export interface AgingBucket {
+  bucket: AgingBucketKey;
+  label: string;
+  units: number;
+  value: number;
+  pct_of_value: number;
+}
+export interface AgingResponse {
+  channel_id?: number | null;
+  generated_at: string;
+  total_stock_units: number;
+  total_stock_value: number;
+  obsolete_value: number;
+  obsolete_pct: number;
+  buckets: AgingBucket[];
+  rows: AgingRow[];
+}
+
 // Transfer
 export interface SourceWarehouseOption { id: number; name: string; location?: string | null; type: string; }
 export interface TransferItem { store_id: number; variant_id: number; units: number; notes?: string; }

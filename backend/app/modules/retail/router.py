@@ -423,6 +423,16 @@ async def report_excess_inventory_xlsx(
     return _xlsx_response(content, "retail_exceso_inventario.xlsx")
 
 
+@router.get("/reports/aging.xlsx")
+async def report_aging_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+):
+    aging = await service.inventory_aging(db, channel_id=channel_id, limit=5000)
+    content = retail_reports.build_aging_report(aging)
+    return _xlsx_response(content, "retail_antiguedad_inventario.xlsx")
+
+
 @router.get("/reports/abc.xlsx")
 async def report_abc_xlsx(
     db: DB, _: CurrentUser,
@@ -575,6 +585,15 @@ async def analytics_excess_inventory(
     limit: int = Query(500, ge=1, le=2000),
 ):
     return await service.excess_inventory(db, channel_id=channel_id, limit=limit)
+
+
+@router.get("/analytics/aging", response_model=schemas.AgingResponse)
+async def analytics_aging(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    return await service.inventory_aging(db, channel_id=channel_id, limit=limit)
 
 
 # ── Traslados desde reabasto ────────────────────────────────────────────

@@ -11,7 +11,7 @@ import {
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
   Bell, EyeOff, CheckCircle2, Zap, Warehouse, Grid3x3, BarChart3, ArrowRight,
-  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown, DollarSign, Boxes,
+  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown, DollarSign, Boxes, Clock,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -26,7 +26,7 @@ import type {
   ABCResponse, SourceWarehouseOption, TransferResponse,
   RetailImportProfile, DetectColumnsResponse, PreviewResponse,
   TrendResponse, DistributionResponse, LostSalesResponse,
-  ProfitabilityResponse, ProfitGroupBy, ExcessInventoryResponse,
+  ProfitabilityResponse, ProfitGroupBy, ExcessInventoryResponse, AgingResponse,
 } from "./types";
 
 type Tokens = any;
@@ -2460,7 +2460,7 @@ function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null
 
 
 // ── Analíticas: Heatmap + ABC ────────────────────────────────────────────
-type AnalyticsSub = "heatmap" | "trend" | "profitability" | "excess" | "distribution" | "lost_sales" | "abc";
+type AnalyticsSub = "heatmap" | "trend" | "profitability" | "excess" | "aging" | "distribution" | "lost_sales" | "abc";
 
 function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }) {
   const [sub, setSub] = useState<AnalyticsSub>("heatmap");
@@ -2469,6 +2469,7 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
     { key: "trend", label: "Tendencia", icon: LineChart },
     { key: "profitability", label: "Rentabilidad", icon: DollarSign },
     { key: "excess", label: "Exceso de inventario", icon: Boxes },
+    { key: "aging", label: "Antigüedad", icon: Clock },
     { key: "distribution", label: "Distribución (voids)", icon: Network },
     { key: "lost_sales", label: "Venta perdida", icon: TrendingDown },
     { key: "abc", label: "Clasificación ABC", icon: TrendingUp },
@@ -2494,6 +2495,7 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
       {sub === "trend" && <TrendView t={t} channelId={channelId} />}
       {sub === "profitability" && <ProfitabilityView t={t} channelId={channelId} />}
       {sub === "excess" && <ExcessInventoryView t={t} channelId={channelId} />}
+      {sub === "aging" && <AgingView t={t} channelId={channelId} />}
       {sub === "distribution" && <DistributionView t={t} channelId={channelId} />}
       {sub === "lost_sales" && <LostSalesView t={t} channelId={channelId} />}
       {sub === "abc" && <ABCView t={t} channelId={channelId} />}
@@ -3118,6 +3120,129 @@ function ExcessInventoryView({ t, channelId }: { t: Tokens; channelId: number | 
           <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
             <b>Rotación</b> alta = inventario que se mueve rápido (bueno). <b>DOH</b> = días que dura el inventario al ritmo de venta actual.
             El exceso se mide contra el umbral de sobreinventario de cada cadena.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+const AGING_COLORS: Record<string, (t: Tokens) => string> = {
+  "0-30": (t) => t.good,
+  "31-60": (t) => t.nova,
+  "61-90": (t) => t.warn,
+  "90+": (t) => t.bad,
+  "never": (t) => t.bad,
+};
+
+function AgingView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<AgingResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.aging({ channel_id: channelId || undefined });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId]);
+
+  const bucketColor = (b: string) => (AGING_COLORS[b] || ((tt: Tokens) => tt.textLo))(t);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12, color: t.textLo, maxWidth: 640 }}>
+          <b style={{ color: t.textMid }}>Antigüedad del inventario</b>: cuántos días lleva cada producto sin venderse.
+          Los de 90+ días y los que nunca han vendido son <b style={{ color: t.bad }}>riesgo de obsolescencia</b>.
+        </div>
+        <ExcelBtn t={t} label="Excel"
+          onClick={() => downloadBlob(
+            () => retailApi.reports.aging({ channel_id: channelId || undefined }),
+            `retail_antiguedad_inventario.xlsx`,
+          )}
+        />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Calculando…</div>}
+      {!loading && data && data.total_stock_units === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <Clock size={28} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin inventario para analizar</div>
+        </div>
+      )}
+      {!loading && data && data.total_stock_units > 0 && (
+        <>
+          {/* Barra de distribución por antigüedad */}
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14, marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+              <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Distribución del inventario por antigüedad</div>
+              <div style={{ fontSize: 12, color: t.textMid }}>
+                Total a costo <b style={{ color: t.textHi }}>{mxn(data.total_stock_value)}</b> ·
+                En riesgo <b style={{ color: t.bad }}>{mxn(data.obsolete_value)} ({data.obsolete_pct.toFixed(1)}%)</b>
+              </div>
+            </div>
+            <div style={{ display: "flex", height: 22, borderRadius: 6, overflow: "hidden", background: t.panel3 }}>
+              {data.buckets.filter(b => b.value > 0).map(b => (
+                <div key={b.bucket} title={`${b.label}: ${mxn(b.value)} (${b.pct_of_value.toFixed(1)}%)`}
+                  style={{ width: `${b.pct_of_value}%`, background: bucketColor(b.bucket), minWidth: b.pct_of_value > 0 ? 2 : 0 }} />
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 14, marginTop: 10, flexWrap: "wrap" }}>
+              {data.buckets.map(b => (
+                <div key={b.bucket} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5 }}>
+                  <span style={{ width: 11, height: 11, borderRadius: 3, background: bucketColor(b.bucket) }} />
+                  <span style={{ color: t.textMid }}>{b.label}</span>
+                  <span style={{ color: t.textHi, fontWeight: 700 }}>{mxn(b.value)}</span>
+                  <span style={{ color: t.textLo }}>({num(b.units)} u)</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "56vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                  <th style={thStyle(t)}>Antigüedad</th>
+                  <th style={thStyle(t)}>Tienda</th>
+                  <th style={thStyle(t)}>SKU</th>
+                  <th style={thStyle(t)}>Producto</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>On-hand</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Días sin vender</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Valor a costo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => {
+                  const bl = data.buckets.find(b => b.bucket === r.bucket)?.label || r.bucket;
+                  return (
+                    <tr key={i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                      <td style={tdStyle(t)}>
+                        <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: bucketColor(r.bucket) + "22", color: bucketColor(r.bucket), fontWeight: 700 }}>
+                          {bl}
+                        </span>
+                      </td>
+                      <td style={tdStyle(t)}>{r.store_name}</td>
+                      <td style={{ ...tdStyle(t), fontFamily: "monospace" }}>{r.sku || "—"}</td>
+                      <td style={tdStyle(t)}>{r.product_name || "—"}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.on_hand)}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 600, color: r.obsolescence_risk ? t.bad : t.textMid }}>
+                        {r.days_since_last_sale != null ? `${r.days_since_last_sale} d` : "Nunca"}
+                      </td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{mxn(r.stock_value)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
+            La antigüedad se estima por días desde la última venta del producto en esa tienda (el sell-out no trae fecha de lote).
           </div>
         </>
       )}

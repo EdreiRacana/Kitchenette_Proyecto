@@ -3116,6 +3116,185 @@ async def excess_inventory(
     )
 
 
+# ── Analytics: antigüedad de inventario (aging / obsolescencia) ──────────
+
+_AGING_BUCKETS = [
+    ("0-30", "0–30 días", 0, 30),
+    ("31-60", "31–60 días", 31, 60),
+    ("61-90", "61–90 días", 61, 90),
+    ("90+", "Más de 90 días", 91, 10_000),
+    ("never", "Sin venta histórica", None, None),
+]
+
+
+def _aging_bucket(days: Optional[int]) -> str:
+    if days is None:
+        return "never"
+    if days <= 30:
+        return "0-30"
+    if days <= 60:
+        return "31-60"
+    if days <= 90:
+        return "61-90"
+    return "90+"
+
+
+async def inventory_aging(
+    db: AsyncSession, channel_id: Optional[int] = None, limit: int = 500,
+) -> schemas.AgingResponse:
+    """Antigüedad del inventario: para cada (tienda, SKU) con stock, cuántos
+    días lleva sin venderse. Clasifica en cubetas y marca riesgo de
+    obsolescencia (90+ días o nunca vendido con stock encima).
+
+    En sell-out no hay fecha de lote, así que la antigüedad se estima por
+    'días desde la última venta' del combo — el proxy estándar cuando sólo
+    se tienen cortes de inventario y venta."""
+    now = datetime.now(timezone.utc)
+
+    # Último corte por combo (para el on-hand actual)
+    combos_stmt = (
+        select(
+            models.RetailStore.id.label("store_id"),
+            models.RetailStore.name.label("store_name"),
+            models.RetailChannel.id.label("channel_id"),
+            models.RetailChannel.name.label("channel_name"),
+            models.SellOutReport.variant_id,
+            models.SellOutReport.product_name,
+            models.SellOutReport.sku,
+            func.max(models.SellOutReport.period_start).label("last_period"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(
+            models.SellOutReport.variant_id.isnot(None),
+            models.RetailStore.is_active.is_(True),
+        )
+        .group_by(
+            models.RetailStore.id, models.RetailStore.name,
+            models.RetailChannel.id, models.RetailChannel.name,
+            models.SellOutReport.variant_id,
+            models.SellOutReport.product_name, models.SellOutReport.sku,
+        )
+    )
+    if channel_id is not None:
+        combos_stmt = combos_stmt.where(models.RetailStore.channel_id == channel_id)
+    combos = (await db.execute(combos_stmt)).all()
+    if not combos:
+        return schemas.AgingResponse(
+            channel_id=channel_id, generated_at=now,
+            total_stock_units=0, total_stock_value=0.0,
+            obsolete_value=0.0, obsolete_pct=0.0,
+            buckets=[schemas.AgingBucket(bucket=b, label=lbl, units=0, value=0.0, pct_of_value=0.0)
+                     for b, lbl, _a, _z in _AGING_BUCKETS],
+            rows=[],
+        )
+
+    variant_ids = list({int(r.variant_id) for r in combos if r.variant_id})
+    store_ids = list({int(r.store_id) for r in combos})
+    cost_by_variant: Dict[int, float] = {}
+    if variant_ids:
+        prices = (await db.execute(
+            select(inv_models.ProductVariant.id, inv_models.ProductVariant.cost_price)
+            .where(inv_models.ProductVariant.id.in_(variant_ids))
+        )).all()
+        cost_by_variant = {int(vid): float(cp or 0.0) for vid, cp in prices}
+
+    # On-hand del último corte por combo
+    oh_rows = (await db.execute(
+        select(
+            models.SellOutReport.store_id,
+            models.SellOutReport.variant_id,
+            models.SellOutReport.period_start,
+            func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0).label("oh"),
+        )
+        .where(
+            models.SellOutReport.store_id.in_(store_ids),
+            models.SellOutReport.variant_id.in_(variant_ids),
+        )
+        .group_by(
+            models.SellOutReport.store_id, models.SellOutReport.variant_id,
+            models.SellOutReport.period_start,
+        )
+    )).all()
+    oh_by_key = {(int(r.store_id), int(r.variant_id), r.period_start): int(r.oh) for r in oh_rows}
+
+    # Última venta (period_end con units_sold>0) por combo
+    last_sale_rows = (await db.execute(
+        select(
+            models.SellOutReport.store_id,
+            models.SellOutReport.variant_id,
+            func.max(models.SellOutReport.period_end).label("last_sale"),
+        )
+        .where(
+            models.SellOutReport.store_id.in_(store_ids),
+            models.SellOutReport.variant_id.in_(variant_ids),
+            models.SellOutReport.units_sold > 0,
+        )
+        .group_by(models.SellOutReport.store_id, models.SellOutReport.variant_id)
+    )).all()
+    last_sale_by = {(int(r.store_id), int(r.variant_id)): r.last_sale for r in last_sale_rows}
+
+    rows: List[schemas.AgingRow] = []
+    bucket_units: Dict[str, int] = {b: 0 for b, *_ in _AGING_BUCKETS}
+    bucket_value: Dict[str, float] = {b: 0.0 for b, *_ in _AGING_BUCKETS}
+    total_units = 0
+    total_value = 0.0
+    obsolete_value = 0.0
+
+    for r in combos:
+        vid = int(r.variant_id)
+        on_hand = oh_by_key.get((int(r.store_id), vid, r.last_period), 0)
+        if on_hand <= 0:
+            continue
+        cost = cost_by_variant.get(vid, 0.0)
+        value = round(on_hand * cost, 2)
+        last_sale = last_sale_by.get((int(r.store_id), vid))
+        if last_sale is not None and last_sale.tzinfo is None:
+            last_sale = last_sale.replace(tzinfo=timezone.utc)
+        days = (now - last_sale).days if last_sale is not None else None
+        bucket = _aging_bucket(days)
+        risk = bucket in ("90+", "never")
+
+        total_units += on_hand
+        total_value += value
+        bucket_units[bucket] += on_hand
+        bucket_value[bucket] += value
+        if risk:
+            obsolete_value += value
+
+        rows.append(schemas.AgingRow(
+            store_id=r.store_id, store_name=r.store_name,
+            channel_id=r.channel_id, channel_name=r.channel_name,
+            variant_id=vid, sku=r.sku, product_name=r.product_name,
+            on_hand=on_hand, last_sale_date=last_sale,
+            days_since_last_sale=days, bucket=bucket,
+            unit_cost=round(cost, 2), stock_value=value,
+            obsolescence_risk=risk,
+        ))
+
+    # Ordena: riesgo primero, luego por valor
+    order = {"never": 0, "90+": 1, "61-90": 2, "31-60": 3, "0-30": 4}
+    rows.sort(key=lambda x: (order.get(x.bucket, 9), -x.stock_value))
+    rows = rows[:limit]
+
+    buckets = [
+        schemas.AgingBucket(
+            bucket=b, label=lbl,
+            units=bucket_units[b], value=round(bucket_value[b], 2),
+            pct_of_value=round(bucket_value[b] / total_value * 100.0, 1) if total_value > 0 else 0.0,
+        )
+        for b, lbl, _a, _z in _AGING_BUCKETS
+    ]
+    obsolete_pct = round(obsolete_value / total_value * 100.0, 1) if total_value > 0 else 0.0
+
+    return schemas.AgingResponse(
+        channel_id=channel_id, generated_at=now,
+        total_stock_units=total_units, total_stock_value=round(total_value, 2),
+        obsolete_value=round(obsolete_value, 2), obsolete_pct=obsolete_pct,
+        buckets=buckets, rows=rows,
+    )
+
+
 # ── Replenishment: crear traslado ────────────────────────────────────────
 
 async def list_source_warehouses(db: AsyncSession) -> List[schemas.SourceWarehouseOption]:

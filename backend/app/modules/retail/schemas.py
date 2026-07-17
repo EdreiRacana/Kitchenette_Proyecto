@@ -564,6 +564,44 @@ class ExcessInventoryResponse(BaseModel):
     rows: List[ExcessInventoryRow]
 
 
+# ── Analytics: antigüedad de inventario (aging / obsolescencia) ─────────
+
+class AgingRow(BaseModel):
+    store_id: int
+    store_name: str
+    channel_id: Optional[int] = None
+    channel_name: Optional[str] = None
+    variant_id: Optional[int] = None
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    on_hand: int
+    last_sale_date: Optional[datetime] = None
+    days_since_last_sale: Optional[int] = None   # None = nunca vendió
+    bucket: str                                   # 0-30 | 31-60 | 61-90 | 90+ | never
+    unit_cost: float
+    stock_value: float
+    obsolescence_risk: bool                       # 90+ o never con stock
+
+
+class AgingBucket(BaseModel):
+    bucket: str
+    label: str
+    units: int
+    value: float
+    pct_of_value: float
+
+
+class AgingResponse(BaseModel):
+    channel_id: Optional[int] = None
+    generated_at: datetime
+    total_stock_units: int
+    total_stock_value: float            # inventario a costo
+    obsolete_value: float               # valor en riesgo (90+ / never)
+    obsolete_pct: float
+    buckets: List[AgingBucket]
+    rows: List[AgingRow]
+
+
 # ── Replenishment: transfer ─────────────────────────────────────────────
 
 class SourceWarehouseOption(BaseModel):

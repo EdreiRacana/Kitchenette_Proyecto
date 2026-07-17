@@ -123,6 +123,8 @@ export const retailApi = {
     api.get<import("./types").ProfitabilityResponse>("/retail/analytics/profitability", { params: opts }).then(r => r.data),
   excessInventory: (opts?: { channel_id?: number; limit?: number }) =>
     api.get<import("./types").ExcessInventoryResponse>("/retail/analytics/excess-inventory", { params: opts }).then(r => r.data),
+  aging: (opts?: { channel_id?: number; limit?: number }) =>
+    api.get<import("./types").AgingResponse>("/retail/analytics/aging", { params: opts }).then(r => r.data),
 
   // Traslados
   listSourceWarehouses: () =>
@@ -186,6 +188,8 @@ export const retailApi = {
       api.get(`/retail/reports/profitability.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
     excessInventory: (params?: { channel_id?: number }) =>
       api.get(`/retail/reports/excess-inventory.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    aging: (params?: { channel_id?: number }) =>
+      api.get(`/retail/reports/aging.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
     abc: (params?: { channel_id?: number; days?: number }) =>
       api.get(`/retail/reports/abc.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
     replenishment: (params?: { channel_id?: number }) =>
