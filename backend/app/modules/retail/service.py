@@ -1401,8 +1401,9 @@ async def import_sellout(
         # SKU (opcional en catálogo)
         variant_id: Optional[int] = None
         matched_pname: Optional[str] = None
+        matched_price: float = 0.0
         if sku and sku in variant_by_sku:
-            variant_id, matched_pname, _price = variant_by_sku[sku]
+            variant_id, matched_pname, matched_price = variant_by_sku[sku]
 
         final_name = matched_pname or product_name or f"SKU {sku}" if sku else product_name
         if not final_name:
@@ -1428,6 +1429,21 @@ async def import_sellout(
         revenue = _parse_float(row.get("ingreso"))
         returns_amount = _parse_float(row.get("importe_devoluciones"))
         notes = (str(row.get("notas") or "").strip() or None)
+
+        # Muchas cadenas reportan sólo unidades (sin pesos). Si el archivo no
+        # trae ingreso pero el SKU matchea catálogo con precio de lista,
+        # estimamos ingreso = unidades × precio para que el dashboard no se
+        # quede en ceros. Igual para el importe de devoluciones.
+        estimated_revenue = False
+        if revenue <= 0 and units_sold > 0 and matched_price > 0:
+            revenue = round(units_sold * matched_price, 2)
+            estimated_revenue = True
+        if returns_amount <= 0 and units_returned > 0 and matched_price > 0:
+            returns_amount = round(units_returned * matched_price, 2)
+            estimated_revenue = True
+        if estimated_revenue:
+            tag = "ingreso estimado por precio de lista"
+            notes = f"{notes} · {tag}" if notes else tag.capitalize()
 
         # Upsert
         existing = (await db.execute(

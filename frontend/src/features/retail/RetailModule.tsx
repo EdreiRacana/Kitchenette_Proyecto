@@ -4,6 +4,7 @@
 // panel de reabasto con sugerencias por tienda × SKU.
 
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode, CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import {
   Store, LayoutDashboard, Building2, ShoppingBag, Package, Truck,
@@ -2454,6 +2455,10 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
 
   // Densidad visual: compacto (para escanear muchas tiendas) o normal
   const [density, setDensity] = useState<"compact" | "normal">("normal");
+  // Índice de SKUs (columna → producto) desplegable
+  const [showSkuIndex, setShowSkuIndex] = useState(false);
+  // Salto directo a página de tiendas
+  const [pageInput, setPageInput] = useState("");
 
   // Debounce del search
   useEffect(() => {
@@ -2513,17 +2518,27 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
   };
 
   const compact = density === "compact";
-  const cellW = compact ? 42 : 60;
-  const cellH = compact ? 26 : 36;
+  const cellW = compact ? 40 : 54;
+  const cellH = compact ? 26 : 34;
   const nameW = compact ? 170 : 220;
   const fontSize = compact ? 9 : 10.5;
+  const headerH = compact ? 104 : 132;
 
   const totalStores = data?.total_stores ?? 0;
   const totalVariants = data?.total_variants ?? 0;
-  const shownStart = storeOffset + 1;
+  const shownStart = totalStores === 0 ? 0 : storeOffset + 1;
   const shownEnd = Math.min(storeOffset + storeLimit, totalStores);
   const canPrev = storeOffset > 0;
   const canNext = storeOffset + storeLimit < totalStores;
+  const totalPages = Math.max(1, Math.ceil(totalStores / storeLimit));
+  const currentPage = Math.floor(storeOffset / storeLimit) + 1;
+  const jumpToPage = () => {
+    const p = parseInt(pageInput, 10);
+    if (!isNaN(p) && p >= 1 && p <= totalPages) {
+      setStoreOffset((p - 1) * storeLimit);
+      setPageInput("");
+    }
+  };
 
   return (
     <div>
@@ -2550,62 +2565,73 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
         </div>
       </div>
 
-      {/* Filtros avanzados */}
-      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", padding: 10, marginBottom: 10, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8 }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
-          <Search size={12} color={t.textLo} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
-          <input value={storeSearch} onChange={e => setStoreSearch(e.target.value)}
-            placeholder="Buscar tienda, código o ciudad…"
-            style={{ ...inputStyle(t), paddingLeft: 30, marginTop: 0, fontSize: 12, height: 30 }} />
-        </div>
+      {/* Filtros avanzados — cada control con su etiqueta visible */}
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", padding: "12px 12px 14px", marginBottom: 10, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8 }}>
+        <FilterField t={t} label="Buscar tienda" style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ position: "relative" }}>
+            <Search size={12} color={t.textLo} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+            <input value={storeSearch} onChange={e => setStoreSearch(e.target.value)}
+              placeholder="Nombre, código o ciudad…"
+              style={{ ...inputStyle(t), paddingLeft: 30, marginTop: 0, fontSize: 12, height: 32, width: "100%" }} />
+          </div>
+        </FilterField>
         {filters && filters.regions.length > 0 && (
-          <select value={region} onChange={e => setRegion(e.target.value)}
-            style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}>
-            <option value="">Todas regiones</option>
-            {filters.regions.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+          <FilterField t={t} label="Región">
+            <select value={region} onChange={e => setRegion(e.target.value)}
+              style={{ ...inputStyle(t), minWidth: 130, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="">Todas</option>
+              {filters.regions.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </FilterField>
         )}
         {filters && filters.states.length > 0 && (
-          <select value={state} onChange={e => setState(e.target.value)}
-            style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}>
-            <option value="">Todos estados</option>
-            {filters.states.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+          <FilterField t={t} label="Estado">
+            <select value={state} onChange={e => setState(e.target.value)}
+              style={{ ...inputStyle(t), minWidth: 130, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="">Todos</option>
+              {filters.states.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </FilterField>
         )}
         {filters && filters.formats.length > 0 && (
-          <select value={storeFormat} onChange={e => setStoreFormat(e.target.value)}
-            style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}>
-            <option value="">Todos formatos</option>
-            {filters.formats.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+          <FilterField t={t} label="Formato">
+            <select value={storeFormat} onChange={e => setStoreFormat(e.target.value)}
+              style={{ ...inputStyle(t), minWidth: 130, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="">Todos</option>
+              {filters.formats.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </FilterField>
         )}
-        <select value={sortStores} onChange={e => setSortStores(e.target.value as HeatmapSortStores)}
-          style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}
-          title="Ordenamiento de tiendas">
-          <option value="worst_wos">Ordenar por: peor WOS ↑</option>
-          <option value="best_wos">Ordenar por: mejor WOS ↓</option>
-          <option value="most_sales">Ordenar por: más ventas</option>
-          <option value="name">Ordenar por: nombre A-Z</option>
-        </select>
-        <select value={limitVariants} onChange={e => setLimitVariants(Number(e.target.value))}
-          style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}
-          title="Cuántos SKUs mostrar (top por ventas)">
-          <option value={20}>Top 20 SKUs</option>
-          <option value={30}>Top 30 SKUs</option>
-          <option value={40}>Top 40 SKUs</option>
-          <option value={60}>Top 60 SKUs</option>
-          <option value={100}>Top 100 SKUs</option>
-        </select>
-        <select value={density} onChange={e => setDensity(e.target.value as any)}
-          style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}
-          title="Densidad visual">
-          <option value="normal">Normal</option>
-          <option value="compact">Compacto</option>
-        </select>
+        <FilterField t={t} label="Ordenar tiendas por">
+          <select value={sortStores} onChange={e => setSortStores(e.target.value as HeatmapSortStores)}
+            style={{ ...inputStyle(t), minWidth: 155, fontSize: 12, height: 32, marginTop: 0 }}>
+            <option value="worst_wos">Peor WOS primero</option>
+            <option value="best_wos">Mejor WOS primero</option>
+            <option value="most_sales">Más ventas</option>
+            <option value="name">Nombre A-Z</option>
+          </select>
+        </FilterField>
+        <FilterField t={t} label="SKUs visibles">
+          <select value={limitVariants} onChange={e => setLimitVariants(Number(e.target.value))}
+            style={{ ...inputStyle(t), minWidth: 115, fontSize: 12, height: 32, marginTop: 0 }}>
+            <option value={20}>Top 20</option>
+            <option value={30}>Top 30</option>
+            <option value={40}>Top 40</option>
+            <option value={60}>Top 60</option>
+            <option value={100}>Top 100</option>
+          </select>
+        </FilterField>
+        <FilterField t={t} label="Densidad">
+          <select value={density} onChange={e => setDensity(e.target.value as any)}
+            style={{ ...inputStyle(t), minWidth: 105, fontSize: 12, height: 32, marginTop: 0 }}>
+            <option value="normal">Normal</option>
+            <option value="compact">Compacto</option>
+          </select>
+        </FilterField>
         {(region || state || storeFormat || storeSearch) && (
           <button onClick={() => { setRegion(""); setState(""); setStoreFormat(""); setStoreSearch(""); }}
-            style={{ padding: "6px 10px", background: "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: t.textLo, fontSize: 11, cursor: "pointer" }}>
-            Limpiar filtros
+            style={{ padding: "7px 12px", background: "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: t.textLo, fontSize: 11, cursor: "pointer", height: 32 }}>
+            Limpiar
           </button>
         )}
       </div>
@@ -2613,9 +2639,17 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
       {/* Barra info + paginador */}
       {data && (
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8, fontSize: 12, color: t.textLo }}>
-          <div>
-            {totalStores === 0 ? "Sin tiendas en el filtro"
-              : `Mostrando ${shownStart}-${shownEnd} de ${totalStores.toLocaleString("es-MX")} tiendas × ${data.variants.length} de ${totalVariants.toLocaleString("es-MX")} SKUs`}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span>
+              {totalStores === 0 ? "Sin tiendas en el filtro"
+                : `Mostrando ${shownStart.toLocaleString("es-MX")}-${shownEnd.toLocaleString("es-MX")} de ${totalStores.toLocaleString("es-MX")} tiendas × ${data.variants.length} de ${totalVariants.toLocaleString("es-MX")} SKUs`}
+            </span>
+            {data.variants.length > 0 && (
+              <button onClick={() => setShowSkuIndex(v => !v)}
+                style={{ padding: "3px 10px", background: showSkuIndex ? t.nova : t.panel3, border: `1px solid ${t.border}`, borderRadius: 6, color: showSkuIndex ? "#fff" : t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+                {showSkuIndex ? "Ocultar índice de SKUs" : "Ver índice de SKUs"}
+              </button>
+            )}
           </div>
           {totalStores > storeLimit && (
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -2624,6 +2658,25 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
                 style={{ padding: "4px 10px", background: canPrev ? t.panel3 : "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: canPrev ? t.textMid : t.textLo, cursor: canPrev ? "pointer" : "not-allowed", fontSize: 11 }}>
                 ← Anterior
               </button>
+              <span style={{ fontSize: 11, color: t.textMid, whiteSpace: "nowrap" }}>
+                Pág {currentPage.toLocaleString("es-MX")} / {totalPages.toLocaleString("es-MX")}
+              </span>
+              <button disabled={!canNext}
+                onClick={() => setStoreOffset(storeOffset + storeLimit)}
+                style={{ padding: "4px 10px", background: canNext ? t.panel3 : "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: canNext ? t.textMid : t.textLo, cursor: canNext ? "pointer" : "not-allowed", fontSize: 11 }}>
+                Siguiente →
+              </button>
+              {totalPages > 2 && (
+                <form onSubmit={e => { e.preventDefault(); jumpToPage(); }} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  <input value={pageInput} onChange={e => setPageInput(e.target.value.replace(/[^0-9]/g, ""))}
+                    placeholder="Ir a…" title="Ir a la página"
+                    style={{ ...inputStyle(t), width: 62, fontSize: 11, height: 26, marginTop: 0, textAlign: "center" }} />
+                  <button type="submit"
+                    style={{ padding: "4px 8px", background: t.panel3, border: `1px solid ${t.border}`, borderRadius: 6, color: t.textMid, cursor: "pointer", fontSize: 11 }}>
+                    Ir
+                  </button>
+                </form>
+              )}
               <select value={storeLimit} onChange={e => setStoreLimit(Number(e.target.value))}
                 style={{ ...inputStyle(t), width: "auto", fontSize: 11, height: 26, marginTop: 0 }}>
                 <option value={30}>30/pág</option>
@@ -2631,13 +2684,26 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
                 <option value={100}>100/pág</option>
                 <option value={200}>200/pág</option>
               </select>
-              <button disabled={!canNext}
-                onClick={() => setStoreOffset(storeOffset + storeLimit)}
-                style={{ padding: "4px 10px", background: canNext ? t.panel3 : "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: canNext ? t.textMid : t.textLo, cursor: canNext ? "pointer" : "not-allowed", fontSize: 11 }}>
-                Siguiente →
-              </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Índice de SKUs: mapea la columna a producto legible */}
+      {data && showSkuIndex && data.variants.length > 0 && (
+        <div style={{ marginBottom: 10, padding: 12, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8 }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 8 }}>
+            Índice de columnas · {data.variants.length} SKUs (top por ventas)
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 4 }}>
+            {data.variants.map((v, i) => (
+              <div key={v.id} style={{ display: "flex", gap: 6, alignItems: "baseline", fontSize: 11.5, padding: "2px 0" }}>
+                <span style={{ minWidth: 26, color: t.nova, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>#{i + 1}</span>
+                <span style={{ fontFamily: "monospace", color: t.textHi, fontWeight: 600 }}>{v.sku || "—"}</span>
+                <span style={{ color: t.textLo, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.product_name || ""}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -2671,23 +2737,31 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
                   borderRight: `1px solid ${t.border}`,
                   borderBottom: `1px solid ${t.border}`,
                   minWidth: nameW, width: nameW,
+                  height: headerH, verticalAlign: "bottom",
                 }}>Tienda</th>
-                {data.variants.map(v => (
+                {data.variants.map((v, i) => (
                   <th key={v.id}
-                    title={`${v.product_name || ""} · ${v.sku || ""}`}
+                    title={`#${i + 1} · ${v.sku || ""} · ${v.product_name || ""}`}
                     style={{
                       position: "sticky", top: 0, zIndex: 2,
                       background: t.panel2, color: t.textLo,
-                      padding: "6px 4px", textAlign: "center",
-                      fontFamily: "monospace", fontWeight: 700,
+                      padding: "8px 0 6px", textAlign: "center",
+                      fontWeight: 700,
                       borderBottom: `1px solid ${t.border}`,
+                      borderLeft: `1px solid ${t.border}33`,
                       minWidth: cellW, width: cellW,
-                      verticalAlign: "bottom", whiteSpace: "nowrap",
+                      height: headerH, verticalAlign: "bottom", whiteSpace: "nowrap",
                     }}>
-                    <div style={{ transform: "rotate(-45deg)", transformOrigin: "left bottom",
-                                    width: cellH * 2, overflow: "hidden", textOverflow: "ellipsis",
-                                    fontSize: compact ? 8.5 : 9.5, height: cellH + 4 }}>
-                      {(v.sku || v.product_name || "—").slice(0, 20)}
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, height: "100%", justifyContent: "flex-end" }}>
+                      <div style={{
+                        writingMode: "vertical-rl", transform: "rotate(180deg)",
+                        fontFamily: "monospace", fontSize: compact ? 9 : 10,
+                        color: t.textHi, letterSpacing: 0.3,
+                        maxHeight: headerH - 26, overflow: "hidden", textOverflow: "ellipsis",
+                      }}>
+                        {v.sku || v.product_name || "—"}
+                      </div>
+                      <span style={{ fontSize: 9, color: t.nova, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>#{i + 1}</span>
                     </div>
                   </th>
                 ))}
@@ -2743,6 +2817,19 @@ function LegendDot({ t, color, label }: { t: Tokens; color: string; label: strin
       <span style={{ width: 10, height: 10, borderRadius: 2, background: color, display: "inline-block" }} />
       {label}
     </span>
+  );
+}
+
+function FilterField({ t, label, children, style }: {
+  t: Tokens; label: string; children: ReactNode; style?: CSSProperties;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, ...style }}>
+      <label style={{ fontSize: 9.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>
+        {label}
+      </label>
+      {children}
+    </div>
   );
 }
 
