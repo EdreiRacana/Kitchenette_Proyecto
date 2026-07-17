@@ -493,6 +493,166 @@ class LostSalesResponse(BaseModel):
     rows: List[LostSalesRow]
 
 
+# ── Analytics: rentabilidad (márgenes + GMROI) ──────────────────────────
+
+class ProfitabilityRow(BaseModel):
+    dimension_id: Optional[int] = None
+    dimension_label: str               # SKU / categoría / tienda / cadena
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    units_sold: int
+    revenue: float
+    cogs: float                        # costo de lo vendido
+    gross_margin: float                # revenue − cogs
+    margin_pct: float                  # gross_margin / revenue × 100
+    inventory_cost: float              # inventario promedio valuado a costo
+    gmroi: Optional[float] = None      # gross_margin / inventory_cost
+    missing_cost: bool = False         # sin cost_price → margen no confiable
+
+
+class ProfitabilityResponse(BaseModel):
+    channel_id: Optional[int] = None
+    group_by: str                      # sku | category | store | channel
+    days: int
+    total_units: int
+    total_revenue: float
+    total_cogs: float
+    total_gross_margin: float
+    total_margin_pct: float
+    total_inventory_cost: float
+    total_gmroi: Optional[float] = None
+    variants_without_cost: int         # señal de calidad de dato
+    rows: List[ProfitabilityRow]
+
+
+# ── Analytics: exceso de inventario + rotación/DOH ──────────────────────
+
+class ExcessInventoryRow(BaseModel):
+    store_id: int
+    store_name: str
+    channel_id: Optional[int] = None
+    channel_name: Optional[str] = None
+    variant_id: Optional[int] = None
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    on_hand: int
+    avg_weekly_units: float
+    wos_weeks: Optional[float] = None   # None = sin movimiento (dead stock)
+    doh_days: Optional[float] = None    # días de inventario
+    overstock_threshold_weeks: float
+    excess_units: int                   # unidades por encima del umbral sano
+    unit_cost: float
+    excess_cost: float                  # dinero detenido en exceso
+    is_dead_stock: bool                 # sin ventas y con stock
+    severity: str                       # urgent | high | medium
+
+
+class ExcessInventoryResponse(BaseModel):
+    channel_id: Optional[int] = None
+    generated_at: datetime
+    # Salud global del inventario
+    total_inventory_units: int
+    total_inventory_cost: float         # inventario actual valuado a costo
+    inventory_turnover: Optional[float] = None   # rotación anualizada
+    days_of_inventory: Optional[float] = None     # 365 / rotación
+    avg_doh_days: Optional[float] = None          # días de inventario promedio
+    # Exceso
+    total_excess_units: int
+    total_excess_cost: float            # $ detenido en exceso
+    dead_stock_cost: float              # $ en productos sin movimiento
+    affected_combos: int
+    rows: List[ExcessInventoryRow]
+
+
+# ── Analytics: antigüedad de inventario (aging / obsolescencia) ─────────
+
+class AgingRow(BaseModel):
+    store_id: int
+    store_name: str
+    channel_id: Optional[int] = None
+    channel_name: Optional[str] = None
+    variant_id: Optional[int] = None
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    on_hand: int
+    last_sale_date: Optional[datetime] = None
+    days_since_last_sale: Optional[int] = None   # None = nunca vendió
+    bucket: str                                   # 0-30 | 31-60 | 61-90 | 90+ | never
+    unit_cost: float
+    stock_value: float
+    obsolescence_risk: bool                       # 90+ o never con stock
+
+
+class AgingBucket(BaseModel):
+    bucket: str
+    label: str
+    units: int
+    value: float
+    pct_of_value: float
+
+
+class AgingResponse(BaseModel):
+    channel_id: Optional[int] = None
+    generated_at: datetime
+    total_stock_units: int
+    total_stock_value: float            # inventario a costo
+    obsolete_value: float               # valor en riesgo (90+ / never)
+    obsolete_pct: float
+    buckets: List[AgingBucket]
+    rows: List[AgingRow]
+
+
+# ── Analytics: nivel de servicio / fill rate ────────────────────────────
+
+class ServiceLevelRow(BaseModel):
+    dimension_id: Optional[int] = None
+    dimension_label: str               # tienda / SKU / cadena
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    total_periods: int                 # observaciones (combos × cortes)
+    in_stock_periods: int
+    in_stock_rate_pct: float           # OSA — disponibilidad en anaquel
+    units_sold: int
+    estimated_lost_units: int
+    fill_rate_pct: float               # vendido / (vendido + perdido)
+    status: str                        # excellent | good | low | critical
+
+
+class ServiceLevelResponse(BaseModel):
+    channel_id: Optional[int] = None
+    generated_at: datetime
+    weeks_back: int
+    group_by: str                      # store | sku | channel
+    overall_in_stock_rate_pct: float
+    overall_stockout_rate_pct: float
+    overall_fill_rate_pct: float
+    total_units_sold: int
+    total_estimated_lost: int
+    combos_evaluated: int
+    rows: List[ServiceLevelRow]
+
+
+# ── Notificaciones de alertas (correo / WhatsApp) ───────────────────────
+
+class NotifyAlertsRequest(BaseModel):
+    email: Optional[str] = None
+    whatsapp_to: Optional[str] = None
+    send_email: bool = True
+    send_whatsapp: bool = False
+    channel_id: Optional[int] = None
+    min_severity: str = Field(default="high", pattern="^(urgent|high|medium|low)$")
+
+
+class NotifyAlertsResponse(BaseModel):
+    alerts_included: int
+    email_sent: bool = False
+    email_error: Optional[str] = None
+    whatsapp_sent: bool = False
+    whatsapp_error: Optional[str] = None
+    email_configured: bool = False
+    whatsapp_configured: bool = False
+
+
 # ── Replenishment: transfer ─────────────────────────────────────────────
 
 class SourceWarehouseOption(BaseModel):

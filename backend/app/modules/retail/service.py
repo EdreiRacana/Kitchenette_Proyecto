@@ -22,7 +22,7 @@ import io
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import and_, delete, func, select, or_
+from sqlalchemy import and_, case, delete, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
@@ -1906,10 +1906,47 @@ async def evaluate_alerts(
 
 # ── Consulta / acciones sobre alertas ────────────────────────────────────
 
+def _alerts_filter_conds(
+    channel_id: Optional[int], status: Optional[str], severity: Optional[str],
+    alert_type: Optional[str], q: Optional[str],
+) -> list:
+    conds = []
+    if channel_id is not None:
+        conds.append(models.RetailAlert.channel_id == channel_id)
+    if status:
+        conds.append(models.RetailAlert.status == status)
+    if severity:
+        conds.append(models.RetailAlert.severity == severity)
+    if alert_type:
+        conds.append(models.RetailAlert.alert_type == alert_type)
+    if q:
+        needle = f"%{q.strip()}%"
+        conds.append(or_(
+            models.RetailAlert.store_name.ilike(needle),
+            models.RetailAlert.product_name.ilike(needle),
+            models.RetailAlert.sku.ilike(needle),
+            models.RetailAlert.message.ilike(needle),
+        ))
+    return conds
+
+
+async def count_alerts(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    status: Optional[str] = None, severity: Optional[str] = None,
+    alert_type: Optional[str] = None, q: Optional[str] = None,
+) -> int:
+    stmt = select(func.count(models.RetailAlert.id))
+    conds = _alerts_filter_conds(channel_id, status, severity, alert_type, q)
+    if conds:
+        stmt = stmt.where(and_(*conds))
+    return int((await db.execute(stmt)).scalar() or 0)
+
+
 async def list_alerts(
     db: AsyncSession, channel_id: Optional[int] = None,
     status: Optional[str] = None, severity: Optional[str] = None,
-    limit: int = 500,
+    alert_type: Optional[str] = None, q: Optional[str] = None,
+    limit: int = 500, offset: int = 0,
 ) -> List[schemas.RetailAlertOut]:
     stmt = (
         select(
@@ -1918,18 +1955,15 @@ async def list_alerts(
         )
         .join(models.RetailChannel, models.RetailAlert.channel_id == models.RetailChannel.id)
     )
-    if channel_id is not None:
-        stmt = stmt.where(models.RetailAlert.channel_id == channel_id)
-    if status:
-        stmt = stmt.where(models.RetailAlert.status == status)
-    if severity:
-        stmt = stmt.where(models.RetailAlert.severity == severity)
+    conds = _alerts_filter_conds(channel_id, status, severity, alert_type, q)
+    if conds:
+        stmt = stmt.where(and_(*conds))
     stmt = stmt.order_by(
         # Prioridad urgent primero, luego por fecha
         func.lower(models.RetailAlert.status) == "open",  # true (1) → open primero
         models.RetailAlert.severity == "urgent",
         models.RetailAlert.created_at.desc(),
-    ).limit(limit)
+    ).offset(offset).limit(limit)
     rows = (await db.execute(stmt)).all()
     return [
         schemas.RetailAlertOut(
@@ -2727,6 +2761,789 @@ async def lost_sales(
         total_lost_revenue=round(total_lost_revenue, 2),
         affected_combos=len(rows), rows=rows,
     )
+
+
+# ── Analytics: rentabilidad (márgenes + GMROI) ───────────────────────────
+
+async def profitability(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    days: int = 90, group_by: str = "sku", limit: int = 500,
+) -> schemas.ProfitabilityResponse:
+    """Margen bruto y GMROI agregados por SKU, categoría, tienda o cadena.
+
+    Definiciones (estándar de retail):
+      COGS            = Σ unidades_vendidas × costo_promedio (cost_price)
+      Margen bruto    = ingreso − COGS
+      Margen %        = margen bruto / ingreso × 100
+      Inv. a costo    = Σ (on-hand promedio del periodo × costo)
+      GMROI           = margen bruto / inventario a costo
+                        (cuántos $ de margen genera cada $ invertido en
+                         inventario — el KPI rey de rentabilidad de retail)
+
+    El on-hand promedio se calcula como avg(units_on_hand) sobre los cortes
+    del periodo por (tienda, variante): como hay un solo reporte por combo
+    y corte (unique constraint), el promedio de esos snapshots es el
+    inventario medio del periodo.
+    """
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+
+    # Subconsulta: métricas por (tienda, variante) en la ventana
+    combo = (
+        select(
+            models.SellOutReport.store_id.label("store_id"),
+            models.SellOutReport.variant_id.label("variant_id"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units"),
+            func.coalesce(func.sum(models.SellOutReport.revenue), 0.0).label("revenue"),
+            func.coalesce(func.avg(models.SellOutReport.units_on_hand), 0.0).label("avg_oh"),
+        )
+        .where(
+            models.SellOutReport.period_start >= since,
+            models.SellOutReport.variant_id.isnot(None),
+        )
+        .group_by(models.SellOutReport.store_id, models.SellOutReport.variant_id)
+    ).subquery()
+
+    cost = func.coalesce(inv_models.ProductVariant.cost_price, 0.0)
+
+    # Selección de la dimensión de agrupación
+    if group_by == "category":
+        dim_id = None
+        dim_label = func.coalesce(inv_models.Product.category, "Sin categoría")
+        group_cols = [dim_label]
+    elif group_by == "store":
+        dim_id = models.RetailStore.id
+        dim_label = models.RetailStore.name
+        group_cols = [models.RetailStore.id, models.RetailStore.name]
+    elif group_by == "channel":
+        dim_id = models.RetailChannel.id
+        dim_label = models.RetailChannel.name
+        group_cols = [models.RetailChannel.id, models.RetailChannel.name]
+    else:  # sku
+        dim_id = inv_models.ProductVariant.id
+        dim_label = func.max(inv_models.ProductVariant.sku)
+        group_cols = [inv_models.ProductVariant.id]
+
+    units_col = func.sum(combo.c.units)
+    revenue_col = func.sum(combo.c.revenue)
+    cogs_col = func.sum(combo.c.units * cost)
+    inv_cost_col = func.sum(combo.c.avg_oh * cost)
+
+    sel = [units_col.label("units"), revenue_col.label("revenue"),
+           cogs_col.label("cogs"), inv_cost_col.label("inv_cost")]
+    if group_by == "sku":
+        sel = [inv_models.ProductVariant.id.label("dim_id"),
+               func.max(inv_models.ProductVariant.sku).label("sku"),
+               func.max(inv_models.Product.name).label("pname")] + sel
+    elif group_by == "category":
+        sel = [func.coalesce(inv_models.Product.category, "Sin categoría").label("cat")] + sel
+    elif group_by == "store":
+        sel = [models.RetailStore.id.label("dim_id"),
+               models.RetailStore.name.label("dim_label")] + sel
+    else:  # channel
+        sel = [models.RetailChannel.id.label("dim_id"),
+               models.RetailChannel.name.label("dim_label")] + sel
+
+    stmt = (
+        select(*sel)
+        .select_from(combo)
+        .join(models.RetailStore, combo.c.store_id == models.RetailStore.id)
+        .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
+        .join(inv_models.ProductVariant, combo.c.variant_id == inv_models.ProductVariant.id)
+        .join(inv_models.Product, inv_models.ProductVariant.product_id == inv_models.Product.id)
+        .group_by(*group_cols)
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailStore.channel_id == channel_id)
+    rows = (await db.execute(stmt)).all()
+
+    # Variantes sin costo (calidad de dato)
+    no_cost_stmt = (
+        select(func.count(func.distinct(combo.c.variant_id)))
+        .select_from(combo)
+        .join(models.RetailStore, combo.c.store_id == models.RetailStore.id)
+        .join(inv_models.ProductVariant, combo.c.variant_id == inv_models.ProductVariant.id)
+        .where(or_(inv_models.ProductVariant.cost_price.is_(None),
+                   inv_models.ProductVariant.cost_price == 0))
+    )
+    if channel_id is not None:
+        no_cost_stmt = no_cost_stmt.where(models.RetailStore.channel_id == channel_id)
+    variants_without_cost = int((await db.execute(no_cost_stmt)).scalar() or 0)
+
+    out: List[schemas.ProfitabilityRow] = []
+    tot_units = 0
+    tot_rev = 0.0
+    tot_cogs = 0.0
+    tot_inv = 0.0
+    for r in rows:
+        units = int(r.units or 0)
+        rev = float(r.revenue or 0.0)
+        cogs_v = round(float(r.cogs or 0.0), 2)
+        inv_cost = round(float(r.inv_cost or 0.0), 2)
+        gm = round(rev - cogs_v, 2)
+        margin_pct = round(gm / rev * 100.0, 2) if rev > 0 else 0.0
+        gmroi = round(gm / inv_cost, 2) if inv_cost > 0 else None
+
+        if group_by == "sku":
+            label = r.sku or (r.pname or f"SKU {r.dim_id}")
+            did = int(r.dim_id) if r.dim_id else None
+            sku_v, pname_v = r.sku, r.pname
+        elif group_by == "category":
+            label = r.cat
+            did, sku_v, pname_v = None, None, None
+        else:
+            label = r.dim_label
+            did = int(r.dim_id) if r.dim_id else None
+            sku_v, pname_v = None, None
+
+        out.append(schemas.ProfitabilityRow(
+            dimension_id=did, dimension_label=label,
+            sku=sku_v, product_name=pname_v,
+            units_sold=units, revenue=round(rev, 2),
+            cogs=cogs_v, gross_margin=gm, margin_pct=margin_pct,
+            inventory_cost=inv_cost, gmroi=gmroi,
+            missing_cost=(cogs_v <= 0 and units > 0),
+        ))
+        tot_units += units
+        tot_rev += rev
+        tot_cogs += cogs_v
+        tot_inv += inv_cost
+
+    # Orden: mayor margen bruto primero (donde está el dinero)
+    out.sort(key=lambda x: -x.gross_margin)
+    out = out[:limit]
+
+    tot_gm = round(tot_rev - tot_cogs, 2)
+    tot_margin_pct = round(tot_gm / tot_rev * 100.0, 2) if tot_rev > 0 else 0.0
+    tot_gmroi = round(tot_gm / tot_inv, 2) if tot_inv > 0 else None
+
+    return schemas.ProfitabilityResponse(
+        channel_id=channel_id, group_by=group_by, days=days,
+        total_units=tot_units, total_revenue=round(tot_rev, 2),
+        total_cogs=round(tot_cogs, 2), total_gross_margin=tot_gm,
+        total_margin_pct=tot_margin_pct,
+        total_inventory_cost=round(tot_inv, 2), total_gmroi=tot_gmroi,
+        variants_without_cost=variants_without_cost,
+        rows=out,
+    )
+
+
+# ── Analytics: exceso de inventario + rotación / DOH ─────────────────────
+
+async def excess_inventory(
+    db: AsyncSession, channel_id: Optional[int] = None, limit: int = 500,
+) -> schemas.ExcessInventoryResponse:
+    """Cuánto dinero está detenido en exceso de inventario, y qué tan rápido
+    rota el inventario (turnover / DOH).
+
+    Exceso por (tienda, SKU):
+      - Con velocidad: exceso = on_hand − (umbral_sobreinventario × vel/sem).
+        Sólo cuenta lo que pasa del límite sano de la cadena.
+      - Sin velocidad y con stock: dead stock → todo el on_hand es exceso.
+      exceso_$ = exceso_unidades × costo.
+
+    Rotación (anualizada) = COGS_ventana × (365/28) / inventario_a_costo.
+    Días de inventario = 365 / rotación.
+    """
+    now = datetime.now(timezone.utc)
+    velocity_from = now - timedelta(days=VELOCITY_WINDOW_DAYS)
+
+    # Combos con último corte + ventas en ventana + umbral de la cadena
+    combos_stmt = (
+        select(
+            models.RetailStore.id.label("store_id"),
+            models.RetailStore.name.label("store_name"),
+            models.RetailChannel.id.label("channel_id"),
+            models.RetailChannel.name.label("channel_name"),
+            models.RetailChannel.overstock_wos_weeks,
+            models.SellOutReport.variant_id,
+            models.SellOutReport.product_name,
+            models.SellOutReport.sku,
+            func.max(models.SellOutReport.period_start).label("last_period"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units_window"),
+            func.coalesce(func.avg(models.SellOutReport.units_on_hand), 0.0).label("avg_oh"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(
+            models.SellOutReport.period_start >= velocity_from,
+            models.SellOutReport.variant_id.isnot(None),
+            models.RetailStore.is_active.is_(True),
+        )
+        .group_by(
+            models.RetailStore.id, models.RetailStore.name,
+            models.RetailChannel.id, models.RetailChannel.name,
+            models.RetailChannel.overstock_wos_weeks,
+            models.SellOutReport.variant_id,
+            models.SellOutReport.product_name, models.SellOutReport.sku,
+        )
+    )
+    if channel_id is not None:
+        combos_stmt = combos_stmt.where(models.RetailStore.channel_id == channel_id)
+    combos = (await db.execute(combos_stmt)).all()
+
+    if not combos:
+        return schemas.ExcessInventoryResponse(
+            channel_id=channel_id, generated_at=now,
+            total_inventory_units=0, total_inventory_cost=0.0,
+            inventory_turnover=None, days_of_inventory=None, avg_doh_days=None,
+            total_excess_units=0, total_excess_cost=0.0, dead_stock_cost=0.0,
+            affected_combos=0, rows=[],
+        )
+
+    # Precios de catálogo
+    variant_ids = list({int(r.variant_id) for r in combos if r.variant_id})
+    cost_by_variant: Dict[int, float] = {}
+    if variant_ids:
+        prices = (await db.execute(
+            select(inv_models.ProductVariant.id, inv_models.ProductVariant.cost_price)
+            .where(inv_models.ProductVariant.id.in_(variant_ids))
+        )).all()
+        cost_by_variant = {int(vid): float(cp or 0.0) for vid, cp in prices}
+
+    # On-hand actual (último corte) por combo, en una sola query consolidada
+    store_ids = list({int(r.store_id) for r in combos})
+    last_oh_rows = (await db.execute(
+        select(
+            models.SellOutReport.store_id,
+            models.SellOutReport.variant_id,
+            models.SellOutReport.period_start,
+            func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0).label("oh"),
+        )
+        .where(
+            models.SellOutReport.store_id.in_(store_ids),
+            models.SellOutReport.variant_id.in_(variant_ids),
+        )
+        .group_by(
+            models.SellOutReport.store_id, models.SellOutReport.variant_id,
+            models.SellOutReport.period_start,
+        )
+    )).all()
+    oh_by_key = {(int(r.store_id), int(r.variant_id), r.period_start): int(r.oh) for r in last_oh_rows}
+
+    rows: List[schemas.ExcessInventoryRow] = []
+    total_inventory_units = 0
+    total_inventory_cost = 0.0
+    total_excess_units = 0
+    total_excess_cost = 0.0
+    dead_stock_cost = 0.0
+    # Para rotación global
+    cogs_window = 0.0
+    avg_inv_cost = 0.0
+
+    for r in combos:
+        vid = int(r.variant_id)
+        cost = cost_by_variant.get(vid, 0.0)
+        on_hand = oh_by_key.get((int(r.store_id), vid, r.last_period), 0)
+        avg_oh = float(r.avg_oh or 0.0)
+        units_window = int(r.units_window or 0)
+        avg_weekly = units_window / (VELOCITY_WINDOW_DAYS / 7.0)
+
+        # Acumuladores globales de rotación (todo el universo, no sólo exceso)
+        total_inventory_units += on_hand
+        total_inventory_cost += on_hand * cost
+        cogs_window += units_window * cost
+        avg_inv_cost += avg_oh * cost
+
+        if on_hand <= 0:
+            continue
+
+        overstock_w = float(r.overstock_wos_weeks or 12.0)
+        is_dead = avg_weekly <= 0
+        if is_dead:
+            wos = None
+            doh = None
+            excess_units = on_hand           # sin ventas → todo es exceso
+        else:
+            wos = on_hand / avg_weekly
+            doh = wos * 7.0
+            healthy_cap = overstock_w * avg_weekly
+            excess_units = int(max(round(on_hand - healthy_cap), 0))
+
+        if excess_units <= 0:
+            continue
+
+        excess_cost = round(excess_units * cost, 2)
+        total_excess_units += excess_units
+        total_excess_cost += excess_cost
+        if is_dead:
+            dead_stock_cost += excess_cost
+
+        if is_dead or excess_cost >= 20000:
+            severity = "urgent"
+        elif (wos or 0) > overstock_w * 1.5 or excess_cost >= 5000:
+            severity = "high"
+        else:
+            severity = "medium"
+
+        rows.append(schemas.ExcessInventoryRow(
+            store_id=r.store_id, store_name=r.store_name,
+            channel_id=r.channel_id, channel_name=r.channel_name,
+            variant_id=vid, sku=r.sku, product_name=r.product_name,
+            on_hand=on_hand, avg_weekly_units=round(avg_weekly, 2),
+            wos_weeks=round(wos, 2) if wos is not None else None,
+            doh_days=round(doh, 1) if doh is not None else None,
+            overstock_threshold_weeks=overstock_w,
+            excess_units=excess_units, unit_cost=round(cost, 2),
+            excess_cost=excess_cost, is_dead_stock=is_dead,
+            severity=severity,
+        ))
+
+    rows.sort(key=lambda x: -x.excess_cost)
+    rows = rows[:limit]
+
+    # Rotación anualizada = COGS_28d × (365/28) / inventario_promedio_a_costo
+    turnover = None
+    days_of_inv = None
+    avg_doh = None
+    if avg_inv_cost > 0:
+        annualized_cogs = cogs_window * (365.0 / VELOCITY_WINDOW_DAYS)
+        turnover = round(annualized_cogs / avg_inv_cost, 2)
+        if turnover > 0:
+            days_of_inv = round(365.0 / turnover, 1)
+            avg_doh = days_of_inv
+
+    return schemas.ExcessInventoryResponse(
+        channel_id=channel_id, generated_at=now,
+        total_inventory_units=total_inventory_units,
+        total_inventory_cost=round(total_inventory_cost, 2),
+        inventory_turnover=turnover, days_of_inventory=days_of_inv,
+        avg_doh_days=avg_doh,
+        total_excess_units=total_excess_units,
+        total_excess_cost=round(total_excess_cost, 2),
+        dead_stock_cost=round(dead_stock_cost, 2),
+        affected_combos=len(rows), rows=rows,
+    )
+
+
+# ── Analytics: antigüedad de inventario (aging / obsolescencia) ──────────
+
+_AGING_BUCKETS = [
+    ("0-30", "0–30 días", 0, 30),
+    ("31-60", "31–60 días", 31, 60),
+    ("61-90", "61–90 días", 61, 90),
+    ("90+", "Más de 90 días", 91, 10_000),
+    ("never", "Sin venta histórica", None, None),
+]
+
+
+def _aging_bucket(days: Optional[int]) -> str:
+    if days is None:
+        return "never"
+    if days <= 30:
+        return "0-30"
+    if days <= 60:
+        return "31-60"
+    if days <= 90:
+        return "61-90"
+    return "90+"
+
+
+async def inventory_aging(
+    db: AsyncSession, channel_id: Optional[int] = None, limit: int = 500,
+) -> schemas.AgingResponse:
+    """Antigüedad del inventario: para cada (tienda, SKU) con stock, cuántos
+    días lleva sin venderse. Clasifica en cubetas y marca riesgo de
+    obsolescencia (90+ días o nunca vendido con stock encima).
+
+    En sell-out no hay fecha de lote, así que la antigüedad se estima por
+    'días desde la última venta' del combo — el proxy estándar cuando sólo
+    se tienen cortes de inventario y venta."""
+    now = datetime.now(timezone.utc)
+
+    # Último corte por combo (para el on-hand actual)
+    combos_stmt = (
+        select(
+            models.RetailStore.id.label("store_id"),
+            models.RetailStore.name.label("store_name"),
+            models.RetailChannel.id.label("channel_id"),
+            models.RetailChannel.name.label("channel_name"),
+            models.SellOutReport.variant_id,
+            models.SellOutReport.product_name,
+            models.SellOutReport.sku,
+            func.max(models.SellOutReport.period_start).label("last_period"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(
+            models.SellOutReport.variant_id.isnot(None),
+            models.RetailStore.is_active.is_(True),
+        )
+        .group_by(
+            models.RetailStore.id, models.RetailStore.name,
+            models.RetailChannel.id, models.RetailChannel.name,
+            models.SellOutReport.variant_id,
+            models.SellOutReport.product_name, models.SellOutReport.sku,
+        )
+    )
+    if channel_id is not None:
+        combos_stmt = combos_stmt.where(models.RetailStore.channel_id == channel_id)
+    combos = (await db.execute(combos_stmt)).all()
+    if not combos:
+        return schemas.AgingResponse(
+            channel_id=channel_id, generated_at=now,
+            total_stock_units=0, total_stock_value=0.0,
+            obsolete_value=0.0, obsolete_pct=0.0,
+            buckets=[schemas.AgingBucket(bucket=b, label=lbl, units=0, value=0.0, pct_of_value=0.0)
+                     for b, lbl, _a, _z in _AGING_BUCKETS],
+            rows=[],
+        )
+
+    variant_ids = list({int(r.variant_id) for r in combos if r.variant_id})
+    store_ids = list({int(r.store_id) for r in combos})
+    cost_by_variant: Dict[int, float] = {}
+    if variant_ids:
+        prices = (await db.execute(
+            select(inv_models.ProductVariant.id, inv_models.ProductVariant.cost_price)
+            .where(inv_models.ProductVariant.id.in_(variant_ids))
+        )).all()
+        cost_by_variant = {int(vid): float(cp or 0.0) for vid, cp in prices}
+
+    # On-hand del último corte por combo
+    oh_rows = (await db.execute(
+        select(
+            models.SellOutReport.store_id,
+            models.SellOutReport.variant_id,
+            models.SellOutReport.period_start,
+            func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0).label("oh"),
+        )
+        .where(
+            models.SellOutReport.store_id.in_(store_ids),
+            models.SellOutReport.variant_id.in_(variant_ids),
+        )
+        .group_by(
+            models.SellOutReport.store_id, models.SellOutReport.variant_id,
+            models.SellOutReport.period_start,
+        )
+    )).all()
+    oh_by_key = {(int(r.store_id), int(r.variant_id), r.period_start): int(r.oh) for r in oh_rows}
+
+    # Última venta (period_end con units_sold>0) por combo
+    last_sale_rows = (await db.execute(
+        select(
+            models.SellOutReport.store_id,
+            models.SellOutReport.variant_id,
+            func.max(models.SellOutReport.period_end).label("last_sale"),
+        )
+        .where(
+            models.SellOutReport.store_id.in_(store_ids),
+            models.SellOutReport.variant_id.in_(variant_ids),
+            models.SellOutReport.units_sold > 0,
+        )
+        .group_by(models.SellOutReport.store_id, models.SellOutReport.variant_id)
+    )).all()
+    last_sale_by = {(int(r.store_id), int(r.variant_id)): r.last_sale for r in last_sale_rows}
+
+    rows: List[schemas.AgingRow] = []
+    bucket_units: Dict[str, int] = {b: 0 for b, *_ in _AGING_BUCKETS}
+    bucket_value: Dict[str, float] = {b: 0.0 for b, *_ in _AGING_BUCKETS}
+    total_units = 0
+    total_value = 0.0
+    obsolete_value = 0.0
+
+    for r in combos:
+        vid = int(r.variant_id)
+        on_hand = oh_by_key.get((int(r.store_id), vid, r.last_period), 0)
+        if on_hand <= 0:
+            continue
+        cost = cost_by_variant.get(vid, 0.0)
+        value = round(on_hand * cost, 2)
+        last_sale = last_sale_by.get((int(r.store_id), vid))
+        if last_sale is not None and last_sale.tzinfo is None:
+            last_sale = last_sale.replace(tzinfo=timezone.utc)
+        days = (now - last_sale).days if last_sale is not None else None
+        bucket = _aging_bucket(days)
+        risk = bucket in ("90+", "never")
+
+        total_units += on_hand
+        total_value += value
+        bucket_units[bucket] += on_hand
+        bucket_value[bucket] += value
+        if risk:
+            obsolete_value += value
+
+        rows.append(schemas.AgingRow(
+            store_id=r.store_id, store_name=r.store_name,
+            channel_id=r.channel_id, channel_name=r.channel_name,
+            variant_id=vid, sku=r.sku, product_name=r.product_name,
+            on_hand=on_hand, last_sale_date=last_sale,
+            days_since_last_sale=days, bucket=bucket,
+            unit_cost=round(cost, 2), stock_value=value,
+            obsolescence_risk=risk,
+        ))
+
+    # Ordena: riesgo primero, luego por valor
+    order = {"never": 0, "90+": 1, "61-90": 2, "31-60": 3, "0-30": 4}
+    rows.sort(key=lambda x: (order.get(x.bucket, 9), -x.stock_value))
+    rows = rows[:limit]
+
+    buckets = [
+        schemas.AgingBucket(
+            bucket=b, label=lbl,
+            units=bucket_units[b], value=round(bucket_value[b], 2),
+            pct_of_value=round(bucket_value[b] / total_value * 100.0, 1) if total_value > 0 else 0.0,
+        )
+        for b, lbl, _a, _z in _AGING_BUCKETS
+    ]
+    obsolete_pct = round(obsolete_value / total_value * 100.0, 1) if total_value > 0 else 0.0
+
+    return schemas.AgingResponse(
+        channel_id=channel_id, generated_at=now,
+        total_stock_units=total_units, total_stock_value=round(total_value, 2),
+        obsolete_value=round(obsolete_value, 2), obsolete_pct=obsolete_pct,
+        buckets=buckets, rows=rows,
+    )
+
+
+# ── Analytics: nivel de servicio / fill rate ─────────────────────────────
+
+def _service_status(in_stock_rate: float) -> str:
+    if in_stock_rate >= 98:
+        return "excellent"
+    if in_stock_rate >= 95:
+        return "good"
+    if in_stock_rate >= 90:
+        return "low"
+    return "critical"
+
+
+async def service_level(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    weeks_back: int = 12, group_by: str = "store", limit: int = 500,
+) -> schemas.ServiceLevelResponse:
+    """Nivel de servicio / fill rate:
+      - In-stock rate (OSA): % de observaciones (combo × corte) con stock.
+      - Fill rate estimado: vendido / (vendido + perdido), donde el perdido
+        se estima con la velocidad de los cortes CON stock aplicada a los
+        cortes en quiebre.
+    Sólo cuenta combos (tienda, SKU) con al menos una venta en la ventana
+    (surtido activo) — no penaliza productos que la tienda nunca manejó."""
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=weeks_back * 7)
+
+    in_stock_expr = func.sum(
+        case((models.SellOutReport.units_on_hand > 0, 1), else_=0)
+    )
+    stockout_expr = func.sum(
+        case((models.SellOutReport.units_on_hand <= 0, 1), else_=0)
+    )
+
+    combo_stmt = (
+        select(
+            models.RetailStore.id.label("store_id"),
+            models.RetailStore.name.label("store_name"),
+            models.RetailChannel.id.label("channel_id"),
+            models.RetailChannel.name.label("channel_name"),
+            models.SellOutReport.variant_id,
+            func.max(models.SellOutReport.sku).label("sku"),
+            func.max(models.SellOutReport.product_name).label("product_name"),
+            func.count().label("total_periods"),
+            in_stock_expr.label("in_stock_periods"),
+            stockout_expr.label("stockout_periods"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units_sold"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(
+            models.SellOutReport.period_start >= since,
+            models.SellOutReport.variant_id.isnot(None),
+            models.RetailStore.is_active.is_(True),
+        )
+        .group_by(
+            models.RetailStore.id, models.RetailStore.name,
+            models.RetailChannel.id, models.RetailChannel.name,
+            models.SellOutReport.variant_id,
+        )
+        .having(func.coalesce(func.sum(models.SellOutReport.units_sold), 0) > 0)
+    )
+    if channel_id is not None:
+        combo_stmt = combo_stmt.where(models.RetailStore.channel_id == channel_id)
+    combos = (await db.execute(combo_stmt)).all()
+
+    # Acumuladores por dimensión + globales
+    agg: Dict[Any, Dict[str, Any]] = {}
+    tot_periods = 0
+    tot_in_stock = 0
+    tot_stockout = 0
+    tot_sold = 0
+    tot_lost = 0.0
+
+    for r in combos:
+        total_p = int(r.total_periods or 0)
+        in_p = int(r.in_stock_periods or 0)
+        out_p = int(r.stockout_periods or 0)
+        sold = int(r.units_sold or 0)
+        # Velocidad por corte CON stock; perdido = velocidad × cortes en quiebre
+        vel_per_period = (sold / in_p) if in_p > 0 else 0.0
+        lost = vel_per_period * out_p
+
+        tot_periods += total_p
+        tot_in_stock += in_p
+        tot_stockout += out_p
+        tot_sold += sold
+        tot_lost += lost
+
+        if group_by == "sku":
+            key = int(r.variant_id)
+            label = r.sku or (r.product_name or f"SKU {r.variant_id}")
+            did, sku_v, pname_v = key, r.sku, r.product_name
+        elif group_by == "channel":
+            key = int(r.channel_id)
+            label = r.channel_name
+            did, sku_v, pname_v = key, None, None
+        else:  # store
+            key = int(r.store_id)
+            label = r.store_name
+            did, sku_v, pname_v = key, None, None
+
+        d = agg.setdefault(key, {
+            "label": label, "did": did, "sku": sku_v, "pname": pname_v,
+            "total_p": 0, "in_p": 0, "out_p": 0, "sold": 0, "lost": 0.0,
+        })
+        d["total_p"] += total_p
+        d["in_p"] += in_p
+        d["out_p"] += out_p
+        d["sold"] += sold
+        d["lost"] += lost
+
+    rows: List[schemas.ServiceLevelRow] = []
+    for d in agg.values():
+        in_rate = round(d["in_p"] / d["total_p"] * 100.0, 1) if d["total_p"] > 0 else 0.0
+        lost_i = int(round(d["lost"]))
+        fill = round(d["sold"] / (d["sold"] + d["lost"]) * 100.0, 1) if (d["sold"] + d["lost"]) > 0 else 100.0
+        rows.append(schemas.ServiceLevelRow(
+            dimension_id=d["did"], dimension_label=d["label"],
+            sku=d["sku"], product_name=d["pname"],
+            total_periods=d["total_p"], in_stock_periods=d["in_p"],
+            in_stock_rate_pct=in_rate,
+            units_sold=d["sold"], estimated_lost_units=lost_i,
+            fill_rate_pct=fill, status=_service_status(in_rate),
+        ))
+    # Peores primero (menor in-stock rate)
+    rows.sort(key=lambda x: (x.in_stock_rate_pct, -x.estimated_lost_units))
+    rows = rows[:limit]
+
+    overall_in = round(tot_in_stock / tot_periods * 100.0, 1) if tot_periods > 0 else 0.0
+    overall_out = round(tot_stockout / tot_periods * 100.0, 1) if tot_periods > 0 else 0.0
+    overall_fill = round(tot_sold / (tot_sold + tot_lost) * 100.0, 1) if (tot_sold + tot_lost) > 0 else 100.0
+
+    return schemas.ServiceLevelResponse(
+        channel_id=channel_id, generated_at=now, weeks_back=weeks_back,
+        group_by=group_by,
+        overall_in_stock_rate_pct=overall_in,
+        overall_stockout_rate_pct=overall_out,
+        overall_fill_rate_pct=overall_fill,
+        total_units_sold=tot_sold, total_estimated_lost=int(round(tot_lost)),
+        combos_evaluated=len(combos), rows=rows,
+    )
+
+
+# ── Notificaciones de alertas (correo / WhatsApp) ────────────────────────
+
+_ALERT_TYPE_LABEL_ES = {
+    "stockout": "Sin stock", "stockout_imminent": "Stock crítico",
+    "overstock": "Sobreinventario", "no_movement": "Sin movimiento",
+    "sell_through_low": "Sell-through bajo", "high_return_rate": "Devoluciones altas",
+}
+_SEV_ORDER = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _alerts_notification_html(alerts: List[schemas.RetailAlertOut], company_name: str) -> str:
+    sev_color = {"urgent": "#e5484d", "high": "#f5a623", "medium": "#2563eb", "low": "#64748b"}
+    rows = []
+    for a in alerts[:60]:
+        color = sev_color.get(a.severity, "#64748b")
+        rows.append(
+            f'<tr>'
+            f'<td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;color:{color};font-weight:700;vertical-align:top;white-space:nowrap;">'
+            f'{_ALERT_TYPE_LABEL_ES.get(a.alert_type, a.alert_type)}</td>'
+            f'<td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;">'
+            f'<b style="color:#0f172a;">{a.store_name or a.channel_name or ""}</b>'
+            f'{" · " + (a.sku or "") if a.sku else ""}<br>'
+            f'<span style="color:#475569;font-size:13px;">{a.message}</span>'
+            f'</td></tr>'
+        )
+    urgent = sum(1 for a in alerts if a.severity == "urgent")
+    high = sum(1 for a in alerts if a.severity == "high")
+    return (
+        f'<h2 style="color:#1e293b;margin-bottom:4px;">Alertas de Retail · {company_name}</h2>'
+        f'<p style="color:#64748b;margin-top:0;">{len(alerts)} alertas abiertas · '
+        f'{urgent} urgentes · {high} de prioridad alta</p>'
+        f'<table style="border-collapse:collapse;width:100%;max-width:680px;">{"".join(rows)}</table>'
+        f'<p style="color:#94a3b8;font-size:12px;margin-top:14px;">Enviado por Sthenova ERP · módulo Retail Analytics.</p>'
+    )
+
+
+def _alerts_notification_text(alerts: List[schemas.RetailAlertOut], company_name: str) -> str:
+    urgent = sum(1 for a in alerts if a.severity == "urgent")
+    lines = [f"*Alertas de Retail · {company_name}*",
+             f"{len(alerts)} abiertas ({urgent} urgentes)", ""]
+    for a in alerts[:20]:
+        tag = _ALERT_TYPE_LABEL_ES.get(a.alert_type, a.alert_type)
+        where = a.store_name or a.channel_name or ""
+        lines.append(f"• [{tag}] {where}{(' · ' + a.sku) if a.sku else ''}: {a.message}")
+    if len(alerts) > 20:
+        lines.append(f"… y {len(alerts) - 20} más.")
+    return "\n".join(lines)
+
+
+async def notify_alerts(
+    db: AsyncSession, req: schemas.NotifyAlertsRequest,
+) -> schemas.NotifyAlertsResponse:
+    """Envía las alertas abiertas (por encima de la severidad mínima) por
+    correo y/o WhatsApp. Reutiliza la infraestructura de correo del ERP
+    (Resend/SendGrid/SMTP) y un webhook saliente para WhatsApp."""
+    from app.core.email import send_email, _platform_provider, get_active_email_integration
+    from app.core.whatsapp import send_whatsapp, whatsapp_configured
+
+    threshold = _SEV_ORDER.get(req.min_severity, 1)
+    all_open = await list_alerts(db, channel_id=req.channel_id, status="open", limit=500)
+    alerts = [a for a in all_open if _SEV_ORDER.get(a.severity, 3) <= threshold]
+    alerts.sort(key=lambda a: (_SEV_ORDER.get(a.severity, 3),))
+
+    # ¿Hay correo configurado? (proveedor plataforma o SMTP por empresa)
+    provider, _k, _f = _platform_provider()
+    email_configured = bool(provider) or (await get_active_email_integration(db)) is not None
+    wa_configured = whatsapp_configured()
+
+    resp = schemas.NotifyAlertsResponse(
+        alerts_included=len(alerts),
+        email_configured=email_configured,
+        whatsapp_configured=wa_configured,
+    )
+    if not alerts:
+        return resp
+
+    try:
+        from app.modules.core_config import service as config_service
+        company = await config_service.get_company_profile(db)
+        company_name = getattr(company, "legal_name", None) or getattr(company, "name", None) or "Sthenova"
+    except Exception:
+        company_name = "Sthenova"
+
+    if req.send_email and req.email:
+        if not email_configured:
+            resp.email_error = ("No hay correo configurado. Define un proveedor "
+                                "(RESEND_API_KEY/SENDGRID_API_KEY + MAIL_FROM) o un SMTP por empresa.")
+        else:
+            html = _alerts_notification_html(alerts, company_name)
+            urgent = sum(1 for a in alerts if a.severity == "urgent")
+            subject = f"⚠ {len(alerts)} alertas de Retail ({urgent} urgentes) · {company_name}"
+            try:
+                sent = await send_email(db, to=req.email, subject=subject, body_html=html)
+                resp.email_sent = bool(sent)
+                if not sent:
+                    resp.email_error = "El proveedor de correo rechazó el envío (revisa configuración)."
+            except Exception as e:
+                resp.email_error = f"{type(e).__name__}: {e}"
+
+    if req.send_whatsapp:
+        text = _alerts_notification_text(alerts, company_name)
+        ok, err = await send_whatsapp(text, to=req.whatsapp_to)
+        resp.whatsapp_sent = ok
+        resp.whatsapp_error = err
+
+    return resp
 
 
 # ── Replenishment: crear traslado ────────────────────────────────────────

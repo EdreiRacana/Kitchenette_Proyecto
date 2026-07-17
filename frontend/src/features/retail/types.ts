@@ -208,6 +208,148 @@ export interface LostSalesResponse {
   rows: LostSalesRow[];
 }
 
+// Rentabilidad (márgenes + GMROI)
+export type ProfitGroupBy = "sku" | "category" | "store" | "channel";
+export interface ProfitabilityRow {
+  dimension_id?: number | null;
+  dimension_label: string;
+  sku?: string | null;
+  product_name?: string | null;
+  units_sold: number;
+  revenue: number;
+  cogs: number;
+  gross_margin: number;
+  margin_pct: number;
+  inventory_cost: number;
+  gmroi?: number | null;
+  missing_cost: boolean;
+}
+export interface ProfitabilityResponse {
+  channel_id?: number | null;
+  group_by: ProfitGroupBy;
+  days: number;
+  total_units: number;
+  total_revenue: number;
+  total_cogs: number;
+  total_gross_margin: number;
+  total_margin_pct: number;
+  total_inventory_cost: number;
+  total_gmroi?: number | null;
+  variants_without_cost: number;
+  rows: ProfitabilityRow[];
+}
+
+// Exceso de inventario + rotación
+export interface ExcessInventoryRow {
+  store_id: number;
+  store_name: string;
+  channel_id?: number | null;
+  channel_name?: string | null;
+  variant_id?: number | null;
+  sku?: string | null;
+  product_name?: string | null;
+  on_hand: number;
+  avg_weekly_units: number;
+  wos_weeks?: number | null;
+  doh_days?: number | null;
+  overstock_threshold_weeks: number;
+  excess_units: number;
+  unit_cost: number;
+  excess_cost: number;
+  is_dead_stock: boolean;
+  severity: "urgent" | "high" | "medium";
+}
+export interface ExcessInventoryResponse {
+  channel_id?: number | null;
+  generated_at: string;
+  total_inventory_units: number;
+  total_inventory_cost: number;
+  inventory_turnover?: number | null;
+  days_of_inventory?: number | null;
+  avg_doh_days?: number | null;
+  total_excess_units: number;
+  total_excess_cost: number;
+  dead_stock_cost: number;
+  affected_combos: number;
+  rows: ExcessInventoryRow[];
+}
+
+// Antigüedad de inventario (aging)
+export type AgingBucketKey = "0-30" | "31-60" | "61-90" | "90+" | "never";
+export interface AgingRow {
+  store_id: number;
+  store_name: string;
+  channel_id?: number | null;
+  channel_name?: string | null;
+  variant_id?: number | null;
+  sku?: string | null;
+  product_name?: string | null;
+  on_hand: number;
+  last_sale_date?: string | null;
+  days_since_last_sale?: number | null;
+  bucket: AgingBucketKey;
+  unit_cost: number;
+  stock_value: number;
+  obsolescence_risk: boolean;
+}
+export interface AgingBucket {
+  bucket: AgingBucketKey;
+  label: string;
+  units: number;
+  value: number;
+  pct_of_value: number;
+}
+export interface AgingResponse {
+  channel_id?: number | null;
+  generated_at: string;
+  total_stock_units: number;
+  total_stock_value: number;
+  obsolete_value: number;
+  obsolete_pct: number;
+  buckets: AgingBucket[];
+  rows: AgingRow[];
+}
+
+// Nivel de servicio / fill rate
+export type ServiceGroupBy = "store" | "sku" | "channel";
+export interface ServiceLevelRow {
+  dimension_id?: number | null;
+  dimension_label: string;
+  sku?: string | null;
+  product_name?: string | null;
+  total_periods: number;
+  in_stock_periods: number;
+  in_stock_rate_pct: number;
+  units_sold: number;
+  estimated_lost_units: number;
+  fill_rate_pct: number;
+  status: "excellent" | "good" | "low" | "critical";
+}
+export interface ServiceLevelResponse {
+  channel_id?: number | null;
+  generated_at: string;
+  weeks_back: number;
+  group_by: ServiceGroupBy;
+  overall_in_stock_rate_pct: number;
+  overall_stockout_rate_pct: number;
+  overall_fill_rate_pct: number;
+  total_units_sold: number;
+  total_estimated_lost: number;
+  combos_evaluated: number;
+  rows: ServiceLevelRow[];
+}
+
+// Notificación de alertas
+export interface NotifyAlertsResponse {
+  alerts_included: number;
+  email_sent: boolean;
+  email_error?: string | null;
+  whatsapp_sent: boolean;
+  whatsapp_error?: string | null;
+  email_configured: boolean;
+  whatsapp_configured: boolean;
+}
+
 // Transfer
 export interface SourceWarehouseOption { id: number; name: string; location?: string | null; type: string; }
 export interface TransferItem { store_id: number; variant_id: number; units: number; notes?: string; }

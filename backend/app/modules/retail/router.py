@@ -399,6 +399,54 @@ async def report_lost_sales_xlsx(
     return _xlsx_response(content, "retail_venta_perdida.xlsx")
 
 
+@router.get("/reports/profitability.xlsx")
+async def report_profitability_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=1, le=365),
+    group_by: str = Query("sku", pattern="^(sku|category|store|channel)$"),
+):
+    prof = await service.profitability(
+        db, channel_id=channel_id, days=days, group_by=group_by, limit=5000,
+    )
+    content = retail_reports.build_profitability_report(prof)
+    return _xlsx_response(content, "retail_rentabilidad.xlsx")
+
+
+@router.get("/reports/excess-inventory.xlsx")
+async def report_excess_inventory_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+):
+    exc = await service.excess_inventory(db, channel_id=channel_id, limit=5000)
+    content = retail_reports.build_excess_inventory_report(exc)
+    return _xlsx_response(content, "retail_exceso_inventario.xlsx")
+
+
+@router.get("/reports/aging.xlsx")
+async def report_aging_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+):
+    aging = await service.inventory_aging(db, channel_id=channel_id, limit=5000)
+    content = retail_reports.build_aging_report(aging)
+    return _xlsx_response(content, "retail_antiguedad_inventario.xlsx")
+
+
+@router.get("/reports/service-level.xlsx")
+async def report_service_level_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    weeks_back: int = Query(12, ge=2, le=52),
+    group_by: str = Query("store", pattern="^(store|sku|channel)$"),
+):
+    sl = await service.service_level(
+        db, channel_id=channel_id, weeks_back=weeks_back, group_by=group_by, limit=5000,
+    )
+    content = retail_reports.build_service_level_report(sl)
+    return _xlsx_response(content, "retail_nivel_servicio.xlsx")
+
+
 @router.get("/reports/abc.xlsx")
 async def report_abc_xlsx(
     db: DB, _: CurrentUser,
@@ -529,6 +577,50 @@ async def analytics_lost_sales(
     limit: int = Query(500, ge=1, le=2000),
 ):
     return await service.lost_sales(db, channel_id=channel_id, limit=limit)
+
+
+@router.get("/analytics/profitability", response_model=schemas.ProfitabilityResponse)
+async def analytics_profitability(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=1, le=365),
+    group_by: str = Query("sku", pattern="^(sku|category|store|channel)$"),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    return await service.profitability(
+        db, channel_id=channel_id, days=days, group_by=group_by, limit=limit,
+    )
+
+
+@router.get("/analytics/excess-inventory", response_model=schemas.ExcessInventoryResponse)
+async def analytics_excess_inventory(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    return await service.excess_inventory(db, channel_id=channel_id, limit=limit)
+
+
+@router.get("/analytics/aging", response_model=schemas.AgingResponse)
+async def analytics_aging(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    return await service.inventory_aging(db, channel_id=channel_id, limit=limit)
+
+
+@router.get("/analytics/service-level", response_model=schemas.ServiceLevelResponse)
+async def analytics_service_level(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    weeks_back: int = Query(12, ge=2, le=52),
+    group_by: str = Query("store", pattern="^(store|sku|channel)$"),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    return await service.service_level(
+        db, channel_id=channel_id, weeks_back=weeks_back, group_by=group_by, limit=limit,
+    )
 
 
 # ── Traslados desde reabasto ────────────────────────────────────────────
@@ -689,15 +781,36 @@ async def consignment_reconciliation(db: DB, _: CurrentUser,
 
 # ── Alerts ──────────────────────────────────────────────────────────────
 
+_ALERT_TYPE_PATTERN = "^(stockout|stockout_imminent|overstock|no_movement|sell_through_low|high_return_rate)$"
+
+
 @router.get("/alerts", response_model=List[schemas.RetailAlertOut])
 async def list_alerts(db: DB, _: CurrentUser,
                         channel_id: Optional[int] = Query(None),
                         status: Optional[str] = Query(None, pattern="^(open|acknowledged|resolved|dismissed)$"),
                         severity: Optional[str] = Query(None, pattern="^(urgent|high|medium|low)$"),
-                        limit: int = Query(500, ge=1, le=2000)):
+                        alert_type: Optional[str] = Query(None, pattern=_ALERT_TYPE_PATTERN),
+                        q: Optional[str] = Query(None, max_length=100),
+                        limit: int = Query(500, ge=1, le=2000),
+                        offset: int = Query(0, ge=0)):
     return await service.list_alerts(
-        db, channel_id=channel_id, status=status, severity=severity, limit=limit,
+        db, channel_id=channel_id, status=status, severity=severity,
+        alert_type=alert_type, q=q, limit=limit, offset=offset,
     )
+
+
+@router.get("/alerts/count")
+async def alerts_count(db: DB, _: CurrentUser,
+                        channel_id: Optional[int] = Query(None),
+                        status: Optional[str] = Query(None, pattern="^(open|acknowledged|resolved|dismissed)$"),
+                        severity: Optional[str] = Query(None, pattern="^(urgent|high|medium|low)$"),
+                        alert_type: Optional[str] = Query(None, pattern=_ALERT_TYPE_PATTERN),
+                        q: Optional[str] = Query(None, max_length=100)):
+    total = await service.count_alerts(
+        db, channel_id=channel_id, status=status, severity=severity,
+        alert_type=alert_type, q=q,
+    )
+    return {"total": total}
 
 
 @router.get("/alerts/summary", response_model=schemas.AlertsSummary)
@@ -710,6 +823,13 @@ async def alerts_summary(db: DB, _: CurrentUser,
 async def evaluate_alerts_route(db: DB, _: CurrentUser,
                                  channel_id: Optional[int] = Query(None)):
     return await service.evaluate_alerts(db, channel_id=channel_id)
+
+
+@router.post("/alerts/notify", response_model=schemas.NotifyAlertsResponse)
+async def notify_alerts_route(payload: schemas.NotifyAlertsRequest,
+                              db: DB, _: CurrentUser):
+    """Envía las alertas abiertas por correo y/o WhatsApp."""
+    return await service.notify_alerts(db, payload)
 
 
 @router.post("/alerts/{alert_id}/acknowledge", response_model=schemas.RetailAlertOut)

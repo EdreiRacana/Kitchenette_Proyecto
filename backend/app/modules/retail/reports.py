@@ -594,6 +594,241 @@ def build_lost_sales_report(ls: Any) -> bytes:
     return _to_bytes(wb)
 
 
+# ── Reporte 11: Rentabilidad (márgenes + GMROI) ─────────────────────────
+
+def _margin_fill(margin_pct: float) -> Optional[PatternFill]:
+    if margin_pct >= 35:
+        return PatternFill("solid", fgColor="D1FAE5")   # verde
+    if margin_pct >= 20:
+        return PatternFill("solid", fgColor="DBEAFE")   # azul
+    if margin_pct >= 8:
+        return PatternFill("solid", fgColor="FEF3C7")   # ámbar
+    return PatternFill("solid", fgColor="FEE2E2")       # rojo
+
+
+GROUP_BY_LABEL = {
+    "sku": "SKU", "category": "Categoría", "store": "Tienda", "channel": "Cadena",
+}
+
+
+def build_profitability_report(prof: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Rentabilidad"
+    dim = GROUP_BY_LABEL.get(prof.group_by, "Dimensión")
+    is_sku = prof.group_by == "sku"
+    headers = ([dim] + (["Producto"] if is_sku else []) +
+               ["Unidades", "Ingreso", "COGS", "Margen bruto", "Margen %",
+                "Inv. a costo", "GMROI"])
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    margin_col = len(headers) - 2  # columna "Margen %"
+    for r in prof.rows:
+        row = [r.dimension_label]
+        if is_sku:
+            row.append(r.product_name or "")
+        row += [
+            int(r.units_sold or 0), float(r.revenue or 0.0),
+            float(r.cogs or 0.0), float(r.gross_margin or 0.0),
+            float(r.margin_pct or 0.0), float(r.inventory_cost or 0.0),
+            float(r.gmroi) if r.gmroi is not None else "",
+        ]
+        ws.append(row)
+        fill = _margin_fill(float(r.margin_pct or 0.0))
+        if fill:
+            ws.cell(row=ws.max_row, column=margin_col).fill = fill
+
+    # Fila total
+    tr = ws.max_row + 1
+    ws.cell(row=tr, column=1, value="TOTAL").font = TOTAL_FONT
+    span_end = 2 if is_sku else 1
+    if is_sku:
+        ws.merge_cells(start_row=tr, start_column=1, end_row=tr, end_column=2)
+    base = 2 if is_sku else 1
+    totals = [
+        int(prof.total_units or 0), float(prof.total_revenue or 0.0),
+        float(prof.total_cogs or 0.0), float(prof.total_gross_margin or 0.0),
+        float(prof.total_margin_pct or 0.0), float(prof.total_inventory_cost or 0.0),
+        float(prof.total_gmroi) if prof.total_gmroi is not None else "",
+    ]
+    for i, val in enumerate(totals):
+        c = ws.cell(row=tr, column=base + 1 + i, value=val)
+        c.font = TOTAL_FONT
+        c.fill = GREY_ROW
+
+    _autosize(ws)
+    warn = ""
+    if prof.variants_without_cost > 0:
+        warn = f" · ⚠ {prof.variants_without_cost} SKUs sin costo (margen subestimado)"
+    _company_header(
+        ws, f"Rentabilidad por {dim}",
+        f"Margen bruto $ {prof.total_gross_margin:,.2f} ({prof.total_margin_pct:.1f}%) · "
+        f"GMROI {prof.total_gmroi if prof.total_gmroi is not None else '—'} · "
+        f"Últimos {prof.days} días{warn}",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 12: Exceso de inventario + rotación ─────────────────────────
+
+def build_excess_inventory_report(exc: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Exceso inventario"
+    headers = ["Severidad", "Cadena", "Tienda", "SKU", "Producto",
+                "On-hand", "Vel. sem", "WOS", "DOH (días)",
+                "Exceso u.", "Costo u.", "Exceso $", "Dead stock"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for r in exc.rows:
+        ws.append([
+            SEV_LABEL.get(r.severity, r.severity),
+            r.channel_name or "", r.store_name or "",
+            r.sku or "", r.product_name or "",
+            int(r.on_hand or 0), float(r.avg_weekly_units or 0.0),
+            float(r.wos_weeks) if r.wos_weeks is not None else "∞",
+            float(r.doh_days) if r.doh_days is not None else "∞",
+            int(r.excess_units or 0), float(r.unit_cost or 0.0),
+            float(r.excess_cost or 0.0),
+            "Sí" if r.is_dead_stock else "",
+        ])
+        fill = SEV_FILL.get(r.severity)
+        if fill:
+            ws.cell(row=ws.max_row, column=1).fill = fill
+
+    tr = ws.max_row + 1
+    ws.cell(row=tr, column=1, value="TOTAL").font = TOTAL_FONT
+    ws.merge_cells(start_row=tr, start_column=1, end_row=tr, end_column=9)
+    c10 = ws.cell(row=tr, column=10, value=int(exc.total_excess_units or 0))
+    c10.font = TOTAL_FONT; c10.fill = GREY_ROW
+    c12 = ws.cell(row=tr, column=12, value=round(float(exc.total_excess_cost or 0.0), 2))
+    c12.font = TOTAL_FONT; c12.fill = GREY_ROW
+
+    _autosize(ws)
+    turn = f"{exc.inventory_turnover:.2f}" if exc.inventory_turnover is not None else "—"
+    doh = f"{exc.days_of_inventory:.0f}" if exc.days_of_inventory is not None else "—"
+    _company_header(
+        ws, "Exceso de inventario y rotación",
+        f"$ {exc.total_excess_cost:,.2f} detenido en exceso "
+        f"(dead stock $ {exc.dead_stock_cost:,.2f}) · "
+        f"Inventario a costo $ {exc.total_inventory_cost:,.2f} · "
+        f"Rotación {turn}x/año · Días de inventario {doh}",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 13: Antigüedad de inventario (aging) ────────────────────────
+
+AGING_FILL = {
+    "0-30":  PatternFill("solid", fgColor="D1FAE5"),
+    "31-60": PatternFill("solid", fgColor="DBEAFE"),
+    "61-90": PatternFill("solid", fgColor="FEF3C7"),
+    "90+":   PatternFill("solid", fgColor="FEE2E2"),
+    "never": PatternFill("solid", fgColor="FECACA"),
+}
+
+
+def build_aging_report(aging: Any) -> bytes:
+    wb = Workbook()
+    # Hoja 1: resumen por cubeta
+    ws = wb.active
+    ws.title = "Resumen"
+    ws.append(["Antigüedad", "Unidades", "Valor a costo", "% del valor"])
+    _style_header(ws, 4)
+    for b in aging.buckets:
+        ws.append([b.label, int(b.units or 0), float(b.value or 0.0), float(b.pct_of_value or 0.0)])
+        fill = AGING_FILL.get(b.bucket)
+        if fill:
+            ws.cell(row=ws.max_row, column=1).fill = fill
+    _autosize(ws)
+    _company_header(
+        ws, "Antigüedad de inventario",
+        f"Inventario a costo $ {aging.total_stock_value:,.2f} · "
+        f"En riesgo de obsolescencia $ {aging.obsolete_value:,.2f} ({aging.obsolete_pct:.1f}%)",
+        4,
+    )
+
+    # Hoja 2: detalle por SKU
+    ws2 = wb.create_sheet("Detalle")
+    headers = ["Antigüedad", "Cadena", "Tienda", "SKU", "Producto",
+                "On-hand", "Última venta", "Días sin vender", "Costo u.", "Valor"]
+    ws2.append(headers)
+    _style_header(ws2, len(headers))
+    bucket_label = {b.bucket: b.label for b in aging.buckets}
+    for r in aging.rows:
+        ws2.append([
+            bucket_label.get(r.bucket, r.bucket),
+            r.channel_name or "", r.store_name or "",
+            r.sku or "", r.product_name or "",
+            int(r.on_hand or 0),
+            r.last_sale_date.strftime("%Y-%m-%d") if r.last_sale_date else "Nunca",
+            r.days_since_last_sale if r.days_since_last_sale is not None else "—",
+            float(r.unit_cost or 0.0), float(r.stock_value or 0.0),
+        ])
+        fill = AGING_FILL.get(r.bucket)
+        if fill:
+            ws2.cell(row=ws2.max_row, column=1).fill = fill
+    _autosize(ws2)
+    return _to_bytes(wb)
+
+
+# ── Reporte 14: Nivel de servicio / fill rate ───────────────────────────
+
+SL_FILL = {
+    "excellent": PatternFill("solid", fgColor="D1FAE5"),
+    "good":      PatternFill("solid", fgColor="DBEAFE"),
+    "low":       PatternFill("solid", fgColor="FEF3C7"),
+    "critical":  PatternFill("solid", fgColor="FEE2E2"),
+}
+SL_LABEL = {"excellent": "Excelente", "good": "Bueno", "low": "Bajo", "critical": "Crítico"}
+SL_DIM = {"store": "Tienda", "sku": "SKU", "channel": "Cadena"}
+
+
+def build_service_level_report(sl: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Nivel de servicio"
+    dim = SL_DIM.get(sl.group_by, "Dimensión")
+    is_sku = sl.group_by == "sku"
+    headers = ([dim] + (["Producto"] if is_sku else []) +
+               ["Observaciones", "Con stock", "In-stock %",
+                "Vendidas", "Perdidas est.", "Fill rate %", "Nivel"])
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    status_col = len(headers)
+    for r in sl.rows:
+        row = [r.dimension_label]
+        if is_sku:
+            row.append(r.product_name or "")
+        row += [
+            int(r.total_periods or 0), int(r.in_stock_periods or 0),
+            float(r.in_stock_rate_pct or 0.0),
+            int(r.units_sold or 0), int(r.estimated_lost_units or 0),
+            float(r.fill_rate_pct or 0.0),
+            SL_LABEL.get(r.status, r.status),
+        ]
+        ws.append(row)
+        fill = SL_FILL.get(r.status)
+        if fill:
+            ws.cell(row=ws.max_row, column=status_col).fill = fill
+
+    _autosize(ws)
+    _company_header(
+        ws, f"Nivel de servicio por {dim}",
+        f"In-stock (OSA) {sl.overall_in_stock_rate_pct:.1f}% · "
+        f"Quiebre {sl.overall_stockout_rate_pct:.1f}% · "
+        f"Fill rate {sl.overall_fill_rate_pct:.1f}% · "
+        f"{sl.total_estimated_lost:,} u perdidas est. · Últimas {sl.weeks_back} sem",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
 # ── Reporte ejecutivo PDF semanal ────────────────────────────────────────
 
 def build_executive_pdf(

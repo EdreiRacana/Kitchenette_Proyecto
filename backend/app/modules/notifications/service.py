@@ -202,6 +202,29 @@ async def build_digest(db: AsyncSession) -> schemas.NotificationDigest:
     except Exception as exc:
         log.warning("HR/tax alerts failed", extra={"error": str(exc)})
 
+    # ── Retail: alertas de sell-out (stockout, sobreinventario, etc.) ─
+    try:
+        from app.modules.retail import service as retail_service
+        _retail_labels = {
+            "stockout": "Sin stock", "stockout_imminent": "Stock crítico",
+            "overstock": "Sobreinventario", "no_movement": "Sin movimiento",
+            "sell_through_low": "Sell-through bajo", "high_return_rate": "Devoluciones altas",
+        }
+        retail_alerts = await retail_service.list_alerts(db, status="open", limit=200)
+        for a in retail_alerts:
+            if a.severity not in ("urgent", "high"):
+                continue
+            items.append(schemas.Notification(
+                kind="retail",
+                severity="critical" if a.severity == "urgent" else "warning",
+                title=f"{_retail_labels.get(a.alert_type, a.alert_type)} · {a.store_name or a.channel_name or ''}".strip(" ·"),
+                detail=a.message,
+                page="retail", query=a.sku or a.product_name or None,
+                id=f"retail_alert_{a.id}",
+            ))
+    except Exception as exc:
+        log.warning("Retail alerts failed", extra={"error": str(exc)})
+
     # ── Forecast: metas del mes ──────────────────────────────────────
     try:
         from app.modules.forecast import service as fc_service
@@ -260,7 +283,7 @@ def _digest_html(digest: schemas.NotificationDigest, company_name: str) -> str:
     kind_labels = {
         "inventory": "Inventario", "cxc": "Cartera", "cxp": "Cuentas por pagar",
         "pos": "Punto de venta", "hr": "Recursos humanos", "tax": "Impuestos",
-        "forecast": "Metas de venta", "finance": "Finanzas",
+        "forecast": "Metas de venta", "finance": "Finanzas", "retail": "Retail",
     }
     rows = []
     for n in digest.items[:40]:

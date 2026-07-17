@@ -11,7 +11,7 @@ import {
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
   Bell, EyeOff, CheckCircle2, Zap, Warehouse, Grid3x3, BarChart3, ArrowRight,
-  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown,
+  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown, DollarSign, Boxes, Clock, Gauge,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -26,6 +26,8 @@ import type {
   ABCResponse, SourceWarehouseOption, TransferResponse,
   RetailImportProfile, DetectColumnsResponse, PreviewResponse,
   TrendResponse, DistributionResponse, LostSalesResponse,
+  ProfitabilityResponse, ProfitGroupBy, ExcessInventoryResponse, AgingResponse,
+  ServiceLevelResponse, ServiceGroupBy,
 } from "./types";
 
 type Tokens = any;
@@ -1467,33 +1469,162 @@ const ALERT_TYPE_LABEL: Record<string, string> = {
   high_return_rate: "Devoluciones altas",
 };
 
+function NotifyAlertsModal({ t, channelId, onClose }: {
+  t: Tokens; channelId: number | null; onClose: () => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [useEmail, setUseEmail] = useState(true);
+  const [useWhatsapp, setUseWhatsapp] = useState(false);
+  const [minSev, setMinSev] = useState<"urgent" | "high" | "medium">("high");
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<import("./types").NotifyAlertsResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const send = async () => {
+    setSending(true); setErr(null); setResult(null);
+    try {
+      const r = await retailApi.notifyAlerts({
+        channel_id: channelId || undefined,
+        email: useEmail ? email || undefined : undefined,
+        whatsapp_to: useWhatsapp ? whatsapp || undefined : undefined,
+        send_email: useEmail, send_whatsapp: useWhatsapp,
+        min_severity: minSev,
+      });
+      setResult(r);
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al enviar");
+    } finally { setSending(false); }
+  };
+
+  const modal = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 480, maxWidth: "100%", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>Notificar alertas</h3>
+        <p style={{ color: t.textLo, fontSize: 12, marginTop: 4 }}>
+          Envía las alertas abiertas por correo y/o WhatsApp al responsable.
+        </p>
+
+        <div style={{ marginTop: 14 }}>
+          <label style={labelStyle(t)}>Severidad mínima a incluir</label>
+          <select value={minSev} onChange={e => setMinSev(e.target.value as any)} style={inputStyle(t)}>
+            <option value="urgent">Solo urgentes</option>
+            <option value="high">Urgentes + alta</option>
+            <option value="medium">Urgentes + alta + media</option>
+          </select>
+        </div>
+
+        <div style={{ marginTop: 14, padding: 12, background: t.panel2, borderRadius: 8, border: `1px solid ${t.border}` }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+            <input type="checkbox" checked={useEmail} onChange={e => setUseEmail(e.target.checked)} />
+            <span style={{ fontSize: 13, color: t.textMid, fontWeight: 600 }}>Correo electrónico</span>
+          </label>
+          {useEmail && (
+            <input value={email} onChange={e => setEmail(e.target.value)} type="email"
+              placeholder="gerente@empresa.com"
+              style={{ ...inputStyle(t), marginTop: 8 }} />
+          )}
+        </div>
+
+        <div style={{ marginTop: 10, padding: 12, background: t.panel2, borderRadius: 8, border: `1px solid ${t.border}` }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+            <input type="checkbox" checked={useWhatsapp} onChange={e => setUseWhatsapp(e.target.checked)} />
+            <span style={{ fontSize: 13, color: t.textMid, fontWeight: 600 }}>WhatsApp</span>
+          </label>
+          {useWhatsapp && (
+            <>
+              <input value={whatsapp} onChange={e => setWhatsapp(e.target.value)}
+                placeholder="+52 1 55 1234 5678"
+                style={{ ...inputStyle(t), marginTop: 8 }} />
+              <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 6 }}>
+                Requiere configurar el webhook de WhatsApp (Twilio, Meta, n8n…) en el servidor.
+              </div>
+            </>
+          )}
+        </div>
+
+        {result && (
+          <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: t.panel2, border: `1px solid ${t.border}`, fontSize: 12 }}>
+            <div style={{ color: t.textMid, marginBottom: 6 }}>{result.alerts_included} alertas incluidas</div>
+            {useEmail && (
+              <div style={{ color: result.email_sent ? t.good : t.bad, display: "flex", gap: 6, alignItems: "center" }}>
+                {result.email_sent ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
+                Correo: {result.email_sent ? "enviado ✓" : (result.email_error || "no enviado")}
+              </div>
+            )}
+            {useWhatsapp && (
+              <div style={{ color: result.whatsapp_sent ? t.good : t.bad, display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+                {result.whatsapp_sent ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
+                WhatsApp: {result.whatsapp_sent ? "enviado ✓" : (result.whatsapp_error || "no enviado")}
+              </div>
+            )}
+          </div>
+        )}
+        {err && <div style={errStyle(t)}>{err}</div>}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button onClick={onClose} style={btnGhost(t)}>Cerrar</button>
+          <button disabled={sending || (!useEmail && !useWhatsapp)} onClick={send} style={btnPrimary(t)}>
+            <Bell size={14} /> {sending ? "Enviando…" : "Enviar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+  return createPortal(modal, document.body);
+}
+
 function AlertsView({ t, channelId, onChanged }: {
   t: Tokens; channelId: number | null; onChanged: () => void;
 }) {
   const [alerts, setAlerts] = useState<RetailAlert[]>([]);
   const [summary, setSummary] = useState<AlertsSummary | null>(null);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<AlertStatus | "all">("open");
   const [sevFilter, setSevFilter] = useState<AlertSeverity | "all">("all");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [search, setSearch] = useState("");
+  const [debSearch, setDebSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const PAGE = 50;
   const [evaluating, setEvaluating] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [actioning, setActioning] = useState<{ id: number; kind: "ack" | "resolve" | "dismiss" } | null>(null);
+  const [notifyOpen, setNotifyOpen] = useState(false);
+
+  useEffect(() => {
+    const h = setTimeout(() => setDebSearch(search), 250);
+    return () => clearTimeout(h);
+  }, [search]);
+  // Reset de página al cambiar cualquier filtro
+  useEffect(() => { setOffset(0); }, [channelId, statusFilter, sevFilter, typeFilter, debSearch]);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [a, s] = await Promise.all([
-        retailApi.listAlerts({
-          channel_id: channelId || undefined,
-          status: statusFilter === "all" ? undefined : statusFilter,
-          severity: sevFilter === "all" ? undefined : sevFilter,
-        }),
+      const commonFilters = {
+        channel_id: channelId || undefined,
+        status: statusFilter === "all" ? undefined : statusFilter,
+        severity: sevFilter === "all" ? undefined : sevFilter,
+        alert_type: typeFilter === "all" ? undefined : typeFilter,
+        q: debSearch || undefined,
+      };
+      const [a, s, c] = await Promise.all([
+        retailApi.listAlerts({ ...commonFilters, limit: PAGE, offset }),
         retailApi.alertsSummary(channelId || undefined),
+        retailApi.alertsCount(commonFilters),
       ]);
-      setAlerts(a); setSummary(s);
+      setAlerts(a); setSummary(s); setTotal(c);
     } finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, [channelId, statusFilter, sevFilter]);
+  useEffect(() => { load(); }, [channelId, statusFilter, sevFilter, typeFilter, debSearch, offset]);
 
   const flashOk = (msg: string) => {
     setFlash(msg); window.setTimeout(() => setFlash(null), 2400);
@@ -1554,13 +1685,20 @@ function AlertsView({ t, channelId, onChanged }: {
               `retail_alertas.xlsx`,
             )}
           />
+          <button onClick={() => setNotifyOpen(true)} style={btnGhost(t)} title="Enviar alertas por correo o WhatsApp">
+            <Bell size={14} /> Notificar
+          </button>
           <button disabled={evaluating} onClick={doEvaluate} style={btnPrimary(t)} title="Recorrer todas las cadenas y regenerar alertas">
             <Zap size={14} /> {evaluating ? "Evaluando…" : "Evaluar ahora"}
           </button>
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+      {notifyOpen && (
+        <NotifyAlertsModal t={t} channelId={channelId} onClose={() => setNotifyOpen(false)} />
+      )}
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
         <FilterPill t={t} label="Todas" active={statusFilter === "all"} onClick={() => setStatusFilter("all")} />
         <FilterPill t={t} label="Abiertas" active={statusFilter === "open"} onClick={() => setStatusFilter("open")} />
         <FilterPill t={t} label="Reconocidas" active={statusFilter === "acknowledged"} onClick={() => setStatusFilter("acknowledged")} />
@@ -1571,6 +1709,47 @@ function AlertsView({ t, channelId, onChanged }: {
         <FilterPill t={t} label="Urgentes" active={sevFilter === "urgent"} onClick={() => setSevFilter("urgent")} color={t.bad} />
         <FilterPill t={t} label="Alta" active={sevFilter === "high"} onClick={() => setSevFilter("high")} color={t.warn} />
         <FilterPill t={t} label="Media" active={sevFilter === "medium"} onClick={() => setSevFilter("medium")} color={t.nova} />
+      </div>
+
+      {/* Búsqueda + tipo + paginación — indispensable con miles de SKUs */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+          <Search size={12} color={t.textLo} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar por tienda, SKU o producto…"
+            style={{ ...inputStyle(t), paddingLeft: 30, marginTop: 0, fontSize: 12, height: 32 }} />
+        </div>
+        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
+          style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 32, marginTop: 0 }}
+          title="Tipo de alerta">
+          <option value="all">Todos los tipos</option>
+          <option value="stockout">Sin stock</option>
+          <option value="stockout_imminent">Stock crítico</option>
+          <option value="overstock">Sobreinventario</option>
+          <option value="no_movement">Sin movimiento</option>
+          <option value="sell_through_low">Sell-through bajo</option>
+          <option value="high_return_rate">Devoluciones altas</option>
+        </select>
+        <div style={{ fontSize: 12, color: t.textLo, whiteSpace: "nowrap" }}>
+          {total > 0
+            ? `${(offset + 1).toLocaleString("es-MX")}-${Math.min(offset + PAGE, total).toLocaleString("es-MX")} de ${total.toLocaleString("es-MX")}`
+            : "0 resultados"}
+        </div>
+        {total > PAGE && (
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}
+              style={{ padding: "5px 10px", background: offset === 0 ? "transparent" : t.panel3, border: `1px solid ${t.border}`, borderRadius: 6, color: offset === 0 ? t.textLo : t.textMid, cursor: offset === 0 ? "not-allowed" : "pointer", fontSize: 11 }}>
+              ← Anterior
+            </button>
+            <span style={{ fontSize: 11, color: t.textMid }}>
+              Pág {Math.floor(offset / PAGE) + 1} / {Math.max(1, Math.ceil(total / PAGE))}
+            </span>
+            <button disabled={offset + PAGE >= total} onClick={() => setOffset(offset + PAGE)}
+              style={{ padding: "5px 10px", background: offset + PAGE >= total ? "transparent" : t.panel3, border: `1px solid ${t.border}`, borderRadius: 6, color: offset + PAGE >= total ? t.textLo : t.textMid, cursor: offset + PAGE >= total ? "not-allowed" : "pointer", fontSize: 11 }}>
+              Siguiente →
+            </button>
+          </div>
+        )}
       </div>
 
       {flash && (
@@ -2401,13 +2580,17 @@ function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null
 
 
 // ── Analíticas: Heatmap + ABC ────────────────────────────────────────────
-type AnalyticsSub = "heatmap" | "trend" | "distribution" | "lost_sales" | "abc";
+type AnalyticsSub = "heatmap" | "trend" | "profitability" | "excess" | "aging" | "service" | "distribution" | "lost_sales" | "abc";
 
 function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }) {
   const [sub, setSub] = useState<AnalyticsSub>("heatmap");
   const tabs: { key: AnalyticsSub; label: string; icon: any }[] = [
     { key: "heatmap", label: "Heatmap tiendas × SKUs", icon: Grid3x3 },
     { key: "trend", label: "Tendencia", icon: LineChart },
+    { key: "profitability", label: "Rentabilidad", icon: DollarSign },
+    { key: "excess", label: "Exceso de inventario", icon: Boxes },
+    { key: "aging", label: "Antigüedad", icon: Clock },
+    { key: "service", label: "Nivel de servicio", icon: Gauge },
     { key: "distribution", label: "Distribución (voids)", icon: Network },
     { key: "lost_sales", label: "Venta perdida", icon: TrendingDown },
     { key: "abc", label: "Clasificación ABC", icon: TrendingUp },
@@ -2431,6 +2614,10 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
       </div>
       {sub === "heatmap" && <HeatmapView t={t} channelId={channelId} />}
       {sub === "trend" && <TrendView t={t} channelId={channelId} />}
+      {sub === "profitability" && <ProfitabilityView t={t} channelId={channelId} />}
+      {sub === "excess" && <ExcessInventoryView t={t} channelId={channelId} />}
+      {sub === "aging" && <AgingView t={t} channelId={channelId} />}
+      {sub === "service" && <ServiceLevelView t={t} channelId={channelId} />}
       {sub === "distribution" && <DistributionView t={t} channelId={channelId} />}
       {sub === "lost_sales" && <LostSalesView t={t} channelId={channelId} />}
       {sub === "abc" && <ABCView t={t} channelId={channelId} />}
@@ -2824,6 +3011,488 @@ function LostSalesView({ t, channelId }: { t: Tokens; channelId: number | null }
 }
 
 
+function ProfitabilityView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<ProfitabilityResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [groupBy, setGroupBy] = useState<ProfitGroupBy>("sku");
+  const [days, setDays] = useState(90);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.profitability({ channel_id: channelId || undefined, days, group_by: groupBy });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, days, groupBy]);
+
+  const dimHeader = groupBy === "sku" ? "SKU" : groupBy === "category" ? "Categoría"
+    : groupBy === "store" ? "Tienda" : "Cadena";
+  const marginColor = (p: number) => p >= 35 ? t.good : p >= 20 ? t.nova : p >= 8 ? t.warn : t.bad;
+  const gmroiColor = (g: number | null | undefined) =>
+    g == null ? t.textLo : g >= 3 ? t.good : g >= 1 ? t.nova : t.bad;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <FilterField t={t} label="Agrupar por">
+            <select value={groupBy} onChange={e => setGroupBy(e.target.value as ProfitGroupBy)}
+              style={{ ...inputStyle(t), minWidth: 130, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="sku">SKU / producto</option>
+              <option value="category">Categoría</option>
+              <option value="store">Tienda</option>
+              <option value="channel">Cadena</option>
+            </select>
+          </FilterField>
+          <FilterField t={t} label="Ventana">
+            <select value={days} onChange={e => setDays(Number(e.target.value))}
+              style={{ ...inputStyle(t), minWidth: 110, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value={30}>30 días</option>
+              <option value={90}>90 días</option>
+              <option value={180}>180 días</option>
+              <option value={365}>1 año</option>
+            </select>
+          </FilterField>
+        </div>
+        <ExcelBtn t={t} label="Excel"
+          onClick={() => downloadBlob(
+            () => retailApi.reports.profitability({ channel_id: channelId || undefined, days, group_by: groupBy }),
+            `retail_rentabilidad_${groupBy}.xlsx`,
+          )}
+        />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Calculando márgenes…</div>}
+      {!loading && data && data.rows.length === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <DollarSign size={28} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin datos de rentabilidad</div>
+          <div style={{ fontSize: 11 }}>Carga sell-out con SKUs vinculados al catálogo (necesitan costo).</div>
+        </div>
+      )}
+      {!loading && data && data.rows.length > 0 && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10, marginBottom: 12 }}>
+            <ProfTile t={t} label="Margen bruto" value={mxn(data.total_gross_margin)} sub={`${data.total_margin_pct.toFixed(1)}% del ingreso`} color={marginColor(data.total_margin_pct)} />
+            <ProfTile t={t} label="GMROI" value={data.total_gmroi != null ? data.total_gmroi.toFixed(2) : "—"} sub="$ margen / $ inventario" color={gmroiColor(data.total_gmroi)} />
+            <ProfTile t={t} label="Ingreso" value={mxn(data.total_revenue)} sub={`${num(data.total_units)} unidades`} color={t.textHi} />
+            <ProfTile t={t} label="Costo vendido (COGS)" value={mxn(data.total_cogs)} sub={`Inv. a costo ${mxn(data.total_inventory_cost)}`} color={t.textMid} />
+          </div>
+
+          {data.variants_without_cost > 0 && (
+            <div style={{ padding: "8px 12px", borderRadius: 6, background: t.warn + "18", color: t.warn, fontSize: 12, marginBottom: 12, display: "flex", gap: 6, alignItems: "center" }}>
+              <AlertTriangle size={13} />
+              {data.variants_without_cost} SKU(s) sin costo en el catálogo — su margen se está subestimando. Captura el costo en Inventario para un cálculo exacto.
+            </div>
+          )}
+
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "62vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                  <th style={thStyle(t)}>{dimHeader}</th>
+                  {groupBy === "sku" && <th style={thStyle(t)}>Producto</th>}
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Unidades</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Ingreso</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>COGS</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Margen bruto</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Margen %</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>GMROI</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => (
+                  <tr key={r.dimension_id ?? r.dimension_label ?? i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                    <td style={{ ...tdStyle(t), fontFamily: groupBy === "sku" ? "monospace" : "inherit", fontWeight: 600 }}>
+                      {r.dimension_label}
+                      {r.missing_cost && <span title="SKU sin costo — margen subestimado" style={{ color: t.warn, marginLeft: 6 }}>⚠</span>}
+                    </td>
+                    {groupBy === "sku" && <td style={tdStyle(t)}>{r.product_name || "—"}</td>}
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.units_sold)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{mxn(r.revenue)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: t.textLo }}>{mxn(r.cogs)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{mxn(r.gross_margin)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>
+                      <span style={{ fontWeight: 700, color: marginColor(r.margin_pct) }}>{r.margin_pct.toFixed(1)}%</span>
+                    </td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: gmroiColor(r.gmroi) }}>
+                      {r.gmroi != null ? r.gmroi.toFixed(2) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
+            <b>GMROI</b> = margen bruto ÷ inventario a costo. Arriba de 1 significa que cada peso invertido en inventario devuelve más de un peso de margen. Meta sana en retail: ≥ 3.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ProfTile({ t, label, value, sub, color }: {
+  t: Tokens; label: string; value: string; sub: string; color: string;
+}) {
+  return (
+    <div style={{ padding: 14, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10 }}>
+      <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      <div style={{ fontSize: 11, color: t.textLo, marginTop: 3 }}>{sub}</div>
+    </div>
+  );
+}
+
+function ExcessInventoryView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<ExcessInventoryResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.excessInventory({ channel_id: channelId || undefined });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId]);
+
+  const sevColor = (s: string) => s === "urgent" ? t.bad : s === "high" ? t.warn : t.nova;
+  const sevLabel = (s: string) => s === "urgent" ? "Urgente" : s === "high" ? "Alta" : "Media";
+  const turnColor = (tv: number | null | undefined) =>
+    tv == null ? t.textLo : tv >= 6 ? t.good : tv >= 3 ? t.nova : t.warn;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12, color: t.textLo, maxWidth: 640 }}>
+          Dónde tienes <b style={{ color: t.textMid }}>dinero detenido</b>: stock por encima del umbral sano de la cadena
+          y productos sin movimiento (dead stock). Incluye rotación anual y días de inventario.
+        </div>
+        <ExcelBtn t={t} label="Excel"
+          onClick={() => downloadBlob(
+            () => retailApi.reports.excessInventory({ channel_id: channelId || undefined }),
+            `retail_exceso_inventario.xlsx`,
+          )}
+        />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Calculando…</div>}
+      {!loading && data && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(175px, 1fr))", gap: 10, marginBottom: 12 }}>
+            <ProfTile t={t} label="Dinero en exceso" value={mxn(data.total_excess_cost)} sub={`${num(data.total_excess_units)} unidades de más`} color={data.total_excess_cost > 0 ? t.bad : t.good} />
+            <ProfTile t={t} label="Dead stock" value={mxn(data.dead_stock_cost)} sub="Sin ventas, con stock" color={data.dead_stock_cost > 0 ? t.warn : t.good} />
+            <ProfTile t={t} label="Rotación" value={data.inventory_turnover != null ? `${data.inventory_turnover.toFixed(1)}x` : "—"} sub="veces al año" color={turnColor(data.inventory_turnover)} />
+            <ProfTile t={t} label="Días de inventario" value={data.days_of_inventory != null ? `${data.days_of_inventory.toFixed(0)} d` : "—"} sub="cobertura promedio (DOH)" color={t.textHi} />
+            <ProfTile t={t} label="Inventario a costo" value={mxn(data.total_inventory_cost)} sub={`${num(data.total_inventory_units)} unidades`} color={t.textMid} />
+          </div>
+
+          {data.rows.length === 0 ? (
+            <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+              <CheckCircle2 size={28} color={t.good} />
+              <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin exceso de inventario</div>
+              <div style={{ fontSize: 11 }}>Tu inventario está dentro del umbral sano. Excelente rotación.</div>
+            </div>
+          ) : (
+            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "58vh" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                    <th style={thStyle(t)}>Severidad</th>
+                    <th style={thStyle(t)}>Tienda</th>
+                    <th style={thStyle(t)}>SKU</th>
+                    <th style={thStyle(t)}>Producto</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>On-hand</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>WOS</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>DOH</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>Exceso u.</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>Detenido $</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.map((r, i) => (
+                    <tr key={i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                      <td style={tdStyle(t)}>
+                        <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: sevColor(r.severity) + "22", color: sevColor(r.severity), fontWeight: 700 }}>
+                          {r.is_dead_stock ? "Dead stock" : sevLabel(r.severity)}
+                        </span>
+                      </td>
+                      <td style={tdStyle(t)}>{r.store_name}</td>
+                      <td style={{ ...tdStyle(t), fontFamily: "monospace" }}>{r.sku || "—"}</td>
+                      <td style={tdStyle(t)}>{r.product_name || "—"}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.on_hand)}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.wos_weeks != null ? r.wos_weeks.toFixed(1) : "∞"}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.doh_days != null ? `${r.doh_days.toFixed(0)}d` : "∞"}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 600 }}>{num(r.excess_units)}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.bad }}>{mxn(r.excess_cost)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
+            <b>Rotación</b> alta = inventario que se mueve rápido (bueno). <b>DOH</b> = días que dura el inventario al ritmo de venta actual.
+            El exceso se mide contra el umbral de sobreinventario de cada cadena.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+const AGING_COLORS: Record<string, (t: Tokens) => string> = {
+  "0-30": (t) => t.good,
+  "31-60": (t) => t.nova,
+  "61-90": (t) => t.warn,
+  "90+": (t) => t.bad,
+  "never": (t) => t.bad,
+};
+
+function AgingView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<AgingResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.aging({ channel_id: channelId || undefined });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId]);
+
+  const bucketColor = (b: string) => (AGING_COLORS[b] || ((tt: Tokens) => tt.textLo))(t);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12, color: t.textLo, maxWidth: 640 }}>
+          <b style={{ color: t.textMid }}>Antigüedad del inventario</b>: cuántos días lleva cada producto sin venderse.
+          Los de 90+ días y los que nunca han vendido son <b style={{ color: t.bad }}>riesgo de obsolescencia</b>.
+        </div>
+        <ExcelBtn t={t} label="Excel"
+          onClick={() => downloadBlob(
+            () => retailApi.reports.aging({ channel_id: channelId || undefined }),
+            `retail_antiguedad_inventario.xlsx`,
+          )}
+        />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Calculando…</div>}
+      {!loading && data && data.total_stock_units === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <Clock size={28} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin inventario para analizar</div>
+        </div>
+      )}
+      {!loading && data && data.total_stock_units > 0 && (
+        <>
+          {/* Barra de distribución por antigüedad */}
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14, marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+              <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Distribución del inventario por antigüedad</div>
+              <div style={{ fontSize: 12, color: t.textMid }}>
+                Total a costo <b style={{ color: t.textHi }}>{mxn(data.total_stock_value)}</b> ·
+                En riesgo <b style={{ color: t.bad }}>{mxn(data.obsolete_value)} ({data.obsolete_pct.toFixed(1)}%)</b>
+              </div>
+            </div>
+            <div style={{ display: "flex", height: 22, borderRadius: 6, overflow: "hidden", background: t.panel3 }}>
+              {data.buckets.filter(b => b.value > 0).map(b => (
+                <div key={b.bucket} title={`${b.label}: ${mxn(b.value)} (${b.pct_of_value.toFixed(1)}%)`}
+                  style={{ width: `${b.pct_of_value}%`, background: bucketColor(b.bucket), minWidth: b.pct_of_value > 0 ? 2 : 0 }} />
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 14, marginTop: 10, flexWrap: "wrap" }}>
+              {data.buckets.map(b => (
+                <div key={b.bucket} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5 }}>
+                  <span style={{ width: 11, height: 11, borderRadius: 3, background: bucketColor(b.bucket) }} />
+                  <span style={{ color: t.textMid }}>{b.label}</span>
+                  <span style={{ color: t.textHi, fontWeight: 700 }}>{mxn(b.value)}</span>
+                  <span style={{ color: t.textLo }}>({num(b.units)} u)</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "56vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                  <th style={thStyle(t)}>Antigüedad</th>
+                  <th style={thStyle(t)}>Tienda</th>
+                  <th style={thStyle(t)}>SKU</th>
+                  <th style={thStyle(t)}>Producto</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>On-hand</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Días sin vender</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Valor a costo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => {
+                  const bl = data.buckets.find(b => b.bucket === r.bucket)?.label || r.bucket;
+                  return (
+                    <tr key={i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                      <td style={tdStyle(t)}>
+                        <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: bucketColor(r.bucket) + "22", color: bucketColor(r.bucket), fontWeight: 700 }}>
+                          {bl}
+                        </span>
+                      </td>
+                      <td style={tdStyle(t)}>{r.store_name}</td>
+                      <td style={{ ...tdStyle(t), fontFamily: "monospace" }}>{r.sku || "—"}</td>
+                      <td style={tdStyle(t)}>{r.product_name || "—"}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.on_hand)}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 600, color: r.obsolescence_risk ? t.bad : t.textMid }}>
+                        {r.days_since_last_sale != null ? `${r.days_since_last_sale} d` : "Nunca"}
+                      </td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{mxn(r.stock_value)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
+            La antigüedad se estima por días desde la última venta del producto en esa tienda (el sell-out no trae fecha de lote).
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ServiceLevelView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<ServiceLevelResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [groupBy, setGroupBy] = useState<ServiceGroupBy>("store");
+  const [weeks, setWeeks] = useState(12);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.serviceLevel({ channel_id: channelId || undefined, weeks_back: weeks, group_by: groupBy });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, weeks, groupBy]);
+
+  const dimHeader = groupBy === "store" ? "Tienda" : groupBy === "sku" ? "SKU" : "Cadena";
+  const sColor = (s: string) => s === "excellent" ? t.good : s === "good" ? t.nova : s === "low" ? t.warn : t.bad;
+  const sLabel = (s: string) => s === "excellent" ? "Excelente" : s === "good" ? "Bueno" : s === "low" ? "Bajo" : "Crítico";
+  const rateColor = (p: number) => p >= 98 ? t.good : p >= 95 ? t.nova : p >= 90 ? t.warn : t.bad;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <FilterField t={t} label="Agrupar por">
+            <select value={groupBy} onChange={e => setGroupBy(e.target.value as ServiceGroupBy)}
+              style={{ ...inputStyle(t), minWidth: 120, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="store">Tienda</option>
+              <option value="sku">SKU</option>
+              <option value="channel">Cadena</option>
+            </select>
+          </FilterField>
+          <FilterField t={t} label="Ventana">
+            <select value={weeks} onChange={e => setWeeks(Number(e.target.value))}
+              style={{ ...inputStyle(t), minWidth: 120, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value={8}>8 semanas</option>
+              <option value={12}>12 semanas</option>
+              <option value={26}>26 semanas</option>
+            </select>
+          </FilterField>
+        </div>
+        <ExcelBtn t={t} label="Excel"
+          onClick={() => downloadBlob(
+            () => retailApi.reports.serviceLevel({ channel_id: channelId || undefined, weeks_back: weeks, group_by: groupBy }),
+            `retail_nivel_servicio_${groupBy}.xlsx`,
+          )}
+        />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Calculando…</div>}
+      {!loading && data && data.combos_evaluated === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <Gauge size={28} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin datos suficientes</div>
+          <div style={{ fontSize: 11 }}>Carga varias semanas de sell-out para medir el nivel de servicio.</div>
+        </div>
+      )}
+      {!loading && data && data.combos_evaluated > 0 && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10, marginBottom: 12 }}>
+            <ProfTile t={t} label="In-stock (OSA)" value={`${data.overall_in_stock_rate_pct.toFixed(1)}%`} sub="disponibilidad en anaquel" color={rateColor(data.overall_in_stock_rate_pct)} />
+            <ProfTile t={t} label="Fill rate" value={`${data.overall_fill_rate_pct.toFixed(1)}%`} sub="demanda satisfecha (est.)" color={rateColor(data.overall_fill_rate_pct)} />
+            <ProfTile t={t} label="Tasa de quiebre" value={`${data.overall_stockout_rate_pct.toFixed(1)}%`} sub="observaciones en cero" color={data.overall_stockout_rate_pct > 5 ? t.bad : t.good} />
+            <ProfTile t={t} label="Unidades perdidas" value={num(data.total_estimated_lost)} sub={`de ${num(data.total_units_sold)} vendidas`} color={t.textMid} />
+          </div>
+
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "58vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                  <th style={thStyle(t)}>{dimHeader}</th>
+                  {groupBy === "sku" && <th style={thStyle(t)}>Producto</th>}
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Obs.</th>
+                  <th style={{ ...thStyle(t), minWidth: 150 }}>In-stock (OSA)</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Vendidas</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Perdidas est.</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Fill rate</th>
+                  <th style={{ ...thStyle(t), textAlign: "center" }}>Nivel</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => (
+                  <tr key={r.dimension_id ?? i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                    <td style={{ ...tdStyle(t), fontFamily: groupBy === "sku" ? "monospace" : "inherit", fontWeight: 600 }}>{r.dimension_label}</td>
+                    {groupBy === "sku" && <td style={tdStyle(t)}>{r.product_name || "—"}</td>}
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: t.textLo }}>{num(r.total_periods)}</td>
+                    <td style={tdStyle(t)}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ flex: 1, height: 7, background: t.panel3, borderRadius: 4, overflow: "hidden", minWidth: 60 }}>
+                          <div style={{ width: `${r.in_stock_rate_pct}%`, height: "100%", background: rateColor(r.in_stock_rate_pct) }} />
+                        </div>
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: rateColor(r.in_stock_rate_pct), minWidth: 42 }}>{r.in_stock_rate_pct.toFixed(1)}%</span>
+                      </div>
+                    </td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.units_sold)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: r.estimated_lost_units > 0 ? t.bad : t.textLo }}>{num(r.estimated_lost_units)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: rateColor(r.fill_rate_pct) }}>{r.fill_rate_pct.toFixed(1)}%</td>
+                    <td style={{ ...tdStyle(t), textAlign: "center" }}>
+                      <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: sColor(r.status) + "22", color: sColor(r.status), fontWeight: 700 }}>
+                        {sLabel(r.status)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
+            <b>In-stock (OSA)</b> = % de cortes con stock disponible. <b>Fill rate</b> = ventas ÷ (ventas + perdidas estimadas por quiebre).
+            Benchmark de retail: OSA ≥ 95%. Sólo se evalúan combos con venta (surtido activo).
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+
 function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) {
   // Estado principal
   const [data, setData] = useState<HeatmapResponse | null>(null);
@@ -2891,12 +3560,22 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
   const cellMap = new Map<string, HeatmapResponse["cells"][number]>();
   data?.cells.forEach(c => cellMap.set(`${c.store_id}:${c.variant_id}`, c));
 
-  const cellBg = (c?: HeatmapResponse["cells"][number]) => {
-    if (!c || c.status === "no_data") return t.panel3;
-    if (c.status === "critical") return t.bad;
-    if (c.status === "replenish") return t.warn;
-    if (c.status === "overstock") return t.nova;
-    return t.good;
+  // Color base por status (tinte translúcido, no saturado — menos invasivo)
+  const statusColor = (status?: string) => {
+    if (status === "critical") return t.bad;
+    if (status === "replenish") return t.warn;
+    if (status === "overstock") return t.nova;
+    if (status === "healthy") return t.good;
+    return null;
+  };
+  const cellStyle = (c?: HeatmapResponse["cells"][number]) => {
+    const col = statusColor(c?.status);
+    if (!c || c.status === "no_data" || !col) {
+      return { bg: "transparent", fg: t.textLo, bd: `${t.border}22` };
+    }
+    // Tinte suave de fondo + texto en el color saturado (alto contraste,
+    // pero sin el "muro de color" del fondo sólido).
+    return { bg: col + "24", fg: col, bd: col + "3a" };
   };
 
   const fmt = (c?: HeatmapResponse["cells"][number]) => {
@@ -3192,15 +3871,18 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
                   </td>
                   {data.variants.map(v => {
                     const c = cellMap.get(`${s.id}:${v.id}`);
-                    const bg = cellBg(c);
+                    const cs = cellStyle(c);
                     return (
                       <td key={v.id}
                         title={c ? `${s.name} · ${v.sku || v.product_name || ""}\nStock ${c.on_hand} · Vend ${c.units_sold} · WOS ${c.value ?? "∞"}` : ""}
                         style={{
-                          background: bg, color: c && c.status !== "no_data" ? "#fff" : t.textLo,
+                          background: cs.bg, color: cs.fg,
                           textAlign: "center", fontWeight: 700,
+                          fontVariantNumeric: "tabular-nums",
                           minWidth: cellW, width: cellW, height: cellH,
-                          padding: 2, borderBottom: `1px solid ${t.border}44`,
+                          padding: 2,
+                          borderBottom: `1px solid ${t.border}33`,
+                          borderLeft: `1px solid ${t.border}22`,
                         }}>
                         {fmt(c)}
                       </td>
