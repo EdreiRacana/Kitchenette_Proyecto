@@ -689,15 +689,36 @@ async def consignment_reconciliation(db: DB, _: CurrentUser,
 
 # ── Alerts ──────────────────────────────────────────────────────────────
 
+_ALERT_TYPE_PATTERN = "^(stockout|stockout_imminent|overstock|no_movement|sell_through_low|high_return_rate)$"
+
+
 @router.get("/alerts", response_model=List[schemas.RetailAlertOut])
 async def list_alerts(db: DB, _: CurrentUser,
                         channel_id: Optional[int] = Query(None),
                         status: Optional[str] = Query(None, pattern="^(open|acknowledged|resolved|dismissed)$"),
                         severity: Optional[str] = Query(None, pattern="^(urgent|high|medium|low)$"),
-                        limit: int = Query(500, ge=1, le=2000)):
+                        alert_type: Optional[str] = Query(None, pattern=_ALERT_TYPE_PATTERN),
+                        q: Optional[str] = Query(None, max_length=100),
+                        limit: int = Query(500, ge=1, le=2000),
+                        offset: int = Query(0, ge=0)):
     return await service.list_alerts(
-        db, channel_id=channel_id, status=status, severity=severity, limit=limit,
+        db, channel_id=channel_id, status=status, severity=severity,
+        alert_type=alert_type, q=q, limit=limit, offset=offset,
     )
+
+
+@router.get("/alerts/count")
+async def alerts_count(db: DB, _: CurrentUser,
+                        channel_id: Optional[int] = Query(None),
+                        status: Optional[str] = Query(None, pattern="^(open|acknowledged|resolved|dismissed)$"),
+                        severity: Optional[str] = Query(None, pattern="^(urgent|high|medium|low)$"),
+                        alert_type: Optional[str] = Query(None, pattern=_ALERT_TYPE_PATTERN),
+                        q: Optional[str] = Query(None, max_length=100)):
+    total = await service.count_alerts(
+        db, channel_id=channel_id, status=status, severity=severity,
+        alert_type=alert_type, q=q,
+    )
+    return {"total": total}
 
 
 @router.get("/alerts/summary", response_model=schemas.AlertsSummary)

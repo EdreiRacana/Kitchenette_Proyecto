@@ -1472,28 +1472,45 @@ function AlertsView({ t, channelId, onChanged }: {
 }) {
   const [alerts, setAlerts] = useState<RetailAlert[]>([]);
   const [summary, setSummary] = useState<AlertsSummary | null>(null);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<AlertStatus | "all">("open");
   const [sevFilter, setSevFilter] = useState<AlertSeverity | "all">("all");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [search, setSearch] = useState("");
+  const [debSearch, setDebSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const PAGE = 50;
   const [evaluating, setEvaluating] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [actioning, setActioning] = useState<{ id: number; kind: "ack" | "resolve" | "dismiss" } | null>(null);
 
+  useEffect(() => {
+    const h = setTimeout(() => setDebSearch(search), 250);
+    return () => clearTimeout(h);
+  }, [search]);
+  // Reset de página al cambiar cualquier filtro
+  useEffect(() => { setOffset(0); }, [channelId, statusFilter, sevFilter, typeFilter, debSearch]);
+
   const load = async () => {
     setLoading(true);
     try {
-      const [a, s] = await Promise.all([
-        retailApi.listAlerts({
-          channel_id: channelId || undefined,
-          status: statusFilter === "all" ? undefined : statusFilter,
-          severity: sevFilter === "all" ? undefined : sevFilter,
-        }),
+      const commonFilters = {
+        channel_id: channelId || undefined,
+        status: statusFilter === "all" ? undefined : statusFilter,
+        severity: sevFilter === "all" ? undefined : sevFilter,
+        alert_type: typeFilter === "all" ? undefined : typeFilter,
+        q: debSearch || undefined,
+      };
+      const [a, s, c] = await Promise.all([
+        retailApi.listAlerts({ ...commonFilters, limit: PAGE, offset }),
         retailApi.alertsSummary(channelId || undefined),
+        retailApi.alertsCount(commonFilters),
       ]);
-      setAlerts(a); setSummary(s);
+      setAlerts(a); setSummary(s); setTotal(c);
     } finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, [channelId, statusFilter, sevFilter]);
+  useEffect(() => { load(); }, [channelId, statusFilter, sevFilter, typeFilter, debSearch, offset]);
 
   const flashOk = (msg: string) => {
     setFlash(msg); window.setTimeout(() => setFlash(null), 2400);
@@ -1560,7 +1577,7 @@ function AlertsView({ t, channelId, onChanged }: {
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
         <FilterPill t={t} label="Todas" active={statusFilter === "all"} onClick={() => setStatusFilter("all")} />
         <FilterPill t={t} label="Abiertas" active={statusFilter === "open"} onClick={() => setStatusFilter("open")} />
         <FilterPill t={t} label="Reconocidas" active={statusFilter === "acknowledged"} onClick={() => setStatusFilter("acknowledged")} />
@@ -1571,6 +1588,47 @@ function AlertsView({ t, channelId, onChanged }: {
         <FilterPill t={t} label="Urgentes" active={sevFilter === "urgent"} onClick={() => setSevFilter("urgent")} color={t.bad} />
         <FilterPill t={t} label="Alta" active={sevFilter === "high"} onClick={() => setSevFilter("high")} color={t.warn} />
         <FilterPill t={t} label="Media" active={sevFilter === "medium"} onClick={() => setSevFilter("medium")} color={t.nova} />
+      </div>
+
+      {/* Búsqueda + tipo + paginación — indispensable con miles de SKUs */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+          <Search size={12} color={t.textLo} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar por tienda, SKU o producto…"
+            style={{ ...inputStyle(t), paddingLeft: 30, marginTop: 0, fontSize: 12, height: 32 }} />
+        </div>
+        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
+          style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 32, marginTop: 0 }}
+          title="Tipo de alerta">
+          <option value="all">Todos los tipos</option>
+          <option value="stockout">Sin stock</option>
+          <option value="stockout_imminent">Stock crítico</option>
+          <option value="overstock">Sobreinventario</option>
+          <option value="no_movement">Sin movimiento</option>
+          <option value="sell_through_low">Sell-through bajo</option>
+          <option value="high_return_rate">Devoluciones altas</option>
+        </select>
+        <div style={{ fontSize: 12, color: t.textLo, whiteSpace: "nowrap" }}>
+          {total > 0
+            ? `${(offset + 1).toLocaleString("es-MX")}-${Math.min(offset + PAGE, total).toLocaleString("es-MX")} de ${total.toLocaleString("es-MX")}`
+            : "0 resultados"}
+        </div>
+        {total > PAGE && (
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}
+              style={{ padding: "5px 10px", background: offset === 0 ? "transparent" : t.panel3, border: `1px solid ${t.border}`, borderRadius: 6, color: offset === 0 ? t.textLo : t.textMid, cursor: offset === 0 ? "not-allowed" : "pointer", fontSize: 11 }}>
+              ← Anterior
+            </button>
+            <span style={{ fontSize: 11, color: t.textMid }}>
+              Pág {Math.floor(offset / PAGE) + 1} / {Math.max(1, Math.ceil(total / PAGE))}
+            </span>
+            <button disabled={offset + PAGE >= total} onClick={() => setOffset(offset + PAGE)}
+              style={{ padding: "5px 10px", background: offset + PAGE >= total ? "transparent" : t.panel3, border: `1px solid ${t.border}`, borderRadius: 6, color: offset + PAGE >= total ? t.textLo : t.textMid, cursor: offset + PAGE >= total ? "not-allowed" : "pointer", fontSize: 11 }}>
+              Siguiente →
+            </button>
+          </div>
+        )}
       </div>
 
       {flash && (
@@ -2891,12 +2949,22 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
   const cellMap = new Map<string, HeatmapResponse["cells"][number]>();
   data?.cells.forEach(c => cellMap.set(`${c.store_id}:${c.variant_id}`, c));
 
-  const cellBg = (c?: HeatmapResponse["cells"][number]) => {
-    if (!c || c.status === "no_data") return t.panel3;
-    if (c.status === "critical") return t.bad;
-    if (c.status === "replenish") return t.warn;
-    if (c.status === "overstock") return t.nova;
-    return t.good;
+  // Color base por status (tinte translúcido, no saturado — menos invasivo)
+  const statusColor = (status?: string) => {
+    if (status === "critical") return t.bad;
+    if (status === "replenish") return t.warn;
+    if (status === "overstock") return t.nova;
+    if (status === "healthy") return t.good;
+    return null;
+  };
+  const cellStyle = (c?: HeatmapResponse["cells"][number]) => {
+    const col = statusColor(c?.status);
+    if (!c || c.status === "no_data" || !col) {
+      return { bg: "transparent", fg: t.textLo, bd: `${t.border}22` };
+    }
+    // Tinte suave de fondo + texto en el color saturado (alto contraste,
+    // pero sin el "muro de color" del fondo sólido).
+    return { bg: col + "24", fg: col, bd: col + "3a" };
   };
 
   const fmt = (c?: HeatmapResponse["cells"][number]) => {
@@ -3192,15 +3260,18 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
                   </td>
                   {data.variants.map(v => {
                     const c = cellMap.get(`${s.id}:${v.id}`);
-                    const bg = cellBg(c);
+                    const cs = cellStyle(c);
                     return (
                       <td key={v.id}
                         title={c ? `${s.name} · ${v.sku || v.product_name || ""}\nStock ${c.on_hand} · Vend ${c.units_sold} · WOS ${c.value ?? "∞"}` : ""}
                         style={{
-                          background: bg, color: c && c.status !== "no_data" ? "#fff" : t.textLo,
+                          background: cs.bg, color: cs.fg,
                           textAlign: "center", fontWeight: 700,
+                          fontVariantNumeric: "tabular-nums",
                           minWidth: cellW, width: cellW, height: cellH,
-                          padding: 2, borderBottom: `1px solid ${t.border}44`,
+                          padding: 2,
+                          borderBottom: `1px solid ${t.border}33`,
+                          borderLeft: `1px solid ${t.border}22`,
                         }}>
                         {fmt(c)}
                       </td>

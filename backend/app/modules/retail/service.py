@@ -1906,10 +1906,47 @@ async def evaluate_alerts(
 
 # ── Consulta / acciones sobre alertas ────────────────────────────────────
 
+def _alerts_filter_conds(
+    channel_id: Optional[int], status: Optional[str], severity: Optional[str],
+    alert_type: Optional[str], q: Optional[str],
+) -> list:
+    conds = []
+    if channel_id is not None:
+        conds.append(models.RetailAlert.channel_id == channel_id)
+    if status:
+        conds.append(models.RetailAlert.status == status)
+    if severity:
+        conds.append(models.RetailAlert.severity == severity)
+    if alert_type:
+        conds.append(models.RetailAlert.alert_type == alert_type)
+    if q:
+        needle = f"%{q.strip()}%"
+        conds.append(or_(
+            models.RetailAlert.store_name.ilike(needle),
+            models.RetailAlert.product_name.ilike(needle),
+            models.RetailAlert.sku.ilike(needle),
+            models.RetailAlert.message.ilike(needle),
+        ))
+    return conds
+
+
+async def count_alerts(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    status: Optional[str] = None, severity: Optional[str] = None,
+    alert_type: Optional[str] = None, q: Optional[str] = None,
+) -> int:
+    stmt = select(func.count(models.RetailAlert.id))
+    conds = _alerts_filter_conds(channel_id, status, severity, alert_type, q)
+    if conds:
+        stmt = stmt.where(and_(*conds))
+    return int((await db.execute(stmt)).scalar() or 0)
+
+
 async def list_alerts(
     db: AsyncSession, channel_id: Optional[int] = None,
     status: Optional[str] = None, severity: Optional[str] = None,
-    limit: int = 500,
+    alert_type: Optional[str] = None, q: Optional[str] = None,
+    limit: int = 500, offset: int = 0,
 ) -> List[schemas.RetailAlertOut]:
     stmt = (
         select(
@@ -1918,18 +1955,15 @@ async def list_alerts(
         )
         .join(models.RetailChannel, models.RetailAlert.channel_id == models.RetailChannel.id)
     )
-    if channel_id is not None:
-        stmt = stmt.where(models.RetailAlert.channel_id == channel_id)
-    if status:
-        stmt = stmt.where(models.RetailAlert.status == status)
-    if severity:
-        stmt = stmt.where(models.RetailAlert.severity == severity)
+    conds = _alerts_filter_conds(channel_id, status, severity, alert_type, q)
+    if conds:
+        stmt = stmt.where(and_(*conds))
     stmt = stmt.order_by(
         # Prioridad urgent primero, luego por fecha
         func.lower(models.RetailAlert.status) == "open",  # true (1) → open primero
         models.RetailAlert.severity == "urgent",
         models.RetailAlert.created_at.desc(),
-    ).limit(limit)
+    ).offset(offset).limit(limit)
     rows = (await db.execute(stmt)).all()
     return [
         schemas.RetailAlertOut(

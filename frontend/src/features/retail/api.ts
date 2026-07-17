@@ -68,8 +68,13 @@ export const retailApi = {
 
   // Alertas
   listAlerts: (opts?: {
-    channel_id?: number; status?: AlertStatus; severity?: AlertSeverity; limit?: number;
+    channel_id?: number; status?: AlertStatus; severity?: AlertSeverity;
+    alert_type?: string; q?: string; limit?: number; offset?: number;
   }) => api.get<RetailAlert[]>("/retail/alerts", { params: opts }).then(r => r.data),
+  alertsCount: (opts?: {
+    channel_id?: number; status?: AlertStatus; severity?: AlertSeverity;
+    alert_type?: string; q?: string;
+  }) => api.get<{ total: number }>("/retail/alerts/count", { params: opts }).then(r => r.data.total),
   alertsSummary: (channel_id?: number) =>
     api.get<AlertsSummary>("/retail/alerts/summary", { params: { channel_id } }).then(r => r.data),
   evaluateAlerts: (channel_id?: number) =>
