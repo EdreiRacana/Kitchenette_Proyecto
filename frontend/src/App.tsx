@@ -1962,7 +1962,11 @@ function NotificationBell({ t, lang, onNavigate }) {
 }
 
 /* ============================ Topbar ============================ */
-function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMenuClick, onNavigate }) {
+function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMenuClick, onNavigate, me, perms }) {
+  const displayName = (me?.full_name || "").trim() || (me?.email ? me.email.split("@")[0] : "") || "Usuario";
+  const initials = displayName
+    .split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() || "").join("") || "U";
+  const roleName = perms?.role || (perms?.is_superuser ? s.role : (me?.is_superuser ? s.role : ""));
   return (
     <header style={{ height: 64, flex: "0 0 64px", background: t.panel, borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 14, padding: isMobile ? "0 12px" : "0 20px", position: "sticky", top: 0, zIndex: 20 }}>
       {isMobile && (
@@ -1980,11 +1984,11 @@ function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMe
         <NotificationBell t={t} lang={lang} onNavigate={onNavigate} />
         <div style={{ width: 1, height: 26, background: t.border, margin: "0 4px" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <span style={{ width: 32, height: 32, borderRadius: 999, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: 13, flex: "0 0 auto" }}>ER</span>
+          <span style={{ width: 32, height: 32, borderRadius: 999, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: 13, flex: "0 0 auto" }}>{initials}</span>
           {!isMobile && (
             <div style={{ lineHeight: 1.2 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textHi }}>Edrei</div>
-              <div style={{ fontSize: 10.5, color: t.textLo }}>{s.role}</div>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textHi }}>{displayName}</div>
+              {roleName && <div style={{ fontSize: 10.5, color: t.textLo }}>{roleName}</div>}
             </div>
           )}
         </div>
@@ -2091,6 +2095,7 @@ export default function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [searchNav, setSearchNav] = useState(null);
   const [perms, setPerms] = useState(null);
+  const [me, setMe] = useState(null);
   const t = THEMES[theme];
   const s = STRINGS[lang];
 
@@ -2098,8 +2103,10 @@ export default function App() {
   // menú (RBAC). Si el backend no responde, perms queda null y NO se oculta nada
   // (degradación segura: no dejar al usuario sin navegación por un fallo de red).
   useEffect(() => {
-    if (!authed) { setPerms(null); return; }
+    if (!authed) { setPerms(null); setMe(null); return; }
     configService.getMyPermissions().then(setPerms).catch(() => setPerms(null));
+    // Identidad del usuario logueado (nombre, correo) para el topbar.
+    api.get("/auth/me").then(r => setMe(r.data)).catch(() => setMe(null));
   }, [authed]);
 
   // Si la base está vacía (sin usuarios, ej. tras un reset), mostramos la
@@ -2189,7 +2196,7 @@ export default function App() {
       `}</style>
       <Sidebar t={t} s={s} page={page} setPage={goToPage} collapsed={collapsed} setCollapsed={setCollapsed} mobile={isMobile} mobileOpen={mobileNavOpen} setMobileOpen={setMobileNavOpen} allowedIds={allowedModuleIds} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
-        <Topbar t={t} s={s} lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} onLogout={() => { localStorage.removeItem("token"); setAuthed(false); }} isMobile={isMobile} onMenuClick={() => setMobileNavOpen(true)} onNavigate={handleSearchNavigate} />
+        <Topbar t={t} s={s} lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} onLogout={() => { localStorage.removeItem("token"); setAuthed(false); }} isMobile={isMobile} onMenuClick={() => setMobileNavOpen(true)} onNavigate={handleSearchNavigate} me={me} perms={perms} />
         <main style={{ flex: 1, padding: isMobile ? 12 : 24, overflowX: "hidden", position: "relative" }}>
           {theme === "dark" && (
             <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>
