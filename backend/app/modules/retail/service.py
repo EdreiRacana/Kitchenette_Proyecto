@@ -2763,6 +2763,171 @@ async def lost_sales(
     )
 
 
+# ── Analytics: rentabilidad (márgenes + GMROI) ───────────────────────────
+
+async def profitability(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    days: int = 90, group_by: str = "sku", limit: int = 500,
+) -> schemas.ProfitabilityResponse:
+    """Margen bruto y GMROI agregados por SKU, categoría, tienda o cadena.
+
+    Definiciones (estándar de retail):
+      COGS            = Σ unidades_vendidas × costo_promedio (cost_price)
+      Margen bruto    = ingreso − COGS
+      Margen %        = margen bruto / ingreso × 100
+      Inv. a costo    = Σ (on-hand promedio del periodo × costo)
+      GMROI           = margen bruto / inventario a costo
+                        (cuántos $ de margen genera cada $ invertido en
+                         inventario — el KPI rey de rentabilidad de retail)
+
+    El on-hand promedio se calcula como avg(units_on_hand) sobre los cortes
+    del periodo por (tienda, variante): como hay un solo reporte por combo
+    y corte (unique constraint), el promedio de esos snapshots es el
+    inventario medio del periodo.
+    """
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+
+    # Subconsulta: métricas por (tienda, variante) en la ventana
+    combo = (
+        select(
+            models.SellOutReport.store_id.label("store_id"),
+            models.SellOutReport.variant_id.label("variant_id"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units"),
+            func.coalesce(func.sum(models.SellOutReport.revenue), 0.0).label("revenue"),
+            func.coalesce(func.avg(models.SellOutReport.units_on_hand), 0.0).label("avg_oh"),
+        )
+        .where(
+            models.SellOutReport.period_start >= since,
+            models.SellOutReport.variant_id.isnot(None),
+        )
+        .group_by(models.SellOutReport.store_id, models.SellOutReport.variant_id)
+    ).subquery()
+
+    cost = func.coalesce(inv_models.ProductVariant.cost_price, 0.0)
+
+    # Selección de la dimensión de agrupación
+    if group_by == "category":
+        dim_id = None
+        dim_label = func.coalesce(inv_models.Product.category, "Sin categoría")
+        group_cols = [dim_label]
+    elif group_by == "store":
+        dim_id = models.RetailStore.id
+        dim_label = models.RetailStore.name
+        group_cols = [models.RetailStore.id, models.RetailStore.name]
+    elif group_by == "channel":
+        dim_id = models.RetailChannel.id
+        dim_label = models.RetailChannel.name
+        group_cols = [models.RetailChannel.id, models.RetailChannel.name]
+    else:  # sku
+        dim_id = inv_models.ProductVariant.id
+        dim_label = func.max(inv_models.ProductVariant.sku)
+        group_cols = [inv_models.ProductVariant.id]
+
+    units_col = func.sum(combo.c.units)
+    revenue_col = func.sum(combo.c.revenue)
+    cogs_col = func.sum(combo.c.units * cost)
+    inv_cost_col = func.sum(combo.c.avg_oh * cost)
+
+    sel = [units_col.label("units"), revenue_col.label("revenue"),
+           cogs_col.label("cogs"), inv_cost_col.label("inv_cost")]
+    if group_by == "sku":
+        sel = [inv_models.ProductVariant.id.label("dim_id"),
+               func.max(inv_models.ProductVariant.sku).label("sku"),
+               func.max(inv_models.Product.name).label("pname")] + sel
+    elif group_by == "category":
+        sel = [func.coalesce(inv_models.Product.category, "Sin categoría").label("cat")] + sel
+    elif group_by == "store":
+        sel = [models.RetailStore.id.label("dim_id"),
+               models.RetailStore.name.label("dim_label")] + sel
+    else:  # channel
+        sel = [models.RetailChannel.id.label("dim_id"),
+               models.RetailChannel.name.label("dim_label")] + sel
+
+    stmt = (
+        select(*sel)
+        .select_from(combo)
+        .join(models.RetailStore, combo.c.store_id == models.RetailStore.id)
+        .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
+        .join(inv_models.ProductVariant, combo.c.variant_id == inv_models.ProductVariant.id)
+        .join(inv_models.Product, inv_models.ProductVariant.product_id == inv_models.Product.id)
+        .group_by(*group_cols)
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailStore.channel_id == channel_id)
+    rows = (await db.execute(stmt)).all()
+
+    # Variantes sin costo (calidad de dato)
+    no_cost_stmt = (
+        select(func.count(func.distinct(combo.c.variant_id)))
+        .select_from(combo)
+        .join(models.RetailStore, combo.c.store_id == models.RetailStore.id)
+        .join(inv_models.ProductVariant, combo.c.variant_id == inv_models.ProductVariant.id)
+        .where(or_(inv_models.ProductVariant.cost_price.is_(None),
+                   inv_models.ProductVariant.cost_price == 0))
+    )
+    if channel_id is not None:
+        no_cost_stmt = no_cost_stmt.where(models.RetailStore.channel_id == channel_id)
+    variants_without_cost = int((await db.execute(no_cost_stmt)).scalar() or 0)
+
+    out: List[schemas.ProfitabilityRow] = []
+    tot_units = 0
+    tot_rev = 0.0
+    tot_cogs = 0.0
+    tot_inv = 0.0
+    for r in rows:
+        units = int(r.units or 0)
+        rev = float(r.revenue or 0.0)
+        cogs_v = round(float(r.cogs or 0.0), 2)
+        inv_cost = round(float(r.inv_cost or 0.0), 2)
+        gm = round(rev - cogs_v, 2)
+        margin_pct = round(gm / rev * 100.0, 2) if rev > 0 else 0.0
+        gmroi = round(gm / inv_cost, 2) if inv_cost > 0 else None
+
+        if group_by == "sku":
+            label = r.sku or (r.pname or f"SKU {r.dim_id}")
+            did = int(r.dim_id) if r.dim_id else None
+            sku_v, pname_v = r.sku, r.pname
+        elif group_by == "category":
+            label = r.cat
+            did, sku_v, pname_v = None, None, None
+        else:
+            label = r.dim_label
+            did = int(r.dim_id) if r.dim_id else None
+            sku_v, pname_v = None, None
+
+        out.append(schemas.ProfitabilityRow(
+            dimension_id=did, dimension_label=label,
+            sku=sku_v, product_name=pname_v,
+            units_sold=units, revenue=round(rev, 2),
+            cogs=cogs_v, gross_margin=gm, margin_pct=margin_pct,
+            inventory_cost=inv_cost, gmroi=gmroi,
+            missing_cost=(cogs_v <= 0 and units > 0),
+        ))
+        tot_units += units
+        tot_rev += rev
+        tot_cogs += cogs_v
+        tot_inv += inv_cost
+
+    # Orden: mayor margen bruto primero (donde está el dinero)
+    out.sort(key=lambda x: -x.gross_margin)
+    out = out[:limit]
+
+    tot_gm = round(tot_rev - tot_cogs, 2)
+    tot_margin_pct = round(tot_gm / tot_rev * 100.0, 2) if tot_rev > 0 else 0.0
+    tot_gmroi = round(tot_gm / tot_inv, 2) if tot_inv > 0 else None
+
+    return schemas.ProfitabilityResponse(
+        channel_id=channel_id, group_by=group_by, days=days,
+        total_units=tot_units, total_revenue=round(tot_rev, 2),
+        total_cogs=round(tot_cogs, 2), total_gross_margin=tot_gm,
+        total_margin_pct=tot_margin_pct,
+        total_inventory_cost=round(tot_inv, 2), total_gmroi=tot_gmroi,
+        variants_without_cost=variants_without_cost,
+        rows=out,
+    )
+
+
 # ── Replenishment: crear traslado ────────────────────────────────────────
 
 async def list_source_warehouses(db: AsyncSession) -> List[schemas.SourceWarehouseOption]:

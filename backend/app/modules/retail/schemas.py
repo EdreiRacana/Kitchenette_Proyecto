@@ -493,6 +493,38 @@ class LostSalesResponse(BaseModel):
     rows: List[LostSalesRow]
 
 
+# ── Analytics: rentabilidad (márgenes + GMROI) ──────────────────────────
+
+class ProfitabilityRow(BaseModel):
+    dimension_id: Optional[int] = None
+    dimension_label: str               # SKU / categoría / tienda / cadena
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    units_sold: int
+    revenue: float
+    cogs: float                        # costo de lo vendido
+    gross_margin: float                # revenue − cogs
+    margin_pct: float                  # gross_margin / revenue × 100
+    inventory_cost: float              # inventario promedio valuado a costo
+    gmroi: Optional[float] = None      # gross_margin / inventory_cost
+    missing_cost: bool = False         # sin cost_price → margen no confiable
+
+
+class ProfitabilityResponse(BaseModel):
+    channel_id: Optional[int] = None
+    group_by: str                      # sku | category | store | channel
+    days: int
+    total_units: int
+    total_revenue: float
+    total_cogs: float
+    total_gross_margin: float
+    total_margin_pct: float
+    total_inventory_cost: float
+    total_gmroi: Optional[float] = None
+    variants_without_cost: int         # señal de calidad de dato
+    rows: List[ProfitabilityRow]
+
+
 # ── Replenishment: transfer ─────────────────────────────────────────────
 
 class SourceWarehouseOption(BaseModel):

@@ -11,7 +11,7 @@ import {
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
   Bell, EyeOff, CheckCircle2, Zap, Warehouse, Grid3x3, BarChart3, ArrowRight,
-  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown,
+  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown, DollarSign,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -26,6 +26,7 @@ import type {
   ABCResponse, SourceWarehouseOption, TransferResponse,
   RetailImportProfile, DetectColumnsResponse, PreviewResponse,
   TrendResponse, DistributionResponse, LostSalesResponse,
+  ProfitabilityResponse, ProfitGroupBy,
 } from "./types";
 
 type Tokens = any;
@@ -2459,13 +2460,14 @@ function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null
 
 
 // ── Analíticas: Heatmap + ABC ────────────────────────────────────────────
-type AnalyticsSub = "heatmap" | "trend" | "distribution" | "lost_sales" | "abc";
+type AnalyticsSub = "heatmap" | "trend" | "profitability" | "distribution" | "lost_sales" | "abc";
 
 function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }) {
   const [sub, setSub] = useState<AnalyticsSub>("heatmap");
   const tabs: { key: AnalyticsSub; label: string; icon: any }[] = [
     { key: "heatmap", label: "Heatmap tiendas × SKUs", icon: Grid3x3 },
     { key: "trend", label: "Tendencia", icon: LineChart },
+    { key: "profitability", label: "Rentabilidad", icon: DollarSign },
     { key: "distribution", label: "Distribución (voids)", icon: Network },
     { key: "lost_sales", label: "Venta perdida", icon: TrendingDown },
     { key: "abc", label: "Clasificación ABC", icon: TrendingUp },
@@ -2489,6 +2491,7 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
       </div>
       {sub === "heatmap" && <HeatmapView t={t} channelId={channelId} />}
       {sub === "trend" && <TrendView t={t} channelId={channelId} />}
+      {sub === "profitability" && <ProfitabilityView t={t} channelId={channelId} />}
       {sub === "distribution" && <DistributionView t={t} channelId={channelId} />}
       {sub === "lost_sales" && <LostSalesView t={t} channelId={channelId} />}
       {sub === "abc" && <ABCView t={t} channelId={channelId} />}
@@ -2877,6 +2880,144 @@ function LostSalesView({ t, channelId }: { t: Tokens; channelId: number | null }
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+
+function ProfitabilityView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<ProfitabilityResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [groupBy, setGroupBy] = useState<ProfitGroupBy>("sku");
+  const [days, setDays] = useState(90);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.profitability({ channel_id: channelId || undefined, days, group_by: groupBy });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, days, groupBy]);
+
+  const dimHeader = groupBy === "sku" ? "SKU" : groupBy === "category" ? "Categoría"
+    : groupBy === "store" ? "Tienda" : "Cadena";
+  const marginColor = (p: number) => p >= 35 ? t.good : p >= 20 ? t.nova : p >= 8 ? t.warn : t.bad;
+  const gmroiColor = (g: number | null | undefined) =>
+    g == null ? t.textLo : g >= 3 ? t.good : g >= 1 ? t.nova : t.bad;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <FilterField t={t} label="Agrupar por">
+            <select value={groupBy} onChange={e => setGroupBy(e.target.value as ProfitGroupBy)}
+              style={{ ...inputStyle(t), minWidth: 130, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="sku">SKU / producto</option>
+              <option value="category">Categoría</option>
+              <option value="store">Tienda</option>
+              <option value="channel">Cadena</option>
+            </select>
+          </FilterField>
+          <FilterField t={t} label="Ventana">
+            <select value={days} onChange={e => setDays(Number(e.target.value))}
+              style={{ ...inputStyle(t), minWidth: 110, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value={30}>30 días</option>
+              <option value={90}>90 días</option>
+              <option value={180}>180 días</option>
+              <option value={365}>1 año</option>
+            </select>
+          </FilterField>
+        </div>
+        <ExcelBtn t={t} label="Excel"
+          onClick={() => downloadBlob(
+            () => retailApi.reports.profitability({ channel_id: channelId || undefined, days, group_by: groupBy }),
+            `retail_rentabilidad_${groupBy}.xlsx`,
+          )}
+        />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Calculando márgenes…</div>}
+      {!loading && data && data.rows.length === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <DollarSign size={28} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin datos de rentabilidad</div>
+          <div style={{ fontSize: 11 }}>Carga sell-out con SKUs vinculados al catálogo (necesitan costo).</div>
+        </div>
+      )}
+      {!loading && data && data.rows.length > 0 && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10, marginBottom: 12 }}>
+            <ProfTile t={t} label="Margen bruto" value={mxn(data.total_gross_margin)} sub={`${data.total_margin_pct.toFixed(1)}% del ingreso`} color={marginColor(data.total_margin_pct)} />
+            <ProfTile t={t} label="GMROI" value={data.total_gmroi != null ? data.total_gmroi.toFixed(2) : "—"} sub="$ margen / $ inventario" color={gmroiColor(data.total_gmroi)} />
+            <ProfTile t={t} label="Ingreso" value={mxn(data.total_revenue)} sub={`${num(data.total_units)} unidades`} color={t.textHi} />
+            <ProfTile t={t} label="Costo vendido (COGS)" value={mxn(data.total_cogs)} sub={`Inv. a costo ${mxn(data.total_inventory_cost)}`} color={t.textMid} />
+          </div>
+
+          {data.variants_without_cost > 0 && (
+            <div style={{ padding: "8px 12px", borderRadius: 6, background: t.warn + "18", color: t.warn, fontSize: 12, marginBottom: 12, display: "flex", gap: 6, alignItems: "center" }}>
+              <AlertTriangle size={13} />
+              {data.variants_without_cost} SKU(s) sin costo en el catálogo — su margen se está subestimando. Captura el costo en Inventario para un cálculo exacto.
+            </div>
+          )}
+
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "62vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                  <th style={thStyle(t)}>{dimHeader}</th>
+                  {groupBy === "sku" && <th style={thStyle(t)}>Producto</th>}
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Unidades</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Ingreso</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>COGS</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Margen bruto</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Margen %</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>GMROI</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => (
+                  <tr key={r.dimension_id ?? r.dimension_label ?? i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                    <td style={{ ...tdStyle(t), fontFamily: groupBy === "sku" ? "monospace" : "inherit", fontWeight: 600 }}>
+                      {r.dimension_label}
+                      {r.missing_cost && <span title="SKU sin costo — margen subestimado" style={{ color: t.warn, marginLeft: 6 }}>⚠</span>}
+                    </td>
+                    {groupBy === "sku" && <td style={tdStyle(t)}>{r.product_name || "—"}</td>}
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.units_sold)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{mxn(r.revenue)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: t.textLo }}>{mxn(r.cogs)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{mxn(r.gross_margin)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>
+                      <span style={{ fontWeight: 700, color: marginColor(r.margin_pct) }}>{r.margin_pct.toFixed(1)}%</span>
+                    </td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: gmroiColor(r.gmroi) }}>
+                      {r.gmroi != null ? r.gmroi.toFixed(2) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
+            <b>GMROI</b> = margen bruto ÷ inventario a costo. Arriba de 1 significa que cada peso invertido en inventario devuelve más de un peso de margen. Meta sana en retail: ≥ 3.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ProfTile({ t, label, value, sub, color }: {
+  t: Tokens; label: string; value: string; sub: string; color: string;
+}) {
+  return (
+    <div style={{ padding: 14, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10 }}>
+      <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      <div style={{ fontSize: 11, color: t.textLo, marginTop: 3 }}>{sub}</div>
     </div>
   );
 }

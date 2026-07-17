@@ -594,6 +594,83 @@ def build_lost_sales_report(ls: Any) -> bytes:
     return _to_bytes(wb)
 
 
+# ── Reporte 11: Rentabilidad (márgenes + GMROI) ─────────────────────────
+
+def _margin_fill(margin_pct: float) -> Optional[PatternFill]:
+    if margin_pct >= 35:
+        return PatternFill("solid", fgColor="D1FAE5")   # verde
+    if margin_pct >= 20:
+        return PatternFill("solid", fgColor="DBEAFE")   # azul
+    if margin_pct >= 8:
+        return PatternFill("solid", fgColor="FEF3C7")   # ámbar
+    return PatternFill("solid", fgColor="FEE2E2")       # rojo
+
+
+GROUP_BY_LABEL = {
+    "sku": "SKU", "category": "Categoría", "store": "Tienda", "channel": "Cadena",
+}
+
+
+def build_profitability_report(prof: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Rentabilidad"
+    dim = GROUP_BY_LABEL.get(prof.group_by, "Dimensión")
+    is_sku = prof.group_by == "sku"
+    headers = ([dim] + (["Producto"] if is_sku else []) +
+               ["Unidades", "Ingreso", "COGS", "Margen bruto", "Margen %",
+                "Inv. a costo", "GMROI"])
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    margin_col = len(headers) - 2  # columna "Margen %"
+    for r in prof.rows:
+        row = [r.dimension_label]
+        if is_sku:
+            row.append(r.product_name or "")
+        row += [
+            int(r.units_sold or 0), float(r.revenue or 0.0),
+            float(r.cogs or 0.0), float(r.gross_margin or 0.0),
+            float(r.margin_pct or 0.0), float(r.inventory_cost or 0.0),
+            float(r.gmroi) if r.gmroi is not None else "",
+        ]
+        ws.append(row)
+        fill = _margin_fill(float(r.margin_pct or 0.0))
+        if fill:
+            ws.cell(row=ws.max_row, column=margin_col).fill = fill
+
+    # Fila total
+    tr = ws.max_row + 1
+    ws.cell(row=tr, column=1, value="TOTAL").font = TOTAL_FONT
+    span_end = 2 if is_sku else 1
+    if is_sku:
+        ws.merge_cells(start_row=tr, start_column=1, end_row=tr, end_column=2)
+    base = 2 if is_sku else 1
+    totals = [
+        int(prof.total_units or 0), float(prof.total_revenue or 0.0),
+        float(prof.total_cogs or 0.0), float(prof.total_gross_margin or 0.0),
+        float(prof.total_margin_pct or 0.0), float(prof.total_inventory_cost or 0.0),
+        float(prof.total_gmroi) if prof.total_gmroi is not None else "",
+    ]
+    for i, val in enumerate(totals):
+        c = ws.cell(row=tr, column=base + 1 + i, value=val)
+        c.font = TOTAL_FONT
+        c.fill = GREY_ROW
+
+    _autosize(ws)
+    warn = ""
+    if prof.variants_without_cost > 0:
+        warn = f" · ⚠ {prof.variants_without_cost} SKUs sin costo (margen subestimado)"
+    _company_header(
+        ws, f"Rentabilidad por {dim}",
+        f"Margen bruto $ {prof.total_gross_margin:,.2f} ({prof.total_margin_pct:.1f}%) · "
+        f"GMROI {prof.total_gmroi if prof.total_gmroi is not None else '—'} · "
+        f"Últimos {prof.days} días{warn}",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
 # ── Reporte ejecutivo PDF semanal ────────────────────────────────────────
 
 def build_executive_pdf(

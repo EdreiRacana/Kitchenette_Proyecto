@@ -399,6 +399,20 @@ async def report_lost_sales_xlsx(
     return _xlsx_response(content, "retail_venta_perdida.xlsx")
 
 
+@router.get("/reports/profitability.xlsx")
+async def report_profitability_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=1, le=365),
+    group_by: str = Query("sku", pattern="^(sku|category|store|channel)$"),
+):
+    prof = await service.profitability(
+        db, channel_id=channel_id, days=days, group_by=group_by, limit=5000,
+    )
+    content = retail_reports.build_profitability_report(prof)
+    return _xlsx_response(content, "retail_rentabilidad.xlsx")
+
+
 @router.get("/reports/abc.xlsx")
 async def report_abc_xlsx(
     db: DB, _: CurrentUser,
@@ -529,6 +543,19 @@ async def analytics_lost_sales(
     limit: int = Query(500, ge=1, le=2000),
 ):
     return await service.lost_sales(db, channel_id=channel_id, limit=limit)
+
+
+@router.get("/analytics/profitability", response_model=schemas.ProfitabilityResponse)
+async def analytics_profitability(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=1, le=365),
+    group_by: str = Query("sku", pattern="^(sku|category|store|channel)$"),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    return await service.profitability(
+        db, channel_id=channel_id, days=days, group_by=group_by, limit=limit,
+    )
 
 
 # ── Traslados desde reabasto ────────────────────────────────────────────

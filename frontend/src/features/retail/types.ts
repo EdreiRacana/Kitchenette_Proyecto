@@ -208,6 +208,37 @@ export interface LostSalesResponse {
   rows: LostSalesRow[];
 }
 
+// Rentabilidad (márgenes + GMROI)
+export type ProfitGroupBy = "sku" | "category" | "store" | "channel";
+export interface ProfitabilityRow {
+  dimension_id?: number | null;
+  dimension_label: string;
+  sku?: string | null;
+  product_name?: string | null;
+  units_sold: number;
+  revenue: number;
+  cogs: number;
+  gross_margin: number;
+  margin_pct: number;
+  inventory_cost: number;
+  gmroi?: number | null;
+  missing_cost: boolean;
+}
+export interface ProfitabilityResponse {
+  channel_id?: number | null;
+  group_by: ProfitGroupBy;
+  days: number;
+  total_units: number;
+  total_revenue: number;
+  total_cogs: number;
+  total_gross_margin: number;
+  total_margin_pct: number;
+  total_inventory_cost: number;
+  total_gmroi?: number | null;
+  variants_without_cost: number;
+  rows: ProfitabilityRow[];
+}
+
 // Transfer
 export interface SourceWarehouseOption { id: number; name: string; location?: string | null; type: string; }
 export interface TransferItem { store_id: number; variant_id: number; units: number; notes?: string; }
