@@ -776,6 +776,59 @@ def build_aging_report(aging: Any) -> bytes:
     return _to_bytes(wb)
 
 
+# ── Reporte 14: Nivel de servicio / fill rate ───────────────────────────
+
+SL_FILL = {
+    "excellent": PatternFill("solid", fgColor="D1FAE5"),
+    "good":      PatternFill("solid", fgColor="DBEAFE"),
+    "low":       PatternFill("solid", fgColor="FEF3C7"),
+    "critical":  PatternFill("solid", fgColor="FEE2E2"),
+}
+SL_LABEL = {"excellent": "Excelente", "good": "Bueno", "low": "Bajo", "critical": "Crítico"}
+SL_DIM = {"store": "Tienda", "sku": "SKU", "channel": "Cadena"}
+
+
+def build_service_level_report(sl: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Nivel de servicio"
+    dim = SL_DIM.get(sl.group_by, "Dimensión")
+    is_sku = sl.group_by == "sku"
+    headers = ([dim] + (["Producto"] if is_sku else []) +
+               ["Observaciones", "Con stock", "In-stock %",
+                "Vendidas", "Perdidas est.", "Fill rate %", "Nivel"])
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    status_col = len(headers)
+    for r in sl.rows:
+        row = [r.dimension_label]
+        if is_sku:
+            row.append(r.product_name or "")
+        row += [
+            int(r.total_periods or 0), int(r.in_stock_periods or 0),
+            float(r.in_stock_rate_pct or 0.0),
+            int(r.units_sold or 0), int(r.estimated_lost_units or 0),
+            float(r.fill_rate_pct or 0.0),
+            SL_LABEL.get(r.status, r.status),
+        ]
+        ws.append(row)
+        fill = SL_FILL.get(r.status)
+        if fill:
+            ws.cell(row=ws.max_row, column=status_col).fill = fill
+
+    _autosize(ws)
+    _company_header(
+        ws, f"Nivel de servicio por {dim}",
+        f"In-stock (OSA) {sl.overall_in_stock_rate_pct:.1f}% · "
+        f"Quiebre {sl.overall_stockout_rate_pct:.1f}% · "
+        f"Fill rate {sl.overall_fill_rate_pct:.1f}% · "
+        f"{sl.total_estimated_lost:,} u perdidas est. · Últimas {sl.weeks_back} sem",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
 # ── Reporte ejecutivo PDF semanal ────────────────────────────────────────
 
 def build_executive_pdf(

@@ -11,7 +11,7 @@ import {
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
   Bell, EyeOff, CheckCircle2, Zap, Warehouse, Grid3x3, BarChart3, ArrowRight,
-  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown, DollarSign, Boxes, Clock,
+  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown, DollarSign, Boxes, Clock, Gauge,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -27,6 +27,7 @@ import type {
   RetailImportProfile, DetectColumnsResponse, PreviewResponse,
   TrendResponse, DistributionResponse, LostSalesResponse,
   ProfitabilityResponse, ProfitGroupBy, ExcessInventoryResponse, AgingResponse,
+  ServiceLevelResponse, ServiceGroupBy,
 } from "./types";
 
 type Tokens = any;
@@ -2460,7 +2461,7 @@ function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null
 
 
 // ── Analíticas: Heatmap + ABC ────────────────────────────────────────────
-type AnalyticsSub = "heatmap" | "trend" | "profitability" | "excess" | "aging" | "distribution" | "lost_sales" | "abc";
+type AnalyticsSub = "heatmap" | "trend" | "profitability" | "excess" | "aging" | "service" | "distribution" | "lost_sales" | "abc";
 
 function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }) {
   const [sub, setSub] = useState<AnalyticsSub>("heatmap");
@@ -2470,6 +2471,7 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
     { key: "profitability", label: "Rentabilidad", icon: DollarSign },
     { key: "excess", label: "Exceso de inventario", icon: Boxes },
     { key: "aging", label: "Antigüedad", icon: Clock },
+    { key: "service", label: "Nivel de servicio", icon: Gauge },
     { key: "distribution", label: "Distribución (voids)", icon: Network },
     { key: "lost_sales", label: "Venta perdida", icon: TrendingDown },
     { key: "abc", label: "Clasificación ABC", icon: TrendingUp },
@@ -2496,6 +2498,7 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
       {sub === "profitability" && <ProfitabilityView t={t} channelId={channelId} />}
       {sub === "excess" && <ExcessInventoryView t={t} channelId={channelId} />}
       {sub === "aging" && <AgingView t={t} channelId={channelId} />}
+      {sub === "service" && <ServiceLevelView t={t} channelId={channelId} />}
       {sub === "distribution" && <DistributionView t={t} channelId={channelId} />}
       {sub === "lost_sales" && <LostSalesView t={t} channelId={channelId} />}
       {sub === "abc" && <ABCView t={t} channelId={channelId} />}
@@ -3243,6 +3246,126 @@ function AgingView({ t, channelId }: { t: Tokens; channelId: number | null }) {
           </div>
           <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
             La antigüedad se estima por días desde la última venta del producto en esa tienda (el sell-out no trae fecha de lote).
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ServiceLevelView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<ServiceLevelResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [groupBy, setGroupBy] = useState<ServiceGroupBy>("store");
+  const [weeks, setWeeks] = useState(12);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.serviceLevel({ channel_id: channelId || undefined, weeks_back: weeks, group_by: groupBy });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, weeks, groupBy]);
+
+  const dimHeader = groupBy === "store" ? "Tienda" : groupBy === "sku" ? "SKU" : "Cadena";
+  const sColor = (s: string) => s === "excellent" ? t.good : s === "good" ? t.nova : s === "low" ? t.warn : t.bad;
+  const sLabel = (s: string) => s === "excellent" ? "Excelente" : s === "good" ? "Bueno" : s === "low" ? "Bajo" : "Crítico";
+  const rateColor = (p: number) => p >= 98 ? t.good : p >= 95 ? t.nova : p >= 90 ? t.warn : t.bad;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <FilterField t={t} label="Agrupar por">
+            <select value={groupBy} onChange={e => setGroupBy(e.target.value as ServiceGroupBy)}
+              style={{ ...inputStyle(t), minWidth: 120, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="store">Tienda</option>
+              <option value="sku">SKU</option>
+              <option value="channel">Cadena</option>
+            </select>
+          </FilterField>
+          <FilterField t={t} label="Ventana">
+            <select value={weeks} onChange={e => setWeeks(Number(e.target.value))}
+              style={{ ...inputStyle(t), minWidth: 120, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value={8}>8 semanas</option>
+              <option value={12}>12 semanas</option>
+              <option value={26}>26 semanas</option>
+            </select>
+          </FilterField>
+        </div>
+        <ExcelBtn t={t} label="Excel"
+          onClick={() => downloadBlob(
+            () => retailApi.reports.serviceLevel({ channel_id: channelId || undefined, weeks_back: weeks, group_by: groupBy }),
+            `retail_nivel_servicio_${groupBy}.xlsx`,
+          )}
+        />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Calculando…</div>}
+      {!loading && data && data.combos_evaluated === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <Gauge size={28} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin datos suficientes</div>
+          <div style={{ fontSize: 11 }}>Carga varias semanas de sell-out para medir el nivel de servicio.</div>
+        </div>
+      )}
+      {!loading && data && data.combos_evaluated > 0 && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10, marginBottom: 12 }}>
+            <ProfTile t={t} label="In-stock (OSA)" value={`${data.overall_in_stock_rate_pct.toFixed(1)}%`} sub="disponibilidad en anaquel" color={rateColor(data.overall_in_stock_rate_pct)} />
+            <ProfTile t={t} label="Fill rate" value={`${data.overall_fill_rate_pct.toFixed(1)}%`} sub="demanda satisfecha (est.)" color={rateColor(data.overall_fill_rate_pct)} />
+            <ProfTile t={t} label="Tasa de quiebre" value={`${data.overall_stockout_rate_pct.toFixed(1)}%`} sub="observaciones en cero" color={data.overall_stockout_rate_pct > 5 ? t.bad : t.good} />
+            <ProfTile t={t} label="Unidades perdidas" value={num(data.total_estimated_lost)} sub={`de ${num(data.total_units_sold)} vendidas`} color={t.textMid} />
+          </div>
+
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "58vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                  <th style={thStyle(t)}>{dimHeader}</th>
+                  {groupBy === "sku" && <th style={thStyle(t)}>Producto</th>}
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Obs.</th>
+                  <th style={{ ...thStyle(t), minWidth: 150 }}>In-stock (OSA)</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Vendidas</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Perdidas est.</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Fill rate</th>
+                  <th style={{ ...thStyle(t), textAlign: "center" }}>Nivel</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => (
+                  <tr key={r.dimension_id ?? i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                    <td style={{ ...tdStyle(t), fontFamily: groupBy === "sku" ? "monospace" : "inherit", fontWeight: 600 }}>{r.dimension_label}</td>
+                    {groupBy === "sku" && <td style={tdStyle(t)}>{r.product_name || "—"}</td>}
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: t.textLo }}>{num(r.total_periods)}</td>
+                    <td style={tdStyle(t)}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ flex: 1, height: 7, background: t.panel3, borderRadius: 4, overflow: "hidden", minWidth: 60 }}>
+                          <div style={{ width: `${r.in_stock_rate_pct}%`, height: "100%", background: rateColor(r.in_stock_rate_pct) }} />
+                        </div>
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: rateColor(r.in_stock_rate_pct), minWidth: 42 }}>{r.in_stock_rate_pct.toFixed(1)}%</span>
+                      </div>
+                    </td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.units_sold)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: r.estimated_lost_units > 0 ? t.bad : t.textLo }}>{num(r.estimated_lost_units)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: rateColor(r.fill_rate_pct) }}>{r.fill_rate_pct.toFixed(1)}%</td>
+                    <td style={{ ...tdStyle(t), textAlign: "center" }}>
+                      <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: sColor(r.status) + "22", color: sColor(r.status), fontWeight: 700 }}>
+                        {sLabel(r.status)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
+            <b>In-stock (OSA)</b> = % de cortes con stock disponible. <b>Fill rate</b> = ventas ÷ (ventas + perdidas estimadas por quiebre).
+            Benchmark de retail: OSA ≥ 95%. Sólo se evalúan combos con venta (surtido activo).
           </div>
         </>
       )}

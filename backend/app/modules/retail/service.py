@@ -22,7 +22,7 @@ import io
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import and_, delete, func, select, or_
+from sqlalchemy import and_, case, delete, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
@@ -3292,6 +3292,149 @@ async def inventory_aging(
         total_stock_units=total_units, total_stock_value=round(total_value, 2),
         obsolete_value=round(obsolete_value, 2), obsolete_pct=obsolete_pct,
         buckets=buckets, rows=rows,
+    )
+
+
+# ── Analytics: nivel de servicio / fill rate ─────────────────────────────
+
+def _service_status(in_stock_rate: float) -> str:
+    if in_stock_rate >= 98:
+        return "excellent"
+    if in_stock_rate >= 95:
+        return "good"
+    if in_stock_rate >= 90:
+        return "low"
+    return "critical"
+
+
+async def service_level(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    weeks_back: int = 12, group_by: str = "store", limit: int = 500,
+) -> schemas.ServiceLevelResponse:
+    """Nivel de servicio / fill rate:
+      - In-stock rate (OSA): % de observaciones (combo × corte) con stock.
+      - Fill rate estimado: vendido / (vendido + perdido), donde el perdido
+        se estima con la velocidad de los cortes CON stock aplicada a los
+        cortes en quiebre.
+    Sólo cuenta combos (tienda, SKU) con al menos una venta en la ventana
+    (surtido activo) — no penaliza productos que la tienda nunca manejó."""
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=weeks_back * 7)
+
+    in_stock_expr = func.sum(
+        case((models.SellOutReport.units_on_hand > 0, 1), else_=0)
+    )
+    stockout_expr = func.sum(
+        case((models.SellOutReport.units_on_hand <= 0, 1), else_=0)
+    )
+
+    combo_stmt = (
+        select(
+            models.RetailStore.id.label("store_id"),
+            models.RetailStore.name.label("store_name"),
+            models.RetailChannel.id.label("channel_id"),
+            models.RetailChannel.name.label("channel_name"),
+            models.SellOutReport.variant_id,
+            func.max(models.SellOutReport.sku).label("sku"),
+            func.max(models.SellOutReport.product_name).label("product_name"),
+            func.count().label("total_periods"),
+            in_stock_expr.label("in_stock_periods"),
+            stockout_expr.label("stockout_periods"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units_sold"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(
+            models.SellOutReport.period_start >= since,
+            models.SellOutReport.variant_id.isnot(None),
+            models.RetailStore.is_active.is_(True),
+        )
+        .group_by(
+            models.RetailStore.id, models.RetailStore.name,
+            models.RetailChannel.id, models.RetailChannel.name,
+            models.SellOutReport.variant_id,
+        )
+        .having(func.coalesce(func.sum(models.SellOutReport.units_sold), 0) > 0)
+    )
+    if channel_id is not None:
+        combo_stmt = combo_stmt.where(models.RetailStore.channel_id == channel_id)
+    combos = (await db.execute(combo_stmt)).all()
+
+    # Acumuladores por dimensión + globales
+    agg: Dict[Any, Dict[str, Any]] = {}
+    tot_periods = 0
+    tot_in_stock = 0
+    tot_stockout = 0
+    tot_sold = 0
+    tot_lost = 0.0
+
+    for r in combos:
+        total_p = int(r.total_periods or 0)
+        in_p = int(r.in_stock_periods or 0)
+        out_p = int(r.stockout_periods or 0)
+        sold = int(r.units_sold or 0)
+        # Velocidad por corte CON stock; perdido = velocidad × cortes en quiebre
+        vel_per_period = (sold / in_p) if in_p > 0 else 0.0
+        lost = vel_per_period * out_p
+
+        tot_periods += total_p
+        tot_in_stock += in_p
+        tot_stockout += out_p
+        tot_sold += sold
+        tot_lost += lost
+
+        if group_by == "sku":
+            key = int(r.variant_id)
+            label = r.sku or (r.product_name or f"SKU {r.variant_id}")
+            did, sku_v, pname_v = key, r.sku, r.product_name
+        elif group_by == "channel":
+            key = int(r.channel_id)
+            label = r.channel_name
+            did, sku_v, pname_v = key, None, None
+        else:  # store
+            key = int(r.store_id)
+            label = r.store_name
+            did, sku_v, pname_v = key, None, None
+
+        d = agg.setdefault(key, {
+            "label": label, "did": did, "sku": sku_v, "pname": pname_v,
+            "total_p": 0, "in_p": 0, "out_p": 0, "sold": 0, "lost": 0.0,
+        })
+        d["total_p"] += total_p
+        d["in_p"] += in_p
+        d["out_p"] += out_p
+        d["sold"] += sold
+        d["lost"] += lost
+
+    rows: List[schemas.ServiceLevelRow] = []
+    for d in agg.values():
+        in_rate = round(d["in_p"] / d["total_p"] * 100.0, 1) if d["total_p"] > 0 else 0.0
+        lost_i = int(round(d["lost"]))
+        fill = round(d["sold"] / (d["sold"] + d["lost"]) * 100.0, 1) if (d["sold"] + d["lost"]) > 0 else 100.0
+        rows.append(schemas.ServiceLevelRow(
+            dimension_id=d["did"], dimension_label=d["label"],
+            sku=d["sku"], product_name=d["pname"],
+            total_periods=d["total_p"], in_stock_periods=d["in_p"],
+            in_stock_rate_pct=in_rate,
+            units_sold=d["sold"], estimated_lost_units=lost_i,
+            fill_rate_pct=fill, status=_service_status(in_rate),
+        ))
+    # Peores primero (menor in-stock rate)
+    rows.sort(key=lambda x: (x.in_stock_rate_pct, -x.estimated_lost_units))
+    rows = rows[:limit]
+
+    overall_in = round(tot_in_stock / tot_periods * 100.0, 1) if tot_periods > 0 else 0.0
+    overall_out = round(tot_stockout / tot_periods * 100.0, 1) if tot_periods > 0 else 0.0
+    overall_fill = round(tot_sold / (tot_sold + tot_lost) * 100.0, 1) if (tot_sold + tot_lost) > 0 else 100.0
+
+    return schemas.ServiceLevelResponse(
+        channel_id=channel_id, generated_at=now, weeks_back=weeks_back,
+        group_by=group_by,
+        overall_in_stock_rate_pct=overall_in,
+        overall_stockout_rate_pct=overall_out,
+        overall_fill_rate_pct=overall_fill,
+        total_units_sold=tot_sold, total_estimated_lost=int(round(tot_lost)),
+        combos_evaluated=len(combos), rows=rows,
     )
 
 

@@ -310,6 +310,35 @@ export interface AgingResponse {
   rows: AgingRow[];
 }
 
+// Nivel de servicio / fill rate
+export type ServiceGroupBy = "store" | "sku" | "channel";
+export interface ServiceLevelRow {
+  dimension_id?: number | null;
+  dimension_label: string;
+  sku?: string | null;
+  product_name?: string | null;
+  total_periods: number;
+  in_stock_periods: number;
+  in_stock_rate_pct: number;
+  units_sold: number;
+  estimated_lost_units: number;
+  fill_rate_pct: number;
+  status: "excellent" | "good" | "low" | "critical";
+}
+export interface ServiceLevelResponse {
+  channel_id?: number | null;
+  generated_at: string;
+  weeks_back: number;
+  group_by: ServiceGroupBy;
+  overall_in_stock_rate_pct: number;
+  overall_stockout_rate_pct: number;
+  overall_fill_rate_pct: number;
+  total_units_sold: number;
+  total_estimated_lost: number;
+  combos_evaluated: number;
+  rows: ServiceLevelRow[];
+}
+
 // Transfer
 export interface SourceWarehouseOption { id: number; name: string; location?: string | null; type: string; }
 export interface TransferItem { store_id: number; variant_id: number; units: number; notes?: string; }

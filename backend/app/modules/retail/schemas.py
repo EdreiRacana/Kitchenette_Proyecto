@@ -602,6 +602,36 @@ class AgingResponse(BaseModel):
     rows: List[AgingRow]
 
 
+# ── Analytics: nivel de servicio / fill rate ────────────────────────────
+
+class ServiceLevelRow(BaseModel):
+    dimension_id: Optional[int] = None
+    dimension_label: str               # tienda / SKU / cadena
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    total_periods: int                 # observaciones (combos × cortes)
+    in_stock_periods: int
+    in_stock_rate_pct: float           # OSA — disponibilidad en anaquel
+    units_sold: int
+    estimated_lost_units: int
+    fill_rate_pct: float               # vendido / (vendido + perdido)
+    status: str                        # excellent | good | low | critical
+
+
+class ServiceLevelResponse(BaseModel):
+    channel_id: Optional[int] = None
+    generated_at: datetime
+    weeks_back: int
+    group_by: str                      # store | sku | channel
+    overall_in_stock_rate_pct: float
+    overall_stockout_rate_pct: float
+    overall_fill_rate_pct: float
+    total_units_sold: int
+    total_estimated_lost: int
+    combos_evaluated: int
+    rows: List[ServiceLevelRow]
+
+
 # ── Replenishment: transfer ─────────────────────────────────────────────
 
 class SourceWarehouseOption(BaseModel):

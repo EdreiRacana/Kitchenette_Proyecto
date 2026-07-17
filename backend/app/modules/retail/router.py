@@ -433,6 +433,20 @@ async def report_aging_xlsx(
     return _xlsx_response(content, "retail_antiguedad_inventario.xlsx")
 
 
+@router.get("/reports/service-level.xlsx")
+async def report_service_level_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    weeks_back: int = Query(12, ge=2, le=52),
+    group_by: str = Query("store", pattern="^(store|sku|channel)$"),
+):
+    sl = await service.service_level(
+        db, channel_id=channel_id, weeks_back=weeks_back, group_by=group_by, limit=5000,
+    )
+    content = retail_reports.build_service_level_report(sl)
+    return _xlsx_response(content, "retail_nivel_servicio.xlsx")
+
+
 @router.get("/reports/abc.xlsx")
 async def report_abc_xlsx(
     db: DB, _: CurrentUser,
@@ -594,6 +608,19 @@ async def analytics_aging(
     limit: int = Query(500, ge=1, le=2000),
 ):
     return await service.inventory_aging(db, channel_id=channel_id, limit=limit)
+
+
+@router.get("/analytics/service-level", response_model=schemas.ServiceLevelResponse)
+async def analytics_service_level(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    weeks_back: int = Query(12, ge=2, le=52),
+    group_by: str = Query("store", pattern="^(store|sku|channel)$"),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    return await service.service_level(
+        db, channel_id=channel_id, weeks_back=weeks_back, group_by=group_by, limit=limit,
+    )
 
 
 # ── Traslados desde reabasto ────────────────────────────────────────────

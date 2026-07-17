@@ -125,6 +125,8 @@ export const retailApi = {
     api.get<import("./types").ExcessInventoryResponse>("/retail/analytics/excess-inventory", { params: opts }).then(r => r.data),
   aging: (opts?: { channel_id?: number; limit?: number }) =>
     api.get<import("./types").AgingResponse>("/retail/analytics/aging", { params: opts }).then(r => r.data),
+  serviceLevel: (opts?: { channel_id?: number; weeks_back?: number; group_by?: import("./types").ServiceGroupBy; limit?: number }) =>
+    api.get<import("./types").ServiceLevelResponse>("/retail/analytics/service-level", { params: opts }).then(r => r.data),
 
   // Traslados
   listSourceWarehouses: () =>
@@ -190,6 +192,8 @@ export const retailApi = {
       api.get(`/retail/reports/excess-inventory.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
     aging: (params?: { channel_id?: number }) =>
       api.get(`/retail/reports/aging.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    serviceLevel: (params?: { channel_id?: number; weeks_back?: number; group_by?: import("./types").ServiceGroupBy }) =>
+      api.get(`/retail/reports/service-level.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
     abc: (params?: { channel_id?: number; days?: number }) =>
       api.get(`/retail/reports/abc.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
     replenishment: (params?: { channel_id?: number }) =>
