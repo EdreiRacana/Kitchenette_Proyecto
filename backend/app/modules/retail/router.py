@@ -413,6 +413,16 @@ async def report_profitability_xlsx(
     return _xlsx_response(content, "retail_rentabilidad.xlsx")
 
 
+@router.get("/reports/excess-inventory.xlsx")
+async def report_excess_inventory_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+):
+    exc = await service.excess_inventory(db, channel_id=channel_id, limit=5000)
+    content = retail_reports.build_excess_inventory_report(exc)
+    return _xlsx_response(content, "retail_exceso_inventario.xlsx")
+
+
 @router.get("/reports/abc.xlsx")
 async def report_abc_xlsx(
     db: DB, _: CurrentUser,
@@ -556,6 +566,15 @@ async def analytics_profitability(
     return await service.profitability(
         db, channel_id=channel_id, days=days, group_by=group_by, limit=limit,
     )
+
+
+@router.get("/analytics/excess-inventory", response_model=schemas.ExcessInventoryResponse)
+async def analytics_excess_inventory(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    return await service.excess_inventory(db, channel_id=channel_id, limit=limit)
 
 
 # ── Traslados desde reabasto ────────────────────────────────────────────

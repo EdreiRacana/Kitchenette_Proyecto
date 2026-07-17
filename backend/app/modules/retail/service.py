@@ -2928,6 +2928,194 @@ async def profitability(
     )
 
 
+# ── Analytics: exceso de inventario + rotación / DOH ─────────────────────
+
+async def excess_inventory(
+    db: AsyncSession, channel_id: Optional[int] = None, limit: int = 500,
+) -> schemas.ExcessInventoryResponse:
+    """Cuánto dinero está detenido en exceso de inventario, y qué tan rápido
+    rota el inventario (turnover / DOH).
+
+    Exceso por (tienda, SKU):
+      - Con velocidad: exceso = on_hand − (umbral_sobreinventario × vel/sem).
+        Sólo cuenta lo que pasa del límite sano de la cadena.
+      - Sin velocidad y con stock: dead stock → todo el on_hand es exceso.
+      exceso_$ = exceso_unidades × costo.
+
+    Rotación (anualizada) = COGS_ventana × (365/28) / inventario_a_costo.
+    Días de inventario = 365 / rotación.
+    """
+    now = datetime.now(timezone.utc)
+    velocity_from = now - timedelta(days=VELOCITY_WINDOW_DAYS)
+
+    # Combos con último corte + ventas en ventana + umbral de la cadena
+    combos_stmt = (
+        select(
+            models.RetailStore.id.label("store_id"),
+            models.RetailStore.name.label("store_name"),
+            models.RetailChannel.id.label("channel_id"),
+            models.RetailChannel.name.label("channel_name"),
+            models.RetailChannel.overstock_wos_weeks,
+            models.SellOutReport.variant_id,
+            models.SellOutReport.product_name,
+            models.SellOutReport.sku,
+            func.max(models.SellOutReport.period_start).label("last_period"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units_window"),
+            func.coalesce(func.avg(models.SellOutReport.units_on_hand), 0.0).label("avg_oh"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(
+            models.SellOutReport.period_start >= velocity_from,
+            models.SellOutReport.variant_id.isnot(None),
+            models.RetailStore.is_active.is_(True),
+        )
+        .group_by(
+            models.RetailStore.id, models.RetailStore.name,
+            models.RetailChannel.id, models.RetailChannel.name,
+            models.RetailChannel.overstock_wos_weeks,
+            models.SellOutReport.variant_id,
+            models.SellOutReport.product_name, models.SellOutReport.sku,
+        )
+    )
+    if channel_id is not None:
+        combos_stmt = combos_stmt.where(models.RetailStore.channel_id == channel_id)
+    combos = (await db.execute(combos_stmt)).all()
+
+    if not combos:
+        return schemas.ExcessInventoryResponse(
+            channel_id=channel_id, generated_at=now,
+            total_inventory_units=0, total_inventory_cost=0.0,
+            inventory_turnover=None, days_of_inventory=None, avg_doh_days=None,
+            total_excess_units=0, total_excess_cost=0.0, dead_stock_cost=0.0,
+            affected_combos=0, rows=[],
+        )
+
+    # Precios de catálogo
+    variant_ids = list({int(r.variant_id) for r in combos if r.variant_id})
+    cost_by_variant: Dict[int, float] = {}
+    if variant_ids:
+        prices = (await db.execute(
+            select(inv_models.ProductVariant.id, inv_models.ProductVariant.cost_price)
+            .where(inv_models.ProductVariant.id.in_(variant_ids))
+        )).all()
+        cost_by_variant = {int(vid): float(cp or 0.0) for vid, cp in prices}
+
+    # On-hand actual (último corte) por combo, en una sola query consolidada
+    store_ids = list({int(r.store_id) for r in combos})
+    last_oh_rows = (await db.execute(
+        select(
+            models.SellOutReport.store_id,
+            models.SellOutReport.variant_id,
+            models.SellOutReport.period_start,
+            func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0).label("oh"),
+        )
+        .where(
+            models.SellOutReport.store_id.in_(store_ids),
+            models.SellOutReport.variant_id.in_(variant_ids),
+        )
+        .group_by(
+            models.SellOutReport.store_id, models.SellOutReport.variant_id,
+            models.SellOutReport.period_start,
+        )
+    )).all()
+    oh_by_key = {(int(r.store_id), int(r.variant_id), r.period_start): int(r.oh) for r in last_oh_rows}
+
+    rows: List[schemas.ExcessInventoryRow] = []
+    total_inventory_units = 0
+    total_inventory_cost = 0.0
+    total_excess_units = 0
+    total_excess_cost = 0.0
+    dead_stock_cost = 0.0
+    # Para rotación global
+    cogs_window = 0.0
+    avg_inv_cost = 0.0
+
+    for r in combos:
+        vid = int(r.variant_id)
+        cost = cost_by_variant.get(vid, 0.0)
+        on_hand = oh_by_key.get((int(r.store_id), vid, r.last_period), 0)
+        avg_oh = float(r.avg_oh or 0.0)
+        units_window = int(r.units_window or 0)
+        avg_weekly = units_window / (VELOCITY_WINDOW_DAYS / 7.0)
+
+        # Acumuladores globales de rotación (todo el universo, no sólo exceso)
+        total_inventory_units += on_hand
+        total_inventory_cost += on_hand * cost
+        cogs_window += units_window * cost
+        avg_inv_cost += avg_oh * cost
+
+        if on_hand <= 0:
+            continue
+
+        overstock_w = float(r.overstock_wos_weeks or 12.0)
+        is_dead = avg_weekly <= 0
+        if is_dead:
+            wos = None
+            doh = None
+            excess_units = on_hand           # sin ventas → todo es exceso
+        else:
+            wos = on_hand / avg_weekly
+            doh = wos * 7.0
+            healthy_cap = overstock_w * avg_weekly
+            excess_units = int(max(round(on_hand - healthy_cap), 0))
+
+        if excess_units <= 0:
+            continue
+
+        excess_cost = round(excess_units * cost, 2)
+        total_excess_units += excess_units
+        total_excess_cost += excess_cost
+        if is_dead:
+            dead_stock_cost += excess_cost
+
+        if is_dead or excess_cost >= 20000:
+            severity = "urgent"
+        elif (wos or 0) > overstock_w * 1.5 or excess_cost >= 5000:
+            severity = "high"
+        else:
+            severity = "medium"
+
+        rows.append(schemas.ExcessInventoryRow(
+            store_id=r.store_id, store_name=r.store_name,
+            channel_id=r.channel_id, channel_name=r.channel_name,
+            variant_id=vid, sku=r.sku, product_name=r.product_name,
+            on_hand=on_hand, avg_weekly_units=round(avg_weekly, 2),
+            wos_weeks=round(wos, 2) if wos is not None else None,
+            doh_days=round(doh, 1) if doh is not None else None,
+            overstock_threshold_weeks=overstock_w,
+            excess_units=excess_units, unit_cost=round(cost, 2),
+            excess_cost=excess_cost, is_dead_stock=is_dead,
+            severity=severity,
+        ))
+
+    rows.sort(key=lambda x: -x.excess_cost)
+    rows = rows[:limit]
+
+    # Rotación anualizada = COGS_28d × (365/28) / inventario_promedio_a_costo
+    turnover = None
+    days_of_inv = None
+    avg_doh = None
+    if avg_inv_cost > 0:
+        annualized_cogs = cogs_window * (365.0 / VELOCITY_WINDOW_DAYS)
+        turnover = round(annualized_cogs / avg_inv_cost, 2)
+        if turnover > 0:
+            days_of_inv = round(365.0 / turnover, 1)
+            avg_doh = days_of_inv
+
+    return schemas.ExcessInventoryResponse(
+        channel_id=channel_id, generated_at=now,
+        total_inventory_units=total_inventory_units,
+        total_inventory_cost=round(total_inventory_cost, 2),
+        inventory_turnover=turnover, days_of_inventory=days_of_inv,
+        avg_doh_days=avg_doh,
+        total_excess_units=total_excess_units,
+        total_excess_cost=round(total_excess_cost, 2),
+        dead_stock_cost=round(dead_stock_cost, 2),
+        affected_combos=len(rows), rows=rows,
+    )
+
+
 # ── Replenishment: crear traslado ────────────────────────────────────────
 
 async def list_source_warehouses(db: AsyncSession) -> List[schemas.SourceWarehouseOption]:

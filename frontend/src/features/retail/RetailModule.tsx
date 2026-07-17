@@ -11,7 +11,7 @@ import {
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
   Bell, EyeOff, CheckCircle2, Zap, Warehouse, Grid3x3, BarChart3, ArrowRight,
-  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown, DollarSign,
+  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown, DollarSign, Boxes,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -26,7 +26,7 @@ import type {
   ABCResponse, SourceWarehouseOption, TransferResponse,
   RetailImportProfile, DetectColumnsResponse, PreviewResponse,
   TrendResponse, DistributionResponse, LostSalesResponse,
-  ProfitabilityResponse, ProfitGroupBy,
+  ProfitabilityResponse, ProfitGroupBy, ExcessInventoryResponse,
 } from "./types";
 
 type Tokens = any;
@@ -2460,7 +2460,7 @@ function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null
 
 
 // ── Analíticas: Heatmap + ABC ────────────────────────────────────────────
-type AnalyticsSub = "heatmap" | "trend" | "profitability" | "distribution" | "lost_sales" | "abc";
+type AnalyticsSub = "heatmap" | "trend" | "profitability" | "excess" | "distribution" | "lost_sales" | "abc";
 
 function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }) {
   const [sub, setSub] = useState<AnalyticsSub>("heatmap");
@@ -2468,6 +2468,7 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
     { key: "heatmap", label: "Heatmap tiendas × SKUs", icon: Grid3x3 },
     { key: "trend", label: "Tendencia", icon: LineChart },
     { key: "profitability", label: "Rentabilidad", icon: DollarSign },
+    { key: "excess", label: "Exceso de inventario", icon: Boxes },
     { key: "distribution", label: "Distribución (voids)", icon: Network },
     { key: "lost_sales", label: "Venta perdida", icon: TrendingDown },
     { key: "abc", label: "Clasificación ABC", icon: TrendingUp },
@@ -2492,6 +2493,7 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
       {sub === "heatmap" && <HeatmapView t={t} channelId={channelId} />}
       {sub === "trend" && <TrendView t={t} channelId={channelId} />}
       {sub === "profitability" && <ProfitabilityView t={t} channelId={channelId} />}
+      {sub === "excess" && <ExcessInventoryView t={t} channelId={channelId} />}
       {sub === "distribution" && <DistributionView t={t} channelId={channelId} />}
       {sub === "lost_sales" && <LostSalesView t={t} channelId={channelId} />}
       {sub === "abc" && <ABCView t={t} channelId={channelId} />}
@@ -3018,6 +3020,107 @@ function ProfTile({ t, label, value, sub, color }: {
       <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
       <div style={{ fontSize: 20, fontWeight: 800, color, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       <div style={{ fontSize: 11, color: t.textLo, marginTop: 3 }}>{sub}</div>
+    </div>
+  );
+}
+
+function ExcessInventoryView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<ExcessInventoryResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.excessInventory({ channel_id: channelId || undefined });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId]);
+
+  const sevColor = (s: string) => s === "urgent" ? t.bad : s === "high" ? t.warn : t.nova;
+  const sevLabel = (s: string) => s === "urgent" ? "Urgente" : s === "high" ? "Alta" : "Media";
+  const turnColor = (tv: number | null | undefined) =>
+    tv == null ? t.textLo : tv >= 6 ? t.good : tv >= 3 ? t.nova : t.warn;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12, color: t.textLo, maxWidth: 640 }}>
+          Dónde tienes <b style={{ color: t.textMid }}>dinero detenido</b>: stock por encima del umbral sano de la cadena
+          y productos sin movimiento (dead stock). Incluye rotación anual y días de inventario.
+        </div>
+        <ExcelBtn t={t} label="Excel"
+          onClick={() => downloadBlob(
+            () => retailApi.reports.excessInventory({ channel_id: channelId || undefined }),
+            `retail_exceso_inventario.xlsx`,
+          )}
+        />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Calculando…</div>}
+      {!loading && data && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(175px, 1fr))", gap: 10, marginBottom: 12 }}>
+            <ProfTile t={t} label="Dinero en exceso" value={mxn(data.total_excess_cost)} sub={`${num(data.total_excess_units)} unidades de más`} color={data.total_excess_cost > 0 ? t.bad : t.good} />
+            <ProfTile t={t} label="Dead stock" value={mxn(data.dead_stock_cost)} sub="Sin ventas, con stock" color={data.dead_stock_cost > 0 ? t.warn : t.good} />
+            <ProfTile t={t} label="Rotación" value={data.inventory_turnover != null ? `${data.inventory_turnover.toFixed(1)}x` : "—"} sub="veces al año" color={turnColor(data.inventory_turnover)} />
+            <ProfTile t={t} label="Días de inventario" value={data.days_of_inventory != null ? `${data.days_of_inventory.toFixed(0)} d` : "—"} sub="cobertura promedio (DOH)" color={t.textHi} />
+            <ProfTile t={t} label="Inventario a costo" value={mxn(data.total_inventory_cost)} sub={`${num(data.total_inventory_units)} unidades`} color={t.textMid} />
+          </div>
+
+          {data.rows.length === 0 ? (
+            <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+              <CheckCircle2 size={28} color={t.good} />
+              <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin exceso de inventario</div>
+              <div style={{ fontSize: 11 }}>Tu inventario está dentro del umbral sano. Excelente rotación.</div>
+            </div>
+          ) : (
+            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "58vh" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                    <th style={thStyle(t)}>Severidad</th>
+                    <th style={thStyle(t)}>Tienda</th>
+                    <th style={thStyle(t)}>SKU</th>
+                    <th style={thStyle(t)}>Producto</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>On-hand</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>WOS</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>DOH</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>Exceso u.</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>Detenido $</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.map((r, i) => (
+                    <tr key={i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                      <td style={tdStyle(t)}>
+                        <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: sevColor(r.severity) + "22", color: sevColor(r.severity), fontWeight: 700 }}>
+                          {r.is_dead_stock ? "Dead stock" : sevLabel(r.severity)}
+                        </span>
+                      </td>
+                      <td style={tdStyle(t)}>{r.store_name}</td>
+                      <td style={{ ...tdStyle(t), fontFamily: "monospace" }}>{r.sku || "—"}</td>
+                      <td style={tdStyle(t)}>{r.product_name || "—"}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.on_hand)}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.wos_weeks != null ? r.wos_weeks.toFixed(1) : "∞"}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.doh_days != null ? `${r.doh_days.toFixed(0)}d` : "∞"}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 600 }}>{num(r.excess_units)}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.bad }}>{mxn(r.excess_cost)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
+            <b>Rotación</b> alta = inventario que se mueve rápido (bueno). <b>DOH</b> = días que dura el inventario al ritmo de venta actual.
+            El exceso se mide contra el umbral de sobreinventario de cada cadena.
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -671,6 +671,56 @@ def build_profitability_report(prof: Any) -> bytes:
     return _to_bytes(wb)
 
 
+# ── Reporte 12: Exceso de inventario + rotación ─────────────────────────
+
+def build_excess_inventory_report(exc: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Exceso inventario"
+    headers = ["Severidad", "Cadena", "Tienda", "SKU", "Producto",
+                "On-hand", "Vel. sem", "WOS", "DOH (días)",
+                "Exceso u.", "Costo u.", "Exceso $", "Dead stock"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for r in exc.rows:
+        ws.append([
+            SEV_LABEL.get(r.severity, r.severity),
+            r.channel_name or "", r.store_name or "",
+            r.sku or "", r.product_name or "",
+            int(r.on_hand or 0), float(r.avg_weekly_units or 0.0),
+            float(r.wos_weeks) if r.wos_weeks is not None else "∞",
+            float(r.doh_days) if r.doh_days is not None else "∞",
+            int(r.excess_units or 0), float(r.unit_cost or 0.0),
+            float(r.excess_cost or 0.0),
+            "Sí" if r.is_dead_stock else "",
+        ])
+        fill = SEV_FILL.get(r.severity)
+        if fill:
+            ws.cell(row=ws.max_row, column=1).fill = fill
+
+    tr = ws.max_row + 1
+    ws.cell(row=tr, column=1, value="TOTAL").font = TOTAL_FONT
+    ws.merge_cells(start_row=tr, start_column=1, end_row=tr, end_column=9)
+    c10 = ws.cell(row=tr, column=10, value=int(exc.total_excess_units or 0))
+    c10.font = TOTAL_FONT; c10.fill = GREY_ROW
+    c12 = ws.cell(row=tr, column=12, value=round(float(exc.total_excess_cost or 0.0), 2))
+    c12.font = TOTAL_FONT; c12.fill = GREY_ROW
+
+    _autosize(ws)
+    turn = f"{exc.inventory_turnover:.2f}" if exc.inventory_turnover is not None else "—"
+    doh = f"{exc.days_of_inventory:.0f}" if exc.days_of_inventory is not None else "—"
+    _company_header(
+        ws, "Exceso de inventario y rotación",
+        f"$ {exc.total_excess_cost:,.2f} detenido en exceso "
+        f"(dead stock $ {exc.dead_stock_cost:,.2f}) · "
+        f"Inventario a costo $ {exc.total_inventory_cost:,.2f} · "
+        f"Rotación {turn}x/año · Días de inventario {doh}",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
 # ── Reporte ejecutivo PDF semanal ────────────────────────────────────────
 
 def build_executive_pdf(

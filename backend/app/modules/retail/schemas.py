@@ -525,6 +525,45 @@ class ProfitabilityResponse(BaseModel):
     rows: List[ProfitabilityRow]
 
 
+# ── Analytics: exceso de inventario + rotación/DOH ──────────────────────
+
+class ExcessInventoryRow(BaseModel):
+    store_id: int
+    store_name: str
+    channel_id: Optional[int] = None
+    channel_name: Optional[str] = None
+    variant_id: Optional[int] = None
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    on_hand: int
+    avg_weekly_units: float
+    wos_weeks: Optional[float] = None   # None = sin movimiento (dead stock)
+    doh_days: Optional[float] = None    # días de inventario
+    overstock_threshold_weeks: float
+    excess_units: int                   # unidades por encima del umbral sano
+    unit_cost: float
+    excess_cost: float                  # dinero detenido en exceso
+    is_dead_stock: bool                 # sin ventas y con stock
+    severity: str                       # urgent | high | medium
+
+
+class ExcessInventoryResponse(BaseModel):
+    channel_id: Optional[int] = None
+    generated_at: datetime
+    # Salud global del inventario
+    total_inventory_units: int
+    total_inventory_cost: float         # inventario actual valuado a costo
+    inventory_turnover: Optional[float] = None   # rotación anualizada
+    days_of_inventory: Optional[float] = None     # 365 / rotación
+    avg_doh_days: Optional[float] = None          # días de inventario promedio
+    # Exceso
+    total_excess_units: int
+    total_excess_cost: float            # $ detenido en exceso
+    dead_stock_cost: float              # $ en productos sin movimiento
+    affected_combos: int
+    rows: List[ExcessInventoryRow]
+
+
 # ── Replenishment: transfer ─────────────────────────────────────────────
 
 class SourceWarehouseOption(BaseModel):

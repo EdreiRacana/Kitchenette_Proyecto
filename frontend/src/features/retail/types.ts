@@ -239,6 +239,41 @@ export interface ProfitabilityResponse {
   rows: ProfitabilityRow[];
 }
 
+// Exceso de inventario + rotación
+export interface ExcessInventoryRow {
+  store_id: number;
+  store_name: string;
+  channel_id?: number | null;
+  channel_name?: string | null;
+  variant_id?: number | null;
+  sku?: string | null;
+  product_name?: string | null;
+  on_hand: number;
+  avg_weekly_units: number;
+  wos_weeks?: number | null;
+  doh_days?: number | null;
+  overstock_threshold_weeks: number;
+  excess_units: number;
+  unit_cost: number;
+  excess_cost: number;
+  is_dead_stock: boolean;
+  severity: "urgent" | "high" | "medium";
+}
+export interface ExcessInventoryResponse {
+  channel_id?: number | null;
+  generated_at: string;
+  total_inventory_units: number;
+  total_inventory_cost: number;
+  inventory_turnover?: number | null;
+  days_of_inventory?: number | null;
+  avg_doh_days?: number | null;
+  total_excess_units: number;
+  total_excess_cost: number;
+  dead_stock_cost: number;
+  affected_combos: number;
+  rows: ExcessInventoryRow[];
+}
+
 // Transfer
 export interface SourceWarehouseOption { id: number; name: string; location?: string | null; type: string; }
 export interface TransferItem { store_id: number; variant_id: number; units: number; notes?: string; }
