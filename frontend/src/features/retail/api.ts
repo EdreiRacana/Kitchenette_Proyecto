@@ -105,6 +105,15 @@ export const retailApi = {
     api.get<import("./types").HeatmapFilters>("/retail/analytics/heatmap/filters", { params: { channel_id } }).then(r => r.data),
   abc: (opts?: { channel_id?: number; days?: number }) =>
     api.get<import("./types").ABCResponse>("/retail/analytics/abc", { params: opts }).then(r => r.data),
+  trend: (opts?: {
+    channel_id?: number; variant_id?: number; store_id?: number;
+    period_type?: "day" | "week" | "month"; weeks_back?: number;
+  }) =>
+    api.get<import("./types").TrendResponse>("/retail/analytics/trend", { params: opts }).then(r => r.data),
+  distribution: (opts?: { channel_id?: number; days?: number; limit?: number }) =>
+    api.get<import("./types").DistributionResponse>("/retail/analytics/distribution", { params: opts }).then(r => r.data),
+  lostSales: (opts?: { channel_id?: number; limit?: number }) =>
+    api.get<import("./types").LostSalesResponse>("/retail/analytics/lost-sales", { params: opts }).then(r => r.data),
 
   // Traslados
   listSourceWarehouses: () =>
@@ -153,8 +162,17 @@ export const retailApi = {
       api.get(`/retail/reports/sellout.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
     dashboard: (params?: { channel_id?: number; days?: number }) =>
       api.get(`/retail/reports/dashboard.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
-    heatmap: (params?: { channel_id?: number; metric?: "wos" | "units_sold" | "on_hand"; limit_variants?: number }) =>
+    heatmap: (params?: { channel_id?: number; metric?: "wos" | "units_sold" | "on_hand"; limit_variants?: number;
+                          full?: boolean; region?: string; state?: string; store_format?: string;
+                          store_search?: string; sort_stores_by?: import("./types").HeatmapSortStores }) =>
       api.get(`/retail/reports/heatmap.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    trend: (params?: { channel_id?: number; variant_id?: number; store_id?: number;
+                        period_type?: "day" | "week" | "month"; weeks_back?: number }) =>
+      api.get(`/retail/reports/trend.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    distribution: (params?: { channel_id?: number; days?: number }) =>
+      api.get(`/retail/reports/distribution.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    lostSales: (params?: { channel_id?: number }) =>
+      api.get(`/retail/reports/lost-sales.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
     abc: (params?: { channel_id?: number; days?: number }) =>
       api.get(`/retail/reports/abc.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
     replenishment: (params?: { channel_id?: number }) =>

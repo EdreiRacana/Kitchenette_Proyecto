@@ -94,28 +94,42 @@ def build_sellout_report(rows: List[Any]) -> bytes:
     headers = [
         "Cadena", "Tienda", "SKU", "Producto",
         "Tipo periodo", "Inicio", "Fin",
-        "Unidades vendidas", "Stock final", "Ingreso",
+        "Unidades vendidas", "Devueltas", "Netas",
+        "Stock final", "Ingreso", "Devoluciones $", "Ingreso neto",
+        "% Devoluciones",
         "Fuente", "Notas",
     ]
     ws.append(headers)
     _style_header(ws, len(headers))
 
     total_units = 0
+    total_returned = 0
     total_stock = 0
     total_rev = 0.0
+    total_ret_amt = 0.0
     for r in rows:
-        total_units += int(r.units_sold or 0)
+        u = int(r.units_sold or 0)
+        ru = int(getattr(r, "units_returned", 0) or 0)
+        net_u = max(u - ru, 0)
+        rev = float(r.revenue or 0.0)
+        ret_amt = float(getattr(r, "returns_amount", 0.0) or 0.0)
+        net_rev = round(max(rev - ret_amt, 0.0), 2)
+        ret_pct = round((ru / u * 100.0), 2) if u > 0 else 0.0
+        total_units += u
+        total_returned += ru
         total_stock += int(r.units_on_hand or 0)
-        total_rev += float(r.revenue or 0.0)
+        total_rev += rev
+        total_ret_amt += ret_amt
         ws.append([
             r.channel_name or "", r.store_name or "",
             r.sku or "", r.product_name or "",
             r.period_type or "",
             r.period_start.strftime("%Y-%m-%d") if r.period_start else "",
             r.period_end.strftime("%Y-%m-%d") if r.period_end else "",
-            int(r.units_sold or 0),
+            u, ru, net_u,
             int(r.units_on_hand or 0),
-            float(r.revenue or 0.0),
+            rev, ret_amt, net_rev,
+            ret_pct,
             r.source or "",
             r.notes or "",
         ])
@@ -124,16 +138,25 @@ def build_sellout_report(rows: List[Any]) -> bytes:
     total_row = ws.max_row + 1
     ws.cell(row=total_row, column=1, value="TOTAL").font = TOTAL_FONT
     ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=7)
-    for col in (8, 9, 10):
-        c = ws.cell(row=total_row, column=col,
-                     value=total_units if col == 8 else total_stock if col == 9 else round(total_rev, 2))
+    net_units_total = max(total_units - total_returned, 0)
+    net_rev_total = round(max(total_rev - total_ret_amt, 0.0), 2)
+    ret_pct_total = round((total_returned / total_units * 100.0), 2) if total_units > 0 else 0.0
+    totals_by_col = {
+        8: total_units, 9: total_returned, 10: net_units_total,
+        11: total_stock, 12: round(total_rev, 2),
+        13: round(total_ret_amt, 2), 14: net_rev_total,
+        15: ret_pct_total,
+    }
+    for col, val in totals_by_col.items():
+        c = ws.cell(row=total_row, column=col, value=val)
         c.font = TOTAL_FONT
         c.fill = GREY_ROW
 
     _autosize(ws)
     _company_header(
         ws, "Reporte de Sell-out",
-        f"{len(rows)} filas · {total_units:,} unidades · $ {total_rev:,.2f}",
+        f"{len(rows)} filas · {total_units:,} u vendidas · {total_returned:,} devueltas "
+        f"({ret_pct_total:.1f}%) · $ {total_rev:,.2f} bruto · $ {net_rev_total:,.2f} neto",
         len(headers),
     )
     return _to_bytes(wb)
@@ -151,6 +174,11 @@ def build_dashboard_report(kpis: Any, stores: List[Any], skus: List[Any]) -> byt
     _style_header(ws, 2)
     ws.append(["Sell-out unidades", kpis.total_sell_out_units])
     ws.append(["Sell-out ingreso", round(kpis.total_sell_out_revenue, 2)])
+    ws.append(["Devoluciones unidades", getattr(kpis, "total_returns_units", 0)])
+    ws.append(["Devoluciones importe", round(getattr(kpis, "total_returns_amount", 0.0), 2)])
+    ws.append(["Tasa devoluciones (%)", getattr(kpis, "return_rate_pct", 0.0)])
+    ws.append(["Unidades netas", getattr(kpis, "net_units", 0)])
+    ws.append(["Ingreso neto", round(getattr(kpis, "net_revenue", 0.0), 2)])
     ws.append(["Sell-in unidades", kpis.total_sell_in_units])
     ws.append(["Sell-in ingreso", round(kpis.total_sell_in_revenue, 2)])
     ws.append(["Sell-through (%)", kpis.sell_through_pct])
@@ -352,6 +380,7 @@ ALERT_TYPE_LABEL = {
     "overstock": "Sobreinventario",
     "no_movement": "Sin movimiento",
     "sell_through_low": "Sell-through bajo",
+    "high_return_rate": "Devoluciones altas",
 }
 
 
@@ -436,6 +465,130 @@ def build_consignment_report(recon: Any) -> bytes:
     _company_header(
         ws, "Reconciliación de consignación",
         f"Total {recon.total_rows} · Cuadran {recon.matched} · Con descuadre {recon.with_diff}",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 8: Tendencia (time-series) ──────────────────────────────────
+
+def build_trend_report(tr: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Tendencia"
+    headers = ["Periodo", "Inicio", "Fin", "Vendidas", "Devueltas", "Netas",
+                "Ingreso", "Devoluciones $", "Ingreso neto",
+                "On-hand", "Tiendas"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for p in tr.points:
+        ws.append([
+            p.label,
+            p.period_start.strftime("%Y-%m-%d") if p.period_start else "",
+            p.period_end.strftime("%Y-%m-%d") if p.period_end else "",
+            int(p.units_sold or 0), int(p.units_returned or 0), int(p.net_units or 0),
+            float(p.revenue or 0.0), float(p.returns_amount or 0.0), float(p.net_revenue or 0.0),
+            int(p.on_hand or 0), int(p.stores_reporting or 0),
+        ])
+
+    wow = ""
+    if tr.wow_units_pct is not None:
+        wow = f" · Δ unidades últ. periodo {tr.wow_units_pct:+.1f}%"
+    _autosize(ws)
+    _company_header(
+        ws, "Tendencia de Sell-out",
+        f"{len(tr.points)} periodos ({tr.period_type}) · {tr.total_units:,} u · $ {tr.total_revenue:,.2f}{wow}",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 9: Distribución numérica (voids) ────────────────────────────
+
+DIST_FILL = {
+    "excellent": PatternFill("solid", fgColor="D1FAE5"),
+    "good":      PatternFill("solid", fgColor="DBEAFE"),
+    "low":       PatternFill("solid", fgColor="FEF3C7"),
+    "critical":  PatternFill("solid", fgColor="FEE2E2"),
+}
+DIST_LABEL = {
+    "excellent": "Excelente", "good": "Buena", "low": "Baja", "critical": "Crítica",
+}
+
+
+def build_distribution_report(dist: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Distribución"
+    headers = ["SKU", "Producto", "Tiendas que venden", "Con stock",
+                "Total tiendas", "Distribución %", "Voids (huecos)",
+                "Unidades", "Prom u/tienda", "Nivel"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for r in dist.rows:
+        ws.append([
+            r.sku or "", r.product_name or "",
+            int(r.stores_selling or 0), int(r.stores_stocking or 0),
+            int(r.total_stores or 0), float(r.distribution_pct or 0.0),
+            int(r.void_stores or 0), int(r.total_units or 0),
+            float(r.avg_units_per_store or 0.0),
+            DIST_LABEL.get(r.status, r.status),
+        ])
+        fill = DIST_FILL.get(r.status)
+        if fill:
+            ws.cell(row=ws.max_row, column=10).fill = fill
+
+    _autosize(ws)
+    _company_header(
+        ws, "Distribución numérica por SKU",
+        f"{len(dist.rows)} SKUs · {dist.total_stores} tiendas activas · "
+        f"un 'void' es una tienda que aún no vende el producto",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 10: Venta perdida por stockout ──────────────────────────────
+
+def build_lost_sales_report(ls: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venta perdida"
+    headers = ["Severidad", "Cadena", "Tienda", "SKU", "Producto",
+                "Vel. semanal", "Sem. sin stock", "Unidades perdidas",
+                "Precio", "Venta perdida $"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for r in ls.rows:
+        ws.append([
+            SEV_LABEL.get(r.severity, r.severity),
+            r.channel_name or "", r.store_name or "",
+            r.sku or "", r.product_name or "",
+            float(r.avg_weekly_units or 0.0), float(r.weeks_out_of_stock or 0.0),
+            int(r.lost_units or 0), float(r.unit_price or 0.0),
+            float(r.lost_revenue or 0.0),
+        ])
+        fill = SEV_FILL.get(r.severity)
+        if fill:
+            ws.cell(row=ws.max_row, column=1).fill = fill
+
+    # Fila total
+    total_row = ws.max_row + 1
+    ws.cell(row=total_row, column=1, value="TOTAL").font = TOTAL_FONT
+    ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=7)
+    c8 = ws.cell(row=total_row, column=8, value=int(ls.total_lost_units or 0))
+    c8.font = TOTAL_FONT; c8.fill = GREY_ROW
+    c10 = ws.cell(row=total_row, column=10, value=round(float(ls.total_lost_revenue or 0.0), 2))
+    c10.font = TOTAL_FONT; c10.fill = GREY_ROW
+
+    _autosize(ws)
+    _company_header(
+        ws, "Venta perdida por agotados",
+        f"{ls.affected_combos} combos agotados · {ls.total_lost_units:,} u perdidas · "
+        f"$ {ls.total_lost_revenue:,.2f} sin vender",
         len(headers),
     )
     return _to_bytes(wb)
@@ -532,10 +685,20 @@ def build_executive_pdf(
     def _mxn(n: float) -> str:
         return "$" + f"{n:,.2f}"
 
+    ret_units = int(getattr(kpis, "total_returns_units", 0) or 0)
+    ret_amt = float(getattr(kpis, "total_returns_amount", 0.0) or 0.0)
+    ret_pct = float(getattr(kpis, "return_rate_pct", 0.0) or 0.0)
+    net_units = int(getattr(kpis, "net_units", 0) or 0)
+    net_rev = float(getattr(kpis, "net_revenue", 0.0) or 0.0)
     kpi_rows = [
         ["Indicador", "Valor"],
         ["Sell-out (unidades)", f"{kpis.total_sell_out_units:,}"],
         ["Sell-out (ingreso)", _mxn(kpis.total_sell_out_revenue)],
+        ["Devoluciones (unidades)", f"{ret_units:,}"],
+        ["Devoluciones (importe)", _mxn(ret_amt)],
+        ["Tasa de devoluciones", f"{ret_pct:.1f}%"],
+        ["Unidades netas", f"{net_units:,}"],
+        ["Ingreso neto", _mxn(net_rev)],
         ["Sell-in (unidades)", f"{kpis.total_sell_in_units:,}"],
         ["Sell-in (ingreso)", _mxn(kpis.total_sell_in_revenue)],
         ["Sell-through %", f"{kpis.sell_through_pct:.1f}%"],

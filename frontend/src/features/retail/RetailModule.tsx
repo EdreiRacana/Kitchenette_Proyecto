@@ -4,13 +4,14 @@
 // panel de reabasto con sugerencias por tienda × SKU.
 
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode, CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import {
   Store, LayoutDashboard, Building2, ShoppingBag, Package, Truck,
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
   Bell, EyeOff, CheckCircle2, Zap, Warehouse, Grid3x3, BarChart3, ArrowRight,
-  FileSpreadsheet, FileDown,
+  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -24,6 +25,7 @@ import type {
   HeatmapResponse, HeatmapMetric, HeatmapFilters, HeatmapSortStores,
   ABCResponse, SourceWarehouseOption, TransferResponse,
   RetailImportProfile, DetectColumnsResponse, PreviewResponse,
+  TrendResponse, DistributionResponse, LostSalesResponse,
 } from "./types";
 
 type Tokens = any;
@@ -213,8 +215,16 @@ function DashboardView({ t, channelId }: { t: Tokens; channelId: number | null }
   if (loading) return <div style={{ padding: 40, color: t.textLo, textAlign: "center" }}>Calculando KPIs…</div>;
   if (!kpis) return null;
 
+  const retUnits = kpis.total_returns_units ?? 0;
+  const retAmt = kpis.total_returns_amount ?? 0;
+  const retPct = kpis.return_rate_pct ?? 0;
+  const netU = kpis.net_units ?? Math.max(kpis.total_sell_out_units - retUnits, 0);
+  const netRev = kpis.net_revenue ?? Math.max(kpis.total_sell_out_revenue - retAmt, 0);
+  const retColor = retPct >= 10 ? t.bad : retPct >= 5 ? t.warn : t.good;
   const tiles = [
     { label: "Sell-out (unidades)", value: num(kpis.total_sell_out_units), sub: mxn(kpis.total_sell_out_revenue), color: t.textHi },
+    { label: "Devoluciones", value: num(retUnits), sub: `${retPct.toFixed(1)}% · ${mxn(retAmt)}`, color: retColor },
+    { label: "Neto", value: num(netU), sub: mxn(netRev), color: t.textHi },
     { label: "Sell-in (unidades)", value: num(kpis.total_sell_in_units), sub: mxn(kpis.total_sell_in_revenue), color: t.textHi },
     { label: "Sell-through", value: `${kpis.sell_through_pct.toFixed(1)}%`, sub: "Sell-out / Sell-in", color: kpis.sell_through_pct >= 70 ? t.good : kpis.sell_through_pct >= 40 ? t.warn : t.bad },
     { label: "On-hand total", value: num(kpis.total_on_hand), sub: `${kpis.stores_active_count} tiendas · ${kpis.skus_active_count} SKUs`, color: t.textHi },
@@ -411,6 +421,7 @@ function ChannelModal({ t, channel, onClose, onSaved }: {
   const [targetW, setTargetW] = useState(channel?.target_wos_weeks ?? 4);
   const [critW, setCritW] = useState(channel?.critical_wos_weeks ?? 2);
   const [overW, setOverW] = useState(channel?.overstock_wos_weeks ?? 12);
+  const [returnMaxPct, setReturnMaxPct] = useState(channel?.return_rate_max_pct ?? 5);
   const [active, setActive] = useState(channel?.is_active ?? true);
   const [notes, setNotes] = useState(channel?.notes || "");
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
@@ -432,6 +443,7 @@ function ChannelModal({ t, channel, onClose, onSaved }: {
         name: name.trim(), code: code || undefined,
         customer_id: customerId || undefined,
         target_wos_weeks: targetW, critical_wos_weeks: critW, overstock_wos_weeks: overW,
+        return_rate_max_pct: returnMaxPct,
         is_active: active, notes: notes || undefined,
       };
       if (channel) await retailApi.updateChannel(channel.id, payload);
@@ -483,6 +495,21 @@ function ChannelModal({ t, channel, onClose, onSaved }: {
           </div>
           <div style={{ marginTop: 6, fontSize: 10.5, color: t.textLo }}>
             Semanas de inventario objetivo. Debajo del mínimo = urgente resurtir. Arriba del máximo = riesgo de sobreinventario.
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, padding: 12, background: t.panel2, borderRadius: 8, border: `1px solid ${t.border}` }}>
+          <div style={{ fontSize: 12, color: t.textLo, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.4 }}>Devoluciones</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8, alignItems: "end" }}>
+            <div>
+              <label style={{ ...labelStyle(t), color: t.bad }}>Tasa máxima (%)</label>
+              <input type="number" step={0.5} min={0} max={100}
+                value={returnMaxPct} onChange={e => setReturnMaxPct(Number(e.target.value))}
+                style={inputStyle(t)} />
+            </div>
+            <div style={{ fontSize: 10.5, color: t.textLo }}>
+              Si las devoluciones superan este % de las ventas en los últimos 28 días, se levanta una alerta de la cadena.
+            </div>
           </div>
         </div>
 
@@ -868,19 +895,29 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
                 <th style={thStyle(t)}>Producto</th>
                 <th style={thStyle(t)}>SKU</th>
                 <th style={thStyle(t)}>Vendidas</th>
+                <th style={thStyle(t)}>Devueltas</th>
+                <th style={thStyle(t)}>Netas</th>
                 <th style={thStyle(t)}>Stock</th>
                 <th style={thStyle(t)}>Ingreso</th>
+                <th style={thStyle(t)}>Neto $</th>
                 <th style={thStyle(t)}>Fuente</th>
                 <th style={thStyle(t)}></th>
               </tr>
             </thead>
             <tbody>
               {reports.length === 0 && (
-                <tr><td colSpan={10} style={{ padding: 30, textAlign: "center", color: t.textLo }}>
+                <tr><td colSpan={13} style={{ padding: 30, textAlign: "center", color: t.textLo }}>
                   Sin reportes aún. Registra el primer sell-out.
                 </td></tr>
               )}
-              {reports.map(r => (
+              {reports.map(r => {
+                const ret = r.units_returned || 0;
+                const retAmt = r.returns_amount || 0;
+                const netU = Math.max((r.units_sold || 0) - ret, 0);
+                const netRev = Math.max((r.revenue || 0) - retAmt, 0);
+                const retPct = r.units_sold > 0 ? (ret / r.units_sold) * 100 : 0;
+                const retColor = retPct >= 10 ? t.bad : retPct >= 5 ? t.warn : t.textMid;
+                return (
                 <tr key={r.id} style={{ borderTop: `1px solid ${t.border}55` }}>
                   <td style={tdStyle(t)}>
                     {new Date(r.period_start).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "2-digit" })}
@@ -892,8 +929,13 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
                   <td style={tdStyle(t)}>{r.product_name || "—"}</td>
                   <td style={{ ...tdStyle(t), fontFamily: "monospace" }}>{r.sku || "—"}</td>
                   <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{num(r.units_sold)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", color: retColor }}>
+                    {ret > 0 ? `${num(ret)} (${retPct.toFixed(1)}%)` : "—"}
+                  </td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 600 }}>{num(netU)}</td>
                   <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.units_on_hand)}</td>
                   <td style={{ ...tdStyle(t), textAlign: "right" }}>{mxn(r.revenue)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{mxn(netRev)}</td>
                   <td style={tdStyle(t)}>
                     <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 10, background: t.panel3, color: t.textMid }}>
                       {r.source}
@@ -903,7 +945,8 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
                     <button onClick={() => del(r)} style={{ ...iconBtn(t), color: t.bad }}><Trash2 size={12} /></button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1047,8 +1090,12 @@ function ImportSellOutModal({ t, channels, defaultChannel, onClose, onDone }: {
     sku: "SKU", producto_nombre: "Nombre producto",
     periodo_tipo: "Tipo periodo", periodo_inicio: "Inicio periodo",
     periodo_fin: "Fin periodo",
-    unidades_vendidas: "Unidades vendidas *", unidades_stock: "Stock",
-    ingreso: "Ingreso", notas: "Notas",
+    unidades_vendidas: "Unidades vendidas *",
+    unidades_devueltas: "Unidades devueltas",
+    unidades_stock: "Stock",
+    ingreso: "Ingreso",
+    importe_devoluciones: "Importe devoluciones",
+    notas: "Notas",
   };
 
   const requiredFields = ["tienda_codigo", "sku", "periodo_inicio", "unidades_vendidas"];
@@ -1265,8 +1312,10 @@ function ImportSellOutModal({ t, channels, defaultChannel, onClose, onDone }: {
                     <th style={thStyle(t)}>Producto</th>
                     <th style={thStyle(t)}>Inicio</th>
                     <th style={thStyle(t)}>Vend</th>
+                    <th style={thStyle(t)}>Devuelt</th>
                     <th style={thStyle(t)}>Stock</th>
                     <th style={thStyle(t)}>Ingreso</th>
+                    <th style={thStyle(t)}>Devol $</th>
                     <th style={thStyle(t)}></th>
                   </tr>
                 </thead>
@@ -1280,8 +1329,10 @@ function ImportSellOutModal({ t, channels, defaultChannel, onClose, onDone }: {
                       <td style={tdStyle(t)}>{r.normalized.producto_nombre || "—"}</td>
                       <td style={tdStyle(t)}>{r.normalized.periodo_inicio ? new Date(r.normalized.periodo_inicio).toLocaleDateString("es-MX") : "—"}</td>
                       <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{r.normalized.unidades_vendidas ?? 0}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", color: (r.normalized.unidades_devueltas ?? 0) > 0 ? t.bad : t.textLo }}>{r.normalized.unidades_devueltas ?? 0}</td>
                       <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.normalized.unidades_stock ?? 0}</td>
                       <td style={{ ...tdStyle(t), textAlign: "right" }}>{mxn(r.normalized.ingreso ?? 0)}</td>
+                      <td style={{ ...tdStyle(t), textAlign: "right", color: (r.normalized.importe_devoluciones ?? 0) > 0 ? t.bad : t.textLo }}>{mxn(r.normalized.importe_devoluciones ?? 0)}</td>
                       <td style={tdStyle(t)}>
                         {r.errors.length > 0 && (
                           <span title={r.errors.join("; ")} style={{ color: t.bad, cursor: "help" }}>
@@ -1413,6 +1464,7 @@ const ALERT_TYPE_LABEL: Record<string, string> = {
   overstock: "Sobreinventario",
   no_movement: "Sin movimiento",
   sell_through_low: "Sell-through bajo",
+  high_return_rate: "Devoluciones altas",
 };
 
 function AlertsView({ t, channelId, onChanged }: {
@@ -1654,8 +1706,10 @@ function SellOutModal({ t, channels, defaultChannel, onClose, onSaved }: {
   const [periodEnd, setPeriodEnd] = useState(isoWeekEnd(isoWeekStart()));
   const [periodType, setPeriodType] = useState<"day" | "week" | "month">("week");
   const [unitsSold, setUnitsSold] = useState(0);
+  const [unitsReturned, setUnitsReturned] = useState(0);
   const [unitsOnHand, setUnitsOnHand] = useState(0);
   const [revenue, setRevenue] = useState(0);
+  const [returnsAmount, setReturnsAmount] = useState(0);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -1714,8 +1768,10 @@ function SellOutModal({ t, channels, defaultChannel, onClose, onSaved }: {
         period_end: new Date(periodEnd + "T23:59:59").toISOString(),
         period_type: periodType,
         units_sold: unitsSold,
+        units_returned: unitsReturned || undefined,
         units_on_hand: unitsOnHand,
         revenue,
+        returns_amount: returnsAmount || undefined,
         notes: notes || undefined,
         source: "manual",
       });
@@ -1795,12 +1851,27 @@ function SellOutModal({ t, channels, defaultChannel, onClose, onSaved }: {
               <input type="number" min={0} value={unitsSold || ""} onChange={e => setUnitsSold(Number(e.target.value) || 0)} style={inputStyle(t)} />
             </div>
             <div>
+              <label style={{ ...labelStyle(t), color: t.bad }}>Unidades devueltas</label>
+              <input type="number" min={0} value={unitsReturned || ""} onChange={e => setUnitsReturned(Number(e.target.value) || 0)} style={inputStyle(t)} />
+            </div>
+            <div>
               <label style={{ ...labelStyle(t), color: t.nova }}>Stock final (on-hand)</label>
               <input type="number" min={0} value={unitsOnHand || ""} onChange={e => setUnitsOnHand(Number(e.target.value) || 0)} style={inputStyle(t)} />
             </div>
             <div>
-              <label style={labelStyle(t)}>Ingreso (MXN)</label>
+              <label style={labelStyle(t)}>Ingreso bruto (MXN)</label>
               <input type="number" step={0.01} min={0} value={revenue || ""} onChange={e => setRevenue(Number(e.target.value) || 0)} style={inputStyle(t)} />
+            </div>
+            <div>
+              <label style={{ ...labelStyle(t), color: t.bad }}>Importe devoluciones</label>
+              <input type="number" step={0.01} min={0} value={returnsAmount || ""} onChange={e => setReturnsAmount(Number(e.target.value) || 0)} style={inputStyle(t)} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+              <div style={{ fontSize: 10, color: t.textLo, marginBottom: 3 }}>Neto</div>
+              <div style={{ padding: "7px 10px", background: t.panel3, borderRadius: 6, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>
+                <div style={{ fontWeight: 700, color: t.textHi }}>{num(Math.max(unitsSold - unitsReturned, 0))} u</div>
+                <div style={{ color: t.textMid, fontSize: 11 }}>{mxn(Math.max(revenue - returnsAmount, 0))}</div>
+              </div>
             </div>
           </div>
         </div>
@@ -2330,36 +2401,424 @@ function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null
 
 
 // ── Analíticas: Heatmap + ABC ────────────────────────────────────────────
+type AnalyticsSub = "heatmap" | "trend" | "distribution" | "lost_sales" | "abc";
+
 function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }) {
-  const [sub, setSub] = useState<"heatmap" | "abc">("heatmap");
+  const [sub, setSub] = useState<AnalyticsSub>("heatmap");
+  const tabs: { key: AnalyticsSub; label: string; icon: any }[] = [
+    { key: "heatmap", label: "Heatmap tiendas × SKUs", icon: Grid3x3 },
+    { key: "trend", label: "Tendencia", icon: LineChart },
+    { key: "distribution", label: "Distribución (voids)", icon: Network },
+    { key: "lost_sales", label: "Venta perdida", icon: TrendingDown },
+    { key: "abc", label: "Clasificación ABC", icon: TrendingUp },
+  ];
   return (
     <div>
-      <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
-        <button onClick={() => setSub("heatmap")}
-          style={{
-            display: "flex", alignItems: "center", gap: 5,
-            padding: "8px 14px", borderRadius: 8,
-            border: `1px solid ${sub === "heatmap" ? t.nova : t.border}`,
-            background: sub === "heatmap" ? t.nova + "22" : "transparent",
-            color: sub === "heatmap" ? t.nova : t.textMid,
-            cursor: "pointer", fontSize: 12.5, fontWeight: 700,
-          }}>
-          <Grid3x3 size={13} /> Heatmap tiendas × SKUs
-        </button>
-        <button onClick={() => setSub("abc")}
-          style={{
-            display: "flex", alignItems: "center", gap: 5,
-            padding: "8px 14px", borderRadius: 8,
-            border: `1px solid ${sub === "abc" ? t.nova : t.border}`,
-            background: sub === "abc" ? t.nova + "22" : "transparent",
-            color: sub === "abc" ? t.nova : t.textMid,
-            cursor: "pointer", fontSize: 12.5, fontWeight: 700,
-          }}>
-          <TrendingUp size={13} /> Clasificación ABC
-        </button>
+      <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
+        {tabs.map(({ key, label, icon: Icon }) => (
+          <button key={key} onClick={() => setSub(key)}
+            style={{
+              display: "flex", alignItems: "center", gap: 5,
+              padding: "8px 14px", borderRadius: 8,
+              border: `1px solid ${sub === key ? t.nova : t.border}`,
+              background: sub === key ? t.nova + "22" : "transparent",
+              color: sub === key ? t.nova : t.textMid,
+              cursor: "pointer", fontSize: 12.5, fontWeight: 700,
+            }}>
+            <Icon size={13} /> {label}
+          </button>
+        ))}
       </div>
       {sub === "heatmap" && <HeatmapView t={t} channelId={channelId} />}
+      {sub === "trend" && <TrendView t={t} channelId={channelId} />}
+      {sub === "distribution" && <DistributionView t={t} channelId={channelId} />}
+      {sub === "lost_sales" && <LostSalesView t={t} channelId={channelId} />}
       {sub === "abc" && <ABCView t={t} channelId={channelId} />}
+    </div>
+  );
+}
+
+
+// ── Gráfica de línea SVG (sin librerías externas) ────────────────────────
+function LineChartSVG({ t, series, height = 260, formatY }: {
+  t: Tokens;
+  series: { name: string; color: string; points: { label: string; value: number }[] }[];
+  height?: number;
+  formatY?: (n: number) => string;
+}) {
+  const W = 760, H = height;
+  const padL = 56, padR = 16, padT = 16, padB = 42;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const n = series[0]?.points.length ?? 0;
+  if (n === 0) return <div style={{ padding: 30, textAlign: "center", color: t.textLo }}>Sin datos para graficar</div>;
+
+  const allVals = series.flatMap(s => s.points.map(p => p.value));
+  const maxV = Math.max(1, ...allVals);
+  const x = (i: number) => padL + (n === 1 ? innerW / 2 : (innerW * i) / (n - 1));
+  const y = (v: number) => padT + innerH - (innerH * v) / maxV;
+
+  const yTicks = 4;
+  const ticks = Array.from({ length: yTicks + 1 }, (_, k) => (maxV * k) / yTicks);
+  const labels = series[0].points.map(p => p.label);
+  const labelEvery = Math.ceil(n / 12);
+
+  return (
+    <div style={{ width: "100%", overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, height: H }}>
+        {ticks.map((tv, k) => (
+          <g key={k}>
+            <line x1={padL} y1={y(tv)} x2={W - padR} y2={y(tv)} stroke={t.border} strokeWidth={0.6} opacity={0.5} />
+            <text x={padL - 8} y={y(tv) + 3} textAnchor="end" fontSize={9} fill={t.textLo}>
+              {formatY ? formatY(tv) : Math.round(tv).toLocaleString("es-MX")}
+            </text>
+          </g>
+        ))}
+        {labels.map((lb, i) => (
+          (i % labelEvery === 0 || i === n - 1) && (
+            <text key={i} x={x(i)} y={H - padB + 16} textAnchor="middle" fontSize={9} fill={t.textLo}>{lb}</text>
+          )
+        ))}
+        {series.map((s, si) => {
+          const d = s.points.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(p.value)}`).join(" ");
+          return (
+            <g key={si}>
+              <path d={d} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+              {s.points.map((p, i) => (
+                <circle key={i} cx={x(i)} cy={y(p.value)} r={2.6} fill={s.color}>
+                  <title>{`${p.label}: ${formatY ? formatY(p.value) : p.value.toLocaleString("es-MX")}`}</title>
+                </circle>
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+      <div style={{ display: "flex", gap: 14, justifyContent: "center", marginTop: 4 }}>
+        {series.map((s, i) => (
+          <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: t.textMid }}>
+            <span style={{ width: 14, height: 3, borderRadius: 2, background: s.color, display: "inline-block" }} />
+            {s.name}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WoWBadge({ t, pct, label }: { t: Tokens; pct: number | null | undefined; label: string }) {
+  if (pct == null) return null;
+  const up = pct >= 0;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 12, fontWeight: 700, color: up ? t.good : t.bad }}>
+      {up ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+      {up ? "+" : ""}{pct.toFixed(1)}% <span style={{ color: t.textLo, fontWeight: 500 }}>{label}</span>
+    </span>
+  );
+}
+
+function TrendView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<TrendResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [periodType, setPeriodType] = useState<"week" | "month">("week");
+  const [weeksBack, setWeeksBack] = useState(26);
+  const [metric, setMetric] = useState<"units" | "revenue" | "net_units">("units");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.trend({
+          channel_id: channelId || undefined,
+          period_type: periodType, weeks_back: weeksBack,
+        });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, periodType, weeksBack]);
+
+  const series = useMemo(() => {
+    if (!data) return [];
+    if (metric === "revenue") {
+      return [
+        { name: "Ingreso", color: t.nova, points: data.points.map(p => ({ label: p.label, value: p.revenue })) },
+        { name: "Ingreso neto", color: t.good, points: data.points.map(p => ({ label: p.label, value: p.net_revenue })) },
+      ];
+    }
+    if (metric === "net_units") {
+      return [
+        { name: "Vendidas", color: t.nova, points: data.points.map(p => ({ label: p.label, value: p.units_sold })) },
+        { name: "Netas", color: t.good, points: data.points.map(p => ({ label: p.label, value: p.net_units })) },
+        { name: "Devueltas", color: t.bad, points: data.points.map(p => ({ label: p.label, value: p.units_returned })) },
+      ];
+    }
+    return [{ name: "Unidades vendidas", color: t.nova, points: data.points.map(p => ({ label: p.label, value: p.units_sold })) }];
+  }, [data, metric, t]);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <FilterField t={t} label="Métrica">
+            <select value={metric} onChange={e => setMetric(e.target.value as any)}
+              style={{ ...inputStyle(t), minWidth: 150, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="units">Unidades vendidas</option>
+              <option value="net_units">Vendidas vs netas vs devueltas</option>
+              <option value="revenue">Ingreso vs neto</option>
+            </select>
+          </FilterField>
+          <FilterField t={t} label="Granularidad">
+            <select value={periodType} onChange={e => setPeriodType(e.target.value as any)}
+              style={{ ...inputStyle(t), minWidth: 110, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="week">Semanal</option>
+              <option value="month">Mensual</option>
+            </select>
+          </FilterField>
+          <FilterField t={t} label="Historia">
+            <select value={weeksBack} onChange={e => setWeeksBack(Number(e.target.value))}
+              style={{ ...inputStyle(t), minWidth: 120, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value={13}>13 periodos</option>
+              <option value={26}>26 periodos</option>
+              <option value={52}>52 periodos</option>
+            </select>
+          </FilterField>
+        </div>
+        <ExcelBtn t={t} label="Excel"
+          onClick={() => downloadBlob(
+            () => retailApi.reports.trend({ channel_id: channelId || undefined, period_type: periodType, weeks_back: weeksBack }),
+            `retail_tendencia.xlsx`,
+          )}
+        />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+      {!loading && data && data.points.length === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <LineChart size={28} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Aún no hay suficiente historia</div>
+          <div style={{ fontSize: 11 }}>Carga sell-out de varias semanas para ver la tendencia.</div>
+        </div>
+      )}
+      {!loading && data && data.points.length > 0 && (
+        <>
+          <div style={{ display: "flex", gap: 20, marginBottom: 12, flexWrap: "wrap", alignItems: "center", padding: "10px 14px", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8 }}>
+            <div>
+              <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Total unidades</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: t.textHi }}>{num(data.total_units)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Total ingreso</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: t.textHi }}>{mxn(data.total_revenue)}</div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <WoWBadge t={t} pct={data.wow_units_pct} label="unidades vs periodo previo" />
+              <WoWBadge t={t} pct={data.wow_revenue_pct} label="ingreso vs periodo previo" />
+            </div>
+          </div>
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
+            <LineChartSVG t={t} series={series}
+              formatY={metric === "revenue" ? (n) => "$" + Math.round(n).toLocaleString("es-MX") : undefined} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DistributionView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<DistributionResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(28);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.distribution({ channel_id: channelId || undefined, days });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, days]);
+
+  const statusColor = (s: string) =>
+    s === "excellent" ? t.good : s === "good" ? t.nova : s === "low" ? t.warn : t.bad;
+  const statusLabel = (s: string) =>
+    s === "excellent" ? "Excelente" : s === "good" ? "Buena" : s === "low" ? "Baja" : "Crítica";
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12, color: t.textLo, maxWidth: 620 }}>
+          Distribución numérica: en cuántas tiendas se está vendiendo cada SKU vs el total.
+          Un <b style={{ color: t.textMid }}>void</b> es una tienda que aún no lo vende — oportunidad de expansión de anaquel.
+          {data && <span style={{ color: t.textMid }}> · {data.total_stores} tiendas activas.</span>}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <FilterField t={t} label="Ventana">
+            <select value={days} onChange={e => setDays(Number(e.target.value))}
+              style={{ ...inputStyle(t), minWidth: 110, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value={28}>28 días</option>
+              <option value={60}>60 días</option>
+              <option value={90}>90 días</option>
+            </select>
+          </FilterField>
+          <ExcelBtn t={t} label="Excel"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.distribution({ channel_id: channelId || undefined, days }),
+              `retail_distribucion.xlsx`,
+            )}
+          />
+        </div>
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+      {!loading && data && data.rows.length === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          Sin ventas en la ventana para medir distribución.
+        </div>
+      )}
+      {!loading && data && data.rows.length > 0 && (
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "68vh" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                <th style={thStyle(t)}>SKU</th>
+                <th style={thStyle(t)}>Producto</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Vende en</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Con stock</th>
+                <th style={{ ...thStyle(t), minWidth: 160 }}>Distribución</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Voids</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Unidades</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Prom u/tienda</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((r, i) => (
+                <tr key={r.variant_id ?? i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                  <td style={{ ...tdStyle(t), fontFamily: "monospace" }}>{r.sku || "—"}</td>
+                  <td style={tdStyle(t)}>{r.product_name || "—"}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.stores_selling)} / {num(r.total_stores)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.stores_stocking)}</td>
+                  <td style={tdStyle(t)}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ flex: 1, height: 8, background: t.panel3, borderRadius: 4, overflow: "hidden", minWidth: 70 }}>
+                        <div style={{ width: `${r.distribution_pct}%`, height: "100%", background: statusColor(r.status) }} />
+                      </div>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: statusColor(r.status), minWidth: 68 }}>
+                        {r.distribution_pct.toFixed(1)}% · {statusLabel(r.status)}
+                      </span>
+                    </div>
+                  </td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: r.void_stores > 0 ? t.warn : t.textLo }}>{num(r.void_stores)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.total_units)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.avg_units_per_store.toFixed(1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LostSalesView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<LostSalesResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.lostSales({ channel_id: channelId || undefined });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId]);
+
+  const sevColor = (s: string) => s === "urgent" ? t.bad : s === "high" ? t.warn : t.nova;
+  const sevLabel = (s: string) => s === "urgent" ? "Urgente" : s === "high" ? "Alta" : "Media";
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12, color: t.textLo, maxWidth: 640 }}>
+          Estimación de venta perdida por productos agotados: productos con on-hand en cero
+          pero que traían velocidad de venta. <span style={{ color: t.textMid }}>Pérdida = velocidad semanal × semanas sin stock × precio.</span>
+        </div>
+        <ExcelBtn t={t} label="Excel"
+          onClick={() => downloadBlob(
+            () => retailApi.reports.lostSales({ channel_id: channelId || undefined }),
+            `retail_venta_perdida.xlsx`,
+          )}
+        />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+      {!loading && data && data.rows.length === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <CheckCircle2 size={28} color={t.good} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin venta perdida detectada</div>
+          <div style={{ fontSize: 11 }}>Ningún producto con velocidad está agotado. Bien ahí.</div>
+        </div>
+      )}
+      {!loading && data && data.rows.length > 0 && (
+        <>
+          <div style={{ display: "flex", gap: 20, marginBottom: 12, flexWrap: "wrap", padding: "10px 14px", background: t.bad + "12", border: `1px solid ${t.bad}44`, borderRadius: 8 }}>
+            <div>
+              <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Venta perdida estimada</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: t.bad }}>{mxn(data.total_lost_revenue)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Unidades no vendidas</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi }}>{num(data.total_lost_units)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Combos agotados</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi }}>{num(data.affected_combos)}</div>
+            </div>
+          </div>
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "62vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                  <th style={thStyle(t)}>Severidad</th>
+                  <th style={thStyle(t)}>Tienda</th>
+                  <th style={thStyle(t)}>SKU</th>
+                  <th style={thStyle(t)}>Producto</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Vel. sem</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Sem. agotado</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>U. perdidas</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Perdido $</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => (
+                  <tr key={i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                    <td style={tdStyle(t)}>
+                      <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: sevColor(r.severity) + "22", color: sevColor(r.severity), fontWeight: 700 }}>
+                        {sevLabel(r.severity)}
+                      </span>
+                    </td>
+                    <td style={tdStyle(t)}>{r.store_name}</td>
+                    <td style={{ ...tdStyle(t), fontFamily: "monospace" }}>{r.sku || "—"}</td>
+                    <td style={tdStyle(t)}>{r.product_name || "—"}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.avg_weekly_units.toFixed(1)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.weeks_out_of_stock.toFixed(0)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{num(r.lost_units)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.bad }}>{mxn(r.lost_revenue)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -2385,6 +2844,10 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
 
   // Densidad visual: compacto (para escanear muchas tiendas) o normal
   const [density, setDensity] = useState<"compact" | "normal">("normal");
+  // Índice de SKUs (columna → producto) desplegable
+  const [showSkuIndex, setShowSkuIndex] = useState(false);
+  // Salto directo a página de tiendas
+  const [pageInput, setPageInput] = useState("");
 
   // Debounce del search
   useEffect(() => {
@@ -2444,17 +2907,27 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
   };
 
   const compact = density === "compact";
-  const cellW = compact ? 42 : 60;
-  const cellH = compact ? 26 : 36;
+  const cellW = compact ? 40 : 54;
+  const cellH = compact ? 26 : 34;
   const nameW = compact ? 170 : 220;
   const fontSize = compact ? 9 : 10.5;
+  const headerH = compact ? 104 : 132;
 
   const totalStores = data?.total_stores ?? 0;
   const totalVariants = data?.total_variants ?? 0;
-  const shownStart = storeOffset + 1;
+  const shownStart = totalStores === 0 ? 0 : storeOffset + 1;
   const shownEnd = Math.min(storeOffset + storeLimit, totalStores);
   const canPrev = storeOffset > 0;
   const canNext = storeOffset + storeLimit < totalStores;
+  const totalPages = Math.max(1, Math.ceil(totalStores / storeLimit));
+  const currentPage = Math.floor(storeOffset / storeLimit) + 1;
+  const jumpToPage = () => {
+    const p = parseInt(pageInput, 10);
+    if (!isNaN(p) && p >= 1 && p <= totalPages) {
+      setStoreOffset((p - 1) * storeLimit);
+      setPageInput("");
+    }
+  };
 
   return (
     <div>
@@ -2465,10 +2938,27 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
           <FilterPill t={t} label="Vendidas" active={metric === "units_sold"} onClick={() => setMetric("units_sold")} />
           <FilterPill t={t} label="Stock" active={metric === "on_hand"} onClick={() => setMetric("on_hand")} />
           <div style={{ width: 8 }} />
-          <ExcelBtn t={t} label="Excel"
+          <ExcelBtn t={t} label="Excel (vista)"
             onClick={() => downloadBlob(
-              () => retailApi.reports.heatmap({ channel_id: channelId || undefined, metric, limit_variants: limitVariants }),
+              () => retailApi.reports.heatmap({
+                channel_id: channelId || undefined, metric, limit_variants: limitVariants,
+                region: region || undefined, state: state || undefined,
+                store_format: storeFormat || undefined, store_search: debouncedSearch || undefined,
+                sort_stores_by: sortStores,
+              }),
               `retail_heatmap_${metric}.xlsx`,
+            )}
+          />
+          <ExcelBtn t={t} label="Excel completo"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.heatmap({
+                channel_id: channelId || undefined, metric, limit_variants: limitVariants,
+                full: true,
+                region: region || undefined, state: state || undefined,
+                store_format: storeFormat || undefined, store_search: debouncedSearch || undefined,
+                sort_stores_by: sortStores,
+              }),
+              `retail_heatmap_${metric}_completo.xlsx`,
             )}
           />
         </div>
@@ -2481,62 +2971,73 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
         </div>
       </div>
 
-      {/* Filtros avanzados */}
-      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", padding: 10, marginBottom: 10, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8 }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
-          <Search size={12} color={t.textLo} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
-          <input value={storeSearch} onChange={e => setStoreSearch(e.target.value)}
-            placeholder="Buscar tienda, código o ciudad…"
-            style={{ ...inputStyle(t), paddingLeft: 30, marginTop: 0, fontSize: 12, height: 30 }} />
-        </div>
+      {/* Filtros avanzados — cada control con su etiqueta visible */}
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", padding: "12px 12px 14px", marginBottom: 10, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8 }}>
+        <FilterField t={t} label="Buscar tienda" style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ position: "relative" }}>
+            <Search size={12} color={t.textLo} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+            <input value={storeSearch} onChange={e => setStoreSearch(e.target.value)}
+              placeholder="Nombre, código o ciudad…"
+              style={{ ...inputStyle(t), paddingLeft: 30, marginTop: 0, fontSize: 12, height: 32, width: "100%" }} />
+          </div>
+        </FilterField>
         {filters && filters.regions.length > 0 && (
-          <select value={region} onChange={e => setRegion(e.target.value)}
-            style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}>
-            <option value="">Todas regiones</option>
-            {filters.regions.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+          <FilterField t={t} label="Región">
+            <select value={region} onChange={e => setRegion(e.target.value)}
+              style={{ ...inputStyle(t), minWidth: 130, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="">Todas</option>
+              {filters.regions.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </FilterField>
         )}
         {filters && filters.states.length > 0 && (
-          <select value={state} onChange={e => setState(e.target.value)}
-            style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}>
-            <option value="">Todos estados</option>
-            {filters.states.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+          <FilterField t={t} label="Estado">
+            <select value={state} onChange={e => setState(e.target.value)}
+              style={{ ...inputStyle(t), minWidth: 130, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="">Todos</option>
+              {filters.states.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </FilterField>
         )}
         {filters && filters.formats.length > 0 && (
-          <select value={storeFormat} onChange={e => setStoreFormat(e.target.value)}
-            style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}>
-            <option value="">Todos formatos</option>
-            {filters.formats.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+          <FilterField t={t} label="Formato">
+            <select value={storeFormat} onChange={e => setStoreFormat(e.target.value)}
+              style={{ ...inputStyle(t), minWidth: 130, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="">Todos</option>
+              {filters.formats.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </FilterField>
         )}
-        <select value={sortStores} onChange={e => setSortStores(e.target.value as HeatmapSortStores)}
-          style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}
-          title="Ordenamiento de tiendas">
-          <option value="worst_wos">Ordenar por: peor WOS ↑</option>
-          <option value="best_wos">Ordenar por: mejor WOS ↓</option>
-          <option value="most_sales">Ordenar por: más ventas</option>
-          <option value="name">Ordenar por: nombre A-Z</option>
-        </select>
-        <select value={limitVariants} onChange={e => setLimitVariants(Number(e.target.value))}
-          style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}
-          title="Cuántos SKUs mostrar (top por ventas)">
-          <option value={20}>Top 20 SKUs</option>
-          <option value={30}>Top 30 SKUs</option>
-          <option value={40}>Top 40 SKUs</option>
-          <option value={60}>Top 60 SKUs</option>
-          <option value={100}>Top 100 SKUs</option>
-        </select>
-        <select value={density} onChange={e => setDensity(e.target.value as any)}
-          style={{ ...inputStyle(t), width: "auto", fontSize: 12, height: 30, marginTop: 0 }}
-          title="Densidad visual">
-          <option value="normal">Normal</option>
-          <option value="compact">Compacto</option>
-        </select>
+        <FilterField t={t} label="Ordenar tiendas por">
+          <select value={sortStores} onChange={e => setSortStores(e.target.value as HeatmapSortStores)}
+            style={{ ...inputStyle(t), minWidth: 155, fontSize: 12, height: 32, marginTop: 0 }}>
+            <option value="worst_wos">Peor WOS primero</option>
+            <option value="best_wos">Mejor WOS primero</option>
+            <option value="most_sales">Más ventas</option>
+            <option value="name">Nombre A-Z</option>
+          </select>
+        </FilterField>
+        <FilterField t={t} label="SKUs visibles">
+          <select value={limitVariants} onChange={e => setLimitVariants(Number(e.target.value))}
+            style={{ ...inputStyle(t), minWidth: 115, fontSize: 12, height: 32, marginTop: 0 }}>
+            <option value={20}>Top 20</option>
+            <option value={30}>Top 30</option>
+            <option value={40}>Top 40</option>
+            <option value={60}>Top 60</option>
+            <option value={100}>Top 100</option>
+          </select>
+        </FilterField>
+        <FilterField t={t} label="Densidad">
+          <select value={density} onChange={e => setDensity(e.target.value as any)}
+            style={{ ...inputStyle(t), minWidth: 105, fontSize: 12, height: 32, marginTop: 0 }}>
+            <option value="normal">Normal</option>
+            <option value="compact">Compacto</option>
+          </select>
+        </FilterField>
         {(region || state || storeFormat || storeSearch) && (
           <button onClick={() => { setRegion(""); setState(""); setStoreFormat(""); setStoreSearch(""); }}
-            style={{ padding: "6px 10px", background: "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: t.textLo, fontSize: 11, cursor: "pointer" }}>
-            Limpiar filtros
+            style={{ padding: "7px 12px", background: "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: t.textLo, fontSize: 11, cursor: "pointer", height: 32 }}>
+            Limpiar
           </button>
         )}
       </div>
@@ -2544,9 +3045,17 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
       {/* Barra info + paginador */}
       {data && (
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8, fontSize: 12, color: t.textLo }}>
-          <div>
-            {totalStores === 0 ? "Sin tiendas en el filtro"
-              : `Mostrando ${shownStart}-${shownEnd} de ${totalStores.toLocaleString("es-MX")} tiendas × ${data.variants.length} de ${totalVariants.toLocaleString("es-MX")} SKUs`}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span>
+              {totalStores === 0 ? "Sin tiendas en el filtro"
+                : `Mostrando ${shownStart.toLocaleString("es-MX")}-${shownEnd.toLocaleString("es-MX")} de ${totalStores.toLocaleString("es-MX")} tiendas × ${data.variants.length} de ${totalVariants.toLocaleString("es-MX")} SKUs`}
+            </span>
+            {data.variants.length > 0 && (
+              <button onClick={() => setShowSkuIndex(v => !v)}
+                style={{ padding: "3px 10px", background: showSkuIndex ? t.nova : t.panel3, border: `1px solid ${t.border}`, borderRadius: 6, color: showSkuIndex ? "#fff" : t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+                {showSkuIndex ? "Ocultar índice de SKUs" : "Ver índice de SKUs"}
+              </button>
+            )}
           </div>
           {totalStores > storeLimit && (
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -2555,6 +3064,25 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
                 style={{ padding: "4px 10px", background: canPrev ? t.panel3 : "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: canPrev ? t.textMid : t.textLo, cursor: canPrev ? "pointer" : "not-allowed", fontSize: 11 }}>
                 ← Anterior
               </button>
+              <span style={{ fontSize: 11, color: t.textMid, whiteSpace: "nowrap" }}>
+                Pág {currentPage.toLocaleString("es-MX")} / {totalPages.toLocaleString("es-MX")}
+              </span>
+              <button disabled={!canNext}
+                onClick={() => setStoreOffset(storeOffset + storeLimit)}
+                style={{ padding: "4px 10px", background: canNext ? t.panel3 : "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: canNext ? t.textMid : t.textLo, cursor: canNext ? "pointer" : "not-allowed", fontSize: 11 }}>
+                Siguiente →
+              </button>
+              {totalPages > 2 && (
+                <form onSubmit={e => { e.preventDefault(); jumpToPage(); }} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  <input value={pageInput} onChange={e => setPageInput(e.target.value.replace(/[^0-9]/g, ""))}
+                    placeholder="Ir a…" title="Ir a la página"
+                    style={{ ...inputStyle(t), width: 62, fontSize: 11, height: 26, marginTop: 0, textAlign: "center" }} />
+                  <button type="submit"
+                    style={{ padding: "4px 8px", background: t.panel3, border: `1px solid ${t.border}`, borderRadius: 6, color: t.textMid, cursor: "pointer", fontSize: 11 }}>
+                    Ir
+                  </button>
+                </form>
+              )}
               <select value={storeLimit} onChange={e => setStoreLimit(Number(e.target.value))}
                 style={{ ...inputStyle(t), width: "auto", fontSize: 11, height: 26, marginTop: 0 }}>
                 <option value={30}>30/pág</option>
@@ -2562,13 +3090,26 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
                 <option value={100}>100/pág</option>
                 <option value={200}>200/pág</option>
               </select>
-              <button disabled={!canNext}
-                onClick={() => setStoreOffset(storeOffset + storeLimit)}
-                style={{ padding: "4px 10px", background: canNext ? t.panel3 : "transparent", border: `1px solid ${t.border}`, borderRadius: 6, color: canNext ? t.textMid : t.textLo, cursor: canNext ? "pointer" : "not-allowed", fontSize: 11 }}>
-                Siguiente →
-              </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Índice de SKUs: mapea la columna a producto legible */}
+      {data && showSkuIndex && data.variants.length > 0 && (
+        <div style={{ marginBottom: 10, padding: 12, background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8 }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, marginBottom: 8 }}>
+            Índice de columnas · {data.variants.length} SKUs (top por ventas)
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 4 }}>
+            {data.variants.map((v, i) => (
+              <div key={v.id} style={{ display: "flex", gap: 6, alignItems: "baseline", fontSize: 11.5, padding: "2px 0" }}>
+                <span style={{ minWidth: 26, color: t.nova, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>#{i + 1}</span>
+                <span style={{ fontFamily: "monospace", color: t.textHi, fontWeight: 600 }}>{v.sku || "—"}</span>
+                <span style={{ color: t.textLo, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.product_name || ""}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -2602,23 +3143,31 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
                   borderRight: `1px solid ${t.border}`,
                   borderBottom: `1px solid ${t.border}`,
                   minWidth: nameW, width: nameW,
+                  height: headerH, verticalAlign: "bottom",
                 }}>Tienda</th>
-                {data.variants.map(v => (
+                {data.variants.map((v, i) => (
                   <th key={v.id}
-                    title={`${v.product_name || ""} · ${v.sku || ""}`}
+                    title={`#${i + 1} · ${v.sku || ""} · ${v.product_name || ""}`}
                     style={{
                       position: "sticky", top: 0, zIndex: 2,
                       background: t.panel2, color: t.textLo,
-                      padding: "6px 4px", textAlign: "center",
-                      fontFamily: "monospace", fontWeight: 700,
+                      padding: "8px 0 6px", textAlign: "center",
+                      fontWeight: 700,
                       borderBottom: `1px solid ${t.border}`,
+                      borderLeft: `1px solid ${t.border}33`,
                       minWidth: cellW, width: cellW,
-                      verticalAlign: "bottom", whiteSpace: "nowrap",
+                      height: headerH, verticalAlign: "bottom", whiteSpace: "nowrap",
                     }}>
-                    <div style={{ transform: "rotate(-45deg)", transformOrigin: "left bottom",
-                                    width: cellH * 2, overflow: "hidden", textOverflow: "ellipsis",
-                                    fontSize: compact ? 8.5 : 9.5, height: cellH + 4 }}>
-                      {(v.sku || v.product_name || "—").slice(0, 20)}
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, height: "100%", justifyContent: "flex-end" }}>
+                      <div style={{
+                        writingMode: "vertical-rl", transform: "rotate(180deg)",
+                        fontFamily: "monospace", fontSize: compact ? 9 : 10,
+                        color: t.textHi, letterSpacing: 0.3,
+                        maxHeight: headerH - 26, overflow: "hidden", textOverflow: "ellipsis",
+                      }}>
+                        {v.sku || v.product_name || "—"}
+                      </div>
+                      <span style={{ fontSize: 9, color: t.nova, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>#{i + 1}</span>
                     </div>
                   </th>
                 ))}
@@ -2674,6 +3223,19 @@ function LegendDot({ t, color, label }: { t: Tokens; color: string; label: strin
       <span style={{ width: 10, height: 10, borderRadius: 2, background: color, display: "inline-block" }} />
       {label}
     </span>
+  );
+}
+
+function FilterField({ t, label, children, style }: {
+  t: Tokens; label: string; children: ReactNode; style?: CSSProperties;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, ...style }}>
+      <label style={{ fontSize: 9.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>
+        {label}
+      </label>
+      {children}
+    </div>
   );
 }
 

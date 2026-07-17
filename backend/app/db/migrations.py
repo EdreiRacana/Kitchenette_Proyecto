@@ -412,6 +412,11 @@ _RETAIL_STATEMENTS = [
         updated_at            TIMESTAMPTZ
     )""",
     "CREATE INDEX IF NOT EXISTS ix_retail_import_profiles_channel_id ON retail_import_profiles(channel_id)",
+    # Devoluciones (Fase 8) — captura los returns que las cadenas reportan
+    # junto con el sell-out para no perderlos, calcular tasa y alertar.
+    "ALTER TABLE retail_channels          ADD COLUMN IF NOT EXISTS return_rate_max_pct DOUBLE PRECISION DEFAULT 5.0 NOT NULL",
+    "ALTER TABLE retail_sellout_reports   ADD COLUMN IF NOT EXISTS units_returned      INTEGER DEFAULT 0 NOT NULL",
+    "ALTER TABLE retail_sellout_reports   ADD COLUMN IF NOT EXISTS returns_amount      DOUBLE PRECISION DEFAULT 0.0 NOT NULL",
 ]
 
 
