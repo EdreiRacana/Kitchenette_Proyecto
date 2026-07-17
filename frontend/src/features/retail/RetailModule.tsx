@@ -11,7 +11,7 @@ import {
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
   Bell, EyeOff, CheckCircle2, Zap, Warehouse, Grid3x3, BarChart3, ArrowRight,
-  FileSpreadsheet, FileDown,
+  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -25,6 +25,7 @@ import type {
   HeatmapResponse, HeatmapMetric, HeatmapFilters, HeatmapSortStores,
   ABCResponse, SourceWarehouseOption, TransferResponse,
   RetailImportProfile, DetectColumnsResponse, PreviewResponse,
+  TrendResponse, DistributionResponse, LostSalesResponse,
 } from "./types";
 
 type Tokens = any;
@@ -2400,36 +2401,424 @@ function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null
 
 
 // ── Analíticas: Heatmap + ABC ────────────────────────────────────────────
+type AnalyticsSub = "heatmap" | "trend" | "distribution" | "lost_sales" | "abc";
+
 function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }) {
-  const [sub, setSub] = useState<"heatmap" | "abc">("heatmap");
+  const [sub, setSub] = useState<AnalyticsSub>("heatmap");
+  const tabs: { key: AnalyticsSub; label: string; icon: any }[] = [
+    { key: "heatmap", label: "Heatmap tiendas × SKUs", icon: Grid3x3 },
+    { key: "trend", label: "Tendencia", icon: LineChart },
+    { key: "distribution", label: "Distribución (voids)", icon: Network },
+    { key: "lost_sales", label: "Venta perdida", icon: TrendingDown },
+    { key: "abc", label: "Clasificación ABC", icon: TrendingUp },
+  ];
   return (
     <div>
-      <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
-        <button onClick={() => setSub("heatmap")}
-          style={{
-            display: "flex", alignItems: "center", gap: 5,
-            padding: "8px 14px", borderRadius: 8,
-            border: `1px solid ${sub === "heatmap" ? t.nova : t.border}`,
-            background: sub === "heatmap" ? t.nova + "22" : "transparent",
-            color: sub === "heatmap" ? t.nova : t.textMid,
-            cursor: "pointer", fontSize: 12.5, fontWeight: 700,
-          }}>
-          <Grid3x3 size={13} /> Heatmap tiendas × SKUs
-        </button>
-        <button onClick={() => setSub("abc")}
-          style={{
-            display: "flex", alignItems: "center", gap: 5,
-            padding: "8px 14px", borderRadius: 8,
-            border: `1px solid ${sub === "abc" ? t.nova : t.border}`,
-            background: sub === "abc" ? t.nova + "22" : "transparent",
-            color: sub === "abc" ? t.nova : t.textMid,
-            cursor: "pointer", fontSize: 12.5, fontWeight: 700,
-          }}>
-          <TrendingUp size={13} /> Clasificación ABC
-        </button>
+      <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
+        {tabs.map(({ key, label, icon: Icon }) => (
+          <button key={key} onClick={() => setSub(key)}
+            style={{
+              display: "flex", alignItems: "center", gap: 5,
+              padding: "8px 14px", borderRadius: 8,
+              border: `1px solid ${sub === key ? t.nova : t.border}`,
+              background: sub === key ? t.nova + "22" : "transparent",
+              color: sub === key ? t.nova : t.textMid,
+              cursor: "pointer", fontSize: 12.5, fontWeight: 700,
+            }}>
+            <Icon size={13} /> {label}
+          </button>
+        ))}
       </div>
       {sub === "heatmap" && <HeatmapView t={t} channelId={channelId} />}
+      {sub === "trend" && <TrendView t={t} channelId={channelId} />}
+      {sub === "distribution" && <DistributionView t={t} channelId={channelId} />}
+      {sub === "lost_sales" && <LostSalesView t={t} channelId={channelId} />}
       {sub === "abc" && <ABCView t={t} channelId={channelId} />}
+    </div>
+  );
+}
+
+
+// ── Gráfica de línea SVG (sin librerías externas) ────────────────────────
+function LineChartSVG({ t, series, height = 260, formatY }: {
+  t: Tokens;
+  series: { name: string; color: string; points: { label: string; value: number }[] }[];
+  height?: number;
+  formatY?: (n: number) => string;
+}) {
+  const W = 760, H = height;
+  const padL = 56, padR = 16, padT = 16, padB = 42;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const n = series[0]?.points.length ?? 0;
+  if (n === 0) return <div style={{ padding: 30, textAlign: "center", color: t.textLo }}>Sin datos para graficar</div>;
+
+  const allVals = series.flatMap(s => s.points.map(p => p.value));
+  const maxV = Math.max(1, ...allVals);
+  const x = (i: number) => padL + (n === 1 ? innerW / 2 : (innerW * i) / (n - 1));
+  const y = (v: number) => padT + innerH - (innerH * v) / maxV;
+
+  const yTicks = 4;
+  const ticks = Array.from({ length: yTicks + 1 }, (_, k) => (maxV * k) / yTicks);
+  const labels = series[0].points.map(p => p.label);
+  const labelEvery = Math.ceil(n / 12);
+
+  return (
+    <div style={{ width: "100%", overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, height: H }}>
+        {ticks.map((tv, k) => (
+          <g key={k}>
+            <line x1={padL} y1={y(tv)} x2={W - padR} y2={y(tv)} stroke={t.border} strokeWidth={0.6} opacity={0.5} />
+            <text x={padL - 8} y={y(tv) + 3} textAnchor="end" fontSize={9} fill={t.textLo}>
+              {formatY ? formatY(tv) : Math.round(tv).toLocaleString("es-MX")}
+            </text>
+          </g>
+        ))}
+        {labels.map((lb, i) => (
+          (i % labelEvery === 0 || i === n - 1) && (
+            <text key={i} x={x(i)} y={H - padB + 16} textAnchor="middle" fontSize={9} fill={t.textLo}>{lb}</text>
+          )
+        ))}
+        {series.map((s, si) => {
+          const d = s.points.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(p.value)}`).join(" ");
+          return (
+            <g key={si}>
+              <path d={d} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+              {s.points.map((p, i) => (
+                <circle key={i} cx={x(i)} cy={y(p.value)} r={2.6} fill={s.color}>
+                  <title>{`${p.label}: ${formatY ? formatY(p.value) : p.value.toLocaleString("es-MX")}`}</title>
+                </circle>
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+      <div style={{ display: "flex", gap: 14, justifyContent: "center", marginTop: 4 }}>
+        {series.map((s, i) => (
+          <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: t.textMid }}>
+            <span style={{ width: 14, height: 3, borderRadius: 2, background: s.color, display: "inline-block" }} />
+            {s.name}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WoWBadge({ t, pct, label }: { t: Tokens; pct: number | null | undefined; label: string }) {
+  if (pct == null) return null;
+  const up = pct >= 0;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 12, fontWeight: 700, color: up ? t.good : t.bad }}>
+      {up ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+      {up ? "+" : ""}{pct.toFixed(1)}% <span style={{ color: t.textLo, fontWeight: 500 }}>{label}</span>
+    </span>
+  );
+}
+
+function TrendView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<TrendResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [periodType, setPeriodType] = useState<"week" | "month">("week");
+  const [weeksBack, setWeeksBack] = useState(26);
+  const [metric, setMetric] = useState<"units" | "revenue" | "net_units">("units");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.trend({
+          channel_id: channelId || undefined,
+          period_type: periodType, weeks_back: weeksBack,
+        });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, periodType, weeksBack]);
+
+  const series = useMemo(() => {
+    if (!data) return [];
+    if (metric === "revenue") {
+      return [
+        { name: "Ingreso", color: t.nova, points: data.points.map(p => ({ label: p.label, value: p.revenue })) },
+        { name: "Ingreso neto", color: t.good, points: data.points.map(p => ({ label: p.label, value: p.net_revenue })) },
+      ];
+    }
+    if (metric === "net_units") {
+      return [
+        { name: "Vendidas", color: t.nova, points: data.points.map(p => ({ label: p.label, value: p.units_sold })) },
+        { name: "Netas", color: t.good, points: data.points.map(p => ({ label: p.label, value: p.net_units })) },
+        { name: "Devueltas", color: t.bad, points: data.points.map(p => ({ label: p.label, value: p.units_returned })) },
+      ];
+    }
+    return [{ name: "Unidades vendidas", color: t.nova, points: data.points.map(p => ({ label: p.label, value: p.units_sold })) }];
+  }, [data, metric, t]);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <FilterField t={t} label="Métrica">
+            <select value={metric} onChange={e => setMetric(e.target.value as any)}
+              style={{ ...inputStyle(t), minWidth: 150, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="units">Unidades vendidas</option>
+              <option value="net_units">Vendidas vs netas vs devueltas</option>
+              <option value="revenue">Ingreso vs neto</option>
+            </select>
+          </FilterField>
+          <FilterField t={t} label="Granularidad">
+            <select value={periodType} onChange={e => setPeriodType(e.target.value as any)}
+              style={{ ...inputStyle(t), minWidth: 110, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value="week">Semanal</option>
+              <option value="month">Mensual</option>
+            </select>
+          </FilterField>
+          <FilterField t={t} label="Historia">
+            <select value={weeksBack} onChange={e => setWeeksBack(Number(e.target.value))}
+              style={{ ...inputStyle(t), minWidth: 120, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value={13}>13 periodos</option>
+              <option value={26}>26 periodos</option>
+              <option value={52}>52 periodos</option>
+            </select>
+          </FilterField>
+        </div>
+        <ExcelBtn t={t} label="Excel"
+          onClick={() => downloadBlob(
+            () => retailApi.reports.trend({ channel_id: channelId || undefined, period_type: periodType, weeks_back: weeksBack }),
+            `retail_tendencia.xlsx`,
+          )}
+        />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+      {!loading && data && data.points.length === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <LineChart size={28} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Aún no hay suficiente historia</div>
+          <div style={{ fontSize: 11 }}>Carga sell-out de varias semanas para ver la tendencia.</div>
+        </div>
+      )}
+      {!loading && data && data.points.length > 0 && (
+        <>
+          <div style={{ display: "flex", gap: 20, marginBottom: 12, flexWrap: "wrap", alignItems: "center", padding: "10px 14px", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8 }}>
+            <div>
+              <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Total unidades</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: t.textHi }}>{num(data.total_units)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Total ingreso</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: t.textHi }}>{mxn(data.total_revenue)}</div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <WoWBadge t={t} pct={data.wow_units_pct} label="unidades vs periodo previo" />
+              <WoWBadge t={t} pct={data.wow_revenue_pct} label="ingreso vs periodo previo" />
+            </div>
+          </div>
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
+            <LineChartSVG t={t} series={series}
+              formatY={metric === "revenue" ? (n) => "$" + Math.round(n).toLocaleString("es-MX") : undefined} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DistributionView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<DistributionResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(28);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.distribution({ channel_id: channelId || undefined, days });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, days]);
+
+  const statusColor = (s: string) =>
+    s === "excellent" ? t.good : s === "good" ? t.nova : s === "low" ? t.warn : t.bad;
+  const statusLabel = (s: string) =>
+    s === "excellent" ? "Excelente" : s === "good" ? "Buena" : s === "low" ? "Baja" : "Crítica";
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12, color: t.textLo, maxWidth: 620 }}>
+          Distribución numérica: en cuántas tiendas se está vendiendo cada SKU vs el total.
+          Un <b style={{ color: t.textMid }}>void</b> es una tienda que aún no lo vende — oportunidad de expansión de anaquel.
+          {data && <span style={{ color: t.textMid }}> · {data.total_stores} tiendas activas.</span>}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <FilterField t={t} label="Ventana">
+            <select value={days} onChange={e => setDays(Number(e.target.value))}
+              style={{ ...inputStyle(t), minWidth: 110, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value={28}>28 días</option>
+              <option value={60}>60 días</option>
+              <option value={90}>90 días</option>
+            </select>
+          </FilterField>
+          <ExcelBtn t={t} label="Excel"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.distribution({ channel_id: channelId || undefined, days }),
+              `retail_distribucion.xlsx`,
+            )}
+          />
+        </div>
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+      {!loading && data && data.rows.length === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          Sin ventas en la ventana para medir distribución.
+        </div>
+      )}
+      {!loading && data && data.rows.length > 0 && (
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "68vh" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                <th style={thStyle(t)}>SKU</th>
+                <th style={thStyle(t)}>Producto</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Vende en</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Con stock</th>
+                <th style={{ ...thStyle(t), minWidth: 160 }}>Distribución</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Voids</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Unidades</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Prom u/tienda</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((r, i) => (
+                <tr key={r.variant_id ?? i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                  <td style={{ ...tdStyle(t), fontFamily: "monospace" }}>{r.sku || "—"}</td>
+                  <td style={tdStyle(t)}>{r.product_name || "—"}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.stores_selling)} / {num(r.total_stores)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.stores_stocking)}</td>
+                  <td style={tdStyle(t)}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ flex: 1, height: 8, background: t.panel3, borderRadius: 4, overflow: "hidden", minWidth: 70 }}>
+                        <div style={{ width: `${r.distribution_pct}%`, height: "100%", background: statusColor(r.status) }} />
+                      </div>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: statusColor(r.status), minWidth: 68 }}>
+                        {r.distribution_pct.toFixed(1)}% · {statusLabel(r.status)}
+                      </span>
+                    </div>
+                  </td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: r.void_stores > 0 ? t.warn : t.textLo }}>{num(r.void_stores)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.total_units)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.avg_units_per_store.toFixed(1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LostSalesView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<LostSalesResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.lostSales({ channel_id: channelId || undefined });
+        if (!cancelled) setData(r);
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId]);
+
+  const sevColor = (s: string) => s === "urgent" ? t.bad : s === "high" ? t.warn : t.nova;
+  const sevLabel = (s: string) => s === "urgent" ? "Urgente" : s === "high" ? "Alta" : "Media";
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12, color: t.textLo, maxWidth: 640 }}>
+          Estimación de venta perdida por productos agotados: productos con on-hand en cero
+          pero que traían velocidad de venta. <span style={{ color: t.textMid }}>Pérdida = velocidad semanal × semanas sin stock × precio.</span>
+        </div>
+        <ExcelBtn t={t} label="Excel"
+          onClick={() => downloadBlob(
+            () => retailApi.reports.lostSales({ channel_id: channelId || undefined }),
+            `retail_venta_perdida.xlsx`,
+          )}
+        />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+      {!loading && data && data.rows.length === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <CheckCircle2 size={28} color={t.good} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin venta perdida detectada</div>
+          <div style={{ fontSize: 11 }}>Ningún producto con velocidad está agotado. Bien ahí.</div>
+        </div>
+      )}
+      {!loading && data && data.rows.length > 0 && (
+        <>
+          <div style={{ display: "flex", gap: 20, marginBottom: 12, flexWrap: "wrap", padding: "10px 14px", background: t.bad + "12", border: `1px solid ${t.bad}44`, borderRadius: 8 }}>
+            <div>
+              <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Venta perdida estimada</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: t.bad }}>{mxn(data.total_lost_revenue)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Unidades no vendidas</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi }}>{num(data.total_lost_units)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Combos agotados</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi }}>{num(data.affected_combos)}</div>
+            </div>
+          </div>
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "62vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                  <th style={thStyle(t)}>Severidad</th>
+                  <th style={thStyle(t)}>Tienda</th>
+                  <th style={thStyle(t)}>SKU</th>
+                  <th style={thStyle(t)}>Producto</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Vel. sem</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Sem. agotado</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>U. perdidas</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Perdido $</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => (
+                  <tr key={i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                    <td style={tdStyle(t)}>
+                      <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: sevColor(r.severity) + "22", color: sevColor(r.severity), fontWeight: 700 }}>
+                        {sevLabel(r.severity)}
+                      </span>
+                    </td>
+                    <td style={tdStyle(t)}>{r.store_name}</td>
+                    <td style={{ ...tdStyle(t), fontFamily: "monospace" }}>{r.sku || "—"}</td>
+                    <td style={tdStyle(t)}>{r.product_name || "—"}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.avg_weekly_units.toFixed(1)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.weeks_out_of_stock.toFixed(0)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{num(r.lost_units)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.bad }}>{mxn(r.lost_revenue)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -2549,10 +2938,27 @@ function HeatmapView({ t, channelId }: { t: Tokens; channelId: number | null }) 
           <FilterPill t={t} label="Vendidas" active={metric === "units_sold"} onClick={() => setMetric("units_sold")} />
           <FilterPill t={t} label="Stock" active={metric === "on_hand"} onClick={() => setMetric("on_hand")} />
           <div style={{ width: 8 }} />
-          <ExcelBtn t={t} label="Excel"
+          <ExcelBtn t={t} label="Excel (vista)"
             onClick={() => downloadBlob(
-              () => retailApi.reports.heatmap({ channel_id: channelId || undefined, metric, limit_variants: limitVariants }),
+              () => retailApi.reports.heatmap({
+                channel_id: channelId || undefined, metric, limit_variants: limitVariants,
+                region: region || undefined, state: state || undefined,
+                store_format: storeFormat || undefined, store_search: debouncedSearch || undefined,
+                sort_stores_by: sortStores,
+              }),
               `retail_heatmap_${metric}.xlsx`,
+            )}
+          />
+          <ExcelBtn t={t} label="Excel completo"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.heatmap({
+                channel_id: channelId || undefined, metric, limit_variants: limitVariants,
+                full: true,
+                region: region || undefined, state: state || undefined,
+                store_format: storeFormat || undefined, store_search: debouncedSearch || undefined,
+                sort_stores_by: sortStores,
+              }),
+              `retail_heatmap_${metric}_completo.xlsx`,
             )}
           />
         </div>

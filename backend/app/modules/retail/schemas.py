@@ -415,6 +415,84 @@ class ABCResponse(BaseModel):
     rows: List[ABCRow]
 
 
+# ── Analytics: tendencia (time-series) ──────────────────────────────────
+
+class TrendPoint(BaseModel):
+    period_start: datetime
+    period_end: Optional[datetime] = None
+    label: str                         # ej. "24 feb"
+    units_sold: int
+    units_returned: int
+    net_units: int
+    revenue: float
+    returns_amount: float
+    net_revenue: float
+    on_hand: int                       # on-hand al cierre del periodo
+    stores_reporting: int              # cuántas tiendas reportaron ese periodo
+
+
+class TrendResponse(BaseModel):
+    channel_id: Optional[int] = None
+    variant_id: Optional[int] = None
+    store_id: Optional[int] = None
+    period_type: str                   # week | month
+    points: List[TrendPoint]
+    # Comparación primer vs último punto (deltas para flechas)
+    total_units: int = 0
+    total_revenue: float = 0.0
+    wow_units_pct: Optional[float] = None      # variación último vs anterior
+    wow_revenue_pct: Optional[float] = None
+
+
+# ── Analytics: distribución numérica (voids) ────────────────────────────
+
+class DistributionRow(BaseModel):
+    variant_id: Optional[int] = None
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    stores_selling: int                # tiendas con venta en la ventana
+    stores_stocking: int               # tiendas con on-hand > 0
+    total_stores: int                  # tiendas activas de la cadena
+    distribution_pct: float            # stores_selling / total_stores × 100
+    void_stores: int                   # total - stores_selling (oportunidad)
+    total_units: int
+    avg_units_per_store: float
+    status: str                        # excellent | good | low | critical
+
+
+class DistributionResponse(BaseModel):
+    channel_id: Optional[int] = None
+    total_stores: int
+    rows: List[DistributionRow]
+
+
+# ── Analytics: venta perdida por stockout ───────────────────────────────
+
+class LostSalesRow(BaseModel):
+    store_id: int
+    store_name: str
+    channel_id: Optional[int] = None
+    channel_name: Optional[str] = None
+    variant_id: Optional[int] = None
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    avg_weekly_units: float            # velocidad histórica
+    weeks_out_of_stock: float          # periodos recientes con on-hand 0
+    lost_units: int                    # velocidad × semanas sin stock
+    unit_price: float
+    lost_revenue: float
+    severity: str                      # urgent | high | medium
+
+
+class LostSalesResponse(BaseModel):
+    channel_id: Optional[int] = None
+    generated_at: datetime
+    total_lost_units: int
+    total_lost_revenue: float
+    affected_combos: int               # cuántos (tienda × SKU) en stockout
+    rows: List[LostSalesRow]
+
+
 # ── Replenishment: transfer ─────────────────────────────────────────────
 
 class SourceWarehouseOption(BaseModel):
@@ -458,13 +536,14 @@ class TransferResponse(BaseModel):
 
 # ── Perfiles de importación por cadena ──────────────────────────────────
 
-# Los 13 campos estándar que el sistema entiende (los mismos de la plantilla).
+# Los campos estándar que el sistema entiende (los mismos de la plantilla).
 STANDARD_FIELDS = [
     "cadena_codigo", "cadena_nombre",
     "tienda_codigo", "tienda_nombre",
     "sku", "producto_nombre",
     "periodo_tipo", "periodo_inicio", "periodo_fin",
-    "unidades_vendidas", "unidades_stock", "ingreso",
+    "unidades_vendidas", "unidades_devueltas", "unidades_stock",
+    "ingreso", "importe_devoluciones",
     "notas",
 ]
 

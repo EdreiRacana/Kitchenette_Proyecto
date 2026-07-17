@@ -380,6 +380,7 @@ ALERT_TYPE_LABEL = {
     "overstock": "Sobreinventario",
     "no_movement": "Sin movimiento",
     "sell_through_low": "Sell-through bajo",
+    "high_return_rate": "Devoluciones altas",
 }
 
 
@@ -464,6 +465,130 @@ def build_consignment_report(recon: Any) -> bytes:
     _company_header(
         ws, "Reconciliación de consignación",
         f"Total {recon.total_rows} · Cuadran {recon.matched} · Con descuadre {recon.with_diff}",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 8: Tendencia (time-series) ──────────────────────────────────
+
+def build_trend_report(tr: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Tendencia"
+    headers = ["Periodo", "Inicio", "Fin", "Vendidas", "Devueltas", "Netas",
+                "Ingreso", "Devoluciones $", "Ingreso neto",
+                "On-hand", "Tiendas"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for p in tr.points:
+        ws.append([
+            p.label,
+            p.period_start.strftime("%Y-%m-%d") if p.period_start else "",
+            p.period_end.strftime("%Y-%m-%d") if p.period_end else "",
+            int(p.units_sold or 0), int(p.units_returned or 0), int(p.net_units or 0),
+            float(p.revenue or 0.0), float(p.returns_amount or 0.0), float(p.net_revenue or 0.0),
+            int(p.on_hand or 0), int(p.stores_reporting or 0),
+        ])
+
+    wow = ""
+    if tr.wow_units_pct is not None:
+        wow = f" · Δ unidades últ. periodo {tr.wow_units_pct:+.1f}%"
+    _autosize(ws)
+    _company_header(
+        ws, "Tendencia de Sell-out",
+        f"{len(tr.points)} periodos ({tr.period_type}) · {tr.total_units:,} u · $ {tr.total_revenue:,.2f}{wow}",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 9: Distribución numérica (voids) ────────────────────────────
+
+DIST_FILL = {
+    "excellent": PatternFill("solid", fgColor="D1FAE5"),
+    "good":      PatternFill("solid", fgColor="DBEAFE"),
+    "low":       PatternFill("solid", fgColor="FEF3C7"),
+    "critical":  PatternFill("solid", fgColor="FEE2E2"),
+}
+DIST_LABEL = {
+    "excellent": "Excelente", "good": "Buena", "low": "Baja", "critical": "Crítica",
+}
+
+
+def build_distribution_report(dist: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Distribución"
+    headers = ["SKU", "Producto", "Tiendas que venden", "Con stock",
+                "Total tiendas", "Distribución %", "Voids (huecos)",
+                "Unidades", "Prom u/tienda", "Nivel"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for r in dist.rows:
+        ws.append([
+            r.sku or "", r.product_name or "",
+            int(r.stores_selling or 0), int(r.stores_stocking or 0),
+            int(r.total_stores or 0), float(r.distribution_pct or 0.0),
+            int(r.void_stores or 0), int(r.total_units or 0),
+            float(r.avg_units_per_store or 0.0),
+            DIST_LABEL.get(r.status, r.status),
+        ])
+        fill = DIST_FILL.get(r.status)
+        if fill:
+            ws.cell(row=ws.max_row, column=10).fill = fill
+
+    _autosize(ws)
+    _company_header(
+        ws, "Distribución numérica por SKU",
+        f"{len(dist.rows)} SKUs · {dist.total_stores} tiendas activas · "
+        f"un 'void' es una tienda que aún no vende el producto",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
+# ── Reporte 10: Venta perdida por stockout ──────────────────────────────
+
+def build_lost_sales_report(ls: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venta perdida"
+    headers = ["Severidad", "Cadena", "Tienda", "SKU", "Producto",
+                "Vel. semanal", "Sem. sin stock", "Unidades perdidas",
+                "Precio", "Venta perdida $"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for r in ls.rows:
+        ws.append([
+            SEV_LABEL.get(r.severity, r.severity),
+            r.channel_name or "", r.store_name or "",
+            r.sku or "", r.product_name or "",
+            float(r.avg_weekly_units or 0.0), float(r.weeks_out_of_stock or 0.0),
+            int(r.lost_units or 0), float(r.unit_price or 0.0),
+            float(r.lost_revenue or 0.0),
+        ])
+        fill = SEV_FILL.get(r.severity)
+        if fill:
+            ws.cell(row=ws.max_row, column=1).fill = fill
+
+    # Fila total
+    total_row = ws.max_row + 1
+    ws.cell(row=total_row, column=1, value="TOTAL").font = TOTAL_FONT
+    ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=7)
+    c8 = ws.cell(row=total_row, column=8, value=int(ls.total_lost_units or 0))
+    c8.font = TOTAL_FONT; c8.fill = GREY_ROW
+    c10 = ws.cell(row=total_row, column=10, value=round(float(ls.total_lost_revenue or 0.0), 2))
+    c10.font = TOTAL_FONT; c10.fill = GREY_ROW
+
+    _autosize(ws)
+    _company_header(
+        ws, "Venta perdida por agotados",
+        f"{ls.affected_combos} combos agotados · {ls.total_lost_units:,} u perdidas · "
+        f"$ {ls.total_lost_revenue:,.2f} sin vender",
         len(headers),
     )
     return _to_bytes(wb)

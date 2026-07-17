@@ -136,6 +136,78 @@ export interface ABCResponse {
   rows: ABCRow[];
 }
 
+// Tendencia (time-series)
+export interface TrendPoint {
+  period_start: string;
+  period_end?: string | null;
+  label: string;
+  units_sold: number;
+  units_returned: number;
+  net_units: number;
+  revenue: number;
+  returns_amount: number;
+  net_revenue: number;
+  on_hand: number;
+  stores_reporting: number;
+}
+export interface TrendResponse {
+  channel_id?: number | null;
+  variant_id?: number | null;
+  store_id?: number | null;
+  period_type: "day" | "week" | "month";
+  points: TrendPoint[];
+  total_units: number;
+  total_revenue: number;
+  wow_units_pct?: number | null;
+  wow_revenue_pct?: number | null;
+}
+
+// Distribución numérica (voids)
+export type DistributionStatus = "excellent" | "good" | "low" | "critical";
+export interface DistributionRow {
+  variant_id?: number | null;
+  sku?: string | null;
+  product_name?: string | null;
+  stores_selling: number;
+  stores_stocking: number;
+  total_stores: number;
+  distribution_pct: number;
+  void_stores: number;
+  total_units: number;
+  avg_units_per_store: number;
+  status: DistributionStatus;
+}
+export interface DistributionResponse {
+  channel_id?: number | null;
+  total_stores: number;
+  rows: DistributionRow[];
+}
+
+// Venta perdida por stockout
+export interface LostSalesRow {
+  store_id: number;
+  store_name: string;
+  channel_id?: number | null;
+  channel_name?: string | null;
+  variant_id?: number | null;
+  sku?: string | null;
+  product_name?: string | null;
+  avg_weekly_units: number;
+  weeks_out_of_stock: number;
+  lost_units: number;
+  unit_price: number;
+  lost_revenue: number;
+  severity: "urgent" | "high" | "medium";
+}
+export interface LostSalesResponse {
+  channel_id?: number | null;
+  generated_at: string;
+  total_lost_units: number;
+  total_lost_revenue: number;
+  affected_combos: number;
+  rows: LostSalesRow[];
+}
+
 // Transfer
 export interface SourceWarehouseOption { id: number; name: string; location?: string | null; type: string; }
 export interface TransferItem { store_id: number; variant_id: number; units: number; notes?: string; }

@@ -169,8 +169,10 @@ async def create_sellout(payload: schemas.SellOutReportCreate, db: DB, current_u
         variant_id=r.variant_id, product_name=r.product_name, sku=r.sku,
         period_start=r.period_start, period_end=r.period_end,
         period_type=r.period_type,
-        units_sold=r.units_sold, units_on_hand=r.units_on_hand,
-        revenue=r.revenue, source=r.source, notes=r.notes,
+        units_sold=r.units_sold, units_returned=int(r.units_returned or 0),
+        units_on_hand=r.units_on_hand,
+        revenue=r.revenue, returns_amount=float(r.returns_amount or 0.0),
+        source=r.source, notes=r.notes,
         created_at=r.created_at,
     )
 
@@ -190,8 +192,10 @@ async def update_sellout(report_id: int, payload: schemas.SellOutReportUpdate,
         variant_id=r.variant_id, product_name=r.product_name, sku=r.sku,
         period_start=r.period_start, period_end=r.period_end,
         period_type=r.period_type,
-        units_sold=r.units_sold, units_on_hand=r.units_on_hand,
-        revenue=r.revenue, source=r.source, notes=r.notes,
+        units_sold=r.units_sold, units_returned=int(r.units_returned or 0),
+        units_on_hand=r.units_on_hand,
+        revenue=r.revenue, returns_amount=float(r.returns_amount or 0.0),
+        source=r.source, notes=r.notes,
         created_at=r.created_at,
     )
 
@@ -333,12 +337,66 @@ async def report_heatmap_xlsx(
     db: DB, _: CurrentUser,
     channel_id: Optional[int] = Query(None),
     metric: str = Query("wos", pattern="^(wos|units_sold|on_hand)$"),
-    limit_variants: int = Query(40, ge=1, le=200),
+    limit_variants: int = Query(40, ge=1, le=500),
+    full: bool = Query(False, description="Exportar TODAS las tiendas, no sólo la página visible"),
+    region: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    store_format: Optional[str] = Query(None),
+    store_search: Optional[str] = Query(None, max_length=100),
+    sort_stores_by: str = Query("worst_wos", pattern="^(name|worst_wos|best_wos|most_sales)$"),
 ):
-    hm = await service.heatmap(db, channel_id=channel_id, metric=metric,
-                                 limit_variants=limit_variants)
+    # full=True exporta todas las tiendas del scope (para respaldos / auditoría);
+    # de lo contrario la primera página de 200. Para catálogos enormes el
+    # archivo puede ser grande — por eso es opt-in.
+    store_limit = 100_000 if full else 200
+    hm = await service.heatmap(
+        db, channel_id=channel_id, metric=metric,
+        limit_variants=limit_variants,
+        region=region, state=state, store_format=store_format,
+        store_search=store_search, sort_stores_by=sort_stores_by,
+        store_offset=0, store_limit=store_limit,
+    )
     content = retail_reports.build_heatmap_report(hm)
-    return _xlsx_response(content, "retail_heatmap.xlsx")
+    name = "retail_heatmap_completo.xlsx" if full else "retail_heatmap.xlsx"
+    return _xlsx_response(content, name)
+
+
+@router.get("/reports/trend.xlsx")
+async def report_trend_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    variant_id: Optional[int] = Query(None),
+    store_id: Optional[int] = Query(None),
+    period_type: str = Query("week", pattern="^(day|week|month)$"),
+    weeks_back: int = Query(26, ge=2, le=104),
+):
+    tr = await service.trend(
+        db, channel_id=channel_id, variant_id=variant_id, store_id=store_id,
+        period_type=period_type, weeks_back=weeks_back,
+    )
+    content = retail_reports.build_trend_report(tr)
+    return _xlsx_response(content, "retail_tendencia.xlsx")
+
+
+@router.get("/reports/distribution.xlsx")
+async def report_distribution_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(28, ge=1, le=180),
+):
+    dist = await service.distribution(db, channel_id=channel_id, days=days, limit=1000)
+    content = retail_reports.build_distribution_report(dist)
+    return _xlsx_response(content, "retail_distribucion.xlsx")
+
+
+@router.get("/reports/lost-sales.xlsx")
+async def report_lost_sales_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+):
+    ls = await service.lost_sales(db, channel_id=channel_id, limit=2000)
+    content = retail_reports.build_lost_sales_report(ls)
+    return _xlsx_response(content, "retail_venta_perdida.xlsx")
 
 
 @router.get("/reports/abc.xlsx")
@@ -437,6 +495,40 @@ async def analytics_abc(
     days: int = Query(90, ge=1, le=365),
 ):
     return await service.abc_classification(db, channel_id=channel_id, days=days)
+
+
+@router.get("/analytics/trend", response_model=schemas.TrendResponse)
+async def analytics_trend(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    variant_id: Optional[int] = Query(None),
+    store_id: Optional[int] = Query(None),
+    period_type: str = Query("week", pattern="^(day|week|month)$"),
+    weeks_back: int = Query(26, ge=2, le=104),
+):
+    return await service.trend(
+        db, channel_id=channel_id, variant_id=variant_id, store_id=store_id,
+        period_type=period_type, weeks_back=weeks_back,
+    )
+
+
+@router.get("/analytics/distribution", response_model=schemas.DistributionResponse)
+async def analytics_distribution(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(28, ge=1, le=180),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    return await service.distribution(db, channel_id=channel_id, days=days, limit=limit)
+
+
+@router.get("/analytics/lost-sales", response_model=schemas.LostSalesResponse)
+async def analytics_lost_sales(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    return await service.lost_sales(db, channel_id=channel_id, limit=limit)
 
 
 # ── Traslados desde reabasto ────────────────────────────────────────────

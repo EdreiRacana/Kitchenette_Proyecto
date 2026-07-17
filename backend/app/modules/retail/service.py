@@ -2385,6 +2385,350 @@ async def abc_classification(
     )
 
 
+# ── Analytics: tendencia (time-series) ───────────────────────────────────
+
+_MONTHS_ES = ["ene", "feb", "mar", "abr", "may", "jun",
+              "jul", "ago", "sep", "oct", "nov", "dic"]
+
+
+def _period_label(dt: datetime, period_type: str) -> str:
+    if period_type == "month":
+        return f"{_MONTHS_ES[dt.month - 1]} {str(dt.year)[2:]}"
+    return f"{dt.day:02d} {_MONTHS_ES[dt.month - 1]}"
+
+
+async def trend(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    variant_id: Optional[int] = None, store_id: Optional[int] = None,
+    period_type: str = "week", weeks_back: int = 26,
+) -> schemas.TrendResponse:
+    """Serie temporal de sell-out agregada por periodo. Permite ver la
+    evolución semana-a-semana (o mes-a-mes) de una cadena, SKU o tienda.
+
+    Cada punto suma unidades, devoluciones e ingreso de todos los reportes
+    cuyo period_start cae en ese periodo. On-hand toma el ÚLTIMO valor
+    reportado dentro del periodo por combo (no se suma a lo largo del tiempo,
+    se suma entre tiendas del mismo corte)."""
+    now = datetime.now(timezone.utc)
+    days_back = weeks_back * 7 if period_type == "week" else weeks_back * 31
+    since = now - timedelta(days=days_back)
+
+    conds = [models.SellOutReport.period_start >= since]
+    if period_type in ("week", "month", "day"):
+        conds.append(models.SellOutReport.period_type == period_type)
+    if variant_id is not None:
+        conds.append(models.SellOutReport.variant_id == variant_id)
+    if store_id is not None:
+        conds.append(models.SellOutReport.store_id == store_id)
+
+    stmt = (
+        select(
+            models.SellOutReport.period_start,
+            func.max(models.SellOutReport.period_end).label("period_end"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units"),
+            func.coalesce(func.sum(models.SellOutReport.units_returned), 0).label("returned"),
+            func.coalesce(func.sum(models.SellOutReport.revenue), 0.0).label("revenue"),
+            func.coalesce(func.sum(models.SellOutReport.returns_amount), 0.0).label("returns_amount"),
+            func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0).label("on_hand"),
+            func.count(func.distinct(models.SellOutReport.store_id)).label("stores"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .where(and_(*conds))
+        .group_by(models.SellOutReport.period_start)
+        .order_by(models.SellOutReport.period_start.asc())
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailStore.channel_id == channel_id)
+
+    rows = (await db.execute(stmt)).all()
+    points: List[schemas.TrendPoint] = []
+    total_units = 0
+    total_revenue = 0.0
+    for r in rows:
+        u = int(r.units or 0)
+        ru = int(r.returned or 0)
+        rev = float(r.revenue or 0.0)
+        ret_amt = float(r.returns_amount or 0.0)
+        total_units += u
+        total_revenue += rev
+        points.append(schemas.TrendPoint(
+            period_start=r.period_start, period_end=r.period_end,
+            label=_period_label(r.period_start, period_type),
+            units_sold=u, units_returned=ru, net_units=max(u - ru, 0),
+            revenue=round(rev, 2), returns_amount=round(ret_amt, 2),
+            net_revenue=round(max(rev - ret_amt, 0.0), 2),
+            on_hand=int(r.on_hand or 0),
+            stores_reporting=int(r.stores or 0),
+        ))
+
+    wow_units_pct: Optional[float] = None
+    wow_revenue_pct: Optional[float] = None
+    if len(points) >= 2:
+        prev, last = points[-2], points[-1]
+        if prev.units_sold > 0:
+            wow_units_pct = round((last.units_sold - prev.units_sold) / prev.units_sold * 100.0, 1)
+        if prev.revenue > 0:
+            wow_revenue_pct = round((last.revenue - prev.revenue) / prev.revenue * 100.0, 1)
+
+    return schemas.TrendResponse(
+        channel_id=channel_id, variant_id=variant_id, store_id=store_id,
+        period_type=period_type, points=points,
+        total_units=total_units, total_revenue=round(total_revenue, 2),
+        wow_units_pct=wow_units_pct, wow_revenue_pct=wow_revenue_pct,
+    )
+
+
+# ── Analytics: distribución numérica (voids) ─────────────────────────────
+
+async def distribution(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    days: int = 28, limit: int = 200,
+) -> schemas.DistributionResponse:
+    """Distribución numérica por SKU: en cuántas tiendas de la cadena se está
+    vendiendo el producto vs el total de tiendas activas. Un 'void' es una
+    tienda que no reporta venta del SKU (oportunidad de expansión).
+
+    Es el KPI que usan Nielsen/las áreas comerciales para saber si un
+    producto está bien distribuido o hay hueco de anaquel."""
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+
+    # Total tiendas activas del scope
+    stores_stmt = select(func.count(models.RetailStore.id)).where(
+        models.RetailStore.is_active.is_(True)
+    )
+    if channel_id is not None:
+        stores_stmt = stores_stmt.where(models.RetailStore.channel_id == channel_id)
+    total_stores = int((await db.execute(stores_stmt)).scalar() or 0)
+
+    # Por variante: tiendas que venden (units>0), tiendas con stock, unidades
+    stmt = (
+        select(
+            models.SellOutReport.variant_id,
+            func.max(models.SellOutReport.sku).label("sku"),
+            func.max(models.SellOutReport.product_name).label("product_name"),
+            func.count(func.distinct(models.RetailStore.id)).label("stores_selling"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .where(
+            models.SellOutReport.period_start >= since,
+            models.SellOutReport.variant_id.isnot(None),
+            models.SellOutReport.units_sold > 0,
+            models.RetailStore.is_active.is_(True),
+        )
+        .group_by(models.SellOutReport.variant_id)
+        .order_by(func.count(func.distinct(models.RetailStore.id)).desc())
+        .limit(limit)
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailStore.channel_id == channel_id)
+    rows = (await db.execute(stmt)).all()
+
+    # Tiendas con stock (on_hand>0) por variante en el último corte
+    variant_ids = [int(r.variant_id) for r in rows if r.variant_id]
+    stocking_by_variant: Dict[int, int] = {}
+    if variant_ids:
+        stock_stmt = (
+            select(
+                models.SellOutReport.variant_id,
+                func.count(func.distinct(models.RetailStore.id)).label("stores"),
+            )
+            .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+            .where(
+                models.SellOutReport.period_start >= since,
+                models.SellOutReport.variant_id.in_(variant_ids),
+                models.SellOutReport.units_on_hand > 0,
+                models.RetailStore.is_active.is_(True),
+            )
+            .group_by(models.SellOutReport.variant_id)
+        )
+        if channel_id is not None:
+            stock_stmt = stock_stmt.where(models.RetailStore.channel_id == channel_id)
+        for vid, cnt in (await db.execute(stock_stmt)).all():
+            stocking_by_variant[int(vid)] = int(cnt or 0)
+
+    out: List[schemas.DistributionRow] = []
+    for r in rows:
+        vid = int(r.variant_id) if r.variant_id else None
+        selling = int(r.stores_selling or 0)
+        pct = round(selling / total_stores * 100.0, 1) if total_stores > 0 else 0.0
+        units = int(r.units or 0)
+        if pct >= 80:
+            status = "excellent"
+        elif pct >= 50:
+            status = "good"
+        elif pct >= 25:
+            status = "low"
+        else:
+            status = "critical"
+        out.append(schemas.DistributionRow(
+            variant_id=vid, sku=r.sku, product_name=r.product_name,
+            stores_selling=selling,
+            stores_stocking=stocking_by_variant.get(vid or -1, 0),
+            total_stores=total_stores,
+            distribution_pct=pct,
+            void_stores=max(total_stores - selling, 0),
+            total_units=units,
+            avg_units_per_store=round(units / selling, 1) if selling > 0 else 0.0,
+            status=status,
+        ))
+    # Ordena por más voids (mayor oportunidad) entre los que ya venden algo
+    out.sort(key=lambda x: (-x.void_stores, -x.total_units))
+    return schemas.DistributionResponse(
+        channel_id=channel_id, total_stores=total_stores, rows=out,
+    )
+
+
+# ── Analytics: venta perdida por stockout ────────────────────────────────
+
+async def lost_sales(
+    db: AsyncSession, channel_id: Optional[int] = None, limit: int = 500,
+) -> schemas.LostSalesResponse:
+    """Estima la venta perdida por productos agotados. Para cada (tienda, SKU)
+    cuyo último corte tiene on_hand=0 pero que traía velocidad de venta,
+    proyecta cuántas unidades e ingreso se están perdiendo por semana × las
+    semanas consecutivas sin stock.
+
+    lost_units = velocidad_semanal × semanas_sin_stock
+    lost_revenue = lost_units × precio (catálogo, o promedio histórico)."""
+    now = datetime.now(timezone.utc)
+    velocity_from = now - timedelta(days=VELOCITY_WINDOW_DAYS)
+
+    # Combos (store, variant) con su último corte
+    combos_stmt = (
+        select(
+            models.RetailStore.id.label("store_id"),
+            models.RetailStore.name.label("store_name"),
+            models.RetailChannel.id.label("channel_id"),
+            models.RetailChannel.name.label("channel_name"),
+            models.SellOutReport.variant_id,
+            models.SellOutReport.product_name,
+            models.SellOutReport.sku,
+            func.max(models.SellOutReport.period_start).label("last_period"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units_window"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .join(models.RetailChannel, models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(
+            models.SellOutReport.period_start >= velocity_from,
+            models.SellOutReport.variant_id.isnot(None),
+            models.RetailStore.is_active.is_(True),
+        )
+        .group_by(
+            models.RetailStore.id, models.RetailStore.name,
+            models.RetailChannel.id, models.RetailChannel.name,
+            models.SellOutReport.variant_id,
+            models.SellOutReport.product_name, models.SellOutReport.sku,
+        )
+    )
+    if channel_id is not None:
+        combos_stmt = combos_stmt.where(models.RetailStore.channel_id == channel_id)
+    combos = (await db.execute(combos_stmt)).all()
+
+    # Precios de catálogo por variante
+    variant_ids = list({int(r.variant_id) for r in combos if r.variant_id})
+    price_by_variant: Dict[int, float] = {}
+    if variant_ids:
+        prices = (await db.execute(
+            select(inv_models.ProductVariant.id, inv_models.ProductVariant.price)
+            .where(inv_models.ProductVariant.id.in_(variant_ids))
+        )).all()
+        price_by_variant = {int(vid): float(p or 0.0) for vid, p in prices}
+
+    rows: List[schemas.LostSalesRow] = []
+    total_lost_units = 0
+    total_lost_revenue = 0.0
+
+    for r in combos:
+        vid = int(r.variant_id)
+        # On-hand del último corte
+        on_hand = int((await db.execute(
+            select(func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0))
+            .where(
+                models.SellOutReport.store_id == r.store_id,
+                models.SellOutReport.variant_id == vid,
+                models.SellOutReport.period_start == r.last_period,
+            )
+        )).scalar() or 0)
+        if on_hand > 0:
+            continue  # hay stock → no hay venta perdida
+
+        avg_weekly = float(r.units_window or 0) / (VELOCITY_WINDOW_DAYS / 7.0)
+        if avg_weekly <= 0:
+            continue  # sin velocidad histórica → no proyectamos pérdida
+
+        # Semanas consecutivas sin stock: cuenta cortes recientes con on_hand=0
+        recent = (await db.execute(
+            select(
+                models.SellOutReport.period_start,
+                func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0).label("oh"),
+            )
+            .where(
+                models.SellOutReport.store_id == r.store_id,
+                models.SellOutReport.variant_id == vid,
+                models.SellOutReport.period_start >= velocity_from,
+            )
+            .group_by(models.SellOutReport.period_start)
+            .order_by(models.SellOutReport.period_start.desc())
+        )).all()
+        weeks_out = 0
+        for _ps, oh in recent:
+            if int(oh or 0) == 0:
+                weeks_out += 1
+            else:
+                break
+        weeks_out = max(weeks_out, 1)
+
+        # Precio: catálogo, o ingreso/unidad histórico
+        price = price_by_variant.get(vid, 0.0)
+        if price <= 0:
+            hist = (await db.execute(
+                select(
+                    func.coalesce(func.sum(models.SellOutReport.revenue), 0.0),
+                    func.coalesce(func.sum(models.SellOutReport.units_sold), 0),
+                ).where(
+                    models.SellOutReport.variant_id == vid,
+                    models.SellOutReport.units_sold > 0,
+                )
+            )).one()
+            hrev, hunits = float(hist[0] or 0.0), int(hist[1] or 0)
+            price = round(hrev / hunits, 2) if hunits > 0 else 0.0
+
+        lost_units = int(round(avg_weekly * weeks_out))
+        if lost_units <= 0:
+            continue
+        lost_revenue = round(lost_units * price, 2)
+        total_lost_units += lost_units
+        total_lost_revenue += lost_revenue
+
+        if weeks_out >= 3 or lost_revenue >= 10000:
+            severity = "urgent"
+        elif weeks_out >= 2:
+            severity = "high"
+        else:
+            severity = "medium"
+
+        rows.append(schemas.LostSalesRow(
+            store_id=r.store_id, store_name=r.store_name,
+            channel_id=r.channel_id, channel_name=r.channel_name,
+            variant_id=vid, sku=r.sku, product_name=r.product_name,
+            avg_weekly_units=round(avg_weekly, 2),
+            weeks_out_of_stock=float(weeks_out),
+            lost_units=lost_units, unit_price=round(price, 2),
+            lost_revenue=lost_revenue, severity=severity,
+        ))
+
+    rows.sort(key=lambda x: -x.lost_revenue)
+    rows = rows[:limit]
+    return schemas.LostSalesResponse(
+        channel_id=channel_id, generated_at=now,
+        total_lost_units=total_lost_units,
+        total_lost_revenue=round(total_lost_revenue, 2),
+        affected_combos=len(rows), rows=rows,
+    )
+
+
 # ── Replenishment: crear traslado ────────────────────────────────────────
 
 async def list_source_warehouses(db: AsyncSession) -> List[schemas.SourceWarehouseOption]:
