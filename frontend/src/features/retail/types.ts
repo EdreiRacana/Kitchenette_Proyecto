@@ -170,6 +170,45 @@ export interface AbcXyzResponse {
   rows: AbcXyzRow[];
 }
 
+// Inteligencia de precios
+export type ElasticityLabel = "elastic" | "inelastic" | "unit" | "n/a";
+export interface PricingRow {
+  variant_id?: number | null;
+  sku?: string | null;
+  product_name?: string | null;
+  units_sold: number;
+  avg_price: number;
+  min_price: number;
+  max_price: number;
+  price_volatility_pct: number;
+  price_change_pct: number;
+  list_price?: number | null;
+  elasticity?: number | null;
+  elasticity_label: ElasticityLabel;
+  periods_count: number;
+}
+export interface PricingResponse {
+  channel_id?: number | null;
+  days: number;
+  rows: PricingRow[];
+}
+export interface PriceHistoryPoint {
+  label: string;
+  period_start: string;
+  avg_price: number;
+  units: number;
+}
+export interface PriceHistoryResponse {
+  variant_id: number;
+  sku?: string | null;
+  product_name?: string | null;
+  points: PriceHistoryPoint[];
+  elasticity?: number | null;
+  elasticity_label: ElasticityLabel;
+  avg_price: number;
+  list_price?: number | null;
+}
+
 // Tendencia (time-series)
 export interface TrendPoint {
   period_start: string;

@@ -885,6 +885,43 @@ def build_abc_xyz_report(axz: Any) -> bytes:
     return _to_bytes(wb)
 
 
+# ── Reporte 16: Inteligencia de precios ─────────────────────────────────
+
+_ELASTICITY_LABEL = {
+    "elastic": "Elástico", "inelastic": "Inelástico", "unit": "Unitario", "n/a": "—",
+}
+
+
+def build_pricing_report(pr: Any) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Precios"
+    headers = ["SKU", "Producto", "Unidades", "Precio prom", "Mín", "Máx",
+                "Volatilidad %", "Cambio %", "Precio lista", "Elasticidad", "Tipo"]
+    ws.append(headers)
+    _style_header(ws, len(headers))
+
+    for r in pr.rows:
+        ws.append([
+            r.sku or "", r.product_name or "",
+            int(r.units_sold or 0), float(r.avg_price or 0.0),
+            float(r.min_price or 0.0), float(r.max_price or 0.0),
+            float(r.price_volatility_pct or 0.0), float(r.price_change_pct or 0.0),
+            float(r.list_price) if r.list_price is not None else "",
+            float(r.elasticity) if r.elasticity is not None else "",
+            _ELASTICITY_LABEL.get(r.elasticity_label, r.elasticity_label),
+        ])
+
+    _autosize(ws)
+    _company_header(
+        ws, "Inteligencia de precios",
+        f"{len(pr.rows)} SKUs · precio implícito (ingreso ÷ unidades) · "
+        f"elasticidad estimada · últimos {pr.days} días",
+        len(headers),
+    )
+    return _to_bytes(wb)
+
+
 # ── Reporte ejecutivo PDF semanal ────────────────────────────────────────
 
 def build_executive_pdf(
