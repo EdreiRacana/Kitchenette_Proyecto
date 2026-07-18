@@ -488,13 +488,25 @@ function ComparisonChart({ t, series, xlabels }) {
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 190, cursor: "crosshair" }} preserveAspectRatio="none"
         onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover(near((e.clientX - r.left) / r.width * W)); }}
         onMouseLeave={() => setHover(null)}>
-        <defs><linearGradient id="cmpFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.nova} stopOpacity="0.3" /><stop offset="100%" stopColor={t.nova} stopOpacity="0" /></linearGradient></defs>
+        <defs>
+          <linearGradient id="cmpFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={t.nova} stopOpacity="0.4" />
+            <stop offset="55%" stopColor={t.nova} stopOpacity="0.1" />
+            <stop offset="100%" stopColor={t.nova} stopOpacity="0" />
+          </linearGradient>
+          <filter id="cmpGlow" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="3.2" /></filter>
+        </defs>
         {grid.map((g, i) => <line key={i} x1={P.l} x2={W - P.r} y1={g} y2={g} stroke={t.gridLine} strokeWidth="1" />)}
-        <path d={path(series.prev)} fill="none" stroke={t.textLo} strokeWidth="2" strokeDasharray="5 5" opacity="0.75" />
+        <path d={path(series.prev)} fill="none" stroke={t.textLo} strokeWidth="2" strokeDasharray="5 5" opacity="0.7" />
         <path d={area} fill="url(#cmpFill)" />
+        {/* Glow bajo la línea actual + línea nítida encima */}
+        <path d={cur} fill="none" stroke={t.nova} strokeWidth="5" opacity="0.4" filter="url(#cmpGlow)" strokeLinejoin="round" strokeLinecap="round" />
         <path d={cur} fill="none" stroke={t.nova} strokeWidth="2.6" strokeLinejoin="round" strokeLinecap="round" />
         {hv && <line x1={x(hv.i)} x2={x(hv.i)} y1={P.t} y2={P.t + ih} stroke={t.nova} strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />}
         {series.cur.map((v, i) => <circle key={i} cx={x(i)} cy={y(v)} r="3.2" fill={t.panel} stroke={t.nova} strokeWidth="2" />)}
+        {/* Marcador "ahora" (último punto) con glow */}
+        {n > 0 && <circle cx={x(n - 1)} cy={y(series.cur[n - 1])} r="6" fill={t.nova} opacity="0.9" filter="url(#cmpGlow)" />}
+        {n > 0 && <circle cx={x(n - 1)} cy={y(series.cur[n - 1])} r="3.4" fill="#fff" stroke={t.nova} strokeWidth="2" />}
         {hv && <circle cx={x(hv.i)} cy={y(hv.prev)} r="4" fill={t.panel} stroke={t.textLo} strokeWidth="2" />}
         {hv && <circle cx={x(hv.i)} cy={y(hv.cur)} r="5" fill={t.panel} stroke={t.nova} strokeWidth="2.5" />}
         {xlabels.map((lb, i) => <text key={i} x={x(i)} y={H - 9} fill={t.textLo} fontSize="12" textAnchor="middle">{lb}</text>)}
@@ -675,26 +687,40 @@ function DonutChart({ t, items, colors }: any) {
     return <div style={{ padding: "40px 0", textAlign: "center", color: t.textLo, fontSize: 12.5 }}>Sin datos de canal.</div>;
   }
   const total = items.reduce((a: number, it: any) => a + (it.total || 0), 0);
-  const cx = 100, cy = 100, r = 70, sw = 24;
+  const cx = 100, cy = 100, r = 70, sw = 22;
+  const gap = items.length > 1 ? 0.045 : 0;          // separación (radianes) → aire entre segmentos
   let acc = 0;
   const arcs = items.map((it: any, i: number) => {
     const val = it.total || 0;
     const frac = total > 0 ? val / total : 0;
-    const startA = acc * 2 * Math.PI - Math.PI / 2;
+    const startA = acc * 2 * Math.PI - Math.PI / 2 + gap / 2;
     acc += frac;
-    const endA = acc * 2 * Math.PI - Math.PI / 2;
-    const large = frac > 0.5 ? 1 : 0;
+    const endA = acc * 2 * Math.PI - Math.PI / 2 - gap / 2;
+    const color = colors[i % colors.length];
+    const name = it.channel || it.name || "—";
+    if (endA <= startA) return { d: "", color, frac, val, name };
+    const large = (endA - startA) > Math.PI ? 1 : 0;
     const x1 = cx + r * Math.cos(startA), y1 = cy + r * Math.sin(startA);
     const x2 = cx + r * Math.cos(endA), y2 = cy + r * Math.sin(endA);
-    return { d: `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`, color: colors[i % colors.length], frac, val, name: it.channel || it.name || "—" };
+    return { d: `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`, color, frac, val, name };
   });
   const topItem = arcs.reduce((max: any, a: any) => (a.frac > (max?.frac ?? 0) ? a : max), null as any);
   return (
     <div>
       <div style={{ position: "relative", display: "flex", justifyContent: "center" }}>
         <svg viewBox="0 0 200 200" width="180" height="180">
-          {arcs.map((a: any, i: number) => (
-            <path key={i} d={a.d} fill="none" stroke={a.color} strokeOpacity="0.65" strokeWidth={sw} strokeLinecap="butt" />
+          <defs>
+            <filter id="donutGlow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.4" /></filter>
+          </defs>
+          {/* Pista recesiva */}
+          <circle cx={cx} cy={cy} r={r} fill="none" stroke={t.panel3} strokeWidth={sw} />
+          {/* Glow por segmento */}
+          {arcs.map((a: any, i: number) => a.d && (
+            <path key={`g${i}`} d={a.d} fill="none" stroke={a.color} strokeWidth={sw} strokeLinecap="round" opacity="0.5" filter="url(#donutGlow)" />
+          ))}
+          {/* Segmentos nítidos */}
+          {arcs.map((a: any, i: number) => a.d && (
+            <path key={i} d={a.d} fill="none" stroke={a.color} strokeWidth={sw} strokeLinecap="round" opacity="0.95" />
           ))}
         </svg>
         <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center" }}>
