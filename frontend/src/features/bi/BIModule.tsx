@@ -454,59 +454,100 @@ function BubbleChart({ t, items }: any) {
 
 function LineBarChart({ data, t, height = 200 }: { data: ChartPoint[]; t: any; height?: number }) {
   const [hover, setHover] = useState<number | null>(null);
-  const W = 600, H = height, PL = 8, PR = 8, PT = 16, PB = 28;
+  // Series: azul = período actual · naranja = período anterior (par CVD-seguro)
+  const CUR = t.nova || "#33B2F5";
+  const PREV = "#FB923C";
+  const W = 600, H = height, PL = 6, PR = 6, PT = 14, PB = 12;
   const iw = W - PL - PR, ih = H - PT - PB, n = data.length;
-  const maxVal = (Math.max(1, ...data.map(d => Math.max(d.current, d.prev, d.target || 0)))) * 1.15;
-  const x = (i: number) => PL + (n === 1 ? iw / 2 : (i * iw) / (n - 1));
+  const baseY = PT + ih;
+  const maxVal = (Math.max(1, ...data.map(d => Math.max(d.current, d.prev)))) * 1.18;
+  const x = (i: number) => PL + (n <= 1 ? iw / 2 : (i * iw) / (n - 1));
   const y = (v: number) => PT + (1 - v / maxVal) * ih;
-  const barW = Math.min(28, iw / n / 2.5);
-  const curPath = data.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(d.current).toFixed(1)}`).join(" ");
-  const prevPath = data.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(d.prev).toFixed(1)}`).join(" ");
-  const areaPath = n ? `${curPath} L ${x(n - 1).toFixed(1)} ${(PT + ih).toFixed(1)} L ${PL.toFixed(1)} ${(PT + ih).toFixed(1)} Z` : "";
+
+  // Curva suave (Catmull-Rom → Bézier cúbica)
+  const smooth = (vals: number[]) => {
+    const p = vals.map((v, i) => [x(i), y(v)] as [number, number]);
+    if (p.length < 2) return p.length ? `M ${p[0][0].toFixed(1)} ${p[0][1].toFixed(1)}` : "";
+    let d = `M ${p[0][0].toFixed(1)} ${p[0][1].toFixed(1)}`;
+    for (let i = 0; i < p.length - 1; i++) {
+      const p0 = p[i - 1] ?? p[i], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2] ?? p2;
+      const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = p1[1] + (p2[1] - p0[1]) / 6;
+      const c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = p2[1] - (p3[1] - p1[1]) / 6;
+      d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+    }
+    return d;
+  };
+  const curLine = smooth(data.map(d => d.current));
+  const prevLine = smooth(data.map(d => d.prev));
+  const toArea = (line: string) => n ? `${line} L ${x(n - 1).toFixed(1)} ${baseY.toFixed(1)} L ${x(0).toFixed(1)} ${baseY.toFixed(1)} Z` : "";
   const grid = [0, 0.25, 0.5, 0.75, 1].map(g => PT + g * ih);
   const nearest = (px: number) => { let b = 0, bd = 1e9; for (let i = 0; i < n; i++) { const dd = Math.abs(px - x(i)); if (dd < bd) { bd = dd; b = i; } } return b; };
   const hv = hover !== null ? data[hover] : null;
   const hd = hv ? delta(hv.current, hv.prev) : 0;
+  const posPct = (i: number) => (x(i) / W) * 100;
+  const stride = Math.max(1, Math.ceil(n / 9));
 
   if (!n) return <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: t.textLo, fontSize: 13 }}>Sin datos para este período</div>;
 
   return (
     <div style={{ position: "relative" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height, cursor: "crosshair" }} preserveAspectRatio="none"
-        onMouseMove={(e) => { const r = (e.currentTarget as SVGElement).getBoundingClientRect(); setHover(nearest((e.clientX - r.left) / r.width * W)); }}
+      {/* Leyenda (identidad no depende solo del color) */}
+      <div style={{ display: "flex", gap: 18, marginBottom: 12 }}>
+        {[{ c: CUR, l: "Período actual" }, { c: PREV, l: "Período anterior" }].map(s => (
+          <span key={s.l} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, color: t.textMid, fontWeight: 600 }}>
+            <span style={{ width: 18, height: 3, borderRadius: 3, background: s.c }} />{s.l}
+          </span>
+        ))}
+      </div>
+
+      <div style={{ position: "relative", width: "100%", height, cursor: "crosshair" }}
+        onMouseMove={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setHover(nearest((e.clientX - r.left) / r.width * W)); }}
         onMouseLeave={() => setHover(null)}>
-        <defs>
-          <linearGradient id="biArea" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={t.nova} stopOpacity="0.25" />
-            <stop offset="100%" stopColor={t.nova} stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {grid.map((g, i) => <line key={i} x1={PL} x2={W - PR} y1={g} y2={g} stroke={t.gridLine} strokeWidth="1" opacity="0.6" />)}
-        {data.map((d, i) => (
-          <rect key={i} x={x(i) - barW / 2} y={y(d.current)} width={barW} height={(PT + ih) - y(d.current)} fill={t.nova} opacity={hover === i ? "0.22" : "0.12"} rx="3" />
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={height} preserveAspectRatio="none" style={{ display: "block", overflow: "visible" }}>
+          <defs>
+            <linearGradient id="biAreaCur" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={CUR} stopOpacity="0.28" />
+              <stop offset="90%" stopColor={CUR} stopOpacity="0.02" />
+            </linearGradient>
+            <linearGradient id="biAreaPrev" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={PREV} stopOpacity="0.16" />
+              <stop offset="90%" stopColor={PREV} stopOpacity="0.01" />
+            </linearGradient>
+          </defs>
+          {grid.map((g, i) => <line key={i} x1={PL} x2={W - PR} y1={g} y2={g} stroke={t.gridLine} strokeWidth="1" opacity={i === grid.length - 1 ? "0.85" : "0.4"} vectorEffect="non-scaling-stroke" />)}
+          <path d={toArea(prevLine)} fill="url(#biAreaPrev)" />
+          <path d={toArea(curLine)} fill="url(#biAreaCur)" />
+          <path d={prevLine} fill="none" stroke={PREV} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" opacity="0.9" vectorEffect="non-scaling-stroke" />
+          <path d={curLine} fill="none" stroke={CUR} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+          {hv && <line x1={x(hover!)} x2={x(hover!)} y1={PT} y2={baseY} stroke={t.textMid} strokeWidth="1" strokeDasharray="4 4" opacity="0.45" vectorEffect="non-scaling-stroke" />}
+        </svg>
+
+        {/* Marcadores en hover (HTML → nítidos, con anillo de superficie) */}
+        {hv && (
+          <>
+            <span style={{ position: "absolute", left: `${posPct(hover!)}%`, top: y(hv.prev), width: 9, height: 9, borderRadius: 99, background: PREV, boxShadow: `0 0 0 2px ${t.panel}`, transform: "translate(-50%,-50%)", pointerEvents: "none" }} />
+            <span style={{ position: "absolute", left: `${posPct(hover!)}%`, top: y(hv.current), width: 11, height: 11, borderRadius: 99, background: CUR, boxShadow: `0 0 0 2px ${t.panel}, 0 0 0 6px ${CUR}22`, transform: "translate(-50%,-50%)", pointerEvents: "none" }} />
+          </>
+        )}
+      </div>
+
+      {/* Eje X (HTML → sin distorsión por el stretch del SVG) */}
+      <div style={{ position: "relative", height: 16, marginTop: 4 }}>
+        {data.map((d, i) => (i % stride === 0 || i === n - 1) && (
+          <span key={i} style={{ position: "absolute", left: `${posPct(i)}%`, transform: "translateX(-50%)", fontSize: 10.5, color: t.textLo, whiteSpace: "nowrap" }}>{d.label}</span>
         ))}
-        <path d={prevPath} fill="none" stroke={t.textLo} strokeWidth="1.8" strokeDasharray="5 4" opacity="0.5" />
-        <path d={areaPath} fill="url(#biArea)" />
-        <path d={curPath} fill="none" stroke={t.nova} strokeWidth="2.6" strokeLinejoin="round" strokeLinecap="round" />
-        {hv && <line x1={x(hover!)} x2={x(hover!)} y1={PT} y2={PT + ih} stroke={t.nova} strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />}
-        {data.map((d, i) => (
-          <g key={i}>
-            <circle cx={x(i)} cy={y(d.current)} r={hover === i ? "5" : "3.5"} fill={t.panel} stroke={t.nova} strokeWidth="2" />
-            <text x={x(i)} y={H - 8} textAnchor="middle" fontSize="11" fill={t.textLo}>{d.label}</text>
-          </g>
-        ))}
-        {hv && <circle cx={x(hover!)} cy={y(hv.prev)} r="4" fill={t.panel} stroke={t.textLo} strokeWidth="2" />}
-      </svg>
+      </div>
+
       {hv && (
-        <div style={{ position: "absolute", top: 6, left: `${(x(hover!) / W) * 100 > 62 ? (x(hover!) / W) * 100 - 2 : (x(hover!) / W) * 100 + 2}%`, transform: (x(hover!) / W) * 100 > 62 ? "translateX(-100%)" : "none", background: t.panel2, border: `1px solid ${t.nova}`, borderRadius: 10, padding: "9px 12px", fontSize: 12, boxShadow: "0 8px 24px rgba(0,0,0,.45)", minWidth: 130, pointerEvents: "none", zIndex: 5 }}>
+        <div style={{ position: "absolute", top: 30, left: `${posPct(hover!) > 62 ? posPct(hover!) - 2 : posPct(hover!) + 2}%`, transform: posPct(hover!) > 62 ? "translateX(-100%)" : "none", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: "9px 12px", fontSize: 12, boxShadow: "0 8px 24px rgba(0,0,0,.45)", minWidth: 140, pointerEvents: "none", zIndex: 5 }}>
           <div style={{ fontWeight: 700, color: t.textHi, marginBottom: 6 }}>{hv.label}</div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 14, marginBottom: 3 }}>
-            <span style={{ color: t.textMid, display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 9, background: t.nova }} />Actual</span>
-            <span style={{ color: t.textHi, fontWeight: 700 }}>{hv.current}</span>
+            <span style={{ color: t.textMid, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 3, borderRadius: 3, background: CUR }} />Actual</span>
+            <span style={{ color: t.textHi, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmt(hv.current, "money")}</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 14, marginBottom: 6 }}>
-            <span style={{ color: t.textMid, display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 9, background: t.textLo }} />Anterior</span>
-            <span style={{ color: t.textMid }}>{hv.prev}</span>
+            <span style={{ color: t.textMid, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 3, borderRadius: 3, background: PREV }} />Anterior</span>
+            <span style={{ color: t.textMid, fontVariantNumeric: "tabular-nums" }}>{fmt(hv.prev, "money")}</span>
           </div>
           <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 5, color: hd >= 0 ? t.good : t.bad, fontWeight: 700 }}>
             {hd >= 0 ? "▲ +" : "▼ "}{hd}% vs anterior
@@ -567,29 +608,41 @@ function SparkMini({ data, color, width = 80, height = 28 }: { data: number[]; c
 }
 
 function GaugeArc({ value, target, max, t }: { value: number; target: number; max: number; t: any }) {
-  const pct = Math.min(value / max, 1);
-  const tpct = Math.min(target / max, 1);
-  const cx = 80, cy = 70, r = 55, sw = 10;
-  const arc = (f0: number, f1: number) => {
-    const a = (f: number) => Math.PI - f * Math.PI;
-    const px = (f: number) => [cx + r * Math.cos(a(f)), cy - r * Math.sin(a(f))];
-    const [x0, y0] = px(f0), [x1, y1] = px(f1);
-    return `M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${r} ${r} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`;
+  const pct = Math.max(0, Math.min(value / max, 1));
+  const tpct = Math.max(0, Math.min(target / max, 1));
+  const W = 200, H = 122, cx = W / 2, cy = 108, r = 82, sw = 14;
+  const ang = (f: number) => Math.PI - f * Math.PI;                 // f:0→izq (180°) … 1→der (0°)
+  const pt = (f: number, rad = r) => [cx + rad * Math.cos(ang(f)), cy - rad * Math.sin(ang(f))] as [number, number];
+  const arc = (f0: number, f1: number, rad = r) => {
+    const [x0, y0] = pt(f0, rad), [x1, y1] = pt(f1, rad);
+    const large = (f1 - f0) > 0.5 ? 1 : 0;
+    return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${rad} ${rad} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
   };
-  const needleA = Math.PI - pct * Math.PI;
-  const nx = cx + (r - 4) * Math.cos(needleA), ny = cy - (r - 4) * Math.sin(needleA);
-  const tA = Math.PI - tpct * Math.PI;
-  const valColor = pct >= 0.8 ? t.good : pct >= 0.5 ? t.warn : t.bad;
+  // Estado según el objetivo: verde ≥ objetivo · ámbar cerca · rojo lejos
+  const valColor = pct >= tpct ? t.good : pct >= tpct * 0.75 ? t.warn : t.bad;
+  const [knobX, knobY] = pt(pct);
+  const [tk0x, tk0y] = pt(tpct, r - sw / 2 - 2);
+  const [tk1x, tk1y] = pt(tpct, r + sw / 2 + 2);
   return (
-    <svg viewBox="0 0 160 90" style={{ width: 140, height: 78 }}>
-      <path d={arc(0, 0.5)} fill="none" stroke={t.bad} strokeWidth={sw} opacity="0.3" strokeLinecap="round" />
-      <path d={arc(0.5, 0.75)} fill="none" stroke={t.warn} strokeWidth={sw} opacity="0.3" />
-      <path d={arc(0.75, 1)} fill="none" stroke={t.good} strokeWidth={sw} opacity="0.3" strokeLinecap="round" />
-      <path d={arc(0, pct)} fill="none" stroke={valColor} strokeWidth={sw} opacity="0.85" strokeLinecap="round" />
-      <line x1={cx + (r - sw) * Math.cos(tA)} y1={cy - (r - sw) * Math.sin(tA)} x2={cx + (r + 4) * Math.cos(tA)} y2={cy - (r + 4) * Math.sin(tA)} stroke={t.textHi} strokeWidth="2" strokeOpacity="0.5" />
-      <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={valColor} strokeWidth="2.5" strokeLinecap="round" opacity="0.8" />
-      <circle cx={cx} cy={cy} r="4" fill={t.panel} stroke={valColor} strokeWidth="2" />
-      <text x={cx} y={cy - 16} textAnchor="middle" fontSize="18" fontWeight="700" fill={valColor}>{Math.round(pct * 100)}%</text>
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: 240, height: "auto", display: "block" }}>
+      <defs>
+        <linearGradient id="biGaugeFill" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor={valColor} stopOpacity="0.5" />
+          <stop offset="100%" stopColor={valColor} stopOpacity="1" />
+        </linearGradient>
+      </defs>
+      {/* Pista (mismo tono, recesiva) */}
+      <path d={arc(0, 1)} fill="none" stroke={t.panel3} strokeWidth={sw} strokeLinecap="round" />
+      {/* Progreso */}
+      {pct > 0.004 && <path d={arc(0, pct)} fill="none" stroke="url(#biGaugeFill)" strokeWidth={sw} strokeLinecap="round" />}
+      {/* Marca de objetivo */}
+      <line x1={tk0x} y1={tk0y} x2={tk1x} y2={tk1y} stroke={t.textHi} strokeWidth="2.5" strokeLinecap="round" opacity="0.5" />
+      {/* Perilla en la punta del progreso (con anillo de superficie) */}
+      <circle cx={knobX} cy={knobY} r={sw / 2 - 0.5} fill={t.panel} />
+      <circle cx={knobX} cy={knobY} r={sw / 2 - 3} fill={valColor} />
+      {/* Valor */}
+      <text x={cx} y={cy - 20} textAnchor="middle" fontSize="30" fontWeight="800" fill={valColor}>{Math.round(pct * 100)}%</text>
+      <text x={cx} y={cy - 3} textAnchor="middle" fontSize="10.5" fill={t.textLo}>Objetivo {Math.round(tpct * 100)}%</text>
     </svg>
   );
 }
@@ -1179,10 +1232,12 @@ function BIModuleBody({
               <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 12 }}>Cotización → Pedido confirmado → Pedido pagado — con % de conversión entre etapas</div>
               <SankeyFunnel t={t} stages={funnel.map(s => ({ label: s.label, value: s.value, color: s.color }))} />
             </div>
-            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20, display: "flex", flexDirection: "column", alignItems: "center" }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 6, alignSelf: "flex-start" }}>Tasa de pedidos pagados</div>
-              <GaugeArc value={D.paidRate} target={80} max={100} t={t} />
-              <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 8 }}>Referencia: 80%</div>
+            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20, display: "flex", flexDirection: "column" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Tasa de pedidos pagados</div>
+              <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 8 }}>Pedidos cobrados sobre el total del período</div>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <GaugeArc value={D.paidRate} target={80} max={100} t={t} />
+              </div>
             </div>
           </div>
 
