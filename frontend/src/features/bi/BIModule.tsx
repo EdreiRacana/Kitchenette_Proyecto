@@ -255,41 +255,51 @@ function WaterfallChart({ t, ingresos, gastosCategorias, utilidad }: any) {
 function SankeyFunnel({ t, stages }: any) {
   // stages: [{ label, value, color }]
   if (!stages || stages.length === 0) return null;
-  const W = 720, H = 220, PL = 20, PR = 20, PT = 14, PB = 32;
+  const W = 720, H = 230, PL = 16, PR = 16, PT = 22, PB = 40;
   const iw = W - PL - PR, ih = H - PT - PB;
   const max = Math.max(1, stages[0].value);
-  const sectionW = iw / stages.length;
+  const gapPx = 30;                                   // aire entre etapas (para la píldora de conversión)
+  const sectionW = (iw - gapPx * (stages.length - 1)) / stages.length;
+  const cy = PT + ih / 2;
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%" }}>
+      <defs>
+        {stages.map((s: any, i: number) => (
+          <linearGradient key={i} id={`sankG${i}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={s.color} stopOpacity="0.75" />
+            <stop offset="100%" stopColor={s.color} stopOpacity="0.32" />
+          </linearGradient>
+        ))}
+      </defs>
       {stages.map((s: any, i: number) => {
         const nextV = i < stages.length - 1 ? stages[i + 1].value : s.value;
-        const h1 = (s.value / max) * ih, h2 = (nextV / max) * ih;
-        const x0 = PL + i * sectionW;
-        const x1 = x0 + sectionW - 12; // gap entre etapas
-        const cy = PT + ih / 2;
+        const h1 = Math.max(6, (s.value / max) * ih), h2 = Math.max(6, (nextV / max) * ih);
+        const x0 = PL + i * (sectionW + gapPx);
+        const x1 = x0 + sectionW;
         const top1 = cy - h1 / 2, bot1 = cy + h1 / 2;
         const top2 = cy - h2 / 2, bot2 = cy + h2 / 2;
-        // Etapa actual: trapecio
         const trap = `M ${x0} ${top1} L ${x1} ${top2} L ${x1} ${bot2} L ${x0} ${bot1} Z`;
-        // Conector curvo hacia la siguiente
         const isLast = i === stages.length - 1;
+        const conv = s.value > 0 ? Math.round((nextV / s.value) * 100) : 0;
+        const midX = (x1 + gapPx / 2).toFixed(1);
         return (
           <g key={i}>
-            <path d={trap} fill={s.color} fillOpacity="0.35" stroke={s.color} strokeOpacity="0.75" strokeWidth="1" />
-            <text x={((x0 + x1) / 2).toFixed(1)} y={(cy - 4).toFixed(1)} textAnchor="middle"
-                  fontSize="15" fontWeight="800" fill={t.textHi}>
+            <path d={trap} fill={`url(#sankG${i})`} stroke={s.color} strokeOpacity="0.55" strokeWidth="1.2" strokeLinejoin="round" />
+            <text x={((x0 + x1) / 2).toFixed(1)} y={(cy - 3).toFixed(1)} textAnchor="middle" fontSize="17" fontWeight="800" fill={t.textHi} style={{ fontVariantNumeric: "tabular-nums" }}>
               {s.value.toLocaleString("es-MX")}
             </text>
-            <text x={((x0 + x1) / 2).toFixed(1)} y={(cy + 10).toFixed(1)} textAnchor="middle"
-                  fontSize="10" fill={t.textLo}>
+            <text x={((x0 + x1) / 2).toFixed(1)} y={(PT + ih + 22).toFixed(1)} textAnchor="middle" fontSize="11" fontWeight="600" fill={t.textMid}>
               {s.label}
             </text>
-            {/* Conversión hacia la siguiente etapa */}
+            {/* Píldora de conversión hacia la siguiente etapa */}
             {!isLast && (
-              <text x={(x1 + 6).toFixed(1)} y={(cy - h1 / 2 - 6).toFixed(1)} textAnchor="middle"
-                    fontSize="10" fill={t.textLo} fontWeight="600">
-                {s.value > 0 ? Math.round((nextV / s.value) * 100) : 0}%
-              </text>
+              <g>
+                <line x1={(x1 + 2).toFixed(1)} y1={cy} x2={(x1 + gapPx - 2).toFixed(1)} y2={cy} stroke={t.border} strokeWidth="1.5" strokeDasharray="3 3" />
+                <rect x={(+midX - 17).toFixed(1)} y={(cy - 10).toFixed(1)} width="34" height="20" rx="10" fill={t.panel3} stroke={conv >= 60 ? t.good : conv >= 30 ? t.warn : t.bad} strokeOpacity="0.6" strokeWidth="1" />
+                <text x={midX} y={(cy + 4).toFixed(1)} textAnchor="middle" fontSize="10.5" fontWeight="800" fill={conv >= 60 ? t.good : conv >= 30 ? t.warn : t.bad}>
+                  {conv}%
+                </text>
+              </g>
             )}
           </g>
         );
@@ -349,9 +359,11 @@ function HeatmapWeek({ t, cells }: any) {
     }
   }
   const max = Math.max(1, ...grid.flat());
+  const NR = 51, NG = 178, NB = 245;                   // t.nova (#33B2F5) en RGB
+  const cell = (a: number) => `rgba(${NR}, ${NG}, ${NB}, ${a})`;
   return (
     <div style={{ overflowX: "auto" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "44px repeat(24, minmax(20px, 1fr))", gap: 2, minWidth: 640 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "44px repeat(24, minmax(20px, 1fr))", gap: 3, minWidth: 640 }}>
         <div />
         {hours.map(h => (
           <div key={h} style={{ fontSize: 9, color: t.textLo, textAlign: "center", paddingBottom: 4 }}>
@@ -363,24 +375,25 @@ function HeatmapWeek({ t, cells }: any) {
             <div style={{ fontSize: 11, color: t.textMid, display: "flex", alignItems: "center", paddingRight: 6, fontWeight: 600 }}>{d}</div>
             {hours.map(h => {
               const v = grid[di][h];
-              const alpha = v > 0 ? 0.15 + Math.pow(v / max, 0.6) * 0.65 : 0.04;
+              const alpha = v > 0 ? 0.14 + Math.pow(v / max, 0.6) * 0.7 : 0;
               return (
                 <div key={`${di}-${h}`}
                      title={v > 0 ? `${d} ${h}:00 — ${fmt(v, "money")}` : `${d} ${h}:00 — sin ventas`}
                      style={{
-                       height: 22, borderRadius: 3,
-                       background: `rgba(91, 141, 239, ${alpha})`,
-                       border: v > 0 ? `1px solid rgba(91, 141, 239, ${Math.min(0.9, alpha + 0.15)})` : "none",
+                       height: 22, borderRadius: 4,
+                       background: v > 0 ? cell(alpha) : t.panel3,
+                       boxShadow: v >= max * 0.85 ? `0 0 0 1px ${cell(0.9)}` : "none",
                      }} />
               );
             })}
           </Fragment>
         ))}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: 10.5, color: t.textLo }}>
-        <span>Menos actividad</span>
-        {[0.1, 0.3, 0.5, 0.7, 0.9].map(a => (
-          <div key={a} style={{ width: 20, height: 12, borderRadius: 2, background: `rgba(91, 141, 239, ${a})` }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 14, fontSize: 10.5, color: t.textLo }}>
+        <span>Menos</span>
+        <div style={{ width: 8, height: 12, borderRadius: 2, background: t.panel3 }} />
+        {[0.2, 0.4, 0.6, 0.8, 1].map(a => (
+          <div key={a} style={{ width: 20, height: 12, borderRadius: 2, background: cell(a) }} />
         ))}
         <span>Más actividad</span>
       </div>
@@ -402,18 +415,20 @@ function BubbleChart({ t, items }: any) {
   const x = (v: number) => PL + (v / maxOrders) * iw;
   const y = (v: number) => PT + (1 - v / maxTicket) * ih;
   const rBubble = (v: number) => 8 + Math.sqrt(v / maxTotal) * 30;
-  const palette = ["#5B8DEF", "#5EBBA9", "#C89E5A", "#8E7BB8", "#B87A8A", "#7BA98E"];
+  const palette = ["#33B2F5", "#34D399", "#FBBF24", "#A78BFA", "#F472B6", "#FB923C"];
+  const topIdx = items.reduce((b: number, it: any, i: number) => it.total > items[b].total ? i : b, 0);
   return (
     <div style={{ position: "relative" }}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%" }}>
-        {/* Grid */}
-        {[0.25, 0.5, 0.75, 1].map(g => (
-          <line key={g} x1={PL} x2={W - PR} y1={PT + (1 - g) * ih} y2={PT + (1 - g) * ih} stroke={t.border} strokeWidth="1" opacity="0.5" />
+        {/* Grid recesivo */}
+        {[0, 0.25, 0.5, 0.75, 1].map(g => (
+          <line key={`h${g}`} x1={PL} x2={W - PR} y1={PT + (1 - g) * ih} y2={PT + (1 - g) * ih} stroke={t.gridLine} strokeWidth="1" opacity={g === 0 ? "0.9" : "0.45"} />
         ))}
-        {/* Ejes */}
-        <line x1={PL} y1={PT + ih} x2={W - PR} y2={PT + ih} stroke={t.textLo} strokeWidth="1" />
-        <line x1={PL} y1={PT} x2={PL} y2={PT + ih} stroke={t.textLo} strokeWidth="1" />
-        {/* Bubbles */}
+        {[0.25, 0.5, 0.75, 1].map(g => (
+          <line key={`v${g}`} x1={PL + g * iw} x2={PL + g * iw} y1={PT} y2={PT + ih} stroke={t.gridLine} strokeWidth="1" opacity="0.3" />
+        ))}
+        <line x1={PL} y1={PT} x2={PL} y2={PT + ih} stroke={t.gridLine} strokeWidth="1" opacity="0.9" />
+        {/* Bubbles con anillo de superficie */}
         {items.map((it: any, i: number) => {
           const cxB = x(it.orders), cyB = y(it.ticket), rB = rBubble(it.total);
           const color = palette[i % palette.length];
@@ -423,16 +438,23 @@ function BubbleChart({ t, items }: any) {
                onMouseLeave={() => setHover(null)}
                style={{ cursor: "pointer" }}>
               <circle cx={cxB.toFixed(1)} cy={cyB.toFixed(1)} r={rB.toFixed(1)}
-                      fill={color} fillOpacity={hover === i ? 0.55 : 0.32}
-                      stroke={color} strokeOpacity="0.9" strokeWidth={hover === i ? 2 : 1} />
+                      fill={color} fillOpacity={hover === i ? 0.6 : 0.38}
+                      stroke={t.panel} strokeWidth="2" />
+              <circle cx={cxB.toFixed(1)} cy={cyB.toFixed(1)} r={rB.toFixed(1)}
+                      fill="none" stroke={color} strokeOpacity={hover === i ? "1" : "0.7"} strokeWidth={hover === i ? "2" : "1.2"} />
+              {i === topIdx && rB > 16 && (
+                <text x={cxB.toFixed(1)} y={(cyB + 3).toFixed(1)} textAnchor="middle" fontSize="10" fontWeight="700" fill={t.textHi} style={{ pointerEvents: "none" }}>
+                  {it.name.length > 12 ? it.name.slice(0, 11) + "…" : it.name}
+                </text>
+              )}
             </g>
           );
         })}
-        {/* Labels */}
+        {/* Ejes / etiquetas */}
         <text x={PL - 6} y={PT + 8} textAnchor="end" fontSize="10" fill={t.textLo}>Ticket prom.</text>
         <text x={PL - 6} y={PT + ih + 4} textAnchor="end" fontSize="10" fill={t.textLo}>0</text>
-        <text x={PL} y={H - 8} textAnchor="start" fontSize="10" fill={t.textLo}>0</text>
-        <text x={W - PR} y={H - 8} textAnchor="end" fontSize="10" fill={t.textLo}>Pedidos</text>
+        <text x={PL} y={H - 8} textAnchor="start" fontSize="10" fill={t.textLo}>0 pedidos</text>
+        <text x={W - PR} y={H - 8} textAnchor="end" fontSize="10" fill={t.textLo}>{maxOrders} pedidos →</text>
       </svg>
       {hover !== null && (
         <div style={{ position: "absolute", top: 12, right: 20, background: t.panel2, border: `1px solid ${t.nova}`, borderRadius: 10, padding: "10px 14px", fontSize: 12, boxShadow: "0 8px 24px rgba(0,0,0,.45)", minWidth: 200, pointerEvents: "none" }}>
@@ -558,37 +580,46 @@ function LineBarChart({ data, t, height = 200 }: { data: ChartPoint[]; t: any; h
   );
 }
 
-function DonutChart({ data, t, size = 140 }: { data: { label: string; value: number; color: string }[]; t: any; size?: number }) {
+function DonutChart({ data, t, size = 150 }: { data: { label: string; value: number; color: string }[]; t: any; size?: number }) {
   const [hover, setHover] = useState<number | null>(null);
   const total = data.reduce((a, d) => a + d.value, 0);
-  const cx = size / 2, cy = size / 2, r = size * 0.38, sw = size * 0.14;
+  const cx = size / 2, cy = size / 2, r = size * 0.4, sw = size * 0.13;
+  const r2d = Math.PI / 180;
+  const gap = data.length > 1 ? 4 : 0;                 // separación (grados) → aire entre segmentos
   let angle = -90;
   const arcs = total ? data.map(d => {
     const pct = d.value / total;
     const deg = pct * 360;
-    const start = angle;
+    const start = angle + gap / 2;
+    const end = angle + deg - gap / 2;
     angle += deg;
-    const r2d = Math.PI / 180;
+    if (end <= start) return { ...d, pct, path: "", full: pct >= 0.999 };
     const x1 = cx + r * Math.cos(start * r2d), y1 = cy + r * Math.sin(start * r2d);
-    const x2 = cx + r * Math.cos((start + deg - 0.5) * r2d), y2 = cy + r * Math.sin((start + deg - 0.5) * r2d);
-    const large = deg > 180 ? 1 : 0;
-    return { ...d, pct, path: `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}` };
+    const x2 = cx + r * Math.cos(end * r2d), y2 = cy + r * Math.sin(end * r2d);
+    const large = (end - start) > 180 ? 1 : 0;
+    return { ...d, pct, full: false, path: `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}` };
   }) : [];
   const hv = hover !== null ? arcs[hover] : null;
   return (
     <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}>
+      {/* Pista recesiva */}
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke={t.panel3} strokeWidth={sw} />
       {arcs.map((a, i) => (
-        <path key={i} d={a.path} fill="none" stroke={a.color} strokeWidth={hover === i ? sw + 4 : sw} strokeLinecap="butt" opacity={hover === null || hover === i ? "0.9" : "0.4"} style={{ cursor: "pointer", transition: "stroke-width .12s" }}
-          onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} />
+        a.full
+          ? <circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={a.color} strokeWidth={sw} opacity="0.92" />
+          : <path key={i} d={a.path} fill="none" stroke={a.color} strokeWidth={hover === i ? sw + 4 : sw} strokeLinecap="round" opacity={hover === null || hover === i ? "0.92" : "0.35"} style={{ cursor: "pointer", transition: "stroke-width .12s, opacity .12s" }}
+            onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} />
       ))}
-      <circle cx={cx} cy={cy} r={r - sw / 2 - 2} fill={t.panel2} />
       {hv ? (
         <>
-          <text x={cx} y={cy - 3} textAnchor="middle" fontSize={size * 0.13} fontWeight="800" fill={t.textHi}>{Math.round(hv.pct * 100)}%</text>
-          <text x={cx} y={cy + 12} textAnchor="middle" fontSize={size * 0.075} fill={t.textLo}>{hv.label.length > 14 ? hv.label.slice(0, 13) + "…" : hv.label}</text>
+          <text x={cx} y={cy - 2} textAnchor="middle" fontSize={size * 0.17} fontWeight="800" fill={t.textHi}>{Math.round(hv.pct * 100)}%</text>
+          <text x={cx} y={cy + 13} textAnchor="middle" fontSize={size * 0.072} fill={t.textLo}>{hv.label.length > 14 ? hv.label.slice(0, 13) + "…" : hv.label}</text>
         </>
       ) : (
-        <text x={cx} y={cy + 4} textAnchor="middle" fontSize={size * 0.085} fill={t.textLo}>Total</text>
+        <>
+          <text x={cx} y={cy - 3} textAnchor="middle" fontSize={size * 0.115} fontWeight="800" fill={t.textHi} style={{ fontVariantNumeric: "tabular-nums" }}>{fmt(total, "money")}</text>
+          <text x={cx} y={cy + 13} textAnchor="middle" fontSize={size * 0.072} fill={t.textLo}>Total</text>
+        </>
       )}
     </svg>
   );
