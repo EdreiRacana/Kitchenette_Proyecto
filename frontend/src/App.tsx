@@ -434,10 +434,15 @@ function Sparkline({ data, color, gid }) {
       <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ cursor: "crosshair", overflow: "visible" }}
         onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover(near((e.clientX - r.left) / r.width * W)); }}
         onMouseLeave={() => setHover(null)}>
-        <defs><linearGradient id={gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.26" /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient></defs>
+        <defs>
+          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.26" /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient>
+          <filter id={`${gid}f`} x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="1.4" /></filter>
+        </defs>
         <path d={area} fill={`url(#${gid})`} />
-        <path d={line} fill="none" stroke={color} strokeOpacity="0.85" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="2.1" fill={color} fillOpacity="0.9" />
+        <path d={line} fill="none" stroke={color} strokeOpacity="0.5" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" filter={`url(#${gid}f)`} />
+        <path d={line} fill="none" stroke={color} strokeOpacity="0.9" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="2.6" fill={color} filter={`url(#${gid}f)`} />
+        <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="1.8" fill="#fff" />
         {hover !== null && <circle cx={x(hover)} cy={y(data[hover])} r="3" fill={color} stroke="#fff" strokeWidth="1" />}
       </svg>
       {hover !== null && (
@@ -449,23 +454,38 @@ function Sparkline({ data, color, gid }) {
   );
 }
 function Gauge({ t, value, target, max = 60 }) {
-  const cx = 100, cy = 90, r = 66, sw = 11;
-  const arc = (f0, f1) => { const a = (f) => Math.PI - f * Math.PI; const p = (f) => [cx + r * Math.cos(a(f)), cy - r * Math.sin(a(f))]; const [x0, y0] = p(f0), [x1, y1] = p(f1); return `M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${r} ${r} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`; };
+  const cx = 100, cy = 90, r = 66, sw = 12;
+  const ang = (f: number) => Math.PI - f * Math.PI;                 // f:0→izq … 1→der
+  const pt = (f: number, rad = r): [number, number] => [cx + rad * Math.cos(ang(f)), cy - rad * Math.sin(ang(f))];
+  const arc = (f0: number, f1: number, rad = r) => {
+    const [x0, y0] = pt(f0, rad), [x1, y1] = pt(f1, rad);
+    const large = (f1 - f0) > 0.5 ? 1 : 0;
+    return `M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${rad} ${rad} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`;
+  };
   const f = Math.max(0, Math.min(1, value / max));
   const tf = Math.max(0, Math.min(1, target / max));
-  const needA = Math.PI - f * Math.PI;
-  const nx = cx + (r - 6) * Math.cos(needA), ny = cy - (r - 6) * Math.sin(needA);
-  const tA = Math.PI - tf * Math.PI;
   const valColor = value < 25 ? t.bad : value < 35 ? t.warn : t.good;
+  const [kx, ky] = pt(f);
+  const [t0x, t0y] = pt(tf, r - sw / 2 - 2), [t1x, t1y] = pt(tf, r + sw / 2 + 2);
   return (
     <svg viewBox="0 0 200 104" style={{ width: 150, height: 78 }}>
-      <path d={arc(0, 25 / max)} fill="none" stroke={t.bad} strokeWidth={sw} opacity="0.45" strokeLinecap="round" />
-      <path d={arc(25 / max, 35 / max)} fill="none" stroke={t.warn} strokeWidth={sw} opacity="0.45" />
-      <path d={arc(35 / max, 1)} fill="none" stroke={t.good} strokeWidth={sw} opacity="0.45" strokeLinecap="round" />
-      <line x1={cx + (r - sw) * Math.cos(tA)} y1={cy - (r - sw) * Math.sin(tA)} x2={cx + (r + 4) * Math.cos(tA)} y2={cy - (r + 4) * Math.sin(tA)} stroke={t.textHi} strokeWidth="2" strokeOpacity="0.5" />
-      <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={valColor} strokeWidth="3" strokeLinecap="round" strokeOpacity="0.65" />
-      <circle cx={cx} cy={cy} r="5" fill={t.panel} stroke={valColor} strokeWidth="2.4" strokeOpacity="0.7" />
-      <text x={cx} y={cy - 16} textAnchor="middle" fontSize="25" fontWeight="700" fill={valColor}>{value}%</text>
+      <defs>
+        <linearGradient id="gMarginFill" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor={valColor} stopOpacity="0.5" /><stop offset="100%" stopColor={valColor} stopOpacity="1" />
+        </linearGradient>
+        <filter id="gMarginGlow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.2" /></filter>
+      </defs>
+      {/* Pista recesiva */}
+      <path d={arc(0, 1)} fill="none" stroke={t.panel3} strokeWidth={sw} strokeLinecap="round" />
+      {/* Progreso con glow + gradiente */}
+      {f > 0.004 && <path d={arc(0, f)} fill="none" stroke={valColor} strokeWidth={sw + 2} strokeLinecap="round" opacity="0.4" filter="url(#gMarginGlow)" />}
+      {f > 0.004 && <path d={arc(0, f)} fill="none" stroke="url(#gMarginFill)" strokeWidth={sw} strokeLinecap="round" />}
+      {/* Marca de objetivo */}
+      <line x1={t0x} y1={t0y} x2={t1x} y2={t1y} stroke={t.textHi} strokeWidth="2.5" strokeLinecap="round" opacity="0.5" />
+      {/* Perilla en la punta (con anillo de superficie) */}
+      <circle cx={kx} cy={ky} r={sw / 2 - 0.5} fill={t.panel} />
+      <circle cx={kx} cy={ky} r={sw / 2 - 3} fill={valColor} />
+      <text x={cx} y={cy - 16} textAnchor="middle" fontSize="25" fontWeight="800" fill={valColor}>{value}%</text>
     </svg>
   );
 }
@@ -599,15 +619,20 @@ function IncomeExpenseArea({ t, data }: any) {
         onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHover(near((e.clientX - r.left) / r.width * W)); }}
         onMouseLeave={() => setHover(null)}>
         <defs>
-          <linearGradient id="ingFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.nova} stopOpacity="0.12" /><stop offset="100%" stopColor={t.nova} stopOpacity="0" /></linearGradient>
-          <linearGradient id="gasFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.good} stopOpacity="0.08" /><stop offset="100%" stopColor={t.good} stopOpacity="0" /></linearGradient>
+          <linearGradient id="ingFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.nova} stopOpacity="0.24" /><stop offset="60%" stopColor={t.nova} stopOpacity="0.06" /><stop offset="100%" stopColor={t.nova} stopOpacity="0" /></linearGradient>
+          <linearGradient id="gasFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={t.good} stopOpacity="0.1" /><stop offset="100%" stopColor={t.good} stopOpacity="0" /></linearGradient>
+          <filter id="ieGlow" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="3" /></filter>
         </defs>
         {grid.map((g, i) => <line key={i} x1={P.l} x2={W - P.r} y1={g} y2={g} stroke={t.gridLine} strokeWidth="1" strokeOpacity="0.5" />)}
         <path d={areaGas} fill="url(#gasFill)" />
         <path d={linePath(gastos)} fill="none" stroke={t.good} strokeWidth="1.4" strokeOpacity="0.6" strokeLinejoin="round" strokeLinecap="round" />
         <path d={areaIng} fill="url(#ingFill)" />
-        <path d={linePath(ingresos)} fill="none" stroke={t.nova} strokeWidth="1.6" strokeOpacity="0.75" strokeLinejoin="round" strokeLinecap="round" />
+        {/* Glow bajo la línea de ingresos + línea nítida encima */}
+        <path d={linePath(ingresos)} fill="none" stroke={t.nova} strokeWidth="4.5" opacity="0.35" filter="url(#ieGlow)" strokeLinejoin="round" strokeLinecap="round" />
+        <path d={linePath(ingresos)} fill="none" stroke={t.nova} strokeWidth="1.9" strokeOpacity="0.95" strokeLinejoin="round" strokeLinecap="round" />
         {ingresos.map((v: number, i: number) => <circle key={i} cx={x(i)} cy={y(v)} r="2" fill={t.panel} stroke={t.nova} strokeWidth="1.2" strokeOpacity="0.7" />)}
+        {n > 0 && <circle cx={x(n - 1)} cy={y(ingresos[n - 1])} r="5.5" fill={t.nova} opacity="0.9" filter="url(#ieGlow)" />}
+        {n > 0 && <circle cx={x(n - 1)} cy={y(ingresos[n - 1])} r="3" fill="#fff" stroke={t.nova} strokeWidth="1.8" />}
         {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={P.t} y2={P.t + ih} stroke={t.nova} strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />}
         {data.map((d: any, i: number) => <text key={i} x={x(i)} y={H - 9} fill={t.textLo} fontSize="11" textAnchor="middle">{(d.period || "").slice(-5)}</text>)}
       </svg>
@@ -755,8 +780,8 @@ function OperationalBars({ t, bars }: any) {
               <span style={{ fontSize: 12, color: t.textMid }}>{b.label}</span>
               <span style={{ fontSize: 13, fontWeight: 700, color, fontVariantNumeric: "tabular-nums" }}>{b.value}</span>
             </div>
-            <div style={{ height: 5, background: t.panel3, borderRadius: 999, overflow: "hidden" }}>
-              <div style={{ width: `${Math.max(0, Math.min(100, b.pct))}%`, height: "100%", borderRadius: 999, background: color, opacity: 0.6 }} />
+            <div style={{ height: 6, background: t.panel3, borderRadius: 999, position: "relative" }}>
+              <div style={{ width: `${Math.max(0, Math.min(100, b.pct))}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${color}99, ${color})`, boxShadow: `0 0 8px ${color}88`, transition: "width .4s" }} />
             </div>
           </div>
         );
