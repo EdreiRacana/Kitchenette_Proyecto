@@ -238,3 +238,138 @@ async def executive_summary(db: DB, _: CurrentUser):
             "low_stock": stock_low,
         },
     }
+
+
+# ── Omnicanalidad: ventas por canal + inventario unificado ────────────────
+
+_CHANNEL_LABELS = {
+    "pos": "Punto de venta", "mostrador": "Mostrador", "telefono": "Teléfono",
+    "whatsapp": "WhatsApp", "web": "E-commerce", "ecommerce": "E-commerce",
+    "distribuidor": "Distribuidor", "marketplace": "Marketplace",
+    "mayoreo": "Mayoreo", "email": "Correo",
+}
+
+
+def _channel_label(ch: Optional[str]) -> str:
+    if not ch:
+        return "Sin canal"
+    return _CHANNEL_LABELS.get(str(ch).lower(), str(ch).capitalize())
+
+
+@router.get("/omnichannel")
+async def omnichannel(db: DB, _: CurrentUser, days: int = Query(30, ge=1, le=365)):
+    """Vista omnicanal: consolida las ventas de la empresa por canal.
+
+    - Ventas directas: todos los pedidos (kind='order', no cancelados)
+      agrupados por Order.channel. Las ventas POS ya viven aquí con
+      channel='pos', así que NO se doblan.
+    - Retail (indirecto): el sell-out que las cadenas reportan al consumidor.
+      Es una lente aguas abajo, no ingreso propio — se muestra aparte.
+    - Inventario unificado: existencias a costo en almacenes propios vs
+      consignación.
+    """
+    from app.modules.sales import models as sales_models
+    from app.modules.inventory import models as inv_models
+    from app.modules.retail import models as retail_models
+
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+
+    # 1) Ventas directas por canal (Orders + items)
+    rows = (await db.execute(
+        select(
+            sales_models.Order.channel,
+            func.coalesce(func.sum(sales_models.Order.total_amount), 0.0).label("revenue"),
+            func.count(func.distinct(sales_models.Order.id)).label("orders"),
+        )
+        .where(
+            sales_models.Order.kind == "order",
+            sales_models.Order.status != "cancelled",
+            sales_models.Order.created_at >= since,
+        )
+        .group_by(sales_models.Order.channel)
+    )).all()
+
+    # Unidades por canal (join a items)
+    unit_rows = (await db.execute(
+        select(
+            sales_models.Order.channel,
+            func.coalesce(func.sum(sales_models.OrderItem.quantity), 0).label("units"),
+        )
+        .join(sales_models.OrderItem, sales_models.OrderItem.order_id == sales_models.Order.id)
+        .where(
+            sales_models.Order.kind == "order",
+            sales_models.Order.status != "cancelled",
+            sales_models.Order.created_at >= since,
+        )
+        .group_by(sales_models.Order.channel)
+    )).all()
+    units_by_channel = {r.channel: int(r.units or 0) for r in unit_rows}
+
+    total_rev = sum(float(r.revenue or 0.0) for r in rows)
+    total_units = sum(units_by_channel.values())
+    total_orders = sum(int(r.orders or 0) for r in rows)
+    channels = []
+    for r in rows:
+        rev = float(r.revenue or 0.0)
+        channels.append({
+            "channel": r.channel or "",
+            "label": _channel_label(r.channel),
+            "revenue": round(rev, 2),
+            "units": units_by_channel.get(r.channel, 0),
+            "orders": int(r.orders or 0),
+            "share_pct": round(rev / total_rev * 100.0, 1) if total_rev > 0 else 0.0,
+        })
+    channels.sort(key=lambda c: -c["revenue"])
+
+    # 2) Retail sell-out (indirecto)
+    so = (await db.execute(
+        select(
+            func.coalesce(func.sum(retail_models.SellOutReport.units_sold), 0),
+            func.coalesce(func.sum(retail_models.SellOutReport.revenue), 0.0),
+            func.count(func.distinct(retail_models.SellOutReport.store_id)),
+        ).where(retail_models.SellOutReport.period_start >= since)
+    )).one()
+
+    # 3) Inventario unificado (propio vs consignación) a costo
+    inv_rows = (await db.execute(
+        select(
+            inv_models.Warehouse.type,
+            func.coalesce(func.sum(inv_models.StockLevel.quantity), 0).label("units"),
+            func.coalesce(func.sum(
+                inv_models.StockLevel.quantity * func.coalesce(inv_models.ProductVariant.cost_price, 0.0)
+            ), 0.0).label("cost_value"),
+        )
+        .join(inv_models.Warehouse, inv_models.StockLevel.warehouse_id == inv_models.Warehouse.id)
+        .join(inv_models.ProductVariant, inv_models.StockLevel.variant_id == inv_models.ProductVariant.id)
+        .group_by(inv_models.Warehouse.type)
+    )).all()
+    own_units = own_value = consign_units = consign_value = 0.0
+    for typ, units, value in inv_rows:
+        if str(typ) == "consignment":
+            consign_units += int(units or 0); consign_value += float(value or 0.0)
+        else:
+            own_units += int(units or 0); own_value += float(value or 0.0)
+
+    return {
+        "period_days": days,
+        "generated_at": now.isoformat(),
+        "direct": {
+            "total_revenue": round(total_rev, 2),
+            "total_units": total_units,
+            "total_orders": total_orders,
+            "channels": channels,
+        },
+        "indirect_retail": {
+            "sell_out_units": int(so[0] or 0),
+            "sell_out_revenue": round(float(so[1] or 0.0), 2),
+            "stores_reporting": int(so[2] or 0),
+        },
+        "inventory": {
+            "own_units": int(own_units),
+            "own_cost_value": round(own_value, 2),
+            "consignment_units": int(consign_units),
+            "consignment_cost_value": round(consign_value, 2),
+            "total_cost_value": round(own_value + consign_value, 2),
+        },
+    }
