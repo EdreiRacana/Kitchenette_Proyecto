@@ -209,6 +209,69 @@ export interface PriceHistoryResponse {
   list_price?: number | null;
 }
 
+// Promociones
+export type PromoMechanic = "descuento" | "precio_especial" | "2x1" | "3x2" | "bundle" | "otro";
+export interface RetailPromotion {
+  id: number;
+  channel_id: number;
+  channel_name?: string | null;
+  store_id?: number | null;
+  store_name?: string | null;
+  variant_id?: number | null;
+  product_name?: string | null;
+  sku?: string | null;
+  name: string;
+  mechanic: PromoMechanic;
+  discount_pct?: number | null;
+  promo_price?: number | null;
+  start_date: string;
+  end_date: string;
+  baseline_weeks: number;
+  is_active: boolean;
+  notes?: string | null;
+  created_at?: string | null;
+}
+export interface RetailPromotionCreate {
+  channel_id: number;
+  store_id?: number | null;
+  variant_id?: number | null;
+  name: string;
+  mechanic?: PromoMechanic;
+  discount_pct?: number | null;
+  promo_price?: number | null;
+  start_date: string;
+  end_date: string;
+  baseline_weeks?: number;
+  is_active?: boolean;
+  notes?: string | null;
+}
+export interface PromotionEffectiveness {
+  promotion_id: number;
+  name: string;
+  channel_name?: string | null;
+  store_name?: string | null;
+  sku?: string | null;
+  product_name?: string | null;
+  start_date: string;
+  end_date: string;
+  promo_weeks: number;
+  measurable: boolean;
+  reason?: string | null;
+  baseline_weekly_units: number;
+  promo_weekly_units: number;
+  expected_units: number;
+  actual_units: number;
+  incremental_units: number;
+  lift_pct?: number | null;
+  baseline_avg_price: number;
+  promo_avg_price: number;
+  actual_revenue: number;
+  incremental_revenue: number;
+  promo_cost?: number | null;
+  roi_pct?: number | null;
+  verdict: "winner" | "neutral" | "loser" | "n/a";
+}
+
 // Tendencia (time-series)
 export interface TrendPoint {
   period_start: string;

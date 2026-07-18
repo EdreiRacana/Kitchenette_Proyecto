@@ -4547,3 +4547,248 @@ async def import_with_profile(
     csv_bytes = buf.getvalue().encode("utf-8-sig")
     fake_name = f"profile_{profile.id}.csv"
     return await import_sellout(db, csv_bytes, fake_name, user_id=user_id)
+
+
+# ── Promociones ──────────────────────────────────────────────────────────
+
+async def _promo_to_out(db: AsyncSession, p: models.RetailPromotion,
+                        channel_name: Optional[str] = None,
+                        store_name: Optional[str] = None) -> schemas.RetailPromotionOut:
+    if channel_name is None:
+        ch = await db.get(models.RetailChannel, p.channel_id)
+        channel_name = ch.name if ch else None
+    if store_name is None and p.store_id:
+        st = await db.get(models.RetailStore, p.store_id)
+        store_name = st.name if st else None
+    return schemas.RetailPromotionOut(
+        id=p.id, channel_id=p.channel_id, store_id=p.store_id,
+        variant_id=p.variant_id, product_name=p.product_name, sku=p.sku,
+        name=p.name, mechanic=p.mechanic, discount_pct=p.discount_pct,
+        promo_price=p.promo_price, start_date=p.start_date, end_date=p.end_date,
+        baseline_weeks=p.baseline_weeks, is_active=p.is_active, notes=p.notes,
+        channel_name=channel_name, store_name=store_name, created_at=p.created_at,
+    )
+
+
+async def list_promotions(db: AsyncSession, channel_id: Optional[int] = None,
+                          active_only: bool = False) -> List[schemas.RetailPromotionOut]:
+    stmt = (
+        select(models.RetailPromotion, models.RetailChannel.name)
+        .join(models.RetailChannel, models.RetailPromotion.channel_id == models.RetailChannel.id)
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailPromotion.channel_id == channel_id)
+    if active_only:
+        stmt = stmt.where(models.RetailPromotion.is_active.is_(True))
+    stmt = stmt.order_by(models.RetailPromotion.start_date.desc())
+    rows = (await db.execute(stmt)).all()
+    store_ids = {p.store_id for p, _ in rows if p.store_id}
+    store_names: Dict[int, str] = {}
+    if store_ids:
+        sres = await db.execute(
+            select(models.RetailStore.id, models.RetailStore.name)
+            .where(models.RetailStore.id.in_(store_ids))
+        )
+        store_names = {r.id: r.name for r in sres}
+    return [
+        await _promo_to_out(db, p, channel_name=cn,
+                            store_name=store_names.get(p.store_id or -1))
+        for p, cn in rows
+    ]
+
+
+async def get_promotion(db: AsyncSession, promo_id: int) -> Optional[models.RetailPromotion]:
+    return await db.get(models.RetailPromotion, promo_id)
+
+
+async def _fill_promo_snapshot(db: AsyncSession, p: models.RetailPromotion) -> None:
+    if p.variant_id and (not p.sku or not p.product_name):
+        v = await db.get(inv_models.ProductVariant, p.variant_id)
+        if v:
+            if not p.sku:
+                p.sku = v.sku
+            if not p.product_name and v.product_id:
+                prod = await db.get(inv_models.Product, v.product_id)
+                if prod:
+                    p.product_name = prod.name
+
+
+async def create_promotion(db: AsyncSession, data: schemas.RetailPromotionCreate
+                           ) -> models.RetailPromotion:
+    p = models.RetailPromotion(**data.model_dump(exclude_unset=True))
+    await _fill_promo_snapshot(db, p)
+    db.add(p); await db.commit(); await db.refresh(p)
+    return p
+
+
+async def update_promotion(db: AsyncSession, promo_id: int,
+                           data: schemas.RetailPromotionUpdate
+                           ) -> Optional[models.RetailPromotion]:
+    p = await db.get(models.RetailPromotion, promo_id)
+    if p is None:
+        return None
+    for k, v in data.model_dump(exclude_unset=True).items():
+        setattr(p, k, v)
+    await _fill_promo_snapshot(db, p)
+    await db.commit(); await db.refresh(p)
+    return p
+
+
+async def delete_promotion(db: AsyncSession, promo_id: int) -> bool:
+    p = await db.get(models.RetailPromotion, promo_id)
+    if p is None:
+        return False
+    await db.delete(p); await db.commit()
+    return True
+
+
+async def _promo_scope_store_ids(db: AsyncSession, p: models.RetailPromotion) -> List[int]:
+    if p.store_id:
+        return [p.store_id]
+    rows = (await db.execute(
+        select(models.RetailStore.id).where(
+            models.RetailStore.channel_id == p.channel_id,
+            models.RetailStore.is_active.is_(True),
+        )
+    )).all()
+    return [int(r[0]) for r in rows]
+
+
+async def _sum_units_revenue(db: AsyncSession, variant_id: int, store_ids: List[int],
+                             lo: datetime, hi: datetime,
+                             overlap: bool = False) -> Tuple[int, float]:
+    """Suma units y revenue de un variant en el scope de tiendas. Si overlap,
+    matchea reportes que traslapan [lo, hi] (period_start<=hi y period_end>=lo);
+    si no, period_start en [lo, hi)."""
+    if not store_ids:
+        return 0, 0.0
+    conds = [
+        models.SellOutReport.variant_id == variant_id,
+        models.SellOutReport.store_id.in_(store_ids),
+    ]
+    if overlap:
+        conds += [models.SellOutReport.period_start <= hi,
+                  models.SellOutReport.period_end >= lo]
+    else:
+        conds += [models.SellOutReport.period_start >= lo,
+                  models.SellOutReport.period_start < hi]
+    row = (await db.execute(
+        select(
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0),
+            func.coalesce(func.sum(models.SellOutReport.revenue), 0.0),
+        ).where(and_(*conds))
+    )).one()
+    return int(row[0] or 0), float(row[1] or 0.0)
+
+
+async def promotion_effectiveness(db: AsyncSession, promo_id: int
+                                  ) -> Optional[schemas.PromotionEffectiveness]:
+    """Compara las ventas durante la promo contra un baseline de las semanas
+    previas y estima lift, unidades/ingreso incremental y ROI."""
+    p = await db.get(models.RetailPromotion, promo_id)
+    if p is None:
+        return None
+    ch = await db.get(models.RetailChannel, p.channel_id)
+    store_name = None
+    if p.store_id:
+        st = await db.get(models.RetailStore, p.store_id)
+        store_name = st.name if st else None
+
+    start = p.start_date
+    end = p.end_date
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    days = max((end - start).days, 1)
+    promo_weeks = round(days / 7.0, 2) if days >= 7 else round(days / 7.0, 3) or (1 / 7)
+    promo_weeks = max(promo_weeks, 1 / 7)
+
+    base = schemas.PromotionEffectiveness(
+        promotion_id=p.id, name=p.name,
+        channel_name=ch.name if ch else None, store_name=store_name,
+        sku=p.sku, product_name=p.product_name,
+        start_date=start, end_date=end, promo_weeks=promo_weeks,
+        measurable=False, baseline_weekly_units=0.0, promo_weekly_units=0.0,
+        expected_units=0, actual_units=0, incremental_units=0,
+        baseline_avg_price=0.0, promo_avg_price=0.0,
+        actual_revenue=0.0, incremental_revenue=0.0, verdict="n/a",
+    )
+    if not p.variant_id:
+        base.reason = "La promoción no tiene un SKU asignado; no se puede medir el lift."
+        return base
+
+    store_ids = await _promo_scope_store_ids(db, p)
+    if not store_ids:
+        base.reason = "Sin tiendas activas en el alcance."
+        return base
+
+    baseline_lo = start - timedelta(days=int(p.baseline_weeks) * 7)
+    base_units, base_rev = await _sum_units_revenue(db, p.variant_id, store_ids, baseline_lo, start)
+    act_units, act_rev = await _sum_units_revenue(db, p.variant_id, store_ids, start, end, overlap=True)
+
+    # Nº de periodos (cortes semanales) que traslapan la promo — alinea el
+    # cálculo a la cadencia real del reporte en vez de las semanas de
+    # calendario, que rara vez son exactas.
+    promo_periods = int((await db.execute(
+        select(func.count(func.distinct(models.SellOutReport.period_start)))
+        .where(
+            models.SellOutReport.variant_id == p.variant_id,
+            models.SellOutReport.store_id.in_(store_ids),
+            models.SellOutReport.period_start <= end,
+            models.SellOutReport.period_end >= start,
+        )
+    )).scalar() or 0)
+    weeks_equiv = promo_periods if promo_periods > 0 else promo_weeks
+
+    baseline_weekly = base_units / float(p.baseline_weeks) if p.baseline_weeks else 0.0
+    promo_weekly = act_units / weeks_equiv if weeks_equiv > 0 else 0.0
+    expected_units = int(round(baseline_weekly * weeks_equiv))
+    incremental_units = act_units - expected_units
+    lift = ((act_units - expected_units) / expected_units * 100.0) if expected_units > 0 else None
+    base_avg_price = (base_rev / base_units) if base_units > 0 else 0.0
+    promo_avg_price = (act_rev / act_units) if act_units > 0 else 0.0
+    expected_revenue = expected_units * base_avg_price
+    incremental_revenue = act_rev - expected_revenue
+
+    # Costo de la promo y ROI (si hay costo de catálogo)
+    promo_cost: Optional[float] = None
+    roi: Optional[float] = None
+    v = await db.get(inv_models.ProductVariant, p.variant_id)
+    cost_price = float(v.cost_price or 0.0) if v else 0.0
+    discount_per_unit = max(base_avg_price - promo_avg_price, 0.0)
+    if discount_per_unit > 0 and act_units > 0:
+        promo_cost = round(discount_per_unit * act_units, 2)
+    elif p.discount_pct and act_units > 0 and base_avg_price > 0:
+        promo_cost = round(p.discount_pct / 100.0 * base_avg_price * act_units, 2)
+    if cost_price > 0 and promo_cost and promo_cost > 0:
+        unit_margin = promo_avg_price - cost_price
+        incremental_margin = incremental_units * unit_margin
+        roi = round(incremental_margin / promo_cost * 100.0, 1)
+
+    if lift is None:
+        verdict = "n/a"
+    elif lift >= 15:
+        verdict = "winner"
+    elif lift <= -5:
+        verdict = "loser"
+    else:
+        verdict = "neutral"
+
+    base.measurable = True
+    base.baseline_weekly_units = round(baseline_weekly, 2)
+    base.promo_weekly_units = round(promo_weekly, 2)
+    base.expected_units = expected_units
+    base.actual_units = act_units
+    base.incremental_units = incremental_units
+    base.lift_pct = round(lift, 1) if lift is not None else None
+    base.baseline_avg_price = round(base_avg_price, 2)
+    base.promo_avg_price = round(promo_avg_price, 2)
+    base.actual_revenue = round(act_rev, 2)
+    base.incremental_revenue = round(incremental_revenue, 2)
+    base.promo_cost = promo_cost
+    base.roi_pct = roi
+    base.verdict = verdict
+    if act_units == 0:
+        base.reason = "Sin ventas registradas del SKU durante la ventana de la promo."
+    return base

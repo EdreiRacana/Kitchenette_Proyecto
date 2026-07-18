@@ -29,6 +29,7 @@ import type {
   ProfitabilityResponse, ProfitGroupBy, ExcessInventoryResponse, AgingResponse,
   ServiceLevelResponse, ServiceGroupBy, AbcXyzResponse,
   PricingResponse, PriceHistoryResponse,
+  RetailPromotion, PromotionEffectiveness, PromoMechanic,
 } from "./types";
 
 type Tokens = any;
@@ -69,7 +70,7 @@ function statusInfo(t: Tokens, status: WosStatus) {
   }
 }
 
-type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment" | "alerts" | "consignment" | "analytics";
+type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment" | "alerts" | "promotions" | "consignment" | "analytics";
 
 export default function RetailModule({ t }: { t: Tokens }) {
   const [tab, setTab] = useState<TabId>("dashboard");
@@ -106,6 +107,7 @@ export default function RetailModule({ t }: { t: Tokens }) {
       badge: alertsSummary?.open,
       badgeColor: (alertsSummary?.urgent ?? 0) > 0 ? "urgent" : "normal",
     },
+    { id: "promotions", label: "Promociones", icon: Tag },
     { id: "consignment", label: "Consignación", icon: Warehouse },
     { id: "analytics", label: "Analíticas", icon: BarChart3 },
   ];
@@ -181,6 +183,7 @@ export default function RetailModule({ t }: { t: Tokens }) {
             {tab === "sellout" && <SellOutView t={t} channels={channels} selectedChannel={selectedChannel} onChanged={refreshAlertsSummary} />}
             {tab === "replenishment" && <ReplenishmentView t={t} channelId={selectedChannel} />}
             {tab === "alerts" && <AlertsView t={t} channelId={selectedChannel} onChanged={refreshAlertsSummary} />}
+            {tab === "promotions" && <PromotionsView t={t} channels={channels} selectedChannel={selectedChannel} />}
             {tab === "consignment" && <ConsignmentView t={t} channelId={selectedChannel} />}
             {tab === "analytics" && <AnalyticsView t={t} channelId={selectedChannel} />}
           </>
@@ -2581,6 +2584,342 @@ function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null
 
 
 // ── Analíticas: Heatmap + ABC ────────────────────────────────────────────
+const PROMO_MECHANIC_LABEL: Record<string, string> = {
+  descuento: "Descuento %", precio_especial: "Precio especial",
+  "2x1": "2x1", "3x2": "3x2", bundle: "Paquete", otro: "Otro",
+};
+
+function PromotionsView({ t, channels, selectedChannel }: {
+  t: Tokens; channels: RetailChannel[]; selectedChannel: number | null;
+}) {
+  const [promos, setPromos] = useState<RetailPromotion[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<RetailPromotion | null>(null);
+  const [effOf, setEffOf] = useState<RetailPromotion | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await retailApi.listPromotions({ channel_id: selectedChannel || undefined });
+      setPromos(r);
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [selectedChannel]);
+
+  const del = async (p: RetailPromotion) => {
+    if (!window.confirm(`¿Eliminar la promoción "${p.name}"?`)) return;
+    await retailApi.deletePromotion(p.id); await load();
+  };
+
+  const fmtDate = (s: string) => new Date(s).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "2-digit" });
+  const now = Date.now();
+  const statusOf = (p: RetailPromotion) => {
+    const st = new Date(p.start_date).getTime(), en = new Date(p.end_date).getTime();
+    if (now < st) return { label: "Programada", color: t.nova };
+    if (now > en) return { label: "Finalizada", color: t.textLo };
+    return { label: "Activa", color: t.good };
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12.5, color: t.textLo, maxWidth: 620 }}>
+          Registra promociones y mide su <b style={{ color: t.textMid }}>efectividad</b>: compara las ventas durante la promo contra el baseline de las semanas previas (lift, unidades e ingreso incremental, ROI).
+        </div>
+        <button onClick={() => { setEditing(null); setModalOpen(true); }} style={btnPrimary(t)}>
+          <Plus size={14} /> Nueva promoción
+        </button>
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+      {!loading && promos.length === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <Tag size={28} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin promociones registradas</div>
+          <div style={{ fontSize: 11 }}>Crea la primera para empezar a medir su impacto.</div>
+        </div>
+      )}
+      {!loading && promos.length > 0 && (
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ background: t.panel2 }}>
+                <th style={thStyle(t)}>Promoción</th>
+                <th style={thStyle(t)}>Cadena</th>
+                <th style={thStyle(t)}>Alcance</th>
+                <th style={thStyle(t)}>Mecánica</th>
+                <th style={thStyle(t)}>Periodo</th>
+                <th style={thStyle(t)}>Estado</th>
+                <th style={thStyle(t)}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {promos.map(p => {
+                const st = statusOf(p);
+                return (
+                  <tr key={p.id} style={{ borderTop: `1px solid ${t.border}55` }}>
+                    <td style={{ ...tdStyle(t), fontWeight: 600, color: t.textHi }}>{p.name}</td>
+                    <td style={tdStyle(t)}>{p.channel_name}</td>
+                    <td style={tdStyle(t)}>
+                      {p.sku ? <span style={{ fontFamily: "monospace" }}>{p.sku}</span> : <span style={{ color: t.textLo }}>Todo el catálogo</span>}
+                      {p.store_name ? <span style={{ color: t.textLo }}> · {p.store_name}</span> : <span style={{ color: t.textLo }}> · todas las tiendas</span>}
+                    </td>
+                    <td style={tdStyle(t)}>
+                      {PROMO_MECHANIC_LABEL[p.mechanic] || p.mechanic}
+                      {p.discount_pct ? ` ${p.discount_pct}%` : ""}
+                      {p.promo_price ? ` · ${mxn(p.promo_price)}` : ""}
+                    </td>
+                    <td style={tdStyle(t)}>{fmtDate(p.start_date)} → {fmtDate(p.end_date)}</td>
+                    <td style={tdStyle(t)}>
+                      <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 10, background: st.color + "22", color: st.color, fontWeight: 700 }}>{st.label}</span>
+                    </td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", whiteSpace: "nowrap" }}>
+                      <button onClick={() => setEffOf(p)} style={{ ...btnGhost(t), fontSize: 11.5, padding: "5px 10px" }} title="Medir efectividad">
+                        <BarChart3 size={12} /> Efectividad
+                      </button>
+                      <button onClick={() => { setEditing(p); setModalOpen(true); }} style={{ ...iconBtn(t), color: t.textMid }}><Pencil size={12} /></button>
+                      <button onClick={() => del(p)} style={{ ...iconBtn(t), color: t.bad }}><Trash2 size={12} /></button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modalOpen && (
+        <PromotionModal t={t} channels={channels} selectedChannel={selectedChannel} editing={editing}
+          onClose={() => setModalOpen(false)} onSaved={() => { setModalOpen(false); load(); }} />
+      )}
+      {effOf && <EffectivenessModal t={t} promo={effOf} onClose={() => setEffOf(null)} />}
+    </div>
+  );
+}
+
+function PromotionModal({ t, channels, selectedChannel, editing, onClose, onSaved }: {
+  t: Tokens; channels: RetailChannel[]; selectedChannel: number | null;
+  editing: RetailPromotion | null; onClose: () => void; onSaved: () => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [channelId, setChannelId] = useState<number>(editing?.channel_id || selectedChannel || channels[0]?.id || 0);
+  const [stores, setStores] = useState<RetailStore[]>([]);
+  const [variants, setVariants] = useState<VariantOption[]>([]);
+  const [storeId, setStoreId] = useState<number | null>(editing?.store_id ?? null);
+  const [variantId, setVariantId] = useState<number | null>(editing?.variant_id ?? null);
+  const [name, setName] = useState(editing?.name || "");
+  const [mechanic, setMechanic] = useState<PromoMechanic>(editing?.mechanic || "descuento");
+  const [discount, setDiscount] = useState<number | "">(editing?.discount_pct ?? "");
+  const [promoPrice, setPromoPrice] = useState<number | "">(editing?.promo_price ?? "");
+  const [start, setStart] = useState(editing ? editing.start_date.slice(0, 10) : today);
+  const [end, setEnd] = useState(editing ? editing.end_date.slice(0, 10) : today);
+  const [baselineWeeks, setBaselineWeeks] = useState(editing?.baseline_weeks || 4);
+  const [notes, setNotes] = useState(editing?.notes || "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    salesApi.variantOptions().then(setVariants).catch(() => setVariants([]));
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+  useEffect(() => {
+    if (!channelId) { setStores([]); return; }
+    retailApi.listStores({ channel_id: channelId, active_only: true }).then(setStores).catch(() => setStores([]));
+  }, [channelId]);
+
+  const submit = async () => {
+    if (!name.trim() || !channelId) return;
+    if (new Date(end) < new Date(start)) { setErr("La fecha fin no puede ser anterior a la de inicio"); return; }
+    setSaving(true); setErr(null);
+    try {
+      const payload = {
+        channel_id: channelId, store_id: storeId ?? undefined, variant_id: variantId ?? undefined,
+        name: name.trim(), mechanic,
+        discount_pct: discount === "" ? undefined : Number(discount),
+        promo_price: promoPrice === "" ? undefined : Number(promoPrice),
+        start_date: new Date(start + "T00:00:00").toISOString(),
+        end_date: new Date(end + "T23:59:59").toISOString(),
+        baseline_weeks: baselineWeeks, notes: notes || undefined,
+      };
+      if (editing) await retailApi.updatePromotion(editing.id, payload);
+      else await retailApi.createPromotion(payload as any);
+      onSaved();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error");
+    } finally { setSaving(false); }
+  };
+
+  const modal = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 580, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>{editing ? "Editar promoción" : "Nueva promoción"}</h3>
+        <p style={{ color: t.textLo, fontSize: 12, marginTop: 4 }}>Define el alcance y la ventana. Para medir el lift necesitas asignar un SKU.</p>
+
+        <div style={{ marginTop: 14 }}>
+          <label style={labelStyle(t)}>Nombre *</label>
+          <input value={name} onChange={e => setName(e.target.value)} style={inputStyle(t)} placeholder="Ej. Descuento verano galletas" autoFocus />
+        </div>
+
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div>
+            <label style={labelStyle(t)}>Cadena *</label>
+            <select value={channelId} onChange={e => { setChannelId(Number(e.target.value)); setStoreId(null); }} style={inputStyle(t)}>
+              {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle(t)}>Tienda (opcional)</label>
+            <select value={storeId ?? ""} onChange={e => setStoreId(e.target.value ? Number(e.target.value) : null)} style={inputStyle(t)}>
+              <option value="">Todas las tiendas</option>
+              {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div style={{ gridColumn: "span 2" }}>
+            <label style={labelStyle(t)}>SKU (recomendado para medir lift)</label>
+            <select value={variantId ?? ""} onChange={e => setVariantId(e.target.value ? Number(e.target.value) : null)} style={inputStyle(t)}>
+              <option value="">— Sin SKU (promo informativa) —</option>
+              {variants.map(v => <option key={v.variant_id} value={v.variant_id}>{v.product_name}{v.sku ? ` · ${v.sku}` : ""}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+          <div>
+            <label style={labelStyle(t)}>Mecánica</label>
+            <select value={mechanic} onChange={e => setMechanic(e.target.value as PromoMechanic)} style={inputStyle(t)}>
+              {Object.entries(PROMO_MECHANIC_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle(t)}>Descuento %</label>
+            <input type="number" min={0} max={100} value={discount} onChange={e => setDiscount(e.target.value === "" ? "" : Number(e.target.value))} style={inputStyle(t)} />
+          </div>
+          <div>
+            <label style={labelStyle(t)}>Precio promo</label>
+            <input type="number" min={0} step={0.01} value={promoPrice} onChange={e => setPromoPrice(e.target.value === "" ? "" : Number(e.target.value))} style={inputStyle(t)} />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+          <div>
+            <label style={labelStyle(t)}>Inicio *</label>
+            <input type="date" value={start} onChange={e => setStart(e.target.value)} style={inputStyle(t)} />
+          </div>
+          <div>
+            <label style={labelStyle(t)}>Fin *</label>
+            <input type="date" value={end} onChange={e => setEnd(e.target.value)} style={inputStyle(t)} />
+          </div>
+          <div>
+            <label style={labelStyle(t)}>Semanas baseline</label>
+            <input type="number" min={1} max={26} value={baselineWeeks} onChange={e => setBaselineWeeks(Number(e.target.value) || 4)} style={inputStyle(t)} />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <label style={labelStyle(t)}>Notas</label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...inputStyle(t), resize: "vertical", fontFamily: "inherit" }} />
+        </div>
+
+        {err && <div style={errStyle(t)}>{err}</div>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button onClick={onClose} style={btnGhost(t)}>Cancelar</button>
+          <button disabled={!name.trim() || saving} onClick={submit} style={btnPrimary(t)}>{saving ? "Guardando…" : editing ? "Guardar" : "Crear"}</button>
+        </div>
+      </div>
+    </div>
+  );
+  return createPortal(modal, document.body);
+}
+
+function EffectivenessModal({ t, promo, onClose }: {
+  t: Tokens; promo: RetailPromotion; onClose: () => void;
+}) {
+  const [data, setData] = useState<PromotionEffectiveness | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    retailApi.promotionEffectiveness(promo.id)
+      .then(r => { if (!cancelled) setData(r); })
+      .catch(() => { if (!cancelled) setData(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => { cancelled = true; window.removeEventListener("keydown", h); };
+  }, [promo.id, onClose]);
+
+  const verdictInfo = (v: string) =>
+    v === "winner" ? { label: "Ganadora", color: t.good } :
+    v === "loser" ? { label: "No funcionó", color: t.bad } :
+    v === "neutral" ? { label: "Neutral", color: t.warn } : { label: "No medible", color: t.textLo };
+
+  const modal = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 560, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>Efectividad · {promo.name}</h3>
+            <p style={{ color: t.textLo, fontSize: 12, marginTop: 4 }}>{promo.channel_name}{promo.sku ? ` · ${promo.sku}` : ""}</p>
+          </div>
+          <button onClick={onClose} style={iconBtn(t)}><X size={16} /></button>
+        </div>
+
+        {loading && <div style={{ padding: 30, textAlign: "center", color: t.textLo }}>Calculando…</div>}
+        {!loading && data && !data.measurable && (
+          <div style={{ marginTop: 14, padding: 14, background: t.warn + "18", border: `1px solid ${t.warn}44`, borderRadius: 8, color: t.warn, fontSize: 13, display: "flex", gap: 8, alignItems: "center" }}>
+            <AlertTriangle size={16} /> {data.reason || "No se puede medir esta promoción."}
+          </div>
+        )}
+        {!loading && data && data.measurable && (
+          <>
+            {(() => { const vi = verdictInfo(data.verdict); return (
+              <div style={{ marginTop: 14, padding: 14, borderRadius: 10, background: vi.color + "14", border: `1px solid ${vi.color}44`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Resultado</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: vi.color }}>{vi.label}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Lift de ventas</div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: (data.lift_pct ?? 0) >= 0 ? t.good : t.bad }}>
+                    {data.lift_pct != null ? `${data.lift_pct > 0 ? "+" : ""}${data.lift_pct.toFixed(1)}%` : "—"}
+                  </div>
+                </div>
+              </div>
+            ); })()}
+
+            <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <EffRow t={t} label="Ventas esperadas (baseline)" value={`${num(data.expected_units)} u`} sub={`${data.baseline_weekly_units.toFixed(0)} u/sem × ${data.promo_weeks} sem`} />
+              <EffRow t={t} label="Ventas reales en promo" value={`${num(data.actual_units)} u`} sub={`${data.promo_weekly_units.toFixed(0)} u/sem`} strong />
+              <EffRow t={t} label="Unidades incrementales" value={`${data.incremental_units >= 0 ? "+" : ""}${num(data.incremental_units)} u`} color={data.incremental_units >= 0 ? t.good : t.bad} />
+              <EffRow t={t} label="Ingreso incremental" value={mxn(data.incremental_revenue)} color={data.incremental_revenue >= 0 ? t.good : t.bad} />
+              <EffRow t={t} label="Precio: baseline → promo" value={`${mxn(data.baseline_avg_price)} → ${mxn(data.promo_avg_price)}`} />
+              {data.promo_cost != null && <EffRow t={t} label="Costo de la promo" value={mxn(data.promo_cost)} sub="descuento sacrificado" />}
+              {data.roi_pct != null && <EffRow t={t} label="ROI de la promo" value={`${data.roi_pct.toFixed(0)}%`} sub="margen incremental / costo" color={data.roi_pct >= 0 ? t.good : t.bad} strong />}
+            </div>
+            {data.reason && <div style={{ marginTop: 12, fontSize: 11.5, color: t.textLo }}>{data.reason}</div>}
+          </>
+        )}
+      </div>
+    </div>
+  );
+  return createPortal(modal, document.body);
+}
+
+function EffRow({ t, label, value, sub, color, strong }: {
+  t: Tokens; label: string; value: string; sub?: string; color?: string; strong?: boolean;
+}) {
+  return (
+    <div style={{ padding: 12, background: t.panel2, borderRadius: 8, border: `1px solid ${t.border}` }}>
+      <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: strong ? 18 : 16, fontWeight: strong ? 800 : 700, color: color || t.textHi, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      {sub && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
 type AnalyticsSub = "heatmap" | "trend" | "profitability" | "pricing" | "excess" | "aging" | "service" | "distribution" | "lost_sales" | "abc" | "abcxyz";
 
 function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }) {

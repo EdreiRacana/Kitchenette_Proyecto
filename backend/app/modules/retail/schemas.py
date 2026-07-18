@@ -865,3 +865,77 @@ class PreviewResponse(BaseModel):
     preview_rows: List[PreviewRow]
     unmapped_required_fields: List[str]  # campos esenciales no mapeados
     warnings: List[str] = Field(default_factory=list)
+
+
+# ── Promociones ─────────────────────────────────────────────────────────
+
+class RetailPromotionBase(BaseModel):
+    channel_id: int
+    store_id: Optional[int] = None
+    variant_id: Optional[int] = None
+    product_name: Optional[str] = None
+    sku: Optional[str] = None
+    name: str = Field(min_length=1, max_length=200)
+    mechanic: str = Field(default="descuento",
+                          pattern="^(descuento|precio_especial|2x1|3x2|bundle|otro)$")
+    discount_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    promo_price: Optional[float] = Field(default=None, ge=0)
+    start_date: datetime
+    end_date: datetime
+    baseline_weeks: int = Field(default=4, ge=1, le=26)
+    is_active: bool = True
+    notes: Optional[str] = None
+
+
+class RetailPromotionCreate(RetailPromotionBase):
+    pass
+
+
+class RetailPromotionUpdate(BaseModel):
+    store_id: Optional[int] = None
+    variant_id: Optional[int] = None
+    name: Optional[str] = None
+    mechanic: Optional[str] = Field(default=None,
+                                    pattern="^(descuento|precio_especial|2x1|3x2|bundle|otro)$")
+    discount_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    promo_price: Optional[float] = Field(default=None, ge=0)
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    baseline_weeks: Optional[int] = Field(default=None, ge=1, le=26)
+    is_active: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class RetailPromotionOut(RetailPromotionBase):
+    id: int
+    channel_name: Optional[str] = None
+    store_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PromotionEffectiveness(BaseModel):
+    promotion_id: int
+    name: str
+    channel_name: Optional[str] = None
+    store_name: Optional[str] = None
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    start_date: datetime
+    end_date: datetime
+    promo_weeks: float
+    measurable: bool                    # False si falta variant o datos
+    reason: Optional[str] = None        # por qué no es medible
+    baseline_weekly_units: float
+    promo_weekly_units: float
+    expected_units: int                 # baseline_weekly × promo_weeks
+    actual_units: int
+    incremental_units: int
+    lift_pct: Optional[float] = None     # (actual − expected)/expected × 100
+    baseline_avg_price: float
+    promo_avg_price: float
+    actual_revenue: float
+    incremental_revenue: float
+    promo_cost: Optional[float] = None   # margen/descuento sacrificado
+    roi_pct: Optional[float] = None      # margen incremental / costo promo
+    verdict: str                        # winner | neutral | loser | n/a

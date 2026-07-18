@@ -676,6 +676,51 @@ async def analytics_service_level(
     )
 
 
+# ── Promociones ──────────────────────────────────────────────────────────
+
+@router.get("/promotions", response_model=List[schemas.RetailPromotionOut])
+async def list_promotions(db: DB, _: CurrentUser,
+                          channel_id: Optional[int] = Query(None),
+                          active_only: bool = Query(False)):
+    return await service.list_promotions(db, channel_id=channel_id, active_only=active_only)
+
+
+@router.post("/promotions", response_model=schemas.RetailPromotionOut, status_code=201)
+async def create_promotion(payload: schemas.RetailPromotionCreate, db: DB, _: CurrentUser):
+    ch = await service.get_channel(db, payload.channel_id)
+    if ch is None:
+        raise HTTPException(400, "Cadena no encontrada")
+    if payload.end_date < payload.start_date:
+        raise HTTPException(400, "La fecha fin no puede ser anterior a la de inicio")
+    p = await service.create_promotion(db, payload)
+    return await service._promo_to_out(db, p)
+
+
+@router.patch("/promotions/{promo_id}", response_model=schemas.RetailPromotionOut)
+async def update_promotion(promo_id: int, payload: schemas.RetailPromotionUpdate,
+                           db: DB, _: CurrentUser):
+    p = await service.update_promotion(db, promo_id, payload)
+    if p is None:
+        raise HTTPException(404, "Promoción no encontrada")
+    return await service._promo_to_out(db, p)
+
+
+@router.delete("/promotions/{promo_id}", status_code=204)
+async def delete_promotion(promo_id: int, db: DB, _: CurrentUser):
+    ok = await service.delete_promotion(db, promo_id)
+    if not ok:
+        raise HTTPException(404, "Promoción no encontrada")
+
+
+@router.get("/promotions/{promo_id}/effectiveness",
+             response_model=schemas.PromotionEffectiveness)
+async def promotion_effectiveness(promo_id: int, db: DB, _: CurrentUser):
+    r = await service.promotion_effectiveness(db, promo_id)
+    if r is None:
+        raise HTTPException(404, "Promoción no encontrada")
+    return r
+
+
 # ── Traslados desde reabasto ────────────────────────────────────────────
 
 @router.get("/replenishment/source-warehouses",

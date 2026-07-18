@@ -275,3 +275,68 @@ class RetailImportProfile(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     channel = relationship("RetailChannel")
+
+
+PROMO_MECHANICS = (
+    "descuento",       # % de descuento
+    "precio_especial", # precio fijo promocional
+    "2x1",             # dos por uno
+    "3x2",             # tres por dos
+    "bundle",          # paquete
+    "otro",
+)
+
+
+class RetailPromotion(Base):
+    """Promoción / actividad comercial en una cadena.
+
+    Registra la ventana [start, end], el alcance (cadena, opcionalmente una
+    tienda y un SKU) y la mecánica. Con esto el módulo calcula la
+    EFECTIVIDAD: compara las ventas durante la promo contra un baseline de
+    las semanas previas y estima el lift, las unidades/ingreso incremental
+    y el ROI (si hay costo/precio).
+    """
+    __tablename__ = "retail_promotions"
+    __table_args__ = (
+        Index("ix_retail_promotions_channel", "channel_id"),
+        Index("ix_retail_promotions_dates", "start_date", "end_date"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    channel_id = Column(
+        Integer, ForeignKey("retail_channels.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    # Alcance opcional: si store_id es NULL aplica a toda la cadena; si
+    # variant_id es NULL la promo es informativa (no se calcula lift por SKU).
+    store_id = Column(
+        Integer, ForeignKey("retail_stores.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    variant_id = Column(
+        Integer, ForeignKey("product_variants.id"), nullable=True, index=True,
+    )
+    # Snapshots para histórico legible
+    product_name = Column(String, nullable=True)
+    sku = Column(String, nullable=True)
+
+    name = Column(String, nullable=False)
+    mechanic = Column(String, default="descuento", nullable=False)
+    discount_pct = Column(Float, nullable=True)       # % de descuento
+    promo_price = Column(Float, nullable=True)        # precio promocional fijo
+
+    start_date = Column(DateTime(timezone=True), nullable=False)
+    end_date = Column(DateTime(timezone=True), nullable=False)
+
+    # Semanas previas para el baseline (default 4)
+    baseline_weeks = Column(Integer, default=4, nullable=False)
+
+    is_active = Column(Boolean, default=True, nullable=False)
+    notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    channel = relationship("RetailChannel")
+    store = relationship("RetailStore")
+    variant = relationship("ProductVariant")

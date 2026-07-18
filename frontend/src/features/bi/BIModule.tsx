@@ -11,12 +11,13 @@ import {
   XCircle, Download, ChevronRight,
   Target, DollarSign, ShoppingCart, Clock, Star,
   Mail, X, Check,
-  TrendingDown, Activity, TrendingUp,
+  TrendingDown, Activity, TrendingUp, Store,
 } from "lucide-react";
 import { salesApi } from "../sales/api";
 import { financeService } from "../finance/service";
 import { inventoryService, type ReorderAlert } from "../inventory/service";
 import { hrApi } from "../hr/api";
+import { biService, type OmnichannelData } from "./service";
 import ExecutiveLive from "./ExecutiveLive";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -865,7 +866,7 @@ async function loadBIState(period: Period): Promise<BIState> {
 // ── Main Module ───────────────────────────────────────────────────────────
 export default function BIModule({ t, s }: { t: any; s: any }) {
   void s;
-  const [tab, setTab] = useState<"executive" | "sales" | "inventory" | "finance" | "hr" | "custom">("executive");
+  const [tab, setTab] = useState<"executive" | "sales" | "inventory" | "finance" | "hr" | "omnichannel" | "custom">("executive");
   const [period, setPeriod] = useState<Period>("month");
   const [D, setD] = useState<BIState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -905,6 +906,7 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
     { id: "inventory", label: "Inventario", icon: Package },
     { id: "finance", label: "Finanzas", icon: Wallet },
     { id: "hr", label: "RH", icon: Users },
+    { id: "omnichannel", label: "Omnicanal", icon: Store },
     { id: "custom", label: "Personalizado", icon: Sliders },
   ] as const;
 
@@ -1437,6 +1439,8 @@ function BIModuleBody({
       )}
 
       {/* ── TAB: Custom ── */}
+      {tab === "omnichannel" && <OmnichannelView t={t} />}
+
       {tab === "custom" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
@@ -1570,6 +1574,136 @@ function BIModuleBody({
       )}
 
       <style>{`@keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}`}</style>
+    </div>
+  );
+}
+
+
+// ── Omnicanal: ventas por canal + inventario unificado ─────────────────────
+const CHANNEL_PALETTE = ["#33B2F5", "#34D399", "#A78BFA", "#F59E0B", "#F472B6", "#22D3EE", "#FB7185", "#94A3B8"];
+
+function OmnichannelView({ t }: { t: any }) {
+  const [data, setData] = useState<OmnichannelData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(30);
+  const money = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { maximumFractionDigits: 0 });
+  const numf = (n: number) => (n || 0).toLocaleString("es-MX");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    biService.omnichannel(days)
+      .then(r => { if (!cancelled) setData(r); })
+      .catch(() => { if (!cancelled) setData(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [days]);
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>;
+  if (!data) return <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Sin datos.</div>;
+
+  const d = data.direct;
+  const inv = data.inventory;
+  const maxRev = Math.max(1, ...d.channels.map(c => c.revenue));
+
+  const tile = (label: string, value: string, sub: string, color: string) => (
+    <div style={{ padding: 16, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12 }}>
+      <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 3 }}>{sub}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12.5, color: t.textLo, maxWidth: 640 }}>
+          Consolidado de <b style={{ color: t.textMid }}>ventas por canal</b> de toda la empresa (punto de venta, mostrador, e-commerce, distribuidores…). El sell-out de cadenas se muestra aparte por ser venta indirecta.
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {[30, 90, 180].map(dd => (
+            <button key={dd} onClick={() => setDays(dd)}
+              style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${days === dd ? t.nova : t.border}`, background: days === dd ? t.nova : "transparent", color: days === dd ? "#fff" : t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+              {dd}d
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 12 }}>
+        {tile("Ventas directas", money(d.total_revenue), `${numf(d.total_units)} u · ${numf(d.total_orders)} pedidos`, t.textHi)}
+        {tile("Canales activos", String(d.channels.length), "con venta en el periodo", t.nova)}
+        {tile("Inventario a costo", money(inv.total_cost_value), `${numf(inv.own_units + inv.consignment_units)} unidades`, t.good)}
+        {tile("Retail (indirecto)", numf(data.indirect_retail.sell_out_units) + " u", `sell-out · ${data.indirect_retail.stores_reporting} tiendas`, t.textMid)}
+      </div>
+
+      {/* Ventas por canal */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 18 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 14 }}>Ventas por canal</div>
+        {d.channels.length === 0 ? (
+          <div style={{ color: t.textLo, fontSize: 12.5, textAlign: "center", padding: 20 }}>Sin ventas en el periodo.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {d.channels.map((c, i) => (
+              <div key={c.channel || i}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12.5 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 7, color: t.textHi, fontWeight: 600 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: 3, background: CHANNEL_PALETTE[i % CHANNEL_PALETTE.length] }} />
+                    {c.label}
+                  </span>
+                  <span style={{ color: t.textMid }}>
+                    <b style={{ color: t.textHi }}>{money(c.revenue)}</b> · {numf(c.units)} u · {numf(c.orders)} ped · {c.share_pct.toFixed(1)}%
+                  </span>
+                </div>
+                <div style={{ height: 10, background: t.panel2, borderRadius: 5, overflow: "hidden" }}>
+                  <div style={{ width: `${(c.revenue / maxRev) * 100}%`, height: "100%", background: CHANNEL_PALETTE[i % CHANNEL_PALETTE.length] }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Inventario unificado */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 18 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, marginBottom: 10 }}>Inventario unificado (a costo)</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+              <span style={{ color: t.textMid }}>Almacenes propios</span>
+              <span style={{ color: t.textHi, fontWeight: 700 }}>{money(inv.own_cost_value)} <span style={{ color: t.textLo, fontWeight: 400 }}>· {numf(inv.own_units)} u</span></span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+              <span style={{ color: t.textMid }}>Consignación (cadenas)</span>
+              <span style={{ color: t.textHi, fontWeight: 700 }}>{money(inv.consignment_cost_value)} <span style={{ color: t.textLo, fontWeight: 400 }}>· {numf(inv.consignment_units)} u</span></span>
+            </div>
+            <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 8, display: "flex", justifyContent: "space-between", fontSize: 13.5 }}>
+              <span style={{ color: t.textHi, fontWeight: 700 }}>Total</span>
+              <span style={{ color: t.good, fontWeight: 800 }}>{money(inv.total_cost_value)}</span>
+            </div>
+          </div>
+        </div>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 18 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, marginBottom: 10 }}>Canal indirecto · Retail</div>
+          <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 10 }}>
+            Lo que las cadenas venden al consumidor final (sell-out). No es ingreso propio; es visibilidad aguas abajo.
+          </div>
+          <div style={{ display: "flex", gap: 20 }}>
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi }}>{numf(data.indirect_retail.sell_out_units)}</div>
+              <div style={{ fontSize: 11, color: t.textLo }}>unidades sell-out</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi }}>{money(data.indirect_retail.sell_out_revenue)}</div>
+              <div style={{ fontSize: 11, color: t.textLo }}>venta al consumidor</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 11, color: t.textLo }}>
+        Las ventas POS ya se cuentan como canal "Punto de venta" (no se duplican). Los conectores de e-commerce y marketplaces se integran vía la API cuando estén disponibles.
+      </div>
     </div>
   );
 }

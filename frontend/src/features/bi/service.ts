@@ -67,9 +67,42 @@ export interface AgingSummary {
   count: number;
 }
 
+export interface OmnichannelChannel {
+  channel: string;
+  label: string;
+  revenue: number;
+  units: number;
+  orders: number;
+  share_pct: number;
+}
+export interface OmnichannelData {
+  period_days: number;
+  generated_at: string;
+  direct: {
+    total_revenue: number;
+    total_units: number;
+    total_orders: number;
+    channels: OmnichannelChannel[];
+  };
+  indirect_retail: {
+    sell_out_units: number;
+    sell_out_revenue: number;
+    stores_reporting: number;
+  };
+  inventory: {
+    own_units: number;
+    own_cost_value: number;
+    consignment_units: number;
+    consignment_cost_value: number;
+    total_cost_value: number;
+  };
+}
+
 export const biService = {
   executiveSummary: () =>
     api.get<ExecutiveSummary>("/bi/executive-summary").then(r => r.data),
+  omnichannel: (days = 30) =>
+    api.get<OmnichannelData>("/bi/omnichannel", { params: { days } }).then(r => r.data),
   cxcAging: () =>
     api.get<AgingSummary>("/finance/cxc/aging-summary").then(r => r.data),
   cxpAging: () =>
