@@ -850,8 +850,9 @@ function Thermometer({ t, actual, target, pct }: any) {
   const fillPct = Math.max(0, Math.min(100, pct));
   const fillH = (tubeH * fillPct) / 100;
   const yFor = (p: number) => tubeBottom - (tubeH * p) / 100;   // p:0..100 → y
-  // Color según nivel (misma lógica de umbrales que antes)
-  const fillColor = fillPct >= 90 ? t.good : fillPct >= 65 ? t.nova : fillPct >= 35 ? t.warn : t.bad;
+  // Verde "Matrix" — degradado fósforo (oscuro abajo → neón brillante arriba)
+  const MTX = { dark: "#067A2E", mid: "#12D954", bright: "#5BFF87" };
+  const fillColor = MTX.bright;                    // acento: bulbo, perilla, marcador y base
   const yCur = yFor(fillPct);
   // Zonas (de arriba hacia abajo) — riel de color + etiqueta alineada al centro de la banda
   const zones = [
@@ -865,8 +866,9 @@ function Thermometer({ t, actual, target, pct }: any) {
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: 210, height: "auto", display: "block" }}>
         <defs>
           <linearGradient id="thermoFill" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0%" stopColor={fillColor} stopOpacity="0.45" />
-            <stop offset="100%" stopColor={fillColor} stopOpacity="1" />
+            <stop offset="0%" stopColor={MTX.dark} stopOpacity="0.3" />
+            <stop offset="50%" stopColor={MTX.mid} stopOpacity="0.5" />
+            <stop offset="100%" stopColor={MTX.bright} stopOpacity="0.72" />
           </linearGradient>
           <radialGradient id="thermoBase" cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor={fillColor} stopOpacity="0.55" />
@@ -901,7 +903,7 @@ function Thermometer({ t, actual, target, pct }: any) {
 
         {/* Bulbo */}
         <circle cx={cx} cy={bulbCy} r={bulbR} fill={t.panel3} stroke={t.border} strokeWidth="1" />
-        <circle cx={cx} cy={bulbCy} r={bulbR - 3} fill={fillColor} fillOpacity="0.8" filter="url(#thermoGlow)" />
+        <circle cx={cx} cy={bulbCy} r={bulbR - 3} fill={fillColor} fillOpacity="0.55" filter="url(#thermoGlow)" />
         <text x={cx} y={bulbCy + 5} textAnchor="middle" fontSize="17" fontWeight="800" fill="#fff">{fillPct}%</text>
 
         {/* Rótulo META (centrado sobre la columna) + línea de tope */}
