@@ -88,7 +88,7 @@ const STRINGS = {
     dash: {
       to: "al", custom: "Personalizado", marginLabel: "MARGEN", target: "obj.",
       focos: { agotados: "agotados", cartera: "por cobrar", margen: "stock bajo" },
-      vsPrev: "vs ant.", chartTitle: "Ventas del periodo", chartUnit: "(miles MXN)",
+      vsPrev: "vs ant.", noComparison: "sin comparativo", chartTitle: "Ventas del periodo", chartUnit: "(miles MXN)",
       legendCur: "Actual", legendPrev: "Periodo anterior",
       metaTitle: "Meta vs real", metaSub: "de la meta del periodo", real: "Real", meta: "Meta",
       remaining: (a) => `Faltan ${a} para llegar al objetivo.`, skus: (n) => `${n} SKUs`,
@@ -122,7 +122,7 @@ const STRINGS = {
     dash: {
       to: "to", custom: "Custom", marginLabel: "MARGIN", target: "target",
       focos: { agotados: "out of stock", cartera: "receivable", margen: "low stock" },
-      vsPrev: "vs prev.", chartTitle: "Period sales", chartUnit: "(thousands MXN)",
+      vsPrev: "vs prev.", noComparison: "no prior data", chartTitle: "Period sales", chartUnit: "(thousands MXN)",
       legendCur: "Current", legendPrev: "Previous period",
       metaTitle: "Goal vs actual", metaSub: "of the period goal", real: "Actual", meta: "Goal",
       remaining: (a) => `${a} left to reach the goal.`, skus: (n) => `${n} SKUs`,
@@ -266,10 +266,10 @@ async function loadDashboardData(preset, customStart, customEnd) {
     : (budgetTarget > 0 ? { kind: "budget", planName: null, planYear: null } : { kind: "none", planName: null, planYear: null });
 
   const kpis = [
-    { label: "Ventas", value: statsCur.total_sold, money: true, delta: pctDelta(statsCur.total_sold, statsPrev.total_sold), spark: trendCur.map((p) => p.total) },
-    { label: "Utilidad neta", value: finComparison.current.net_profit, money: true, delta: pctDelta(finComparison.current.net_profit, finComparison.previous.net_profit), spark: [] },
-    { label: "Pedidos", value: statsCur.orders_count, money: false, delta: pctDelta(statsCur.orders_count, statsPrev.orders_count), spark: trendCur.map((p) => p.count) },
-    { label: "Ticket promedio", value: statsCur.avg_ticket, money: true, delta: pctDelta(statsCur.avg_ticket, statsPrev.avg_ticket), spark: trendCur.map((p) => (p.count ? p.total / p.count : 0)) },
+    { label: "Ventas", value: statsCur.total_sold, prev: statsPrev.total_sold, money: true, delta: pctDelta(statsCur.total_sold, statsPrev.total_sold), spark: trendCur.map((p) => p.total) },
+    { label: "Utilidad neta", value: finComparison.current.net_profit, prev: finComparison.previous.net_profit, money: true, delta: pctDelta(finComparison.current.net_profit, finComparison.previous.net_profit), spark: [] },
+    { label: "Pedidos", value: statsCur.orders_count, prev: statsPrev.orders_count, money: false, delta: pctDelta(statsCur.orders_count, statsPrev.orders_count), spark: trendCur.map((p) => p.count) },
+    { label: "Ticket promedio", value: statsCur.avg_ticket, prev: statsPrev.avg_ticket, money: true, delta: pctDelta(statsCur.avg_ticket, statsPrev.avg_ticket), spark: trendCur.map((p) => (p.count ? p.total / p.count : 0)) },
   ];
 
   const totalIncome = finComparison.current.total_income || 0;
@@ -667,6 +667,8 @@ function TopCustomersRanked({ t, items, onClick }: any) {
         const hasDelta = typeof c.delta === "number";
         const up = hasDelta && c.delta >= 0;
         const deltaColor = !hasDelta ? t.textLo : up ? t.good : t.bad;
+        const anon = !c.name || !String(c.name).trim() || c.name === "Sin cliente";
+        const displayName = anon ? "Venta sin cliente" : c.name;
         return (
           <div key={c.customer_id ?? i}
             onClick={() => onClick?.(c)}
@@ -689,7 +691,7 @@ function TopCustomersRanked({ t, items, onClick }: any) {
             }}>{i + 1}</div>
             {/* Cliente + pedidos */}
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, color: t.textHi, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={c.name}>{c.name}</div>
+              <div style={{ fontSize: 13, color: anon ? t.textLo : t.textHi, fontWeight: 600, fontStyle: anon ? "italic" : "normal", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={displayName}>{displayName}</div>
               <div style={{ fontSize: 11, color: t.textLo, marginTop: 2 }}>{c.orders} pedido{c.orders === 1 ? "" : "s"}</div>
             </div>
             {/* Monto + delta */}
@@ -1053,18 +1055,40 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
             {calOpen && <MiniCalendar t={t} s={s} start={rStart} end={rEnd} onPick={pick} anchor={calAnchor} onClose={() => setCalOpen(false)} />}
           </div>
         </Card>
-        <Card t={t} style={{ flex: "0 0 auto", padding: "8px 20px", display: "flex", alignItems: "center", gap: 14, minWidth: 220 }}>
-          <Gauge t={t} value={data.margin} target={data.marginTarget} />
-          <div>
-            <div style={{ fontSize: 10.5, color: t.textLo, fontWeight: 600, letterSpacing: 0.6 }}>{s.dash.marginLabel}</div>
-            <div style={{ fontSize: 12, color: t.textMid, marginTop: 3 }}>{s.dash.target} {data.marginTarget}%</div>
+        <Card t={t} style={{ flex: "1 1 380px", padding: "8px 18px", display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap", justifyContent: "space-around" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Gauge t={t} value={data.margin} target={data.marginTarget} />
+            <div>
+              <div style={{ fontSize: 10.5, color: t.textLo, fontWeight: 600, letterSpacing: 0.6 }}>{s.dash.marginLabel}</div>
+              <div style={{ fontSize: 12, color: t.textMid, marginTop: 3 }}>{s.dash.target} {data.marginTarget}%</div>
+            </div>
           </div>
+          <div style={{ width: 1, alignSelf: "stretch", background: t.border, margin: "6px 0" }} />
+          {data.goal.configured ? (() => {
+            const gc = goalPct >= 90 ? t.good : goalPct >= 65 ? t.nova : t.warn;
+            return (
+              <div style={{ minWidth: 132 }}>
+                <div style={{ fontSize: 10.5, color: t.textLo, fontWeight: 600, letterSpacing: 0.6, textTransform: "uppercase" }}>{s.dash.goalProgress}</div>
+                <div style={{ fontSize: 25, fontWeight: 800, color: gc, fontVariantNumeric: "tabular-nums", lineHeight: 1.1, marginTop: 2 }}>{goalPct}%</div>
+                <div style={{ height: 5, background: t.panel3, borderRadius: 999, marginTop: 6, overflow: "hidden" }}>
+                  <div style={{ width: `${Math.min(100, goalPct)}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${gc}99, ${gc})`, boxShadow: `0 0 8px ${gc}88`, transition: "width .4s" }} />
+                </div>
+                <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{mxnShort(data.goal.actual)} / {mxnShort(data.goal.target)}</div>
+              </div>
+            );
+          })() : (
+            <div style={{ minWidth: 132 }}>
+              <div style={{ fontSize: 10.5, color: t.textLo, fontWeight: 600, letterSpacing: 0.6, textTransform: "uppercase" }}>{s.dash.goalProgress}</div>
+              <div style={{ fontSize: 12.5, color: t.textLo, marginTop: 8, fontStyle: "italic" }}>{lang === "en" ? "No goal set" : "Sin meta configurada"}</div>
+            </div>
+          )}
         </Card>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))", gap: 10, marginBottom: 12 }}>
         {data.kpis.map((k, i) => {
-          const up = k.delta >= 0; const c = statusColor(t, k.delta);
+          const hasPrev = k.prev !== undefined && k.prev !== null && k.prev > 0;
+          const up = k.delta >= 0; const c = hasPrev ? statusColor(t, k.delta) : t.textLo;
           const target = kpiTargets[k.label];
           const pct = target ? Math.min(100, Math.round((k.value / target) * 100)) : null;
           const Icon = kpiIcons[k.label];
@@ -1078,13 +1102,17 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
                 </span>
                 <span style={{ width: 8, height: 8, borderRadius: 999, background: c + "cc", boxShadow: `0 0 0 3px ${c}1f` }} />
               </div>
-              <div style={{ fontSize: 19, fontWeight: 700, color: t.textHi, marginTop: 7, fontVariantNumeric: "tabular-nums" }}>{k.money ? mxn(k.value) : k.value.toLocaleString("es-MX")}</div>
+              <div style={{ fontSize: 21, fontWeight: 800, color: t.textHi, marginTop: 7, fontVariantNumeric: "tabular-nums" }}>{k.money ? mxnShort(k.value) : k.value.toLocaleString("es-MX")}</div>
               <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginTop: 6 }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  {up ? <ArrowUpRight size={14} color={t.good} /> : <ArrowDownRight size={14} color={t.bad} />}
-                  <span style={{ fontSize: 12.5, fontWeight: 600, color: up ? t.good : t.bad }}>{Math.abs(k.delta)}%</span>
-                  <span style={{ fontSize: 11, color: t.textLo }}>{s.dash.vsPrev}</span>
-                </span>
+                {hasPrev ? (
+                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    {up ? <ArrowUpRight size={14} color={t.good} /> : <ArrowDownRight size={14} color={t.bad} />}
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: up ? t.good : t.bad }}>{Math.abs(k.delta)}%</span>
+                    <span style={{ fontSize: 11, color: t.textLo }}>{s.dash.vsPrev}</span>
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 11.5, color: t.textLo, fontStyle: "italic" }}>— {s.dash.noComparison}</span>
+                )}
                 {k.spark && k.spark.length > 1 && <Sparkline data={k.spark} color={c} gid={`spk${i}`} />}
               </div>
               {target && (
@@ -1215,7 +1243,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
         const c = statusColor(t, k.delta);
         const target = kpiTargets[k.label];
         const pct = target ? Math.round((k.value / target) * 100) : null;
-        const prevVal = Math.round(k.value / (1 + k.delta / 100));
+        const prevVal = (k.prev !== undefined && k.prev !== null) ? k.prev : Math.round(k.value / (1 + k.delta / 100));
         const Icon = kpiIcons[k.label];
         return createPortal(
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", justifyContent: "flex-end" }} onClick={() => setKpiDrill(null)}>
