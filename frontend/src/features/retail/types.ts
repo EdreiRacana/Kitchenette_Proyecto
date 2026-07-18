@@ -136,6 +136,40 @@ export interface ABCResponse {
   rows: ABCRow[];
 }
 
+// ABC-XYZ (segmentación de surtido)
+export interface AbcXyzRow {
+  variant_id?: number | null;
+  sku?: string | null;
+  product_name?: string | null;
+  total_units: number;
+  total_revenue: number;
+  revenue_pct: number;
+  cumulative_pct: number;
+  avg_weekly_units: number;
+  cv?: number | null;
+  abc_class: "A" | "B" | "C";
+  xyz_class: "X" | "Y" | "Z";
+  combined_class: string;
+  strategy: string;
+}
+export interface AbcXyzMatrixCell {
+  combined: string;
+  abc_class: "A" | "B" | "C";
+  xyz_class: "X" | "Y" | "Z";
+  count: number;
+  units: number;
+  revenue: number;
+  revenue_pct: number;
+}
+export interface AbcXyzResponse {
+  channel_id?: number | null;
+  days: number;
+  weeks: number;
+  total_revenue: number;
+  matrix: AbcXyzMatrixCell[];
+  rows: AbcXyzRow[];
+}
+
 // Tendencia (time-series)
 export interface TrendPoint {
   period_start: string;

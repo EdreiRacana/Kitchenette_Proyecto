@@ -114,6 +114,8 @@ export const retailApi = {
     api.get<import("./types").HeatmapFilters>("/retail/analytics/heatmap/filters", { params: { channel_id } }).then(r => r.data),
   abc: (opts?: { channel_id?: number; days?: number }) =>
     api.get<import("./types").ABCResponse>("/retail/analytics/abc", { params: opts }).then(r => r.data),
+  abcXyz: (opts?: { channel_id?: number; days?: number }) =>
+    api.get<import("./types").AbcXyzResponse>("/retail/analytics/abc-xyz", { params: opts }).then(r => r.data),
   trend: (opts?: {
     channel_id?: number; variant_id?: number; store_id?: number;
     period_type?: "day" | "week" | "month"; weeks_back?: number;
@@ -200,6 +202,8 @@ export const retailApi = {
       api.get(`/retail/reports/service-level.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
     abc: (params?: { channel_id?: number; days?: number }) =>
       api.get(`/retail/reports/abc.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
+    abcXyz: (params?: { channel_id?: number; days?: number }) =>
+      api.get(`/retail/reports/abc-xyz.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
     replenishment: (params?: { channel_id?: number }) =>
       api.get(`/retail/reports/replenishment.xlsx`, { params, responseType: "blob" }).then(r => r.data as Blob),
     alerts: (params?: { channel_id?: number; status?: string; severity?: string }) =>

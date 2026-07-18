@@ -2419,6 +2419,169 @@ async def abc_classification(
     )
 
 
+# ── Analytics: ABC-XYZ (segmentación de surtido) ─────────────────────────
+
+# Estrategia recomendada por celda de la matriz 3×3.
+_ABCXYZ_STRATEGY = {
+    "AX": "Alto valor, demanda estable → reabasto automático, stock de seguridad bajo.",
+    "AY": "Alto valor, demanda variable → pronóstico + stock de seguridad medio.",
+    "AZ": "Alto valor, demanda errática → revisión manual frecuente, buffer alto.",
+    "BX": "Valor medio, estable → regla simple de reorden.",
+    "BY": "Valor medio, variable → pronóstico ligero, revisar estacionalidad.",
+    "BZ": "Valor medio, errático → vigilar; buffer moderado.",
+    "CX": "Bajo valor, estable → mínimos; candidato a surtido base.",
+    "CY": "Bajo valor, variable → racionalizar surtido.",
+    "CZ": "Bajo valor, errático → candidato a descontinuar.",
+}
+
+
+def _xyz_class(cv: Optional[float]) -> str:
+    """X estable (CV ≤ 0.5), Y variable (≤ 1.0), Z errático (> 1.0 o sin media)."""
+    if cv is None:
+        return "Z"
+    if cv <= 0.5:
+        return "X"
+    if cv <= 1.0:
+        return "Y"
+    return "Z"
+
+
+async def abc_xyz(
+    db: AsyncSession, channel_id: Optional[int] = None, days: int = 90,
+) -> schemas.AbcXyzResponse:
+    """Segmentación ABC-XYZ del catálogo:
+      ABC — por facturación acumulada (Pareto): A ≤80%, B ≤95%, C resto.
+      XYZ — por variabilidad de la demanda (coef. de variación del sell-out
+            semanal): X estable, Y variable, Z errático.
+    Cruza ambos ejes en 9 clases con estrategia de reabasto recomendada.
+    Las semanas sin venta cuentan como 0 (penalizan a los SKUs esporádicos
+    hacia Z), por eso se rellena la serie hasta el número de semanas de la
+    ventana."""
+    import math
+
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+    weeks = max(1, round(days / 7))
+
+    stmt = (
+        select(
+            models.SellOutReport.variant_id,
+            models.SellOutReport.period_start,
+            func.max(models.SellOutReport.sku).label("sku"),
+            func.max(models.SellOutReport.product_name).label("product_name"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units"),
+            func.coalesce(func.sum(models.SellOutReport.revenue), 0.0).label("revenue"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .where(
+            models.SellOutReport.period_start >= since,
+            models.SellOutReport.variant_id.isnot(None),
+        )
+        .group_by(models.SellOutReport.variant_id, models.SellOutReport.period_start)
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailStore.channel_id == channel_id)
+    rows = (await db.execute(stmt)).all()
+
+    # Agrupa por variante: serie semanal (por ISO-week) + revenue total
+    per_variant: Dict[int, Dict[str, Any]] = {}
+    for r in rows:
+        vid = int(r.variant_id)
+        d = per_variant.setdefault(vid, {
+            "sku": r.sku, "product_name": r.product_name,
+            "weeks": {}, "revenue": 0.0, "units": 0,
+        })
+        ps = r.period_start
+        wk = ps.isocalendar()  # (year, week, weekday)
+        key = (wk[0], wk[1])
+        d["weeks"][key] = d["weeks"].get(key, 0) + int(r.units or 0)
+        d["revenue"] += float(r.revenue or 0.0)
+        d["units"] += int(r.units or 0)
+        if not d["sku"] and r.sku:
+            d["sku"] = r.sku
+        if not d["product_name"] and r.product_name:
+            d["product_name"] = r.product_name
+
+    total_rev = sum(d["revenue"] for d in per_variant.values())
+    if total_rev <= 0 or not per_variant:
+        empty_matrix = [
+            schemas.AbcXyzMatrixCell(combined=a + x, abc_class=a, xyz_class=x,
+                                     count=0, units=0, revenue=0.0, revenue_pct=0.0)
+            for a in ("A", "B", "C") for x in ("X", "Y", "Z")
+        ]
+        return schemas.AbcXyzResponse(
+            channel_id=channel_id, days=days, weeks=weeks,
+            total_revenue=0.0, matrix=empty_matrix, rows=[],
+        )
+
+    # Ordena por revenue desc para el eje ABC
+    ordered = sorted(per_variant.items(), key=lambda kv: -kv[1]["revenue"])
+
+    out: List[schemas.AbcXyzRow] = []
+    cum = 0.0
+    for vid, d in ordered:
+        rev = d["revenue"]
+        pct = round(rev / total_rev * 100.0, 2)
+        prev_pct = round(cum / total_rev * 100.0, 2)
+        cum += rev
+        cum_pct = round(cum / total_rev * 100.0, 2)
+        if prev_pct < 80.0:
+            abc = "A"
+        elif prev_pct < 95.0:
+            abc = "B"
+        else:
+            abc = "C"
+
+        # Serie semanal rellenada con ceros hasta 'weeks'
+        series = list(d["weeks"].values())
+        if len(series) < weeks:
+            series = series + [0] * (weeks - len(series))
+        mean = sum(series) / weeks
+        if mean > 0:
+            var = sum((x - mean) ** 2 for x in series) / weeks
+            cv = math.sqrt(var) / mean
+        else:
+            cv = None
+        xyz = _xyz_class(cv)
+        combined = abc + xyz
+
+        out.append(schemas.AbcXyzRow(
+            variant_id=vid, sku=d["sku"], product_name=d["product_name"],
+            total_units=int(d["units"]), total_revenue=round(rev, 2),
+            revenue_pct=pct, cumulative_pct=cum_pct,
+            avg_weekly_units=round(mean, 2),
+            cv=round(cv, 2) if cv is not None else None,
+            abc_class=abc, xyz_class=xyz, combined_class=combined,
+            strategy=_ABCXYZ_STRATEGY.get(combined, ""),
+        ))
+
+    # Matriz 3×3
+    matrix_agg: Dict[str, Dict[str, float]] = {
+        a + x: {"count": 0, "units": 0, "revenue": 0.0}
+        for a in ("A", "B", "C") for x in ("X", "Y", "Z")
+    }
+    for row in out:
+        cell = matrix_agg[row.combined_class]
+        cell["count"] += 1
+        cell["units"] += row.total_units
+        cell["revenue"] += row.total_revenue
+    matrix = [
+        schemas.AbcXyzMatrixCell(
+            combined=a + x, abc_class=a, xyz_class=x,
+            count=int(matrix_agg[a + x]["count"]),
+            units=int(matrix_agg[a + x]["units"]),
+            revenue=round(matrix_agg[a + x]["revenue"], 2),
+            revenue_pct=round(matrix_agg[a + x]["revenue"] / total_rev * 100.0, 1) if total_rev > 0 else 0.0,
+        )
+        for a in ("A", "B", "C") for x in ("X", "Y", "Z")
+    ]
+
+    return schemas.AbcXyzResponse(
+        channel_id=channel_id, days=days, weeks=weeks,
+        total_revenue=round(total_rev, 2), matrix=matrix, rows=out,
+    )
+
+
 # ── Analytics: tendencia (time-series) ───────────────────────────────────
 
 _MONTHS_ES = ["ene", "feb", "mar", "abr", "may", "jun",

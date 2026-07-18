@@ -458,6 +458,17 @@ async def report_abc_xlsx(
     return _xlsx_response(content, "retail_abc.xlsx")
 
 
+@router.get("/reports/abc-xyz.xlsx")
+async def report_abc_xyz_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=14, le=365),
+):
+    axz = await service.abc_xyz(db, channel_id=channel_id, days=days)
+    content = retail_reports.build_abc_xyz_report(axz)
+    return _xlsx_response(content, "retail_abc_xyz.xlsx")
+
+
 @router.get("/reports/alerts.xlsx")
 async def report_alerts_xlsx(
     db: DB, _: CurrentUser,
@@ -543,6 +554,15 @@ async def analytics_abc(
     days: int = Query(90, ge=1, le=365),
 ):
     return await service.abc_classification(db, channel_id=channel_id, days=days)
+
+
+@router.get("/analytics/abc-xyz", response_model=schemas.AbcXyzResponse)
+async def analytics_abc_xyz(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=14, le=365),
+):
+    return await service.abc_xyz(db, channel_id=channel_id, days=days)
 
 
 @router.get("/analytics/trend", response_model=schemas.TrendResponse)

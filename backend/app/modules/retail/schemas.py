@@ -415,6 +415,43 @@ class ABCResponse(BaseModel):
     rows: List[ABCRow]
 
 
+# ── Analytics: ABC-XYZ (segmentación de surtido) ────────────────────────
+
+class AbcXyzRow(BaseModel):
+    variant_id: Optional[int] = None
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    total_units: int
+    total_revenue: float
+    revenue_pct: float
+    cumulative_pct: float
+    avg_weekly_units: float
+    cv: Optional[float] = None          # coef. de variación (None = sin ventas)
+    abc_class: str                       # A | B | C
+    xyz_class: str                       # X | Y | Z
+    combined_class: str                  # AX, AY, … CZ
+    strategy: str
+
+
+class AbcXyzMatrixCell(BaseModel):
+    combined: str                        # AX … CZ
+    abc_class: str
+    xyz_class: str
+    count: int
+    units: int
+    revenue: float
+    revenue_pct: float
+
+
+class AbcXyzResponse(BaseModel):
+    channel_id: Optional[int] = None
+    days: int
+    weeks: int
+    total_revenue: float
+    matrix: List[AbcXyzMatrixCell]       # 9 celdas (A/B/C × X/Y/Z)
+    rows: List[AbcXyzRow]
+
+
 # ── Analytics: tendencia (time-series) ──────────────────────────────────
 
 class TrendPoint(BaseModel):

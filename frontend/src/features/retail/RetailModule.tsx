@@ -11,7 +11,7 @@ import {
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
   Bell, EyeOff, CheckCircle2, Zap, Warehouse, Grid3x3, BarChart3, ArrowRight,
-  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown, DollarSign, Boxes, Clock, Gauge,
+  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown, DollarSign, Boxes, Clock, Gauge, Grid2x2,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -27,7 +27,7 @@ import type {
   RetailImportProfile, DetectColumnsResponse, PreviewResponse,
   TrendResponse, DistributionResponse, LostSalesResponse,
   ProfitabilityResponse, ProfitGroupBy, ExcessInventoryResponse, AgingResponse,
-  ServiceLevelResponse, ServiceGroupBy,
+  ServiceLevelResponse, ServiceGroupBy, AbcXyzResponse,
 } from "./types";
 
 type Tokens = any;
@@ -2580,7 +2580,7 @@ function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null
 
 
 // ── Analíticas: Heatmap + ABC ────────────────────────────────────────────
-type AnalyticsSub = "heatmap" | "trend" | "profitability" | "excess" | "aging" | "service" | "distribution" | "lost_sales" | "abc";
+type AnalyticsSub = "heatmap" | "trend" | "profitability" | "excess" | "aging" | "service" | "distribution" | "lost_sales" | "abc" | "abcxyz";
 
 function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }) {
   const [sub, setSub] = useState<AnalyticsSub>("heatmap");
@@ -2594,6 +2594,7 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
     { key: "distribution", label: "Distribución (voids)", icon: Network },
     { key: "lost_sales", label: "Venta perdida", icon: TrendingDown },
     { key: "abc", label: "Clasificación ABC", icon: TrendingUp },
+    { key: "abcxyz", label: "ABC-XYZ", icon: Grid2x2 },
   ];
   return (
     <div>
@@ -2621,6 +2622,7 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
       {sub === "distribution" && <DistributionView t={t} channelId={channelId} />}
       {sub === "lost_sales" && <LostSalesView t={t} channelId={channelId} />}
       {sub === "abc" && <ABCView t={t} channelId={channelId} />}
+      {sub === "abcxyz" && <AbcXyzView t={t} channelId={channelId} />}
     </div>
   );
 }
@@ -3485,6 +3487,160 @@ function ServiceLevelView({ t, channelId }: { t: Tokens; channelId: number | nul
           <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
             <b>In-stock (OSA)</b> = % de cortes con stock disponible. <b>Fill rate</b> = ventas ÷ (ventas + perdidas estimadas por quiebre).
             Benchmark de retail: OSA ≥ 95%. Sólo se evalúan combos con venta (surtido activo).
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AbcXyzView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<AbcXyzResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(90);
+  const [selCell, setSelCell] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.abcXyz({ channel_id: channelId || undefined, days });
+        if (!cancelled) { setData(r); setSelCell(null); }
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, days]);
+
+  const abcColor = (a: string) => a === "A" ? t.good : a === "B" ? t.nova : t.textLo;
+  const cellByKey = (k: string) => data?.matrix.find(c => c.combined === k);
+  const visibleRows = data ? (selCell ? data.rows.filter(r => r.combined_class === selCell) : data.rows) : [];
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12, color: t.textLo, maxWidth: 640 }}>
+          <b style={{ color: t.textMid }}>ABC-XYZ</b>: cruza el valor (ABC por facturación) con la
+          previsibilidad de la demanda (XYZ por variabilidad). Cada celda sugiere una estrategia de reabasto.
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <FilterField t={t} label="Ventana">
+            <select value={days} onChange={e => setDays(Number(e.target.value))}
+              style={{ ...inputStyle(t), minWidth: 110, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value={90}>90 días</option>
+              <option value={180}>180 días</option>
+              <option value={365}>1 año</option>
+            </select>
+          </FilterField>
+          <ExcelBtn t={t} label="Excel"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.abcXyz({ channel_id: channelId || undefined, days }),
+              `retail_abc_xyz.xlsx`,
+            )}
+          />
+        </div>
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Calculando…</div>}
+      {!loading && data && data.rows.length === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <Grid2x2 size={28} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin ventas para segmentar</div>
+        </div>
+      )}
+      {!loading && data && data.rows.length > 0 && (
+        <>
+          {/* Matriz 3×3 clickeable */}
+          <div style={{ overflowX: "auto", marginBottom: 14 }}>
+            <table style={{ borderCollapse: "separate", borderSpacing: 6 }}>
+              <thead>
+                <tr>
+                  <th></th>
+                  {[["X", "Estable"], ["Y", "Variable"], ["Z", "Errático"]].map(([x, lbl]) => (
+                    <th key={x} style={{ fontSize: 11, color: t.textLo, fontWeight: 700, padding: "2px 8px", textAlign: "center", minWidth: 150 }}>
+                      {x} · {lbl}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(["A", "B", "C"] as const).map(a => (
+                  <tr key={a}>
+                    <th style={{ fontSize: 12, fontWeight: 800, color: abcColor(a), padding: "2px 8px", textAlign: "right" }}>
+                      Clase {a}
+                    </th>
+                    {(["X", "Y", "Z"] as const).map(x => {
+                      const key = a + x;
+                      const c = cellByKey(key);
+                      const active = selCell === key;
+                      const count = c?.count ?? 0;
+                      return (
+                        <td key={x}>
+                          <button onClick={() => setSelCell(active ? null : (count > 0 ? key : null))}
+                            disabled={count === 0}
+                            style={{
+                              width: "100%", minWidth: 150, textAlign: "left", cursor: count > 0 ? "pointer" : "default",
+                              background: active ? abcColor(a) + "33" : count > 0 ? t.panel : t.panel2,
+                              border: `1px solid ${active ? abcColor(a) : t.border}`,
+                              borderRadius: 8, padding: "10px 12px",
+                              opacity: count === 0 ? 0.5 : 1,
+                            }}>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: abcColor(a) }}>{key}</div>
+                            <div style={{ fontSize: 12, color: t.textHi, marginTop: 2 }}>{num(count)} SKUs</div>
+                            <div style={{ fontSize: 11, color: t.textLo }}>{(c?.revenue_pct ?? 0).toFixed(1)}% ingreso</div>
+                          </button>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+            <div style={{ fontSize: 12, color: t.textMid }}>
+              {selCell
+                ? <>Mostrando <b style={{ color: abcColor(selCell[0]) }}>{selCell}</b> · {visibleRows.length} SKUs · <button onClick={() => setSelCell(null)} style={{ background: "none", border: "none", color: t.nova, cursor: "pointer", fontSize: 12 }}>ver todos</button></>
+                : <>{data.rows.length} SKUs · {data.weeks} semanas de historia</>}
+            </div>
+          </div>
+
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: "52vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                  <th style={thStyle(t)}>Clase</th>
+                  <th style={thStyle(t)}>SKU</th>
+                  <th style={thStyle(t)}>Producto</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Ingreso</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Prom sem</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>CV</th>
+                  <th style={thStyle(t)}>Estrategia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRows.map((r, i) => (
+                  <tr key={r.variant_id ?? i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                    <td style={tdStyle(t)}>
+                      <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: abcColor(r.abc_class) + "22", color: abcColor(r.abc_class), fontWeight: 800 }}>
+                        {r.combined_class}
+                      </span>
+                    </td>
+                    <td style={{ ...tdStyle(t), fontFamily: "monospace" }}>{r.sku || "—"}</td>
+                    <td style={tdStyle(t)}>{r.product_name || "—"}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 600 }}>{mxn(r.total_revenue)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.avg_weekly_units.toFixed(1)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: r.xyz_class === "Z" ? t.bad : r.xyz_class === "Y" ? t.warn : t.good }}>
+                      {r.cv != null ? r.cv.toFixed(2) : "∞"}
+                    </td>
+                    <td style={{ ...tdStyle(t), fontSize: 11.5, color: t.textLo }}>{r.strategy}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
+            <b>ABC</b>: A = top 80% de facturación, B = siguiente 15%, C = último 5%. <b>XYZ</b> (coef. de variación): X ≤ 0.5 estable, Y ≤ 1.0 variable, Z {">"} 1.0 errático. Los <b>AX</b> son tu núcleo (automatiza); los <b>CZ</b>, candidatos a descontinuar.
           </div>
         </>
       )}

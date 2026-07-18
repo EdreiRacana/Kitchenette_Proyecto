@@ -829,6 +829,62 @@ def build_service_level_report(sl: Any) -> bytes:
     return _to_bytes(wb)
 
 
+# ── Reporte 15: ABC-XYZ (segmentación de surtido) ───────────────────────
+
+_ABCXYZ_CELL_FILL = {
+    "A": PatternFill("solid", fgColor="D1FAE5"),
+    "B": PatternFill("solid", fgColor="DBEAFE"),
+    "C": PatternFill("solid", fgColor="F3F4F6"),
+}
+
+
+def build_abc_xyz_report(axz: Any) -> bytes:
+    wb = Workbook()
+    # Hoja 1: matriz 3×3 (conteo + % de ingreso por celda)
+    ws = wb.active
+    ws.title = "Matriz ABC-XYZ"
+    ws.append(["", "X · estable", "Y · variable", "Z · errático"])
+    _style_header(ws, 4)
+    cells = {c.combined: c for c in axz.matrix}
+    for a in ("A", "B", "C"):
+        row = [f"Clase {a}"]
+        for x in ("X", "Y", "Z"):
+            c = cells.get(a + x)
+            row.append(f"{c.count} SKUs · {c.revenue_pct:.1f}% ingreso" if c else "—")
+        ws.append(row)
+        fill = _ABCXYZ_CELL_FILL.get(a)
+        if fill:
+            ws.cell(row=ws.max_row, column=1).fill = fill
+    _autosize(ws)
+    _company_header(
+        ws, "Matriz ABC-XYZ",
+        f"ABC por facturación × XYZ por variabilidad de demanda · "
+        f"{len(axz.rows)} SKUs · {axz.weeks} semanas · Total $ {axz.total_revenue:,.2f}",
+        4,
+    )
+
+    # Hoja 2: detalle por SKU
+    ws2 = wb.create_sheet("Detalle")
+    headers = ["Clase", "SKU", "Producto", "Unidades", "Ingreso", "% Ingreso",
+                "% Acum", "Prom sem", "CV", "ABC", "XYZ", "Estrategia"]
+    ws2.append(headers)
+    _style_header(ws2, len(headers))
+    for r in axz.rows:
+        ws2.append([
+            r.combined_class, r.sku or "", r.product_name or "",
+            int(r.total_units or 0), float(r.total_revenue or 0.0),
+            float(r.revenue_pct or 0.0), float(r.cumulative_pct or 0.0),
+            float(r.avg_weekly_units or 0.0),
+            float(r.cv) if r.cv is not None else "∞",
+            r.abc_class, r.xyz_class, r.strategy,
+        ])
+        fill = _ABCXYZ_CELL_FILL.get(r.abc_class)
+        if fill:
+            ws2.cell(row=ws2.max_row, column=1).fill = fill
+    _autosize(ws2)
+    return _to_bytes(wb)
+
+
 # ── Reporte ejecutivo PDF semanal ────────────────────────────────────────
 
 def build_executive_pdf(
