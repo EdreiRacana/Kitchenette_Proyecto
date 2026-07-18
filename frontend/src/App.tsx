@@ -525,8 +525,8 @@ function ComparisonChart({ t, series, xlabels }) {
         {hv && <line x1={x(hv.i)} x2={x(hv.i)} y1={P.t} y2={P.t + ih} stroke={t.nova} strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />}
         {series.cur.map((v, i) => <circle key={i} cx={x(i)} cy={y(v)} r="3.2" fill={t.panel} stroke={t.nova} strokeWidth="2" />)}
         {/* Marcador "ahora" (último punto) con glow */}
-        {n > 0 && <circle cx={x(n - 1)} cy={y(series.cur[n - 1])} r="6" fill={t.nova} opacity="0.9" filter="url(#cmpGlow)" />}
-        {n > 0 && <circle cx={x(n - 1)} cy={y(series.cur[n - 1])} r="3.4" fill="#fff" stroke={t.nova} strokeWidth="2" />}
+        {n > 1 && <circle cx={x(n - 1)} cy={y(series.cur[n - 1])} r="6" fill={t.nova} opacity="0.9" filter="url(#cmpGlow)" />}
+        {n > 1 && <circle cx={x(n - 1)} cy={y(series.cur[n - 1])} r="3.4" fill="#fff" stroke={t.nova} strokeWidth="2" />}
         {hv && <circle cx={x(hv.i)} cy={y(hv.prev)} r="4" fill={t.panel} stroke={t.textLo} strokeWidth="2" />}
         {hv && <circle cx={x(hv.i)} cy={y(hv.cur)} r="5" fill={t.panel} stroke={t.nova} strokeWidth="2.5" />}
         {xlabels.map((lb, i) => <text key={i} x={x(i)} y={H - 9} fill={t.textLo} fontSize="12" textAnchor="middle">{lb}</text>)}
@@ -631,8 +631,8 @@ function IncomeExpenseArea({ t, data }: any) {
         <path d={linePath(ingresos)} fill="none" stroke={t.nova} strokeWidth="4.5" opacity="0.35" filter="url(#ieGlow)" strokeLinejoin="round" strokeLinecap="round" />
         <path d={linePath(ingresos)} fill="none" stroke={t.nova} strokeWidth="1.9" strokeOpacity="0.95" strokeLinejoin="round" strokeLinecap="round" />
         {ingresos.map((v: number, i: number) => <circle key={i} cx={x(i)} cy={y(v)} r="2" fill={t.panel} stroke={t.nova} strokeWidth="1.2" strokeOpacity="0.7" />)}
-        {n > 0 && <circle cx={x(n - 1)} cy={y(ingresos[n - 1])} r="5.5" fill={t.nova} opacity="0.9" filter="url(#ieGlow)" />}
-        {n > 0 && <circle cx={x(n - 1)} cy={y(ingresos[n - 1])} r="3" fill="#fff" stroke={t.nova} strokeWidth="1.8" />}
+        {n > 1 && <circle cx={x(n - 1)} cy={y(ingresos[n - 1])} r="5.5" fill={t.nova} opacity="0.9" filter="url(#ieGlow)" />}
+        {n > 1 && <circle cx={x(n - 1)} cy={y(ingresos[n - 1])} r="3" fill="#fff" stroke={t.nova} strokeWidth="1.8" />}
         {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={P.t} y2={P.t + ih} stroke={t.nova} strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />}
         {data.map((d: any, i: number) => <text key={i} x={x(i)} y={H - 9} fill={t.textLo} fontSize="11" textAnchor="middle">{(d.period || "").slice(-5)}</text>)}
       </svg>
@@ -708,6 +708,7 @@ function TopCustomersRanked({ t, items, onClick }: any) {
 
 /* ── Chart: Donut (canales) con centro ─────────────────────────────── */
 function DonutChart({ t, items, colors }: any) {
+  const [hover, setHover] = useState<number | null>(null);
   if (!items || items.length === 0) {
     return <div style={{ padding: "40px 0", textAlign: "center", color: t.textLo, fontSize: 12.5 }}>Sin datos de canal.</div>;
   }
@@ -730,6 +731,7 @@ function DonutChart({ t, items, colors }: any) {
     return { d: `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`, color, frac, val, name };
   });
   const topItem = arcs.reduce((max: any, a: any) => (a.frac > (max?.frac ?? 0) ? a : max), null as any);
+  const shown = hover !== null ? arcs[hover] : topItem;
   return (
     <div>
       <div style={{ position: "relative", display: "flex", justifyContent: "center" }}>
@@ -741,21 +743,26 @@ function DonutChart({ t, items, colors }: any) {
           <circle cx={cx} cy={cy} r={r} fill="none" stroke={t.panel3} strokeWidth={sw} />
           {/* Glow por segmento */}
           {arcs.map((a: any, i: number) => a.d && (
-            <path key={`g${i}`} d={a.d} fill="none" stroke={a.color} strokeWidth={sw} strokeLinecap="round" opacity="0.5" filter="url(#donutGlow)" />
+            <path key={`g${i}`} d={a.d} fill="none" stroke={a.color} strokeWidth={sw} strokeLinecap="round" opacity={hover === null || hover === i ? 0.5 : 0.15} filter="url(#donutGlow)" />
           ))}
-          {/* Segmentos nítidos */}
+          {/* Segmentos nítidos (interactivos) */}
           {arcs.map((a: any, i: number) => a.d && (
-            <path key={i} d={a.d} fill="none" stroke={a.color} strokeWidth={sw} strokeLinecap="round" opacity="0.95" />
+            <path key={i} d={a.d} fill="none" stroke={a.color} strokeWidth={hover === i ? sw + 4 : sw} strokeLinecap="round"
+              opacity={hover === null || hover === i ? 0.95 : 0.4}
+              style={{ cursor: "pointer", transition: "stroke-width .12s, opacity .12s" }}
+              onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} />
           ))}
         </svg>
-        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center" }}>
-          <div style={{ fontSize: 24, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{topItem ? Math.round(topItem.frac * 100) : 0}%</div>
-          <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 }}>{topItem?.name || "—"}</div>
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center", pointerEvents: "none" }}>
+          <div style={{ fontSize: 24, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{shown ? Math.round(shown.frac * 100) : 0}%</div>
+          <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 }}>{shown?.name || "—"}</div>
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12 }}>
         {arcs.map((a: any, i: number) => (
-          <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
+          <div key={i}
+            onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
+            style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, cursor: "pointer", borderRadius: 6, padding: "1px 4px", margin: "0 -4px", background: hover === i ? t.panel3 : "transparent", opacity: hover === null || hover === i ? 1 : 0.5, transition: "background .12s, opacity .12s" }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6, color: t.textMid }}>
               <span style={{ width: 9, height: 9, borderRadius: 3, background: a.color }} /> {a.name}
             </span>
