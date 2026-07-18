@@ -90,6 +90,17 @@ export const retailApi = {
   dismissAlert: (id: number, notes?: string) =>
     api.post<RetailAlert>(`/retail/alerts/${id}/dismiss`, { notes: notes || undefined }).then(r => r.data),
 
+  // Promociones
+  listPromotions: (opts?: { channel_id?: number; active_only?: boolean }) =>
+    api.get<import("./types").RetailPromotion[]>("/retail/promotions", { params: opts }).then(r => r.data),
+  createPromotion: (data: import("./types").RetailPromotionCreate) =>
+    api.post<import("./types").RetailPromotion>("/retail/promotions", data).then(r => r.data),
+  updatePromotion: (id: number, data: Partial<import("./types").RetailPromotionCreate>) =>
+    api.patch<import("./types").RetailPromotion>(`/retail/promotions/${id}`, data).then(r => r.data),
+  deletePromotion: (id: number) => api.delete(`/retail/promotions/${id}`),
+  promotionEffectiveness: (id: number) =>
+    api.get<import("./types").PromotionEffectiveness>(`/retail/promotions/${id}/effectiveness`).then(r => r.data),
+
   // Consignación
   listConsignmentWarehouses: () =>
     api.get<import("./types").ConsignmentWarehouseOption[]>("/retail/consignment/warehouses").then(r => r.data),

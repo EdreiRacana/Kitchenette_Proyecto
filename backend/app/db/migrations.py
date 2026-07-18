@@ -417,6 +417,28 @@ _RETAIL_STATEMENTS = [
     "ALTER TABLE retail_channels          ADD COLUMN IF NOT EXISTS return_rate_max_pct DOUBLE PRECISION DEFAULT 5.0 NOT NULL",
     "ALTER TABLE retail_sellout_reports   ADD COLUMN IF NOT EXISTS units_returned      INTEGER DEFAULT 0 NOT NULL",
     "ALTER TABLE retail_sellout_reports   ADD COLUMN IF NOT EXISTS returns_amount      DOUBLE PRECISION DEFAULT 0.0 NOT NULL",
+    # Promociones (Fase 9) — ventana + alcance + mecánica para medir el lift.
+    """CREATE TABLE IF NOT EXISTS retail_promotions (
+        id             SERIAL PRIMARY KEY,
+        channel_id     INTEGER NOT NULL REFERENCES retail_channels(id) ON DELETE CASCADE,
+        store_id       INTEGER REFERENCES retail_stores(id) ON DELETE SET NULL,
+        variant_id     INTEGER REFERENCES product_variants(id),
+        product_name   VARCHAR,
+        sku            VARCHAR,
+        name           VARCHAR NOT NULL,
+        mechanic       VARCHAR DEFAULT 'descuento' NOT NULL,
+        discount_pct   DOUBLE PRECISION,
+        promo_price    DOUBLE PRECISION,
+        start_date     TIMESTAMPTZ NOT NULL,
+        end_date       TIMESTAMPTZ NOT NULL,
+        baseline_weeks INTEGER DEFAULT 4 NOT NULL,
+        is_active      BOOLEAN DEFAULT TRUE NOT NULL,
+        notes          TEXT,
+        created_at     TIMESTAMPTZ DEFAULT now(),
+        updated_at     TIMESTAMPTZ
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_retail_promotions_channel ON retail_promotions(channel_id)",
+    "CREATE INDEX IF NOT EXISTS ix_retail_promotions_dates ON retail_promotions(start_date, end_date)",
 ]
 
 
