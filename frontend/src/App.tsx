@@ -866,9 +866,9 @@ function Thermometer({ t, actual, target, pct }: any) {
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: 210, height: "auto", display: "block" }}>
         <defs>
           <linearGradient id="thermoFill" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0%" stopColor={MTX.dark} stopOpacity="0.9" />
-            <stop offset="50%" stopColor={MTX.mid} stopOpacity="1" />
-            <stop offset="100%" stopColor={MTX.bright} stopOpacity="1" />
+            <stop offset="0%" stopColor={MTX.dark} stopOpacity="0.3" />
+            <stop offset="50%" stopColor={MTX.mid} stopOpacity="0.5" />
+            <stop offset="100%" stopColor={MTX.bright} stopOpacity="0.72" />
           </linearGradient>
           <radialGradient id="thermoBase" cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor={fillColor} stopOpacity="0.55" />
@@ -903,7 +903,7 @@ function Thermometer({ t, actual, target, pct }: any) {
 
         {/* Bulbo */}
         <circle cx={cx} cy={bulbCy} r={bulbR} fill={t.panel3} stroke={t.border} strokeWidth="1" />
-        <circle cx={cx} cy={bulbCy} r={bulbR - 3} fill={fillColor} fillOpacity="0.8" filter="url(#thermoGlow)" />
+        <circle cx={cx} cy={bulbCy} r={bulbR - 3} fill={fillColor} fillOpacity="0.55" filter="url(#thermoGlow)" />
         <text x={cx} y={bulbCy + 5} textAnchor="middle" fontSize="17" fontWeight="800" fill="#fff">{fillPct}%</text>
 
         {/* Rótulo META (centrado sobre la columna) + línea de tope */}
