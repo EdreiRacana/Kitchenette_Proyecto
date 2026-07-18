@@ -1348,21 +1348,28 @@ function BIModuleBody({
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>Análisis ABC de inventario</div>
             <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 16 }}>Clasificación real por valor acumulado: A ≤80% · B ≤95% · C resto, calculado sobre las categorías de inventario</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
-              {(["A", "B", "C"] as const).map(cat => {
-                const abcInfo = abc[cat];
-                const color = cat === "A" ? t.good : cat === "B" ? t.warn : t.bad;
-                const label = cat === "A" ? "Alta concentración" : cat === "B" ? "Media concentración" : "Baja concentración";
-                const pct = D.inventarioVal ? Math.round((abcInfo.value / D.inventarioVal) * 100) : 0;
-                return (
-                  <div key={cat} style={{ background: color + "12", border: `1px solid ${color}33`, borderRadius: 10, padding: 16, textAlign: "center" }}>
-                    <div style={{ fontSize: 28, fontWeight: 900, color, marginBottom: 4 }}>{cat}</div>
-                    <div style={{ fontSize: 12, color: t.textLo, marginBottom: 8 }}>{label}</div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: t.textHi }}>{fmt(abcInfo.value, "money")}</div>
-                    <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 4 }}>{abcInfo.count} categorías · {pct}% del valor</div>
-                  </div>
-                );
-              })}
+            <div style={{ display: "grid", gridTemplateColumns: isMobileBI() ? "1fr" : "200px 1fr", gap: 18, alignItems: "center" }}>
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <DonutChart
+                  data={(["A", "B", "C"] as const).map(cat => ({ label: `Clase ${cat}`, value: abc[cat].value, color: cat === "A" ? t.good : cat === "B" ? t.warn : t.bad }))}
+                  t={t} size={190} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                {(["A", "B", "C"] as const).map(cat => {
+                  const abcInfo = abc[cat];
+                  const color = cat === "A" ? t.good : cat === "B" ? t.warn : t.bad;
+                  const label = cat === "A" ? "Alta concentración" : cat === "B" ? "Media concentración" : "Baja concentración";
+                  const pct = D.inventarioVal ? Math.round((abcInfo.value / D.inventarioVal) * 100) : 0;
+                  return (
+                    <div key={cat} style={{ background: color + "12", border: `1px solid ${color}33`, borderRadius: 10, padding: 16, textAlign: "center" }}>
+                      <div style={{ fontSize: 28, fontWeight: 900, color, marginBottom: 4 }}>{cat}</div>
+                      <div style={{ fontSize: 12, color: t.textLo, marginBottom: 8 }}>{label}</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: t.textHi }}>{fmt(abcInfo.value, "money")}</div>
+                      <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 4 }}>{abcInfo.count} categorías · {pct}% del valor</div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
@@ -1425,6 +1432,41 @@ function BIModuleBody({
             <WaterfallChart t={t} ingresos={D.ingresos} gastosCategorias={D.gastosCat} utilidad={D.utilidad} />
           </div>
 
+          <div style={{ display: "grid", gridTemplateColumns: isMobileBI() ? "1fr" : "1fr 1.3fr", gap: 14 }}>
+            {/* Gauge de margen neto */}
+            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20, display: "flex", flexDirection: "column" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Margen neto</div>
+              <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 8 }}>Utilidad sobre ingresos del período · objetivo 15%</div>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <GaugeArc value={Math.max(0, Math.min(D.margenNeto, 100))} target={15} max={100} t={t} />
+              </div>
+            </div>
+            {/* Donut de estructura de egresos */}
+            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Estructura de egresos</div>
+              <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 16 }}>Distribución del gasto total por categoría</div>
+              {D.gastosCat.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: t.textLo, padding: "20px 0", textAlign: "center" }}>No hay gastos registrados en este período.</div>
+              ) : (
+                <div style={{ display: isMobileBI() ? "block" : "flex", alignItems: "center", gap: 20 }}>
+                  <div style={{ display: "flex", justifyContent: "center", flexShrink: 0, marginBottom: isMobileBI() ? 12 : 0 }}>
+                    <DonutChart data={D.gastosCat.map((g: DrillRow, i: number) => ({ label: g.label, value: g.value, color: CHANNEL_COLORS[i % CHANNEL_COLORS.length] }))} t={t} size={150} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {D.gastosCat.slice(0, 6).map((g: DrillRow, i: number) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                        <span style={{ width: 10, height: 10, borderRadius: 99, background: CHANNEL_COLORS[i % CHANNEL_COLORS.length], flexShrink: 0 }} />
+                        <span style={{ fontSize: 12.5, color: t.textMid, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.label}</span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>{g.pct ?? 0}%</span>
+                        <span style={{ fontSize: 12, color: t.textLo }}>{fmt(g.value, "money")}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 16 }}>Razones financieras (calculadas con datos reales)</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
@@ -1445,8 +1487,6 @@ function BIModuleBody({
               })}
             </div>
           </div>
-
-          <DrillTable rows={D.gastosCat} t={t} title="Distribución de egresos por categoría" emptyMsg="No hay gastos registrados en este período." />
         </div>
       )}
 
@@ -1480,24 +1520,43 @@ function BIModuleBody({
                 </div>
               )}
             </div>
-            {/* Histograma de rangos salariales */}
-            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Distribución salarial</div>
-              <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 16 }}>Empleados por rango de salario base mensual</div>
-              {D.salaryBuckets.length === 0 ? (
-                <div style={{ fontSize: 12.5, color: t.textLo, padding: "20px 0", textAlign: "center" }}>Sin datos de salario.</div>
-              ) : D.salaryBuckets.map((b, i) => (
-                <div key={i} style={{ marginBottom: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                    <span style={{ fontSize: 12.5, color: t.textMid }}>{b.label}</span>
-                    <span style={{ fontSize: 12.5, color: t.textHi, fontWeight: 700 }}>{b.value} <span style={{ fontSize: 10.5, color: t.textLo }}>· {(b.pct ?? 0).toFixed(0)}%</span></span>
+            {/* Gauge de asistencia del día */}
+            <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20, display: "flex", flexDirection: "column" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Tasa de asistencia (hoy)</div>
+              <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 8 }}>Presentes sobre el total esperado · objetivo 90%</div>
+              {(D.hrPresentToday + D.hrAbsentToday) === 0 ? (
+                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12.5, color: t.textLo, padding: "20px 0" }}>Sin registros de asistencia hoy.</div>
+              ) : (
+                <>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <GaugeArc value={Math.round((D.hrPresentToday / (D.hrPresentToday + D.hrAbsentToday)) * 100)} target={90} max={100} t={t} />
                   </div>
-                  <div style={{ height: 6, background: t.panel3, borderRadius: 99 }}>
-                    <div style={{ width: `${b.pct ?? 0}%`, height: "100%", borderRadius: 99, background: "#5EBBA9", opacity: 0.6 }} />
+                  <div style={{ display: "flex", justifyContent: "center", gap: 18, marginTop: 4 }}>
+                    <span style={{ fontSize: 11.5, color: t.textMid, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: 99, background: t.good }} />{D.hrPresentToday} presentes</span>
+                    <span style={{ fontSize: 11.5, color: t.textMid, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: 99, background: t.bad }} />{D.hrAbsentToday} ausentes</span>
                   </div>
-                </div>
-              ))}
+                </>
+              )}
             </div>
+          </div>
+
+          {/* Histograma de rangos salariales */}
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Distribución salarial</div>
+            <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 16 }}>Empleados por rango de salario base mensual</div>
+            {D.salaryBuckets.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: t.textLo, padding: "20px 0", textAlign: "center" }}>Sin datos de salario.</div>
+            ) : D.salaryBuckets.map((b, i) => (
+              <div key={i} style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <span style={{ fontSize: 12.5, color: t.textMid }}>{b.label}</span>
+                  <span style={{ fontSize: 12.5, color: t.textHi, fontWeight: 700 }}>{b.value} <span style={{ fontSize: 10.5, color: t.textLo }}>· {(b.pct ?? 0).toFixed(0)}%</span></span>
+                </div>
+                <div style={{ height: 6, background: t.panel3, borderRadius: 99 }}>
+                  <div style={{ width: `${b.pct ?? 0}%`, height: "100%", borderRadius: 99, background: "#5EBBA9", opacity: 0.6 }} />
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* Barras de plantilla por depto */}
