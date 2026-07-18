@@ -775,56 +775,103 @@ function AlertsList({ t, s, items, onGo }: any) {
 }
 function lang(s: any) { return (s?.nav?.dashboard || "").toLowerCase().includes("dash") ? "en" : "es"; }
 
-/* ── Termómetro vertical (Meta vs Real) ───────────────────────────── */
+/* ── Columna neón (Meta vs Real) — HUD-lite ───────────────────────── */
 function Thermometer({ t, actual, target, pct }: any) {
-  // Layout: tubo vertical con bulbo abajo. El % de llenado sube desde el bulbo.
-  const W = 90, H = 260;
-  const tubeW = 22;
-  const bulbR = 28;
-  const cx = W / 2;
-  const tubeTop = 22;
-  const tubeBottom = H - bulbR - 8;
+  void actual; void target;
+  // Layout HUD: columna vertical con base luminosa; riel de zonas + etiquetas a la derecha.
+  const W = 190, H = 268;
+  const tubeW = 26;
+  const cx = 34;                                   // eje de la columna (a la izquierda)
+  const tubeTop = 26;
+  const bulbR = 30;
+  const bulbCy = H - bulbR - 6;
+  const tubeBottom = H - bulbR - 12;
   const tubeH = tubeBottom - tubeTop;
   const fillPct = Math.max(0, Math.min(100, pct));
   const fillH = (tubeH * fillPct) / 100;
-  // Color según nivel
+  const yFor = (p: number) => tubeBottom - (tubeH * p) / 100;   // p:0..100 → y
+  // Color según nivel (misma lógica de umbrales que antes)
   const fillColor = fillPct >= 90 ? t.good : fillPct >= 65 ? t.nova : fillPct >= 35 ? t.warn : t.bad;
-  const scaleMarks = [0, 25, 50, 75, 100];
+  const yCur = yFor(fillPct);
+  // Zonas (de arriba hacia abajo) — riel de color + etiqueta alineada al centro de la banda
+  const zones = [
+    { from: 90, to: 100, color: t.good, label: "En objetivo", range: "90–100%" },
+    { from: 65, to: 90, color: t.nova, label: "En progreso", range: "65–90%" },
+    { from: 0, to: 65, color: t.bad, label: "Riesgo", range: "< 65%" },
+  ];
+  const railX = 52, railW = 4;
   return (
-    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 18, padding: "8px 0 0" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}>
+    <div style={{ display: "flex", justifyContent: "center", padding: "6px 0 0" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: 210, height: "auto", display: "block" }}>
         <defs>
           <linearGradient id="thermoFill" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0%" stopColor={fillColor} stopOpacity="0.55" />
-            <stop offset="100%" stopColor={fillColor} stopOpacity="0.9" />
+            <stop offset="0%" stopColor={fillColor} stopOpacity="0.45" />
+            <stop offset="100%" stopColor={fillColor} stopOpacity="1" />
           </linearGradient>
+          <radialGradient id="thermoBase" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={fillColor} stopOpacity="0.55" />
+            <stop offset="100%" stopColor={fillColor} stopOpacity="0" />
+          </radialGradient>
+          <filter id="thermoGlow" x="-70%" y="-70%" width="240%" height="240%">
+            <feGaussianBlur stdDeviation="3" result="b" />
+            <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
         </defs>
+
+        {/* Base luminosa (pedestal HUD) */}
+        <ellipse cx={cx} cy={bulbCy + bulbR - 2} rx={40} ry={8} fill="url(#thermoBase)" />
+        <ellipse cx={cx} cy={bulbCy + bulbR - 2} rx={24} ry={4} fill={fillColor} fillOpacity="0.25" />
+
         {/* Tubo de fondo (glass) */}
         <rect x={cx - tubeW / 2} y={tubeTop} width={tubeW} height={tubeH}
               rx={tubeW / 2} fill={t.panel3} stroke={t.border} strokeWidth="1" />
-        {/* Llenado del tubo */}
-        <rect x={cx - tubeW / 2 + 2} y={tubeBottom - fillH}
-              width={tubeW - 4} height={fillH}
-              rx={(tubeW - 4) / 2} fill="url(#thermoFill)" />
-        {/* Bulbo de fondo */}
-        <circle cx={cx} cy={H - bulbR - 4} r={bulbR} fill={t.panel3}
-                stroke={t.border} strokeWidth="1" />
-        {/* Bulbo llenado */}
-        <circle cx={cx} cy={H - bulbR - 4} r={bulbR - 3} fill={fillColor} fillOpacity="0.75" />
-        {/* Texto % dentro del bulbo */}
-        <text x={cx} y={H - bulbR + 1} textAnchor="middle" fontSize="16" fontWeight="700" fill="#fff">
-          {fillPct}%
-        </text>
-      </svg>
-      {/* Escala + valores a la derecha */}
-      <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", height: tubeH + 16, position: "relative" }}>
-        {scaleMarks.slice().reverse().map((m) => (
-          <div key={m} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10.5, color: t.textLo, fontVariantNumeric: "tabular-nums" }}>
-            <span style={{ width: 8, height: 1, background: t.border, display: "inline-block" }} />
-            <span>{m}%</span>
-          </div>
+
+        {/* Llenado con degradado + glow */}
+        {fillH > 0 && (
+          <rect x={cx - tubeW / 2 + 2} y={tubeBottom - fillH}
+                width={tubeW - 4} height={fillH}
+                rx={(tubeW - 4) / 2} fill="url(#thermoFill)" filter="url(#thermoGlow)" />
+        )}
+
+        {/* Segmentos horizontales (stacked HUD) */}
+        {[25, 50, 75].map((p) => (
+          <line key={p} x1={cx - tubeW / 2 + 2} x2={cx + tubeW / 2 - 2} y1={yFor(p)} y2={yFor(p)}
+                stroke={t.border} strokeWidth="1" opacity="0.35" />
         ))}
-      </div>
+
+        {/* Bulbo */}
+        <circle cx={cx} cy={bulbCy} r={bulbR} fill={t.panel3} stroke={t.border} strokeWidth="1" />
+        <circle cx={cx} cy={bulbCy} r={bulbR - 3} fill={fillColor} fillOpacity="0.8" filter="url(#thermoGlow)" />
+        <text x={cx} y={bulbCy + 5} textAnchor="middle" fontSize="17" fontWeight="800" fill="#fff">{fillPct}%</text>
+
+        {/* Rótulo META (centrado sobre la columna) + línea de tope */}
+        <text x={cx} y={12} textAnchor="middle" fontSize="8.5" fontWeight="700" fill={t.textHi} letterSpacing="0.6">META · 100%</text>
+        <line x1={cx - tubeW / 2 - 3} x2={railX + railW + 2} y1={yFor(100)} y2={yFor(100)}
+              stroke={t.textHi} strokeWidth="1.5" strokeDasharray="3 3" opacity="0.6" />
+
+        {/* Marcador del nivel actual (AHORA) con glow */}
+        <line x1={cx - tubeW / 2 - 4} x2={cx + tubeW / 2 + 4} y1={yCur} y2={yCur}
+              stroke={fillColor} strokeWidth="1.5" opacity="0.9" filter="url(#thermoGlow)" />
+        <circle cx={cx} cy={yCur} r="4" fill="#fff" stroke={fillColor} strokeWidth="2" filter="url(#thermoGlow)" />
+
+        {/* Riel de zonas (barra segmentada a la derecha) */}
+        {zones.map((z) => (
+          <rect key={z.label} x={railX} y={yFor(z.to)} width={railW} height={yFor(z.from) - yFor(z.to)}
+                rx={railW / 2} fill={z.color} opacity="0.55" />
+        ))}
+
+        {/* Etiquetas de zona alineadas al centro de cada banda */}
+        {zones.map((z) => {
+          const yMid = yFor((z.from + z.to) / 2);
+          return (
+            <g key={z.label}>
+              <circle cx={railX + railW + 8} cy={yMid} r="3" fill={z.color} />
+              <text x={railX + railW + 16} y={yMid + 1} fontSize="9.5" fontWeight="700" fill={t.textMid}>{z.label}</text>
+              <text x={railX + railW + 16} y={yMid + 12} fontSize="8.5" fill={t.textLo} style={{ fontVariantNumeric: "tabular-nums" }}>{z.range}</text>
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }
