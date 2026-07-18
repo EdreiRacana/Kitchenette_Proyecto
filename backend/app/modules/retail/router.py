@@ -469,6 +469,17 @@ async def report_abc_xyz_xlsx(
     return _xlsx_response(content, "retail_abc_xyz.xlsx")
 
 
+@router.get("/reports/pricing.xlsx")
+async def report_pricing_xlsx(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=14, le=365),
+):
+    pr = await service.pricing(db, channel_id=channel_id, days=days, limit=5000)
+    content = retail_reports.build_pricing_report(pr)
+    return _xlsx_response(content, "retail_precios.xlsx")
+
+
 @router.get("/reports/alerts.xlsx")
 async def report_alerts_xlsx(
     db: DB, _: CurrentUser,
@@ -563,6 +574,28 @@ async def analytics_abc_xyz(
     days: int = Query(90, ge=14, le=365),
 ):
     return await service.abc_xyz(db, channel_id=channel_id, days=days)
+
+
+@router.get("/analytics/pricing", response_model=schemas.PricingResponse)
+async def analytics_pricing(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=14, le=365),
+):
+    return await service.pricing(db, channel_id=channel_id, days=days)
+
+
+@router.get("/analytics/pricing/{variant_id}/history",
+             response_model=schemas.PriceHistoryResponse)
+async def analytics_price_history(
+    variant_id: int, db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(180, ge=14, le=365),
+):
+    r = await service.price_history(db, variant_id, channel_id=channel_id, days=days)
+    if r is None:
+        raise HTTPException(404, "SKU sin historial de precios en el periodo")
+    return r
 
 
 @router.get("/analytics/trend", response_model=schemas.TrendResponse)

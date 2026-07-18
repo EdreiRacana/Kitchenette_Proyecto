@@ -452,6 +452,48 @@ class AbcXyzResponse(BaseModel):
     rows: List[AbcXyzRow]
 
 
+# ── Analytics: inteligencia de precios ──────────────────────────────────
+
+class PricingRow(BaseModel):
+    variant_id: Optional[int] = None
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    units_sold: int
+    avg_price: float                     # ingreso / unidades (ponderado)
+    min_price: float
+    max_price: float
+    price_volatility_pct: float          # CV del precio por periodo × 100
+    price_change_pct: float              # último vs primer periodo
+    list_price: Optional[float] = None   # precio de catálogo (referencia)
+    elasticity: Optional[float] = None   # pendiente log(q)~log(p)
+    elasticity_label: str                # elastic | inelastic | unit | n/a
+    periods_count: int
+
+
+class PricingResponse(BaseModel):
+    channel_id: Optional[int] = None
+    days: int
+    rows: List[PricingRow]
+
+
+class PriceHistoryPoint(BaseModel):
+    label: str
+    period_start: datetime
+    avg_price: float
+    units: int
+
+
+class PriceHistoryResponse(BaseModel):
+    variant_id: int
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    points: List[PriceHistoryPoint]
+    elasticity: Optional[float] = None
+    elasticity_label: str
+    avg_price: float
+    list_price: Optional[float] = None
+
+
 # ── Analytics: tendencia (time-series) ──────────────────────────────────
 
 class TrendPoint(BaseModel):

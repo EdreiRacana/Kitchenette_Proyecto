@@ -11,7 +11,7 @@ import {
   Plus, Pencil, Trash2, X, Search, AlertTriangle, TrendingUp,
   ChevronRight, RefreshCw, Check, Download, Upload, FileText,
   Bell, EyeOff, CheckCircle2, Zap, Warehouse, Grid3x3, BarChart3, ArrowRight,
-  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown, DollarSign, Boxes, Clock, Gauge, Grid2x2,
+  FileSpreadsheet, FileDown, LineChart, Network, TrendingDown, DollarSign, Boxes, Clock, Gauge, Grid2x2, Tag,
 } from "lucide-react";
 import { retailApi } from "./api";
 import { salesApi, type VariantOption } from "../sales/api";
@@ -28,6 +28,7 @@ import type {
   TrendResponse, DistributionResponse, LostSalesResponse,
   ProfitabilityResponse, ProfitGroupBy, ExcessInventoryResponse, AgingResponse,
   ServiceLevelResponse, ServiceGroupBy, AbcXyzResponse,
+  PricingResponse, PriceHistoryResponse,
 } from "./types";
 
 type Tokens = any;
@@ -2580,7 +2581,7 @@ function ConsignmentView({ t, channelId }: { t: Tokens; channelId: number | null
 
 
 // ── Analíticas: Heatmap + ABC ────────────────────────────────────────────
-type AnalyticsSub = "heatmap" | "trend" | "profitability" | "excess" | "aging" | "service" | "distribution" | "lost_sales" | "abc" | "abcxyz";
+type AnalyticsSub = "heatmap" | "trend" | "profitability" | "pricing" | "excess" | "aging" | "service" | "distribution" | "lost_sales" | "abc" | "abcxyz";
 
 function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }) {
   const [sub, setSub] = useState<AnalyticsSub>("heatmap");
@@ -2588,6 +2589,7 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
     { key: "heatmap", label: "Heatmap tiendas × SKUs", icon: Grid3x3 },
     { key: "trend", label: "Tendencia", icon: LineChart },
     { key: "profitability", label: "Rentabilidad", icon: DollarSign },
+    { key: "pricing", label: "Precios", icon: Tag },
     { key: "excess", label: "Exceso de inventario", icon: Boxes },
     { key: "aging", label: "Antigüedad", icon: Clock },
     { key: "service", label: "Nivel de servicio", icon: Gauge },
@@ -2616,6 +2618,7 @@ function AnalyticsView({ t, channelId }: { t: Tokens; channelId: number | null }
       {sub === "heatmap" && <HeatmapView t={t} channelId={channelId} />}
       {sub === "trend" && <TrendView t={t} channelId={channelId} />}
       {sub === "profitability" && <ProfitabilityView t={t} channelId={channelId} />}
+      {sub === "pricing" && <PricingView t={t} channelId={channelId} />}
       {sub === "excess" && <ExcessInventoryView t={t} channelId={channelId} />}
       {sub === "aging" && <AgingView t={t} channelId={channelId} />}
       {sub === "service" && <ServiceLevelView t={t} channelId={channelId} />}
@@ -3146,6 +3149,169 @@ function ProfTile({ t, label, value, sub, color }: {
       <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
       <div style={{ fontSize: 20, fontWeight: 800, color, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       <div style={{ fontSize: 11, color: t.textLo, marginTop: 3 }}>{sub}</div>
+    </div>
+  );
+}
+
+const ELASTICITY_LABEL_ES: Record<string, string> = {
+  elastic: "Elástico", inelastic: "Inelástico", unit: "Unitario", "n/a": "—",
+};
+
+function PricingView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<PricingResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(90);
+  const [sel, setSel] = useState<{ id: number; sku: string } | null>(null);
+  const [hist, setHist] = useState<PriceHistoryResponse | null>(null);
+  const [histLoading, setHistLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await retailApi.pricing({ channel_id: channelId || undefined, days });
+        if (!cancelled) { setData(r); setSel(null); setHist(null); }
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, days]);
+
+  const openHistory = async (variantId: number, sku: string) => {
+    setSel({ id: variantId, sku }); setHist(null); setHistLoading(true);
+    try {
+      const h = await retailApi.priceHistory(variantId, { channel_id: channelId || undefined, days: 180 });
+      setHist(h);
+    } catch { setHist(null); } finally { setHistLoading(false); }
+  };
+
+  const elasColor = (l: string) => l === "elastic" ? t.warn : l === "inelastic" ? t.good : l === "unit" ? t.nova : t.textLo;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12, color: t.textLo, maxWidth: 640 }}>
+          <b style={{ color: t.textMid }}>Inteligencia de precios</b>: precio implícito (ingreso ÷ unidades),
+          su volatilidad y la <b>elasticidad</b> precio-demanda. Haz clic en un SKU para ver su historial.
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <FilterField t={t} label="Ventana">
+            <select value={days} onChange={e => setDays(Number(e.target.value))}
+              style={{ ...inputStyle(t), minWidth: 110, fontSize: 12, height: 32, marginTop: 0 }}>
+              <option value={90}>90 días</option>
+              <option value={180}>180 días</option>
+              <option value={365}>1 año</option>
+            </select>
+          </FilterField>
+          <ExcelBtn t={t} label="Excel"
+            onClick={() => downloadBlob(
+              () => retailApi.reports.pricing({ channel_id: channelId || undefined, days }),
+              `retail_precios.xlsx`,
+            )}
+          />
+        </div>
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Calculando…</div>}
+      {!loading && data && data.rows.length === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <Tag size={28} />
+          <div style={{ marginTop: 8, color: t.textHi, fontSize: 13 }}>Sin ventas para analizar precios</div>
+        </div>
+      )}
+      {!loading && data && data.rows.length > 0 && (
+        <>
+          {sel && (
+            <div style={{ background: t.panel, border: `1px solid ${t.nova}55`, borderRadius: 10, padding: 14, marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>
+                  Historial de {sel.sku} {hist?.product_name ? `· ${hist.product_name}` : ""}
+                </div>
+                <button onClick={() => { setSel(null); setHist(null); }} style={iconBtn(t)}><X size={14} /></button>
+              </div>
+              {histLoading && <div style={{ padding: 20, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+              {!histLoading && hist && hist.points.length > 0 && (
+                <>
+                  <div style={{ display: "flex", gap: 20, marginBottom: 8, flexWrap: "wrap", fontSize: 12 }}>
+                    <span style={{ color: t.textMid }}>Precio prom <b style={{ color: t.textHi }}>{mxn(hist.avg_price)}</b></span>
+                    {hist.list_price != null && <span style={{ color: t.textMid }}>Precio lista <b style={{ color: t.textHi }}>{mxn(hist.list_price)}</b></span>}
+                    <span style={{ color: t.textMid }}>Elasticidad <b style={{ color: elasColor(hist.elasticity_label) }}>{hist.elasticity != null ? hist.elasticity.toFixed(2) : "—"} ({ELASTICITY_LABEL_ES[hist.elasticity_label]})</b></span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: t.textLo, marginBottom: 4 }}>Precio por semana</div>
+                      <LineChartSVG t={t} height={190}
+                        series={[{ name: "Precio", color: t.nova, points: hist.points.map(p => ({ label: p.label, value: p.avg_price })) }]}
+                        formatY={(n) => "$" + Math.round(n).toLocaleString("es-MX")} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: t.textLo, marginBottom: 4 }}>Demanda (unidades) por semana</div>
+                      <LineChartSVG t={t} height={190}
+                        series={[{ name: "Unidades", color: t.good, points: hist.points.map(p => ({ label: p.label, value: p.units })) }]} />
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
+                    {hist.elasticity_label === "elastic" && "Demanda sensible al precio: una baja de precio dispara las ventas — buen candidato a promociones."}
+                    {hist.elasticity_label === "inelastic" && "Demanda poco sensible al precio: puedes sostener o subir el precio sin perder mucho volumen."}
+                    {hist.elasticity_label === "unit" && "Elasticidad cercana a 1: el ingreso se mantiene aunque cambie el precio."}
+                    {hist.elasticity_label === "n/a" && "Sin suficiente variación de precio para estimar la elasticidad."}
+                  </div>
+                </>
+              )}
+              {!histLoading && (!hist || hist.points.length === 0) && (
+                <div style={{ padding: 12, color: t.textLo, fontSize: 12 }}>Sin historial suficiente para este SKU.</div>
+              )}
+            </div>
+          )}
+
+          <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "auto", maxHeight: sel ? "40vh" : "62vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: t.panel2, position: "sticky", top: 0 }}>
+                  <th style={thStyle(t)}>SKU</th>
+                  <th style={thStyle(t)}>Producto</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Unidades</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Precio prom</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Rango</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Volatilidad</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Δ Precio</th>
+                  <th style={{ ...thStyle(t), textAlign: "right" }}>Elasticidad</th>
+                  <th style={thStyle(t)}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => (
+                  <tr key={r.variant_id ?? i}
+                    onClick={() => r.variant_id && openHistory(r.variant_id, r.sku || "")}
+                    style={{ borderTop: `1px solid ${t.border}55`, cursor: r.variant_id ? "pointer" : "default", background: sel?.id === r.variant_id ? t.nova + "12" : undefined }}>
+                    <td style={{ ...tdStyle(t), fontFamily: "monospace", fontWeight: 600 }}>{r.sku || "—"}</td>
+                    <td style={tdStyle(t)}>{r.product_name || "—"}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.units_sold)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 600 }}>{mxn(r.avg_price)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: t.textLo }}>{mxn(r.min_price)}–{mxn(r.max_price)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: r.price_volatility_pct > 10 ? t.warn : t.textMid }}>{r.price_volatility_pct.toFixed(1)}%</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: r.price_change_pct < 0 ? t.bad : r.price_change_pct > 0 ? t.good : t.textLo }}>
+                      {r.price_change_pct > 0 ? "+" : ""}{r.price_change_pct.toFixed(1)}%
+                    </td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>
+                      <span style={{ fontWeight: 700, color: elasColor(r.elasticity_label) }}>
+                        {r.elasticity != null ? r.elasticity.toFixed(2) : "—"}
+                      </span>
+                      <span style={{ fontSize: 10, color: t.textLo, marginLeft: 4 }}>{ELASTICITY_LABEL_ES[r.elasticity_label]}</span>
+                    </td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: t.textLo }}>
+                      {r.variant_id ? <LineChart size={13} /> : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: t.textLo, marginTop: 8 }}>
+            <b>Elasticidad</b>: cuánto cambia la demanda ante un cambio de precio. <b>Elástico</b> (|E|{">"}1) = sensible al precio (bueno para promos); <b>Inelástico</b> (|E|{"<"}1) = puedes sostener precio. El precio es el implícito del sell-out, no captura manual.
+          </div>
+        </>
+      )}
     </div>
   );
 }

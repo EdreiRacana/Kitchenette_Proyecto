@@ -2582,6 +2582,177 @@ async def abc_xyz(
     )
 
 
+# ── Analytics: inteligencia de precios ───────────────────────────────────
+
+def _elasticity(series: List[Tuple[float, int]]) -> Optional[float]:
+    """Elasticidad precio-demanda = pendiente de la regresión log(q)~log(p).
+    series = [(precio, unidades), ...]. Requiere ≥3 puntos con precio y
+    unidades positivos y variación real de precio."""
+    import math
+    pts = [(p, q) for p, q in series if p > 0 and q > 0]
+    if len(pts) < 3:
+        return None
+    xs = [math.log(p) for p, _q in pts]
+    ys = [math.log(q) for _p, q in pts]
+    n = len(xs)
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    var_x = sum((x - mx) ** 2 for x in xs)
+    if var_x < 1e-9:
+        return None  # sin variación de precio → elasticidad indefinida
+    cov = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+    return cov / var_x
+
+
+def _elasticity_label(e: Optional[float]) -> str:
+    if e is None:
+        return "n/a"
+    a = abs(e)
+    if a >= 1.15:
+        return "elastic"
+    if a <= 0.85:
+        return "inelastic"
+    return "unit"
+
+
+async def _price_series_by_variant(
+    db: AsyncSession, channel_id: Optional[int], since: datetime,
+    variant_id: Optional[int] = None,
+):
+    """Devuelve dict variant_id → {sku, product_name, periods:[(period_start, units, revenue)]}."""
+    stmt = (
+        select(
+            models.SellOutReport.variant_id,
+            models.SellOutReport.period_start,
+            func.max(models.SellOutReport.sku).label("sku"),
+            func.max(models.SellOutReport.product_name).label("product_name"),
+            func.coalesce(func.sum(models.SellOutReport.units_sold), 0).label("units"),
+            func.coalesce(func.sum(models.SellOutReport.revenue), 0.0).label("revenue"),
+        )
+        .join(models.RetailStore, models.SellOutReport.store_id == models.RetailStore.id)
+        .where(
+            models.SellOutReport.period_start >= since,
+            models.SellOutReport.variant_id.isnot(None),
+            models.SellOutReport.units_sold > 0,
+        )
+        .group_by(models.SellOutReport.variant_id, models.SellOutReport.period_start)
+        .order_by(models.SellOutReport.period_start.asc())
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailStore.channel_id == channel_id)
+    if variant_id is not None:
+        stmt = stmt.where(models.SellOutReport.variant_id == variant_id)
+    rows = (await db.execute(stmt)).all()
+
+    per: Dict[int, Dict[str, Any]] = {}
+    for r in rows:
+        vid = int(r.variant_id)
+        d = per.setdefault(vid, {"sku": r.sku, "product_name": r.product_name, "periods": []})
+        d["periods"].append((r.period_start, int(r.units or 0), float(r.revenue or 0.0)))
+        if not d["sku"] and r.sku:
+            d["sku"] = r.sku
+        if not d["product_name"] and r.product_name:
+            d["product_name"] = r.product_name
+    return per
+
+
+async def _list_prices(db: AsyncSession, variant_ids: List[int]) -> Dict[int, float]:
+    if not variant_ids:
+        return {}
+    rows = (await db.execute(
+        select(inv_models.ProductVariant.id, inv_models.ProductVariant.price)
+        .where(inv_models.ProductVariant.id.in_(variant_ids))
+    )).all()
+    return {int(vid): float(p or 0.0) for vid, p in rows}
+
+
+async def pricing(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    days: int = 90, limit: int = 500,
+) -> schemas.PricingResponse:
+    """Inteligencia de precios por SKU a partir del precio implícito
+    (ingreso ÷ unidades) por periodo: precio promedio, rango, volatilidad,
+    cambio y elasticidad precio-demanda estimada."""
+    import math
+
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+    per = await _price_series_by_variant(db, channel_id, since)
+    list_prices = await _list_prices(db, list(per.keys()))
+
+    out: List[schemas.PricingRow] = []
+    for vid, d in per.items():
+        periods = d["periods"]
+        prices = [(rev / u) for (_ps, u, rev) in periods if u > 0]
+        if not prices:
+            continue
+        total_units = sum(u for (_ps, u, _rev) in periods)
+        total_rev = sum(rev for (_ps, _u, rev) in periods)
+        avg_price = (total_rev / total_units) if total_units > 0 else 0.0
+        min_p = min(prices)
+        max_p = max(prices)
+        # Volatilidad = CV de los precios por periodo
+        mean_p = sum(prices) / len(prices)
+        if mean_p > 0 and len(prices) > 1:
+            var_p = sum((p - mean_p) ** 2 for p in prices) / len(prices)
+            vol = math.sqrt(var_p) / mean_p * 100.0
+        else:
+            vol = 0.0
+        change = ((prices[-1] - prices[0]) / prices[0] * 100.0) if prices[0] > 0 else 0.0
+        e = _elasticity([(rev / u, u) for (_ps, u, rev) in periods if u > 0])
+
+        out.append(schemas.PricingRow(
+            variant_id=vid, sku=d["sku"], product_name=d["product_name"],
+            units_sold=int(total_units), avg_price=round(avg_price, 2),
+            min_price=round(min_p, 2), max_price=round(max_p, 2),
+            price_volatility_pct=round(vol, 1),
+            price_change_pct=round(change, 1),
+            list_price=round(list_prices.get(vid, 0.0), 2) or None,
+            elasticity=round(e, 2) if e is not None else None,
+            elasticity_label=_elasticity_label(e),
+            periods_count=len(periods),
+        ))
+
+    out.sort(key=lambda r: -r.units_sold)
+    out = out[:limit]
+    return schemas.PricingResponse(channel_id=channel_id, days=days, rows=out)
+
+
+async def price_history(
+    db: AsyncSession, variant_id: int, channel_id: Optional[int] = None,
+    days: int = 180,
+) -> Optional[schemas.PriceHistoryResponse]:
+    """Serie de precio implícito + demanda de UN SKU, para graficar la
+    relación precio↔demanda y su elasticidad."""
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+    per = await _price_series_by_variant(db, channel_id, since, variant_id=variant_id)
+    d = per.get(int(variant_id))
+    if d is None:
+        return None
+    list_prices = await _list_prices(db, [int(variant_id)])
+    points: List[schemas.PriceHistoryPoint] = []
+    total_u = 0
+    total_r = 0.0
+    for (ps, u, rev) in d["periods"]:
+        if u <= 0:
+            continue
+        points.append(schemas.PriceHistoryPoint(
+            label=_period_label(ps, "week"),
+            period_start=ps, avg_price=round(rev / u, 2), units=int(u),
+        ))
+        total_u += u
+        total_r += rev
+    e = _elasticity([(rev / u, u) for (_ps, u, rev) in d["periods"] if u > 0])
+    return schemas.PriceHistoryResponse(
+        variant_id=int(variant_id), sku=d["sku"], product_name=d["product_name"],
+        points=points, elasticity=round(e, 2) if e is not None else None,
+        elasticity_label=_elasticity_label(e),
+        avg_price=round(total_r / total_u, 2) if total_u > 0 else 0.0,
+        list_price=round(list_prices.get(int(variant_id), 0.0), 2) or None,
+    )
+
+
 # ── Analytics: tendencia (time-series) ───────────────────────────────────
 
 _MONTHS_ES = ["ene", "feb", "mar", "abr", "may", "jun",
