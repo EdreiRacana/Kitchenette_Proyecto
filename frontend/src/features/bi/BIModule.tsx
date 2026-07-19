@@ -638,42 +638,80 @@ function SparkMini({ data, color, width = 80, height = 28 }: { data: number[]; c
   );
 }
 
-function GaugeArc({ value, target, max, t }: { value: number; target: number; max: number; t: any }) {
-  const pct = Math.max(0, Math.min(value / max, 1));
-  const tpct = Math.max(0, Math.min(target / max, 1));
-  const W = 200, H = 122, cx = W / 2, cy = 108, r = 82, sw = 14;
-  const ang = (f: number) => Math.PI - f * Math.PI;                 // f:0→izq (180°) … 1→der (0°)
-  const pt = (f: number, rad = r) => [cx + rad * Math.cos(ang(f)), cy - rad * Math.sin(ang(f))] as [number, number];
-  const arc = (f0: number, f1: number, rad = r) => {
-    const [x0, y0] = pt(f0, rad), [x1, y1] = pt(f1, rad);
-    const large = (f1 - f0) > 0.5 ? 1 : 0;
-    return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${rad} ${rad} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+/* ── Núcleo de líquido (medidor de nivel animado) ─────────────────────
+   Mismo instrumento que la esfera de "Meta vs real" del Tablero: vaso
+   circular que se llena de líquido "Matrix" hasta el %, con superficie de
+   onda en movimiento, burbujas y anillo de ticks. Animación SMIL (SVG puro). */
+function LiquidCore({ pct, t, sub }: { pct: number; t: any; sub?: string }) {
+  const W = 200, H = 204, cx = 100, cy = 100, r = 78;
+  const fillPct = Math.max(0, Math.min(100, Math.round(pct)));
+  const bot = cy + r;
+  const fillTopY = bot - (2 * r) * fillPct / 100;
+  const MTX = { dark: "#067A2E", mid: "#12D954", bright: "#5BFF87", surf: "#8AFFB0" };
+  const waveFill = (amp: number, wl: number) => {
+    let d = `M ${-2 * wl} ${fillTopY.toFixed(1)}`;
+    for (let x = -2 * wl; x <= W + 2 * wl; x += 5) d += ` L ${x} ${(fillTopY + amp * Math.sin((x / wl) * 2 * Math.PI)).toFixed(1)}`;
+    return d + ` L ${W + 2 * wl} ${bot + 24} L ${-2 * wl} ${bot + 24} Z`;
   };
-  // Estado según el objetivo: verde ≥ objetivo · ámbar cerca · rojo lejos
-  const valColor = pct >= tpct ? t.good : pct >= tpct * 0.75 ? t.warn : t.bad;
-  const [knobX, knobY] = pt(pct);
-  const [tk0x, tk0y] = pt(tpct, r - sw / 2 - 2);
-  const [tk1x, tk1y] = pt(tpct, r + sw / 2 + 2);
+  const waveLine = (amp: number, wl: number) => {
+    let d = `M ${-2 * wl} ${(fillTopY + amp * Math.sin((-2 * wl / wl) * 2 * Math.PI)).toFixed(1)}`;
+    for (let x = -2 * wl; x <= W + 2 * wl; x += 5) d += ` L ${x} ${(fillTopY + amp * Math.sin((x / wl) * 2 * Math.PI)).toFixed(1)}`;
+    return d;
+  };
+  const gridYs = [38, 54, 70, 86, 102, 118, 134, 150, 166];
+  const bubbles = [
+    { x: 76, r: 2.4, dur: 3.6, begin: 0 }, { x: 112, r: 1.7, dur: 4.3, begin: 0.9 },
+    { x: 94, r: 3, dur: 3.9, begin: 1.7 }, { x: 128, r: 1.9, dur: 4.7, begin: 2.4 },
+    { x: 66, r: 1.5, dur: 3.2, begin: 1.2 },
+  ];
+  const hasLiquid = fillPct > 0.5;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: 240, height: "auto", display: "block" }}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: 210, height: "auto", display: "block" }}>
       <defs>
-        <linearGradient id="biGaugeFill" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stopColor={valColor} stopOpacity="0.5" />
-          <stop offset="100%" stopColor={valColor} stopOpacity="1" />
+        <clipPath id="lcClip"><circle cx={cx} cy={cy} r={r - 3} /></clipPath>
+        <linearGradient id="lcLiquid" x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0%" stopColor={MTX.dark} /><stop offset="70%" stopColor={MTX.mid} /><stop offset="100%" stopColor={MTX.bright} />
         </linearGradient>
+        <radialGradient id="lcVign" cx="50%" cy="42%" r="62%">
+          <stop offset="58%" stopColor="#000" stopOpacity="0" /><stop offset="100%" stopColor="#000" stopOpacity="0.38" />
+        </radialGradient>
+        <filter id="lcGlow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="2.6" /></filter>
       </defs>
-      {/* Pista (mismo tono, recesiva) */}
-      <path d={arc(0, 1)} fill="none" stroke={t.panel3} strokeWidth={sw} strokeLinecap="round" />
-      {/* Progreso */}
-      {pct > 0.004 && <path d={arc(0, pct)} fill="none" stroke="url(#biGaugeFill)" strokeWidth={sw} strokeLinecap="round" />}
-      {/* Marca de objetivo */}
-      <line x1={tk0x} y1={tk0y} x2={tk1x} y2={tk1y} stroke={t.textHi} strokeWidth="2.5" strokeLinecap="round" opacity="0.5" />
-      {/* Perilla en la punta del progreso (con anillo de superficie) */}
-      <circle cx={knobX} cy={knobY} r={sw / 2 - 0.5} fill={t.panel} />
-      <circle cx={knobX} cy={knobY} r={sw / 2 - 3} fill={valColor} />
-      {/* Valor */}
-      <text x={cx} y={cy - 20} textAnchor="middle" fontSize="30" fontWeight="800" fill={valColor}>{Math.round(pct * 100)}%</text>
-      <text x={cx} y={cy - 3} textAnchor="middle" fontSize="10.5" fill={t.textLo}>Objetivo {Math.round(tpct * 100)}%</text>
+      <circle cx={cx} cy={cy} r={r} fill={t.panel3} opacity="0.5" />
+      <g clipPath="url(#lcClip)">
+        {gridYs.map((y) => <line key={y} x1={cx - r} x2={cx + r} y1={y} y2={y} stroke="#0A1430" strokeWidth="1" opacity="0.5" />)}
+        {hasLiquid && (
+          <>
+            <g opacity="0.3">
+              <animateTransform attributeName="transform" type="translate" from="0 0" to="-100 0" dur="5.5s" repeatCount="indefinite" />
+              <path d={waveFill(6, 100)} fill={MTX.mid} />
+            </g>
+            <g>
+              <animateTransform attributeName="transform" type="translate" from="0 0" to="-70 0" dur="3.2s" repeatCount="indefinite" />
+              <path d={waveFill(5, 70)} fill="url(#lcLiquid)" opacity="0.92" />
+              <path d={waveLine(5, 70)} fill="none" stroke={MTX.surf} strokeWidth="2" filter="url(#lcGlow)" />
+            </g>
+            {bubbles.map((b, i) => (
+              <circle key={i} cx={b.x} cy={bot - 6} r={b.r} fill={MTX.surf} opacity="0">
+                <animate attributeName="cy" from={bot - 6} to={fillTopY + 4} dur={`${b.dur}s`} begin={`${b.begin}s`} repeatCount="indefinite" />
+                <animate attributeName="opacity" values="0;0.55;0" dur={`${b.dur}s`} begin={`${b.begin}s`} repeatCount="indefinite" />
+              </circle>
+            ))}
+          </>
+        )}
+        <rect x="0" y="0" width={W} height={H} fill="url(#lcVign)" />
+      </g>
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke={MTX.bright} strokeOpacity="0.35" strokeWidth="1.5" />
+      <circle cx={cx} cy={cy} r={r + 4} fill="none" stroke={t.border} strokeWidth="1" />
+      {Array.from({ length: 36 }, (_, i) => {
+        const a = (i * 10 - 90) * Math.PI / 180;
+        const major = i % 9 === 0;
+        const x1 = cx + (r + 4) * Math.cos(a), y1 = cy + (r + 4) * Math.sin(a);
+        const x2 = cx + (r + (major ? 11 : 7)) * Math.cos(a), y2 = cy + (r + (major ? 11 : 7)) * Math.sin(a);
+        return <line key={i} x1={x1.toFixed(1)} y1={y1.toFixed(1)} x2={x2.toFixed(1)} y2={y2.toFixed(1)} stroke={major ? MTX.bright : t.textLo} strokeWidth="1" opacity={major ? "0.85" : "0.35"} />;
+      })}
+      <text x={cx} y={cy - 1} textAnchor="middle" fontSize="42" fontWeight="800" fill="#fff" style={{ letterSpacing: "-1px" }}>{fillPct}%</text>
+      {sub && <text x={cx} y={cy + 17} textAnchor="middle" fontSize="9.5" fontWeight="600" fill={MTX.surf} letterSpacing="1.4">{sub}</text>}
     </svg>
   );
 }
@@ -1267,7 +1305,7 @@ function BIModuleBody({
               <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Tasa de pedidos pagados</div>
               <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 8 }}>Pedidos cobrados sobre el total del período</div>
               <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <GaugeArc value={D.paidRate} target={80} max={100} t={t} />
+                <LiquidCore pct={D.paidRate} sub="Pagado" t={t} />
               </div>
             </div>
           </div>
@@ -1438,7 +1476,7 @@ function BIModuleBody({
               <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Margen neto</div>
               <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 8 }}>Utilidad sobre ingresos del período · objetivo 15%</div>
               <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <GaugeArc value={Math.max(0, Math.min(D.margenNeto, 100))} target={15} max={100} t={t} />
+                <LiquidCore pct={Math.max(0, Math.min(D.margenNeto, 100))} sub="Margen neto" t={t} />
               </div>
             </div>
             {/* Donut de estructura de egresos */}
@@ -1529,7 +1567,7 @@ function BIModuleBody({
               ) : (
                 <>
                   <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <GaugeArc value={Math.round((D.hrPresentToday / (D.hrPresentToday + D.hrAbsentToday)) * 100)} target={90} max={100} t={t} />
+                    <LiquidCore pct={Math.round((D.hrPresentToday / (D.hrPresentToday + D.hrAbsentToday)) * 100)} sub="Asistencia" t={t} />
                   </div>
                   <div style={{ display: "flex", justifyContent: "center", gap: 18, marginTop: 4 }}>
                     <span style={{ fontSize: 11.5, color: t.textMid, display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 9, height: 9, borderRadius: 99, background: t.good }} />{D.hrPresentToday} presentes</span>
