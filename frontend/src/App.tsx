@@ -437,7 +437,7 @@ function PrimaryBtn({ t, children, onClick }) {
 
 /* ============================ Charts ============================ */
 /* Sparkline con tooltip al pasar el cursor */
-function Sparkline({ data, color, gid }) {
+function Sparkline({ data, color, gid, t }) {
   const [hover, setHover] = useState(null);
   const W = 84, H = 26, min = Math.min(...data), max = Math.max(...data);
   const x = (i) => (i * W) / (data.length - 1);
@@ -458,11 +458,11 @@ function Sparkline({ data, color, gid }) {
         <path d={line} fill="none" stroke={color} strokeOpacity="0.5" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" filter={`url(#${gid}f)`} />
         <path d={line} fill="none" stroke={color} strokeOpacity="0.9" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
         <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="2.6" fill={color} filter={`url(#${gid}f)`} />
-        <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="1.8" fill="#fff" />
-        {hover !== null && <circle cx={x(hover)} cy={y(data[hover])} r="3" fill={color} stroke="#fff" strokeWidth="1" />}
+        <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="1.8" fill={t.textHi} />
+        {hover !== null && <circle cx={x(hover)} cy={y(data[hover])} r="3" fill={color} stroke={t.textHi} strokeWidth="1" />}
       </svg>
       {hover !== null && (
-        <div style={{ position: "absolute", top: -22, left: `${(x(hover) / W) * 100}%`, transform: "translateX(-50%)", background: "#131F44", border: `1px solid ${color}`, borderRadius: 6, padding: "2px 7px", fontSize: 10.5, fontWeight: 700, color: "#F2F6FF", whiteSpace: "nowrap", pointerEvents: "none", zIndex: 5 }}>
+        <div style={{ position: "absolute", top: -22, left: `${(x(hover) / W) * 100}%`, transform: "translateX(-50%)", background: t.panel2, border: `1px solid ${color}`, borderRadius: 6, padding: "2px 7px", fontSize: 10.5, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", pointerEvents: "none", zIndex: 5 }}>
           {data[hover]}
         </div>
       )}
@@ -542,7 +542,7 @@ function ComparisonChart({ t, series, xlabels }) {
         {series.cur.map((v, i) => <circle key={i} cx={x(i)} cy={y(v)} r="3.2" fill={t.panel} stroke={t.nova} strokeWidth="2" />)}
         {/* Marcador "ahora" (último punto) con glow */}
         {n > 1 && <circle cx={x(n - 1)} cy={y(series.cur[n - 1])} r="6" fill={t.nova} opacity="0.9" filter="url(#cmpGlow)" />}
-        {n > 1 && <circle cx={x(n - 1)} cy={y(series.cur[n - 1])} r="3.4" fill="#fff" stroke={t.nova} strokeWidth="2" />}
+        {n > 1 && <circle cx={x(n - 1)} cy={y(series.cur[n - 1])} r="3.4" fill={t.textHi} stroke={t.nova} strokeWidth="2" />}
         {hv && <circle cx={x(hv.i)} cy={y(hv.prev)} r="4" fill={t.panel} stroke={t.textLo} strokeWidth="2" />}
         {hv && <circle cx={x(hv.i)} cy={y(hv.cur)} r="5" fill={t.panel} stroke={t.nova} strokeWidth="2.5" />}
         {xlabels.map((lb, i) => <text key={i} x={x(i)} y={H - 9} fill={t.textLo} fontSize="12" textAnchor="middle">{lb}</text>)}
@@ -648,7 +648,7 @@ function IncomeExpenseArea({ t, data }: any) {
         <path d={linePath(ingresos)} fill="none" stroke={t.nova} strokeWidth="1.9" strokeOpacity="0.95" strokeLinejoin="round" strokeLinecap="round" />
         {ingresos.map((v: number, i: number) => <circle key={i} cx={x(i)} cy={y(v)} r="2" fill={t.panel} stroke={t.nova} strokeWidth="1.2" strokeOpacity="0.7" />)}
         {n > 1 && <circle cx={x(n - 1)} cy={y(ingresos[n - 1])} r="5.5" fill={t.nova} opacity="0.9" filter="url(#ieGlow)" />}
-        {n > 1 && <circle cx={x(n - 1)} cy={y(ingresos[n - 1])} r="3" fill="#fff" stroke={t.nova} strokeWidth="1.8" />}
+        {n > 1 && <circle cx={x(n - 1)} cy={y(ingresos[n - 1])} r="3" fill={t.textHi} stroke={t.nova} strokeWidth="1.8" />}
         {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={P.t} y2={P.t + ih} stroke={t.nova} strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />}
         {data.map((d: any, i: number) => <text key={i} x={x(i)} y={H - 9} fill={t.textLo} fontSize="11" textAnchor="middle">{(d.period || "").slice(-5)}</text>)}
       </svg>
@@ -1133,7 +1133,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
                 ) : (
                   <span style={{ fontSize: 11.5, color: t.textLo, fontStyle: "italic" }}>— {s.dash.noComparison}</span>
                 )}
-                {k.spark && k.spark.length > 1 && <Sparkline data={k.spark} color={c} gid={`spk${i}`} />}
+                {k.spark && k.spark.length > 1 && <Sparkline data={k.spark} color={c} gid={`spk${i}`} t={t} />}
               </div>
               {target && (
                 <div style={{ marginTop: 7 }}>
