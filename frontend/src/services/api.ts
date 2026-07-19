@@ -33,6 +33,24 @@ export function onServerWaking(fn) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// --- Sesión expirada (401): avisar a la app para mandar al login ---
+// Sin esto, un token vencido dejaba la app "logueada" pero con todas las
+// llamadas fallando en 401 (tablero roto). Ahora limpiamos el token y
+// notificamos una sola vez (aunque fallen 16 llamadas a la vez).
+const unauthorizedListeners = new Set<() => void>();
+export function onUnauthorized(fn: () => void) {
+    unauthorizedListeners.add(fn);
+    return () => unauthorizedListeners.delete(fn);
+}
+let notifiedUnauthorized = false;
+function notifyUnauthorized() {
+    if (notifiedUnauthorized) return;
+    notifiedUnauthorized = true;
+    localStorage.removeItem('token');
+    unauthorizedListeners.forEach((fn) => fn());
+    setTimeout(() => { notifiedUnauthorized = false; }, 3000);
+}
+
 // Origen del backend (sin el sufijo /api/v1). El frontend vive en otro dominio
 // en Render, así que las rutas relativas que devuelven las subidas (p. ej.
 // "/static/inventory/x.webp") hay que anteponerles este origen para que el
@@ -75,6 +93,13 @@ api.interceptors.response.use(
     },
     async (error) => {
         const config = error.config;
+        // Token vencido/no válido → cerrar sesión y mandar al login (salvo en el
+        // propio login, donde un 401 significa credenciales incorrectas).
+        if (error.response?.status === 401 && !String(config?.url || '').includes('/auth/login')) {
+            notifyUnauthorized();
+            setWaking(false);
+            return Promise.reject(error);
+        }
         if (!config || !isRetryable(error)) {
             setWaking(false);
             return Promise.reject(error);
