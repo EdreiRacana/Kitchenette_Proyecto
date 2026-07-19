@@ -98,23 +98,39 @@ export const customersApi = {
   async uploadDocument(customerId: number, documentType: string, file: File): Promise<CustomerDocument> {
     const mimeType = file.type || "application/octet-stream";
 
-    const { data: signed } = await api.post<{ upload_url: string; path: string }>(
-      `/customers/${customerId}/documents/sign-upload`,
-      { file_name: file.name, mime_type: mimeType },
-    );
+    // Camino preferido: subida firmada directa a Supabase (rápida, sin doble
+    // salto por el backend). Si algo del storage directo falla o no está
+    // configurado (409/424), se cae al respaldo multipart por el backend para
+    // que el usuario NUNCA quede bloqueado al subir un documento.
+    try {
+      const { data: signed } = await api.post<{ upload_url: string; path: string }>(
+        `/customers/${customerId}/documents/sign-upload`,
+        { file_name: file.name, mime_type: mimeType },
+      );
 
-    // PUT directo a Supabase: SIN la instancia `api` (no debe llevar el
-    // Authorization de nuestro backend; la URL firmada ya autoriza la subida).
-    await axios.put(signed.upload_url, file, {
-      headers: { "Content-Type": mimeType },
-      timeout: 120000,
-    });
+      // PUT directo a Supabase: SIN la instancia `api` (no debe llevar el
+      // Authorization de nuestro backend; la URL firmada ya autoriza la subida).
+      await axios.put(signed.upload_url, file, {
+        headers: { "Content-Type": mimeType },
+        timeout: 120000,
+      });
 
-    const { data } = await api.post<CustomerDocument>(
-      `/customers/${customerId}/documents/finalize`,
-      { document_type: documentType, file_name: file.name, path: signed.path, mime_type: mimeType },
-    );
-    return data;
+      const { data } = await api.post<CustomerDocument>(
+        `/customers/${customerId}/documents/finalize`,
+        { document_type: documentType, file_name: file.name, path: signed.path, mime_type: mimeType },
+      );
+      return data;
+    } catch {
+      // Respaldo: subida multipart por el backend.
+      const form = new FormData();
+      form.append("file", file);
+      const { data } = await api.post<CustomerDocument>(
+        `/customers/${customerId}/documents?document_type=${encodeURIComponent(documentType)}`,
+        form,
+        { headers: { "Content-Type": undefined as unknown as string }, timeout: 120000 },
+      );
+      return data;
+    }
   },
   async deleteDocument(customerId: number, docId: number): Promise<void> {
     await api.delete(`/customers/${customerId}/documents/${docId}`);

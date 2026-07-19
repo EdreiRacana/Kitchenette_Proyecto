@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Annotated, List, Optional
 
@@ -14,6 +15,7 @@ from app.modules.auth.models import User
 from app.modules.customers import schemas, service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 DB = Annotated[AsyncSession, Depends(deps.get_db)]
 CurrentUser = Annotated[User, Depends(deps.get_current_active_user)]
@@ -97,8 +99,11 @@ async def sign_customer_document_upload(
     safe_name = f"cli{customer_id}_{int(datetime.now().timestamp())}_{body.file_name}"
     try:
         signed = await create_signed_upload(safe_name, folder="clientes")
-    except RuntimeError as e:
-        raise HTTPException(502, str(e))
+    except Exception as e:  # noqa: BLE001 — cualquier fallo de Supabase se reporta como 424, nunca 500 opaco
+        # 424 (no 502/503/504) para que el axios del frontend NO lo reintente
+        # como "cold start" y caiga de inmediato a la subida multipart de respaldo.
+        logger.warning("sign-upload cliente %s falló: %s", customer_id, e)
+        raise HTTPException(424, f"Almacenamiento directo no disponible: {e}")
     if not signed:
         raise HTTPException(409, "Subida directa no disponible: configura Supabase Storage en el servidor.")
     return schemas.CustomerDocumentSignResponse(upload_url=signed["upload_url"], path=signed["path"])
@@ -127,10 +132,17 @@ async def finalize_customer_document(
 async def _with_signed_url(doc) -> schemas.CustomerDocumentInDB:
     """Convierte el ORM a schema y, si el path es un objeto de Supabase
     (no un fallback local), lo reemplaza por una URL de lectura firmada y
-    temporal. No muta el ORM: el path crudo es lo único que se persiste."""
+    temporal. No muta el ORM: el path crudo es lo único que se persiste.
+
+    Firmar la URL de lectura NO debe ser fatal: si Supabase falla al firmar,
+    el documento igual quedó guardado, así que devolvemos el schema con el
+    path crudo en vez de tumbar toda la respuesta con un 500."""
     out = schemas.CustomerDocumentInDB.model_validate(doc)
     if not out.file_path.startswith("/static/") and not out.file_path.startswith("http"):
-        out.file_path = await create_signed_download(out.file_path)
+        try:
+            out.file_path = await create_signed_download(out.file_path)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("No se pudo firmar la descarga de %s: %s", out.file_path, e)
     return out
 
 
@@ -147,7 +159,11 @@ async def upload_customer_document(
 
     content = await file.read()
     safe_name = f"cli{customer_id}_{document_type}_{int(datetime.now().timestamp())}_{file.filename or 'documento'}"
-    url = await upload_bytes(content, safe_name, folder="clientes")
+    try:
+        url = await upload_bytes(content, safe_name, folder="clientes")
+    except Exception as e:  # noqa: BLE001 — fallo de almacenamiento → 424, nunca 500 opaco
+        logger.warning("multipart upload cliente %s falló: %s", customer_id, e)
+        raise HTTPException(424, f"No se pudo almacenar el archivo: {e}")
 
     doc_in = schemas.CustomerDocumentCreate(
         customer_id=customer_id, document_type=document_type,
