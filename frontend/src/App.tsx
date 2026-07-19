@@ -862,7 +862,8 @@ function Thermometer({ t, actual, target, pct }: any) {
   const fillPct = Math.max(0, Math.min(100, pct));
   const bot = cy + r, top = cy - r;
   const fillTopY = bot - (2 * r) * fillPct / 100;
-  const MTX = { dark: "#067A2E", mid: "#12D954", bright: "#5BFF87", surf: "#8AFFB0" };
+  // Azul del sistema (nova) — da variedad frente al verde de las esferas de BI.
+  const MTX = { dark: "#0B4A78", mid: "#1E86CC", bright: "#33B2F5", surf: "#8CEEFF" };
 
   // Onda periódica: se dibuja extendida y se traslada exactamente una longitud
   // de onda (loop sin costura). `top` de relleno fijo; solo ripplea la superficie.

@@ -642,12 +642,14 @@ function SparkMini({ data, color, width = 80, height = 28 }: { data: number[]; c
    Mismo instrumento que la esfera de "Meta vs real" del Tablero: vaso
    circular que se llena de líquido "Matrix" hasta el %, con superficie de
    onda en movimiento, burbujas y anillo de ticks. Animación SMIL (SVG puro). */
-function LiquidCore({ pct, t, sub }: { pct: number; t: any; sub?: string }) {
+function LiquidCore({ pct, t, sub, hue = "green" }: { pct: number; t: any; sub?: string; hue?: "green" | "blue" }) {
   const W = 200, H = 204, cx = 100, cy = 100, r = 78;
   const fillPct = Math.max(0, Math.min(100, Math.round(pct)));
   const bot = cy + r;
   const fillTopY = bot - (2 * r) * fillPct / 100;
-  const MTX = { dark: "#067A2E", mid: "#12D954", bright: "#5BFF87", surf: "#8AFFB0" };
+  const MTX = hue === "blue"
+    ? { dark: "#0B4A78", mid: "#1E86CC", bright: "#33B2F5", surf: "#8CEEFF" }
+    : { dark: "#067A2E", mid: "#12D954", bright: "#5BFF87", surf: "#8AFFB0" };
   const waveFill = (amp: number, wl: number) => {
     let d = `M ${-2 * wl} ${fillTopY.toFixed(1)}`;
     for (let x = -2 * wl; x <= W + 2 * wl; x += 5) d += ` L ${x} ${(fillTopY + amp * Math.sin((x / wl) * 2 * Math.PI)).toFixed(1)}`;
@@ -1476,7 +1478,7 @@ function BIModuleBody({
               <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 4 }}>Margen neto</div>
               <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 8 }}>Utilidad sobre ingresos del período · objetivo 15%</div>
               <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <LiquidCore pct={Math.max(0, Math.min(D.margenNeto, 100))} sub="Margen neto" t={t} />
+                <LiquidCore pct={Math.max(0, Math.min(D.margenNeto, 100))} sub="Margen neto" hue="blue" t={t} />
               </div>
             </div>
             {/* Donut de estructura de egresos */}
