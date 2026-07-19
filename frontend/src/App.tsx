@@ -851,104 +851,102 @@ function AlertsList({ t, s, items, onGo }: any) {
 }
 function lang(s: any) { return (s?.nav?.dashboard || "").toLowerCase().includes("dash") ? "en" : "es"; }
 
-/* ── Columna neón (Meta vs Real) — HUD-lite ───────────────────────── */
+/* ── Núcleo de líquido (Meta vs Real) — medidor de nivel animado ──────
+   Instrumento HUD: vaso circular que se llena de líquido "Matrix" hasta el
+   % de avance a la meta, con superficie de onda en movimiento, burbujas que
+   suben y anillo de ticks de precisión. La animación es SMIL (SVG puro), sin
+   JS por frame ni re-render de React. */
 function Thermometer({ t, actual, target, pct }: any) {
   void actual; void target;
-  // Layout HUD: columna vertical con base luminosa; riel de zonas + etiquetas a la derecha.
-  const W = 190, H = 268;
-  const tubeW = 26;
-  const cx = 34;                                   // eje de la columna (a la izquierda)
-  const tubeTop = 26;
-  const bulbR = 30;
-  const bulbCy = H - bulbR - 6;
-  const tubeBottom = H - bulbR - 12;
-  const tubeH = tubeBottom - tubeTop;
+  const W = 200, H = 204, cx = 100, cy = 100, r = 78;
   const fillPct = Math.max(0, Math.min(100, pct));
-  const fillH = (tubeH * fillPct) / 100;
-  const yFor = (p: number) => tubeBottom - (tubeH * p) / 100;   // p:0..100 → y
-  // Verde "Matrix" — degradado fósforo (oscuro abajo → neón brillante arriba)
-  const MTX = { dark: "#067A2E", mid: "#12D954", bright: "#5BFF87" };
-  const fillColor = MTX.bright;                    // acento: bulbo, perilla, marcador y base
-  const yCur = yFor(fillPct);
-  // Zonas (de arriba hacia abajo) — riel de color + etiqueta alineada al centro de la banda
-  const zones = [
-    { from: 90, to: 100, color: t.good, label: "En objetivo", range: "90–100%" },
-    { from: 65, to: 90, color: t.nova, label: "En progreso", range: "65–90%" },
-    { from: 0, to: 65, color: t.bad, label: "Riesgo", range: "< 65%" },
+  const bot = cy + r, top = cy - r;
+  const fillTopY = bot - (2 * r) * fillPct / 100;
+  const MTX = { dark: "#067A2E", mid: "#12D954", bright: "#5BFF87", surf: "#8AFFB0" };
+
+  // Onda periódica: se dibuja extendida y se traslada exactamente una longitud
+  // de onda (loop sin costura). `top` de relleno fijo; solo ripplea la superficie.
+  const waveFill = (amp: number, wl: number) => {
+    let d = `M ${-2 * wl} ${fillTopY.toFixed(1)}`;
+    for (let x = -2 * wl; x <= W + 2 * wl; x += 5) d += ` L ${x} ${(fillTopY + amp * Math.sin((x / wl) * 2 * Math.PI)).toFixed(1)}`;
+    return d + ` L ${W + 2 * wl} ${bot + 24} L ${-2 * wl} ${bot + 24} Z`;
+  };
+  const waveLine = (amp: number, wl: number) => {
+    let d = `M ${-2 * wl} ${(fillTopY + amp * Math.sin((-2 * wl / wl) * 2 * Math.PI)).toFixed(1)}`;
+    for (let x = -2 * wl; x <= W + 2 * wl; x += 5) d += ` L ${x} ${(fillTopY + amp * Math.sin((x / wl) * 2 * Math.PI)).toFixed(1)}`;
+    return d;
+  };
+
+  const gridYs = [38, 54, 70, 86, 102, 118, 134, 150, 166];
+  const bubbles = [
+    { x: 76, r: 2.4, dur: 3.6, begin: 0 }, { x: 112, r: 1.7, dur: 4.3, begin: 0.9 },
+    { x: 94, r: 3, dur: 3.9, begin: 1.7 }, { x: 128, r: 1.9, dur: 4.7, begin: 2.4 },
+    { x: 66, r: 1.5, dur: 3.2, begin: 1.2 },
   ];
-  const railX = 52, railW = 4;
+  const hasLiquid = fillPct > 0.5;
+
   return (
-    <div style={{ display: "flex", justifyContent: "center", padding: "6px 0 0" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: 210, height: "auto", display: "block" }}>
+    <div style={{ display: "flex", justifyContent: "center", padding: "2px 0 0" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: 224, height: "auto", display: "block" }}>
         <defs>
-          <linearGradient id="thermoFill" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0%" stopColor={MTX.dark} stopOpacity="0.3" />
-            <stop offset="50%" stopColor={MTX.mid} stopOpacity="0.5" />
-            <stop offset="100%" stopColor={MTX.bright} stopOpacity="0.72" />
+          <clipPath id="coreClip"><circle cx={cx} cy={cy} r={r - 3} /></clipPath>
+          <linearGradient id="coreLiquid" x1="0" y1="1" x2="0" y2="0">
+            <stop offset="0%" stopColor={MTX.dark} /><stop offset="70%" stopColor={MTX.mid} /><stop offset="100%" stopColor={MTX.bright} />
           </linearGradient>
-          <radialGradient id="thermoBase" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor={fillColor} stopOpacity="0.55" />
-            <stop offset="100%" stopColor={fillColor} stopOpacity="0" />
+          <radialGradient id="coreVign" cx="50%" cy="42%" r="62%">
+            <stop offset="58%" stopColor="#000" stopOpacity="0" /><stop offset="100%" stopColor="#000" stopOpacity="0.38" />
           </radialGradient>
-          <filter id="thermoGlow" x="-70%" y="-70%" width="240%" height="240%">
-            <feGaussianBlur stdDeviation="3" result="b" />
-            <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
-          </filter>
+          <filter id="coreGlow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="2.6" /></filter>
         </defs>
 
-        {/* Base luminosa (pedestal HUD) */}
-        <ellipse cx={cx} cy={bulbCy + bulbR - 2} rx={40} ry={8} fill="url(#thermoBase)" />
-        <ellipse cx={cx} cy={bulbCy + bulbR - 2} rx={24} ry={4} fill={fillColor} fillOpacity="0.25" />
+        {/* Vaso de fondo */}
+        <circle cx={cx} cy={cy} r={r} fill={t.panel3} opacity="0.5" />
 
-        {/* Tubo de fondo (glass) */}
-        <rect x={cx - tubeW / 2} y={tubeTop} width={tubeW} height={tubeH}
-              rx={tubeW / 2} fill={t.panel3} stroke={t.border} strokeWidth="1" />
+        <g clipPath="url(#coreClip)">
+          {/* Rejilla de "tanque" */}
+          {gridYs.map((y) => <line key={y} x1={cx - r} x2={cx + r} y1={y} y2={y} stroke="#0A1430" strokeWidth="1" opacity="0.5" />)}
 
-        {/* Llenado con degradado + glow */}
-        {fillH > 0 && (
-          <rect x={cx - tubeW / 2 + 2} y={tubeBottom - fillH}
-                width={tubeW - 4} height={fillH}
-                rx={(tubeW - 4) / 2} fill="url(#thermoFill)" filter="url(#thermoGlow)" />
-        )}
+          {hasLiquid && (
+            <>
+              {/* Onda trasera (lenta, tenue) */}
+              <g opacity="0.3">
+                <animateTransform attributeName="transform" type="translate" from="0 0" to="-100 0" dur="5.5s" repeatCount="indefinite" />
+                <path d={waveFill(6, 100)} fill={MTX.mid} />
+              </g>
+              {/* Onda frontal + línea de superficie luminosa */}
+              <g>
+                <animateTransform attributeName="transform" type="translate" from="0 0" to="-70 0" dur="3.2s" repeatCount="indefinite" />
+                <path d={waveFill(5, 70)} fill="url(#coreLiquid)" opacity="0.92" />
+                <path d={waveLine(5, 70)} fill="none" stroke={MTX.surf} strokeWidth="2" filter="url(#coreGlow)" />
+              </g>
+              {/* Burbujas que suben */}
+              {bubbles.map((b, i) => (
+                <circle key={i} cx={b.x} cy={bot - 6} r={b.r} fill={MTX.surf} opacity="0">
+                  <animate attributeName="cy" from={bot - 6} to={fillTopY + 4} dur={`${b.dur}s`} begin={`${b.begin}s`} repeatCount="indefinite" />
+                  <animate attributeName="opacity" values="0;0.55;0" dur={`${b.dur}s`} begin={`${b.begin}s`} repeatCount="indefinite" />
+                </circle>
+              ))}
+            </>
+          )}
+          <rect x="0" y="0" width={W} height={H} fill="url(#coreVign)" />
+        </g>
 
-        {/* Segmentos horizontales (stacked HUD) */}
-        {[25, 50, 75].map((p) => (
-          <line key={p} x1={cx - tubeW / 2 + 2} x2={cx + tubeW / 2 - 2} y1={yFor(p)} y2={yFor(p)}
-                stroke={t.border} strokeWidth="1" opacity="0.35" />
-        ))}
+        {/* Aro del vaso + borde */}
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={MTX.bright} strokeOpacity="0.35" strokeWidth="1.5" />
+        <circle cx={cx} cy={cy} r={r + 4} fill="none" stroke={t.border} strokeWidth="1" />
 
-        {/* Bulbo */}
-        <circle cx={cx} cy={bulbCy} r={bulbR} fill={t.panel3} stroke={t.border} strokeWidth="1" />
-        <circle cx={cx} cy={bulbCy} r={bulbR - 3} fill={fillColor} fillOpacity="0.55" filter="url(#thermoGlow)" />
-        <text x={cx} y={bulbCy + 5} textAnchor="middle" fontSize="17" fontWeight="800" fill="#fff">{fillPct}%</text>
-
-        {/* Rótulo META (centrado sobre la columna) + línea de tope */}
-        <text x={cx} y={12} textAnchor="middle" fontSize="8.5" fontWeight="700" fill={t.textHi} letterSpacing="0.6">META · 100%</text>
-        <line x1={cx - tubeW / 2 - 3} x2={railX + railW + 2} y1={yFor(100)} y2={yFor(100)}
-              stroke={t.textHi} strokeWidth="1.5" strokeDasharray="3 3" opacity="0.6" />
-
-        {/* Marcador del nivel actual (AHORA) con glow */}
-        <line x1={cx - tubeW / 2 - 4} x2={cx + tubeW / 2 + 4} y1={yCur} y2={yCur}
-              stroke={fillColor} strokeWidth="1.5" opacity="0.9" filter="url(#thermoGlow)" />
-        <circle cx={cx} cy={yCur} r="4" fill="#fff" stroke={fillColor} strokeWidth="2" filter="url(#thermoGlow)" />
-
-        {/* Riel de zonas (barra segmentada a la derecha) */}
-        {zones.map((z) => (
-          <rect key={z.label} x={railX} y={yFor(z.to)} width={railW} height={yFor(z.from) - yFor(z.to)}
-                rx={railW / 2} fill={z.color} opacity="0.55" />
-        ))}
-
-        {/* Etiquetas de zona alineadas al centro de cada banda */}
-        {zones.map((z) => {
-          const yMid = yFor((z.from + z.to) / 2);
-          return (
-            <g key={z.label}>
-              <circle cx={railX + railW + 8} cy={yMid} r="3" fill={z.color} />
-              <text x={railX + railW + 16} y={yMid + 1} fontSize="9.5" fontWeight="700" fill={t.textMid}>{z.label}</text>
-              <text x={railX + railW + 16} y={yMid + 12} fontSize="8.5" fill={t.textLo} style={{ fontVariantNumeric: "tabular-nums" }}>{z.range}</text>
-            </g>
-          );
+        {/* Anillo de ticks de precisión (cada 9º más largo/brillante) */}
+        {Array.from({ length: 36 }, (_, i) => {
+          const a = (i * 10 - 90) * Math.PI / 180;
+          const major = i % 9 === 0;
+          const x1 = cx + (r + 4) * Math.cos(a), y1 = cy + (r + 4) * Math.sin(a);
+          const x2 = cx + (r + (major ? 11 : 7)) * Math.cos(a), y2 = cy + (r + (major ? 11 : 7)) * Math.sin(a);
+          return <line key={i} x1={x1.toFixed(1)} y1={y1.toFixed(1)} x2={x2.toFixed(1)} y2={y2.toFixed(1)} stroke={major ? MTX.bright : t.textLo} strokeWidth="1" opacity={major ? "0.85" : "0.35"} />;
         })}
+
+        {/* Lectura central */}
+        <text x={cx} y={cy - 1} textAnchor="middle" fontSize="42" fontWeight="800" fill="#fff" style={{ letterSpacing: "-1px" }}>{fillPct}%</text>
+        <text x={cx} y={cy + 17} textAnchor="middle" fontSize="9.5" fontWeight="600" fill={MTX.surf} letterSpacing="1.6">DE LA META</text>
       </svg>
     </div>
   );
@@ -1193,7 +1191,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
                   <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxnShort(data.goal.target)}</div>
                 </div>
               </div>
-              <div style={{ marginTop: "auto", paddingTop: 12, fontSize: 12.5, color: t.textMid, borderTop: `1px solid ${t.borderSoft}` }}>{s.dash.remaining(mxn(Math.max(0, data.goal.target - data.goal.actual)))}</div>
+              <div style={{ marginTop: "auto", paddingTop: 12, fontSize: 12.5, color: t.textMid, borderTop: `1px solid ${t.borderSoft}` }}>{s.dash.remaining(mxnShort(Math.max(0, data.goal.target - data.goal.actual)))}</div>
             </>
           ) : (
             <div style={{ marginTop: 6, fontSize: 13, color: t.textLo, lineHeight: 1.5 }}>
