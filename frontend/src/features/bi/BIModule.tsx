@@ -650,6 +650,8 @@ function LiquidCore({ pct, t, sub, hue = "green" }: { pct: number; t: any; sub?:
   const MTX = hue === "blue"
     ? { dark: "#0B4A78", mid: "#1E86CC", bright: "#33B2F5", surf: "#8CEEFF" }
     : { dark: "#067A2E", mid: "#12D954", bright: "#5BFF87", surf: "#8AFFB0" };
+  // Theme-aware: la esfera debe leerse igual en claro y oscuro.
+  const isLight = ((): boolean => { const h = String(t.base || t.panel || "").replace("#", ""); if (h.length < 6) return false; return (parseInt(h.slice(0, 2), 16) * 299 + parseInt(h.slice(2, 4), 16) * 587 + parseInt(h.slice(4, 6), 16) * 114) / 1000 > 140; })();
   const waveFill = (amp: number, wl: number) => {
     let d = `M ${-2 * wl} ${fillTopY.toFixed(1)}`;
     for (let x = -2 * wl; x <= W + 2 * wl; x += 5) d += ` L ${x} ${(fillTopY + amp * Math.sin((x / wl) * 2 * Math.PI)).toFixed(1)}`;
@@ -675,13 +677,13 @@ function LiquidCore({ pct, t, sub, hue = "green" }: { pct: number; t: any; sub?:
           <stop offset="0%" stopColor={MTX.dark} /><stop offset="70%" stopColor={MTX.mid} /><stop offset="100%" stopColor={MTX.bright} />
         </linearGradient>
         <radialGradient id="lcVign" cx="50%" cy="42%" r="62%">
-          <stop offset="58%" stopColor="#000" stopOpacity="0" /><stop offset="100%" stopColor="#000" stopOpacity="0.38" />
+          <stop offset="58%" stopColor="#000" stopOpacity="0" /><stop offset="100%" stopColor="#000" stopOpacity={isLight ? "0.06" : "0.38"} />
         </radialGradient>
         <filter id="lcGlow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="2.6" /></filter>
       </defs>
       <circle cx={cx} cy={cy} r={r} fill={t.panel3} opacity="0.5" />
       <g clipPath="url(#lcClip)">
-        {gridYs.map((y) => <line key={y} x1={cx - r} x2={cx + r} y1={y} y2={y} stroke="#0A1430" strokeWidth="1" opacity="0.5" />)}
+        {gridYs.map((y) => <line key={y} x1={cx - r} x2={cx + r} y1={y} y2={y} stroke={t.gridLine} strokeWidth="1" opacity={isLight ? "0.7" : "0.5"} />)}
         {hasLiquid && (
           <>
             <g opacity="0.3">
@@ -712,8 +714,8 @@ function LiquidCore({ pct, t, sub, hue = "green" }: { pct: number; t: any; sub?:
         const x2 = cx + (r + (major ? 11 : 7)) * Math.cos(a), y2 = cy + (r + (major ? 11 : 7)) * Math.sin(a);
         return <line key={i} x1={x1.toFixed(1)} y1={y1.toFixed(1)} x2={x2.toFixed(1)} y2={y2.toFixed(1)} stroke={major ? MTX.bright : t.textLo} strokeWidth="1" opacity={major ? "0.85" : "0.35"} />;
       })}
-      <text x={cx} y={cy - 1} textAnchor="middle" fontSize="42" fontWeight="800" fill="#fff" style={{ letterSpacing: "-1px" }}>{fillPct}%</text>
-      {sub && <text x={cx} y={cy + 17} textAnchor="middle" fontSize="9.5" fontWeight="600" fill={MTX.surf} letterSpacing="1.4">{sub}</text>}
+      <text x={cx} y={cy - 1} textAnchor="middle" fontSize="42" fontWeight="800" fill={t.textHi} style={{ letterSpacing: "-1px" }}>{fillPct}%</text>
+      {sub && <text x={cx} y={cy + 17} textAnchor="middle" fontSize="9.5" fontWeight="600" fill={t.textMid} letterSpacing="1.4">{sub}</text>}
     </svg>
   );
 }
