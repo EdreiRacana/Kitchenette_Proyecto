@@ -283,8 +283,13 @@ async function loadDashboardData(preset, customStart, customEnd) {
     { label: "Ticket promedio", value: statsCur.avg_ticket, prev: statsPrev.avg_ticket, money: true, delta: pctDelta(statsCur.avg_ticket, statsPrev.avg_ticket), spark: trendCur.map((p) => (p.count ? p.total / p.count : 0)) },
   ];
 
-  const totalIncome = finComparison.current.total_income || 0;
-  const margin = totalIncome ? Math.round((finComparison.current.net_profit / totalIncome) * 100) : 0;
+  // Margen neto consistente con las tarjetas visibles del tablero: Utilidad
+  // neta ÷ Ventas del período (los mismos dos números que se muestran arriba).
+  // Antes se dividía entre los ingresos de Finanzas, que tienen otra base y
+  // hacían que el gauge (p. ej. 73%) contradijera el Utilidad/Ventas (≈55%)
+  // que el director calcula a ojo. Ahora los tres números cuadran.
+  const ventasBase = statsCur.total_sold || 0;
+  const margin = ventasBase ? Math.round((finComparison.current.net_profit / ventasBase) * 100) : 0;
 
   // Alertas TOP 5 unificadas — CxC vencida, inventario, RH, etc.
   const alerts = [];
