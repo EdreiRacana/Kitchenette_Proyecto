@@ -1130,51 +1130,8 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
         })}
       </div>
 
-      {/* ── FILA: Tendencia Ingresos vs Gastos + Top clientes ── */}
+      {/* ── FILA: ¿Vamos en plan? — Ventas del período vs anterior + Meta ── */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 2fr) minmax(0, 1fr)", gap: 10, marginBottom: 12 }}>
-        <Card t={t} style={{ padding: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Tendencia de ingresos y gastos</div>
-            <div style={{ display: "flex", gap: 16 }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: t.textMid }}><span style={{ width: 14, height: 3, borderRadius: 2, background: t.nova }} /> Ingresos</span>
-              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: t.textMid }}><span style={{ width: 14, height: 3, borderRadius: 2, background: t.good }} /> Gastos</span>
-            </div>
-          </div>
-          <IncomeExpenseArea t={t} data={data.cashFlow} />
-        </Card>
-        <Card t={t} style={{ padding: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Top 5 clientes</div>
-            <span style={{ fontSize: 11, color: t.textLo }}>del período</span>
-          </div>
-          <TopCustomersRanked t={t} items={data.topCustomers} onClick={() => setPage("clientes")} />
-        </Card>
-      </div>
-
-      {/* ── FILA: Donut ventas por canal + Alertas TOP 5 + KPIs operativos ── */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr)", gap: 10, marginBottom: 12 }}>
-        <Card t={t} style={{ padding: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Ventas por canal</div>
-          </div>
-          <DonutChart t={t} items={data.byChannel} colors={["#5B8DEF", "#5EBBA9", "#C89E5A", "#8E7BB8", "#B87A8A"]} />
-        </Card>
-        <Card t={t} style={{ padding: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Alertas tempranas (TOP 5)</div>
-          </div>
-          <AlertsList t={t} s={s} items={data.topAlerts} onGo={setPage} />
-        </Card>
-        <Card t={t} style={{ padding: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>KPIs operativos</div>
-          </div>
-          <OperationalBars t={t} bars={data.progressBars} />
-        </Card>
-      </div>
-
-      {/* ── FILA: Comparativa período actual vs anterior + Meta ── */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 2fr) minmax(0, 1fr)", gap: 10 }}>
         <Card t={t} style={{ padding: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, flexWrap: "wrap", gap: 8 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: t.textHi }}>{s.dash.chartTitle} <span style={{ color: t.textLo, fontWeight: 400 }}>{s.dash.chartUnit}</span></div>
@@ -1235,6 +1192,49 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
               </div>
             </div>
           )}
+        </Card>
+      </div>
+
+      {/* ── FILA: Tendencia Ingresos vs Gastos + Top clientes ── */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 2fr) minmax(0, 1fr)", gap: 10, marginBottom: 12 }}>
+        <Card t={t} style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Tendencia de ingresos y gastos</div>
+            <div style={{ display: "flex", gap: 16 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: t.textMid }}><span style={{ width: 14, height: 3, borderRadius: 2, background: t.nova }} /> Ingresos</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: t.textMid }}><span style={{ width: 14, height: 3, borderRadius: 2, background: t.good }} /> Gastos</span>
+            </div>
+          </div>
+          <IncomeExpenseArea t={t} data={data.cashFlow} />
+        </Card>
+        <Card t={t} style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Top 5 clientes</div>
+            <span style={{ fontSize: 11, color: t.textLo }}>del período</span>
+          </div>
+          <TopCustomersRanked t={t} items={data.topCustomers} onClick={() => setPage("clientes")} />
+        </Card>
+      </div>
+
+      {/* ── FILA: Donut ventas por canal + Alertas TOP 5 + KPIs operativos ── */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr)", gap: 10, marginBottom: 12 }}>
+        <Card t={t} style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Ventas por canal</div>
+          </div>
+          <DonutChart t={t} items={data.byChannel} colors={["#5B8DEF", "#5EBBA9", "#C89E5A", "#8E7BB8", "#B87A8A"]} />
+        </Card>
+        <Card t={t} style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>Alertas tempranas (TOP 5)</div>
+          </div>
+          <AlertsList t={t} s={s} items={data.topAlerts} onGo={setPage} />
+        </Card>
+        <Card t={t} style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, textTransform: "uppercase", letterSpacing: 0.4 }}>KPIs operativos</div>
+          </div>
+          <OperationalBars t={t} bars={data.progressBars} />
         </Card>
       </div>
 
