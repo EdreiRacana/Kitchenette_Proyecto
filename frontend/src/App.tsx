@@ -231,16 +231,27 @@ async function loadDashboardData(preset, customStart, customEnd) {
   const prevStartISO = prevStart.toISOString(), prevEndISO = prevEnd.toISOString();
   const { granularity, days } = dashTrendParams(preset);
 
+  // Defaults seguros: en el plan free de Render el backend arranca en frío y
+  // el tablero dispara ~16 llamadas en paralelo. Antes, si UNA sola fallaba,
+  // Promise.all tumbaba TODO el tablero. Ahora solo `statsCur` es el "latido"
+  // (si falla, el backend está caído → pantalla de Reintentar); el resto cae a
+  // un default y el tablero se pinta con lo que sí cargó, degradando en vez de
+  // quedar en blanco.
+  const ZERO_STATS: any = { total_sold: 0, orders_count: 0, avg_ticket: 0, pending_amount: 0, paid_rate: 0, quotes_count: 0 };
+  const ZERO_FINCMP: any = { current: { net_profit: 0, total_income: 0, total_expenses: 0, expenses_by_category: [] }, previous: { net_profit: 0, total_income: 0, total_expenses: 0, expenses_by_category: [] } };
+  const ZERO_INV: any = { total_value: 0, total_units: 0, out_of_stock: 0, low_stock: 0, by_category: [] };
+  const ZERO_FINDASH: any = { cxc_balance: 0, cxp_balance: 0 };
+
   const [statsCur, statsPrev, trendCur, trendPrev, finComparison, invStats, finDashboard, budgets, forecastGoal,
          topCustomers, topCustomersPrev, byChannel, cashFlow, reorderAlerts, hrAlerts] = await Promise.all([
-    salesApi.stats(curStartISO, curEndISO),
-    salesApi.stats(prevStartISO, prevEndISO),
-    salesApi.trend(granularity, days, curEndISO),
-    salesApi.trend(granularity, days, curStartISO),
-    financeService.getPeriodComparison(curStartISO, curEndISO),
-    inventoryService.getStats(),
-    financeService.getDashboard(),
-    financeService.getBudgets(),
+    salesApi.stats(curStartISO, curEndISO),   // latido: si esto falla, el backend está caído
+    salesApi.stats(prevStartISO, prevEndISO).catch(() => ZERO_STATS),
+    salesApi.trend(granularity, days, curEndISO).catch(() => []),
+    salesApi.trend(granularity, days, curStartISO).catch(() => []),
+    financeService.getPeriodComparison(curStartISO, curEndISO).catch(() => ZERO_FINCMP),
+    inventoryService.getStats().catch(() => ZERO_INV),
+    financeService.getDashboard().catch(() => ZERO_FINDASH),
+    financeService.getBudgets().catch(() => []),
     // Forecast tiene prioridad; si no hay plan activo cae a los presupuestos de Finanzas.
     forecastApi.goalForRange(curStartISO, curEndISO).catch(() => ({ goal_amount: 0, plan_id: null, plan_name: null, plan_year: null, months_covered: [] })),
     salesApi.topCustomers(5, curStartISO, curEndISO).catch(() => []),
