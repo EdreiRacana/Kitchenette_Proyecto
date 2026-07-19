@@ -23,7 +23,7 @@ import ConfigModule from "./features/config/ConfigModule";
 import ForecastModule from "./features/forecast/ForecastModule";
 import RetailModule from "./features/retail/RetailModule";
 import POSModule from "./features/pos/POSModule";
-import api from "./services/api";
+import api, { onUnauthorized } from "./services/api";
 import { useServerRecovery } from "./hooks/useServerRecovery";
 import configService from "./features/config/service";
 
@@ -2241,6 +2241,9 @@ export default function App() {
   const [theme, setTheme] = useState("dark");
   const [lang, setLang] = useState("es");
   const [authed, setAuthed] = useState(() => !!localStorage.getItem("token"));
+  // Sesión expirada (401 del backend): el interceptor limpia el token y aquí
+  // volvemos al login en vez de dejar el tablero roto con errores.
+  useEffect(() => onUnauthorized(() => setAuthed(false)), []);
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   const [page, setPage] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
