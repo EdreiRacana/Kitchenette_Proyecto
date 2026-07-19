@@ -82,14 +82,23 @@ async def create_signed_upload(filename: str, folder: str = "misc") -> dict | No
         "apikey": settings.SUPABASE_SERVICE_KEY,
         "Content-Type": "application/json",
     }
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(sign_url, headers=headers, json={})
-        if resp.is_error:
-            raise RuntimeError(f"Supabase sign-upload falló ({resp.status_code}): {resp.text}")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(sign_url, headers=headers, json={})
+    except httpx.HTTPError as e:
+        # Errores de red/DNS/timeout no son RuntimeError; sin esto escapan como
+        # excepción no controlada y el endpoint devuelve un 500 opaco.
+        raise RuntimeError(f"No se pudo contactar Supabase Storage: {e}") from e
+    if resp.is_error:
+        raise RuntimeError(f"Supabase sign-upload falló ({resp.status_code}): {resp.text}")
+    try:
         signed = resp.json()
+        relative = signed["url"]
+    except (ValueError, KeyError) as e:
+        raise RuntimeError(f"Respuesta inesperada de Supabase sign-upload: {resp.text}") from e
 
     # `url` viene como ruta relativa, p. ej. "/object/upload/sign/<bucket>/<path>?token=...".
-    upload_url = f"{settings.SUPABASE_URL}/storage/v1{signed['url']}"
+    upload_url = f"{settings.SUPABASE_URL}/storage/v1{relative}"
     return {"upload_url": upload_url, "public_url": public_url_for(object_path), "path": object_path}
 
 
@@ -111,9 +120,15 @@ async def create_signed_download(object_path: str, expires_in: int = 600) -> str
         "apikey": settings.SUPABASE_SERVICE_KEY,
         "Content-Type": "application/json",
     }
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(sign_url, headers=headers, json={"expiresIn": expires_in})
-        if resp.is_error:
-            raise RuntimeError(f"Supabase sign-download falló ({resp.status_code}): {resp.text}")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(sign_url, headers=headers, json={"expiresIn": expires_in})
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"No se pudo firmar la descarga en Supabase: {e}") from e
+    if resp.is_error:
+        raise RuntimeError(f"Supabase sign-download falló ({resp.status_code}): {resp.text}")
+    try:
         signed = resp.json()
-    return f"{settings.SUPABASE_URL}/storage/v1{signed['signedURL']}"
+        return f"{settings.SUPABASE_URL}/storage/v1{signed['signedURL']}"
+    except (ValueError, KeyError) as e:
+        raise RuntimeError(f"Respuesta inesperada de Supabase sign-download: {resp.text}") from e

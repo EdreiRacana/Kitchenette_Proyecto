@@ -17,6 +17,7 @@ import { money } from "../sales/theme";
 import { Badge, Select, Button } from "../sales/ui";
 import type { Customer, CustomerDocument } from "./types";
 import { customersApi } from "./api";
+import { resolveMediaUrl } from "../../services/api";
 import { openWhatsApp } from "../../utils/whatsapp";
 import { salesApi } from "../sales/api";
 import type { CustomerPnLBreakdown, CustomerTransaction, CustomerReturnLine } from "../sales/types";
@@ -543,7 +544,7 @@ export default function Customer360({
               ) : docs.map((doc) => (
                 <div key={doc.id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 8, padding: "10px 14px", minWidth: 0 }}>
                   <FileText size={16} style={{ color: tk.accent, flexShrink: 0 }} />
-                  <a href={doc.file_path} target="_blank" rel="noreferrer" title={doc.file_name}
+                  <a href={resolveMediaUrl(doc.file_path)} target="_blank" rel="noreferrer" title={doc.file_name}
                     style={{ color: tk.textHi, fontSize: 13.5, fontWeight: 600, textDecoration: "none", flex: "1 1 140px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {doc.file_name}
                   </a>
