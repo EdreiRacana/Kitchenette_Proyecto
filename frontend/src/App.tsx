@@ -864,6 +864,9 @@ function Thermometer({ t, actual, target, pct }: any) {
   const fillTopY = bot - (2 * r) * fillPct / 100;
   // Azul del sistema (nova) — da variedad frente al verde de las esferas de BI.
   const MTX = { dark: "#0B4A78", mid: "#1E86CC", bright: "#33B2F5", surf: "#8CEEFF" };
+  // La esfera debe leerse en claro y oscuro: detectamos el tema por la luminancia
+  // del fondo para elegir color de texto, rejilla y viñeta acordes.
+  const isLight = ((): boolean => { const h = String(t.base || t.panel || "").replace("#", ""); if (h.length < 6) return false; return (parseInt(h.slice(0, 2), 16) * 299 + parseInt(h.slice(2, 4), 16) * 587 + parseInt(h.slice(4, 6), 16) * 114) / 1000 > 140; })();
 
   // Onda periódica: se dibuja extendida y se traslada exactamente una longitud
   // de onda (loop sin costura). `top` de relleno fijo; solo ripplea la superficie.
@@ -895,7 +898,7 @@ function Thermometer({ t, actual, target, pct }: any) {
             <stop offset="0%" stopColor={MTX.dark} /><stop offset="70%" stopColor={MTX.mid} /><stop offset="100%" stopColor={MTX.bright} />
           </linearGradient>
           <radialGradient id="coreVign" cx="50%" cy="42%" r="62%">
-            <stop offset="58%" stopColor="#000" stopOpacity="0" /><stop offset="100%" stopColor="#000" stopOpacity="0.38" />
+            <stop offset="58%" stopColor="#000" stopOpacity="0" /><stop offset="100%" stopColor="#000" stopOpacity={isLight ? "0.06" : "0.38"} />
           </radialGradient>
           <filter id="coreGlow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="2.6" /></filter>
         </defs>
@@ -905,7 +908,7 @@ function Thermometer({ t, actual, target, pct }: any) {
 
         <g clipPath="url(#coreClip)">
           {/* Rejilla de "tanque" */}
-          {gridYs.map((y) => <line key={y} x1={cx - r} x2={cx + r} y1={y} y2={y} stroke="#0A1430" strokeWidth="1" opacity="0.5" />)}
+          {gridYs.map((y) => <line key={y} x1={cx - r} x2={cx + r} y1={y} y2={y} stroke={t.gridLine} strokeWidth="1" opacity={isLight ? "0.7" : "0.5"} />)}
 
           {hasLiquid && (
             <>
@@ -946,8 +949,8 @@ function Thermometer({ t, actual, target, pct }: any) {
         })}
 
         {/* Lectura central */}
-        <text x={cx} y={cy - 1} textAnchor="middle" fontSize="42" fontWeight="800" fill="#fff" style={{ letterSpacing: "-1px" }}>{fillPct}%</text>
-        <text x={cx} y={cy + 17} textAnchor="middle" fontSize="9.5" fontWeight="600" fill={MTX.surf} letterSpacing="1.6">DE LA META</text>
+        <text x={cx} y={cy - 1} textAnchor="middle" fontSize="42" fontWeight="800" fill={t.textHi} style={{ letterSpacing: "-1px" }}>{fillPct}%</text>
+        <text x={cx} y={cy + 17} textAnchor="middle" fontSize="9.5" fontWeight="600" fill={t.textMid} letterSpacing="1.6">DE LA META</text>
       </svg>
     </div>
   );
