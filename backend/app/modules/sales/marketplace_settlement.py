@@ -9,8 +9,13 @@ Cuando Liverpool/Amazon/ML te deposita un pago periódico, este módulo:
 
 Fórmula:
   esperado = Σ(net_to_seller de órdenes) − Σ(refund de devoluciones)
+                                        − IVA retenido (8% s/bruto) − ISR retenido (2.5% s/bruto)
                                         ± ajustes manuales (comisiones extra, promociones)
   diferencia = depositado − esperado
+
+Las retenciones (8% IVA + 2.5% ISR, o el esquema configurado en el cliente)
+las retiene la plataforma en la fuente y las entera al SAT por ti, así que se
+descuentan del depósito esperado. Solo aplican a clientes marketplace/cadena.
 """
 from __future__ import annotations
 from datetime import datetime
@@ -54,6 +59,14 @@ async def compute_settlement(
     res = await db.execute(select(sales_models.Order).where(*conds))
     orders = res.scalars().all()
 
+    # Tasas de retención del cliente (marketplace/cadena). Para otros tipos
+    # regresa (0, 0) y no se descuenta nada.
+    from app.modules.customers.models import Customer, marketplace_retention_rates
+    cust = (await db.execute(
+        select(Customer).where(Customer.id == customer_id)
+    )).scalar_one_or_none()
+    iva_ret_pct, isr_ret_pct = marketplace_retention_rates(cust) if cust else (0.0, 0.0)
+
     order_lines = []
     total_gross = 0.0
     total_net_expected = 0.0
@@ -91,7 +104,12 @@ async def compute_settlement(
                 "refund_amount": round(amt, 2),
             })
 
-    expected = total_net_expected - total_returns
+    # Retenciones fiscales sobre la venta bruta (las retiene la plataforma).
+    iva_retention = round(total_gross * iva_ret_pct, 2)
+    isr_retention = round(total_gross * isr_ret_pct, 2)
+    retention_total = round(iva_retention + isr_retention, 2)
+
+    expected = round(total_net_expected - total_returns - retention_total, 2)
     variance = None
     if deposited_amount is not None:
         variance = round(deposited_amount - expected, 2)
@@ -107,6 +125,11 @@ async def compute_settlement(
             "commission_total": round(total_gross - total_net_expected, 2),
             "net_expected_before_returns": round(total_net_expected, 2),
             "returns_deducted": round(total_returns, 2),
+            "iva_retention": iva_retention,
+            "isr_retention": isr_retention,
+            "retention_total": retention_total,
+            "iva_retention_pct": round(iva_ret_pct * 100, 3),
+            "isr_retention_pct": round(isr_ret_pct * 100, 3),
             "expected_deposit": round(expected, 2),
             "deposited": deposited_amount,
             "variance": variance,
