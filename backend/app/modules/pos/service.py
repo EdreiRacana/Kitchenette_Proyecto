@@ -260,6 +260,103 @@ async def get_session_report(db: AsyncSession, session_id: int) -> Optional[dict
     return base
 
 
+async def list_sessions(
+    db: AsyncSession,
+    status: Optional[str] = None,
+    pending_only: bool = False,
+    terminal_id: Optional[int] = None,
+    limit: int = 100,
+) -> dict:
+    """Historial de turnos (arqueos) para el panel de conciliación.
+
+    Devuelve cada turno con sus derivados de reconciliación (depositado, fondo
+    al siguiente turno, efectivo pendiente por depositar) y un resumen global
+    de pendientes: cuántos turnos siguen sin conciliar, el total pendiente por
+    depositar y el saldo acumulado a favor (+) o en contra (−).
+
+    "Pendiente" = turno cerrado que aún NO se marca como reconciliado.
+    """
+    stmt = select(pos_models.POSSession)
+    if terminal_id is not None:
+        stmt = stmt.where(pos_models.POSSession.terminal_id == terminal_id)
+    if status and status != "all":
+        stmt = stmt.where(pos_models.POSSession.status == status)
+    stmt = stmt.order_by(
+        pos_models.POSSession.closed_at.desc().nulls_last(),
+        pos_models.POSSession.opened_at.desc(),
+        pos_models.POSSession.id.desc(),
+    ).limit(max(1, min(limit, 500)))
+    sessions = (await db.execute(stmt)).scalars().all()
+
+    empty = {"sessions": [], "summary": {"pending_count": 0, "total_pending_deposit": 0.0, "accumulated_variance": 0.0}}
+    if not sessions:
+        return empty
+
+    ids = [s.id for s in sessions]
+    # Derivados de reconciliación (depósitos y fondos) en un solo query.
+    res_tx = await db.execute(select(pos_models.POSTransaction).where(
+        pos_models.POSTransaction.session_id.in_(ids),
+        pos_models.POSTransaction.type.in_(("bank_deposit", "float_next_shift")),
+    ))
+    dep: dict = {}
+    flt: dict = {}
+    for tx in res_tx.scalars().all():
+        bucket = dep if tx.type == "bank_deposit" else flt
+        bucket[tx.session_id] = bucket.get(tx.session_id, 0.0) + tx.amount
+
+    # Nombres de cajero y terminal en batch (evita N+1).
+    from app.modules.auth.models import User
+    users = {u.id: u for u in (await db.execute(
+        select(User).where(User.id.in_({s.cashier_id for s in sessions})))).scalars().all()}
+    terms = {t.id: t for t in (await db.execute(
+        select(pos_models.POSTerminal).where(pos_models.POSTerminal.id.in_({s.terminal_id for s in sessions})))).scalars().all()}
+
+    out = []
+    pending_count = 0
+    total_pending_deposit = 0.0
+    accumulated_variance = 0.0
+    for s in sessions:
+        deposited = round(dep.get(s.id, 0.0), 2)
+        float_next = round(flt.get(s.id, 0.0), 2)
+        remaining = round((s.actual_cash or 0.0) - deposited - float_next, 2) if s.status != "open" else 0.0
+        is_pending = s.status == "closed"
+        if is_pending:
+            pending_count += 1
+            total_pending_deposit += remaining
+            accumulated_variance += (s.variance or 0.0)
+        u = users.get(s.cashier_id)
+        t = terms.get(s.terminal_id)
+        out.append({
+            "id": s.id, "terminal_id": s.terminal_id,
+            "terminal_name": t.name if t else "?",
+            "cashier_id": s.cashier_id,
+            "cashier_name": (u.full_name or u.email) if u else "?",
+            "status": s.status,
+            "opened_at": s.opened_at, "closed_at": s.closed_at,
+            "opening_balance": s.opening_balance,
+            "expected_cash": s.expected_cash, "actual_cash": s.actual_cash,
+            "variance": s.variance,
+            "total_sales_amount": s.total_sales_amount,
+            "total_sales_count": s.total_sales_count,
+            "total_deposited": deposited,
+            "total_float_next": float_next,
+            "cash_remaining_after": remaining,
+            "is_pending": is_pending,
+        })
+
+    if pending_only:
+        out = [o for o in out if o["is_pending"]]
+
+    return {
+        "sessions": out,
+        "summary": {
+            "pending_count": pending_count,
+            "total_pending_deposit": round(total_pending_deposit, 2),
+            "accumulated_variance": round(accumulated_variance, 2),
+        },
+    }
+
+
 async def get_open_session_for_user(db: AsyncSession, cashier_id: int) -> Optional[dict]:
     res = await db.execute(select(pos_models.POSSession).where(
         pos_models.POSSession.cashier_id == cashier_id,
