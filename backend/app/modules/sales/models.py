@@ -59,6 +59,9 @@ class Order(Base):
 
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # seller
+    # Agente/comisionista acreditado por esta venta (interno o externo). Se
+    # hereda del agente asignado al cliente por default, editable por orden.
+    sales_agent_id = Column(Integer, ForeignKey("sales_agents.id"), nullable=True, index=True)
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=True)
 
     status = Column(String, default="pending", nullable=False, index=True)
@@ -109,6 +112,29 @@ class Order(Base):
     )
     customer = relationship("Customer")
     seller = relationship("User")
+    sales_agent = relationship("SalesAgent")
+
+
+class SalesAgent(Base):
+    """Agente de ventas / comisionista. Puede ser interno (vinculado a un
+    usuario del sistema) o externo (independiente que solo cobra comisión).
+    La comisión se paga sobre las ventas que se le acreditan en el periodo."""
+
+    __tablename__ = "sales_agents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    # Interno = ligado a un usuario/empleado del sistema; externo = independiente.
+    is_external = Column(Boolean, default=False, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # si es interno
+    commission_pct = Column(Float, default=0.0, nullable=False)       # % sobre la venta
+    email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Convenience (not persisted)
     @property

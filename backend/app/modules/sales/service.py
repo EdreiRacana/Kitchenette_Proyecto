@@ -286,6 +286,7 @@ _LOAD = (
     selectinload(models.Order.payments),
     selectinload(models.Order.customer),
     selectinload(models.Order.seller),
+    selectinload(models.Order.sales_agent),
 )
 
 
@@ -394,6 +395,8 @@ async def create_order(db: AsyncSession, order_in: schemas.OrderCreate,
         customer_id=order_in.customer_id,
         warehouse_id=order_in.warehouse_id,
         user_id=order_in.seller_user_id or user_id,
+        sales_agent_id=order_in.sales_agent_id
+            or await _inherit_agent_from_customer(db, order_in.customer_id),
         status=status,
         payment_method=order_in.payment_method,
         channel=order_in.channel,
@@ -458,6 +461,9 @@ async def update_order(db: AsyncSession, order_id: int,
             setattr(order, f, val)
     if data.seller_user_id is not None:
         order.user_id = data.seller_user_id
+    if data.sales_agent_id is not None:
+        # 0 (o negativo) = quitar la atribución de agente.
+        order.sales_agent_id = data.sales_agent_id if data.sales_agent_id > 0 else None
 
     # Item replacement (with stock re-sync)
     if data.items is not None:
@@ -791,6 +797,148 @@ async def list_sellers(db: AsyncSession) -> List[schemas.SellerLite]:
     )
     rows = (await db.execute(stmt)).scalars().all()
     return [schemas.SellerLite(id=u.id, full_name=u.full_name, email=u.email) for u in rows]
+
+
+# ── Agentes de venta / comisionistas ──────────────────────────────────────────
+async def _inherit_agent_from_customer(db: AsyncSession, customer_id: Optional[int]) -> Optional[int]:
+    """Si el cliente tiene un agente asignado (por nombre), devuelve el id del
+    SalesAgent activo que coincida, para heredar la atribución en la orden."""
+    if not customer_id:
+        return None
+    from app.modules.customers.models import Customer
+    cust = (await db.execute(select(Customer).where(Customer.id == customer_id))).scalar_one_or_none()
+    name = (getattr(cust, "sales_agent", None) or "").strip() if cust else ""
+    if not name:
+        return None
+    agent = (await db.execute(
+        select(models.SalesAgent).where(
+            func.lower(models.SalesAgent.name) == name.lower(),
+            models.SalesAgent.is_active.is_(True),
+        )
+    )).scalars().first()
+    return agent.id if agent else None
+
+
+async def list_agents(db: AsyncSession, include_inactive: bool = False) -> List[models.SalesAgent]:
+    stmt = select(models.SalesAgent)
+    if not include_inactive:
+        stmt = stmt.where(models.SalesAgent.is_active.is_(True))
+    stmt = stmt.order_by(models.SalesAgent.is_active.desc(), models.SalesAgent.name)
+    return list((await db.execute(stmt)).scalars().all())
+
+
+async def create_agent(db: AsyncSession, data: schemas.SalesAgentCreate) -> models.SalesAgent:
+    agent = models.SalesAgent(**data.model_dump())
+    db.add(agent)
+    await db.commit()
+    await db.refresh(agent)
+    return agent
+
+
+async def update_agent(db: AsyncSession, agent_id: int, data: schemas.SalesAgentUpdate) -> Optional[models.SalesAgent]:
+    agent = (await db.execute(select(models.SalesAgent).where(models.SalesAgent.id == agent_id))).scalar_one_or_none()
+    if not agent:
+        return None
+    for f, v in data.model_dump(exclude_unset=True).items():
+        setattr(agent, f, v)
+    await db.commit()
+    await db.refresh(agent)
+    return agent
+
+
+async def delete_agent(db: AsyncSession, agent_id: int) -> bool:
+    """Baja lógica: si el agente ya tiene ventas atribuidas, solo se desactiva
+    (para no romper el histórico de comisiones); si no, se elimina."""
+    agent = (await db.execute(select(models.SalesAgent).where(models.SalesAgent.id == agent_id))).scalar_one_or_none()
+    if not agent:
+        return False
+    used = (await db.execute(
+        select(func.count(models.Order.id)).where(models.Order.sales_agent_id == agent_id)
+    )).scalar_one()
+    if used:
+        agent.is_active = False
+        await db.commit()
+    else:
+        await db.delete(agent)
+        await db.commit()
+    return True
+
+
+async def agent_commissions(db: AsyncSession, start: Optional[datetime] = None,
+                            end: Optional[datetime] = None,
+                            branch_warehouse_ids: Optional[List[int]] = None) -> schemas.AgentCommissionReport:
+    """Comisiones a pagar por agente en el periodo.
+
+    Base de comisión = subtotal (venta, sin IVA) de las órdenes activas
+    atribuidas a cada agente. Se muestra además cuánto de esa base ya está
+    cobrado, para quien paga comisión solo sobre lo pagado.
+    """
+    O = models.Order
+    conds = [O.kind == "order", O.status != "cancelled", O.sales_agent_id.isnot(None)]
+    if start is not None:
+        conds.append(O.created_at >= start)
+    if end is not None:
+        conds.append(O.created_at < end)
+    if branch_warehouse_ids is not None:
+        conds.append(_branch_cond(O, branch_warehouse_ids))
+
+    # Fracción cobrada por orden = paid_amount / total_amount (acotada a [0,1]).
+    # CASE portable (evita LEAST/MIN escalar que difiere entre SQLite y Postgres).
+    paid_frac = case(
+        (O.total_amount <= 0, 0.0),
+        (O.paid_amount >= O.total_amount, 1.0),
+        else_=O.paid_amount / O.total_amount,
+    )
+    stmt = (
+        select(
+            O.sales_agent_id.label("agent_id"),
+            func.count(O.id).label("orders_count"),
+            func.coalesce(func.sum(O.subtotal), 0.0).label("sales_base"),
+            func.coalesce(func.sum(O.subtotal * paid_frac), 0.0).label("paid_base"),
+        )
+        .where(*conds)
+        .group_by(O.sales_agent_id)
+    )
+    grouped = {r.agent_id: r for r in (await db.execute(stmt)).all()}
+
+    agents = {a.id: a for a in await list_agents(db, include_inactive=True)}
+
+    rows: List[schemas.AgentCommissionRow] = []
+    tot_base = tot_paid = tot_comm = tot_comm_paid = 0.0
+    for agent_id, g in grouped.items():
+        agent = agents.get(agent_id)
+        pct = (agent.commission_pct if agent else 0.0) or 0.0
+        base = float(g.sales_base or 0.0)
+        paid_base = float(g.paid_base or 0.0)
+        commission = round(base * pct / 100.0, 2)
+        commission_on_paid = round(paid_base * pct / 100.0, 2)
+        rows.append(schemas.AgentCommissionRow(
+            agent_id=agent_id,
+            agent_name=agent.name if agent else f"Agente #{agent_id}",
+            commission_pct=pct,
+            is_external=bool(agent.is_external) if agent else False,
+            orders_count=int(g.orders_count or 0),
+            sales_base=round(base, 2),
+            paid_base=round(paid_base, 2),
+            commission=commission,
+            commission_on_paid=commission_on_paid,
+        ))
+        tot_base += base; tot_paid += paid_base
+        tot_comm += commission; tot_comm_paid += commission_on_paid
+
+    rows.sort(key=lambda r: r.commission, reverse=True)
+    return schemas.AgentCommissionReport(
+        period_start=start.isoformat() if start else None,
+        period_end=end.isoformat() if end else None,
+        rows=rows,
+        totals={
+            "sales_base": round(tot_base, 2),
+            "paid_base": round(tot_paid, 2),
+            "commission": round(tot_comm, 2),
+            "commission_on_paid": round(tot_comm_paid, 2),
+            "agents_count": len(rows),
+        },
+    )
 
 
 async def get_average_returns(db: AsyncSession, customer_id: Optional[int] = None,

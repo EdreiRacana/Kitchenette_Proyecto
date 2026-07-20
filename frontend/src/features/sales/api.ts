@@ -58,6 +58,46 @@ export interface SettlementReport {
   returns: SettlementReturnLine[];
 }
 
+export interface SalesAgent {
+  id: number;
+  name: string;
+  is_external: boolean;
+  user_id: number | null;
+  commission_pct: number;
+  email: string | null;
+  phone: string | null;
+  notes: string | null;
+  is_active: boolean;
+  created_at?: string | null;
+}
+
+export type SalesAgentDraft = Omit<SalesAgent, "id" | "created_at">;
+
+export interface AgentCommissionRow {
+  agent_id: number | null;
+  agent_name: string;
+  commission_pct: number;
+  is_external: boolean;
+  orders_count: number;
+  sales_base: number;
+  paid_base: number;
+  commission: number;
+  commission_on_paid: number;
+}
+
+export interface AgentCommissionReport {
+  period_start: string | null;
+  period_end: string | null;
+  rows: AgentCommissionRow[];
+  totals: {
+    sales_base: number;
+    paid_base: number;
+    commission: number;
+    commission_on_paid: number;
+    agents_count: number;
+  };
+}
+
 function qs(filters: OrderFilters): string {
   const p = new URLSearchParams();
   Object.entries(filters).forEach(([k, v]) => {
@@ -72,6 +112,7 @@ function draftToPayload(d: OrderDraft) {
     kind: d.kind,
     customer_id: d.customer_id,
     seller_user_id: d.seller_user_id,
+    sales_agent_id: d.sales_agent_id ?? null,
     payment_method: d.payment_method || null,
     channel: d.channel || null,
     status: d.status,
@@ -150,6 +191,27 @@ export const salesApi = {
   },
   async listSellers(): Promise<SellerLite[]> {
     const { data } = await api.get<SellerLite[]>(`/sales/sellers`);
+    return data;
+  },
+
+  // ── Agentes de venta / comisionistas ──────────────────────────────────
+  async listAgents(includeInactive = false): Promise<SalesAgent[]> {
+    const { data } = await api.get<SalesAgent[]>(`/sales/agents`, { params: { include_inactive: includeInactive } });
+    return data;
+  },
+  async createAgent(payload: SalesAgentDraft): Promise<SalesAgent> {
+    const { data } = await api.post<SalesAgent>(`/sales/agents`, payload);
+    return data;
+  },
+  async updateAgent(id: number, payload: Partial<SalesAgentDraft>): Promise<SalesAgent> {
+    const { data } = await api.patch<SalesAgent>(`/sales/agents/${id}`, payload);
+    return data;
+  },
+  async deleteAgent(id: number): Promise<void> {
+    await api.delete(`/sales/agents/${id}`);
+  },
+  async agentCommissions(params?: { start?: string; end?: string }): Promise<AgentCommissionReport> {
+    const { data } = await api.get<AgentCommissionReport>(`/sales/agents/commissions`, { params });
     return data;
   },
   async customerForecast(customerId: number, months = 6): Promise<CustomerForecast> {

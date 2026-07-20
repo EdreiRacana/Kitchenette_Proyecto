@@ -88,6 +88,7 @@ class OrderBase(BaseModel):
     customer_id: Optional[int] = None
     warehouse_id: Optional[int] = None
     seller_user_id: Optional[int] = None
+    sales_agent_id: Optional[int] = None
     payment_method: Optional[str] = None
     channel: Optional[str] = None
     currency: str = "MXN"
@@ -126,6 +127,7 @@ class OrderUpdate(BaseModel):
     customer_id: Optional[int] = None
     warehouse_id: Optional[int] = None
     seller_user_id: Optional[int] = None
+    sales_agent_id: Optional[int] = None
     payment_method: Optional[str] = None
     channel: Optional[str] = None
     status: Optional[str] = None
@@ -162,6 +164,65 @@ class SellerLite(BaseModel):
     full_name: Optional[str] = None
     email: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+class SalesAgentLite(BaseModel):
+    id: int
+    name: str
+    commission_pct: float = 0.0
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ── Sales agents / commissions ────────────────────────────────────────────────
+class SalesAgentBase(BaseModel):
+    name: str
+    is_external: bool = False
+    user_id: Optional[int] = None
+    commission_pct: float = Field(default=0.0, ge=0, le=100)
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    notes: Optional[str] = None
+    is_active: bool = True
+
+
+class SalesAgentCreate(SalesAgentBase):
+    pass
+
+
+class SalesAgentUpdate(BaseModel):
+    name: Optional[str] = None
+    is_external: Optional[bool] = None
+    user_id: Optional[int] = None
+    commission_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class SalesAgentInDB(SalesAgentBase):
+    id: int
+    created_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentCommissionRow(BaseModel):
+    agent_id: Optional[int] = None
+    agent_name: str
+    commission_pct: float
+    is_external: bool = False
+    orders_count: int
+    sales_base: float          # base de venta (subtotal) acreditada
+    paid_base: float           # cuánto de esa base ya está cobrado
+    commission: float          # sales_base * commission_pct
+    commission_on_paid: float  # comisión correspondiente a lo ya cobrado
+
+
+class AgentCommissionReport(BaseModel):
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    rows: List[AgentCommissionRow]
+    totals: dict
 
 
 class OrderInDB(BaseModel):
@@ -203,10 +264,13 @@ class OrderInDB(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
+    sales_agent_id: Optional[int] = None
+
     items: List[OrderItemInDB] = []
     payments: List[PaymentInDB] = []
     customer: Optional[CustomerLite] = None
     seller: Optional[SellerLite] = None
+    sales_agent: Optional[SalesAgentLite] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -5,7 +5,8 @@ import { Plus, Trash2, FileText } from "lucide-react";
 import type { Tokens, Translator } from "./theme";
 import { money, PAYMENT_METHODS, CHANNELS } from "./theme";
 import type { Order, OrderDraft, OrderItemDraft, CustomerLite, SellerLite } from "./types";
-import type { VariantOption } from "./api";
+import type { VariantOption, SalesAgent } from "./api";
+import { salesApi } from "./api";
 import { Modal, Field, TextInput, NumberInput, Select, Button, IconButton } from "./ui";
 
 const CFDI_USES = [
@@ -21,7 +22,7 @@ function emptyItem(): OrderItemDraft {
 
 function blankDraft(): OrderDraft {
   return {
-    kind: "order", customer_id: null, seller_user_id: null, payment_method: "transfer", channel: "mostrador",
+    kind: "order", customer_id: null, seller_user_id: null, sales_agent_id: null, payment_method: "transfer", channel: "mostrador",
     status: undefined, discount_type: "amount", discount_value: 0, tax_rate: 16,
     shipping_amount: 0, notes: "", due_date: "", valid_until: "",
     bill_rfc: "", bill_name: "", bill_use: "G03", bill_regime: "", bill_zip: "",
@@ -32,6 +33,7 @@ function blankDraft(): OrderDraft {
 function fromOrder(o: Order): OrderDraft {
   return {
     kind: o.kind, customer_id: o.customer_id, seller_user_id: o.seller?.id ?? o.user_id ?? null,
+    sales_agent_id: o.sales_agent_id ?? o.sales_agent?.id ?? null,
     payment_method: o.payment_method ?? "",
     channel: o.channel ?? "", status: o.status, discount_type: o.discount_type,
     discount_value: o.discount_value, tax_rate: o.tax_rate, shipping_amount: o.shipping_amount,
@@ -112,11 +114,13 @@ export function OrderForm({
 }) {
   const [draft, setDraft] = useState<OrderDraft>(blankDraft());
   const [showBilling, setShowBilling] = useState(false);
+  const [agents, setAgents] = useState<SalesAgent[]>([]);
 
   useEffect(() => {
     if (open) {
       setDraft(editing ? fromOrder(editing) : blankDraft());
       setShowBilling(!!editing?.bill_rfc);
+      salesApi.listAgents().then(setAgents).catch(() => setAgents([]));
     }
   }, [open, editing]);
 
@@ -140,6 +144,7 @@ export function OrderForm({
 
   const customerOpts = customers.map((c) => ({ value: String(c.id), label: c.name }));
   const sellerOpts = sellers.map((s) => ({ value: String(s.id), label: s.full_name || s.email || `#${s.id}` }));
+  const agentOpts = agents.map((a) => ({ value: String(a.id), label: `${a.name} · ${a.commission_pct}%${a.is_external ? " (externo)" : ""}` }));
 
   return (
     <Modal tk={tk} open={open} onClose={onClose} title={title} width={780}
@@ -180,11 +185,18 @@ export function OrderForm({
         <Field tk={tk} label={tr("sales_channel", "Canal")}>
           <Select tk={tk} value={draft.channel} onChange={(v) => set({ channel: v })} options={CHANNELS} placeholder="—" />
         </Field>
-        <Field tk={tk} label={tr("sales_agent", "Agente")} hint={tr("sales_agent_hint", "Personal activo dado de alta en RH")}>
+        <Field tk={tk} label={tr("sales_agent", "Vendedor")} hint={tr("sales_agent_hint", "Personal activo dado de alta en RH")}>
           <Select tk={tk} value={draft.seller_user_id ? String(draft.seller_user_id) : ""}
             onChange={(v) => set({ seller_user_id: v ? Number(v) : null })}
             options={sellerOpts} placeholder={tr("sales_agent_unassigned", "Sin asignar")} />
         </Field>
+        {agents.length > 0 && (
+          <Field tk={tk} label={tr("sales_commission_agent", "Agente / comisión")} hint={tr("sales_commission_agent_hint", "Gana comisión por esta venta")}>
+            <Select tk={tk} value={draft.sales_agent_id ? String(draft.sales_agent_id) : ""}
+              onChange={(v) => set({ sales_agent_id: v ? Number(v) : null })}
+              options={agentOpts} placeholder={tr("sales_agent_unassigned", "Sin asignar")} />
+          </Field>
+        )}
         {isQuote ? (
           <Field tk={tk} label={tr("sales_valid_until", "Vigencia")}>
             <TextInput tk={tk} type="date" value={draft.valid_until} onChange={(v) => set({ valid_until: v })} />

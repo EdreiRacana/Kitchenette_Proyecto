@@ -442,6 +442,14 @@ _RETAIL_STATEMENTS = [
 ]
 
 
+_SALES_AGENTS_STATEMENTS = [
+    # La tabla sales_agents la crea create_all; aquí solo la columna de
+    # atribución en orders (una tabla existente que create_all nunca altera).
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS sales_agent_id INTEGER",
+    "CREATE INDEX IF NOT EXISTS ix_orders_sales_agent_id ON orders(sales_agent_id)",
+]
+
+
 def _apply(sync_conn: Connection) -> None:
     if sync_conn.dialect.name != "postgresql":
         return
@@ -449,6 +457,7 @@ def _apply(sync_conn: Connection) -> None:
     all_statements = [
         ("customers",  _CUSTOMER_STATEMENTS),
         ("sales",      _SALES_STATEMENTS),
+        ("sales_agents", _SALES_AGENTS_STATEMENTS),
         ("universal_erp", _UNIVERSAL_ERP_STATEMENTS),
         ("ingesta",    _INGESTA_STATEMENTS),
         ("inventory",  _INVENTORY_STATEMENTS),

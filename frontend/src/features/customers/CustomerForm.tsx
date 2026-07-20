@@ -99,10 +99,19 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
       } else {
         setDocs([]);
       }
-      // Trae al personal real para sugerirlo en Ventas / Créditos.
-      salesApi.listSellers()
-        .then((list) => setPersonnel(list.map((s) => (s.full_name || s.email || "").trim()).filter(Boolean)))
-        .catch(() => setPersonnel([]));
+      // Trae al personal real y a los agentes/comisionistas para sugerirlos en
+      // Ventas / Créditos. Si el nombre coincide con un agente, las ventas del
+      // cliente se le atribuyen automáticamente para el cálculo de comisiones.
+      Promise.all([
+        salesApi.listSellers().catch(() => []),
+        salesApi.listAgents().catch(() => []),
+      ]).then(([sellers, agents]) => {
+        const names = [
+          ...sellers.map((s) => (s.full_name || s.email || "").trim()),
+          ...agents.map((a) => (a.name || "").trim()),
+        ].filter(Boolean);
+        setPersonnel(Array.from(new Set(names)));
+      });
     }
   }, [open, editing]);
 
