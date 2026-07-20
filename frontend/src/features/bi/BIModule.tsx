@@ -880,8 +880,8 @@ async function loadBIState(period: Period): Promise<BIState> {
     invStats, reorderAlerts,
     hrDashboard, employees,
   ] = await Promise.all([
-    salesApi.stats(curStartISO, curEndISO),
-    salesApi.stats(prevStartISO, prevEndISO),
+    salesApi.stats({ start: curStartISO, end: curEndISO }),
+    salesApi.stats({ start: prevStartISO, end: prevEndISO }),
     salesApi.trend(granularity, days, curEndISO),      // fix: siempre pasar endDate simétrico
     salesApi.trend(granularity, days, prevEndISO),     // fix: mismo tratamiento para período anterior
     salesApi.topCustomers(10, curStartISO, curEndISO),
