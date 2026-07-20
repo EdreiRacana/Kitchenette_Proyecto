@@ -449,6 +449,11 @@ _SALES_AGENTS_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS ix_orders_sales_agent_id ON orders(sales_agent_id)",
     # Costo real de la paquetería (separado del envío cobrado al cliente).
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_cost DOUBLE PRECISION DEFAULT 0",
+    # Saldos negativos históricos en ventas POS: el efectivo recibido (con
+    # cambio) se guardaba como pagado, dejando saldo = total − recibido < 0.
+    # El cambio no es sobrepago; la venta se liquida exactamente por su total.
+    "UPDATE orders SET paid_amount = total_amount "
+    "WHERE channel = 'pos' AND paid_amount > total_amount + 0.005",
 ]
 
 
