@@ -70,6 +70,7 @@ export interface Order {
   tax_rate: number;
   tax_amount: number;
   shipping_amount: number;
+  shipping_cost?: number;
   total_amount: number;
   paid_amount: number;
   balance: number;
@@ -136,7 +137,8 @@ export interface HeatmapCell { dow: number; hour: number; orders: number; total:
 
 export interface CustomerPnLBreakdown {
   gross_sales: number; returns: number; allowances: number; discounts: number;
-  net_sales: number; cogs: number; gross_margin: number; shipping_costs: number;
+  net_sales: number; cogs: number; gross_margin: number;
+  shipping_charged?: number; shipping_costs: number;
   withholdings: number; net_contribution: number; orders_count: number;
 }
 export interface CustomerTransaction {
@@ -221,6 +223,7 @@ export interface OrderDraft {
   discount_value: number;
   tax_rate: number;
   shipping_amount: number;
+  shipping_cost: number;
   notes: string;
   due_date: string;
   valid_until: string;

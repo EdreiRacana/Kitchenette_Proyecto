@@ -447,6 +447,8 @@ _SALES_AGENTS_STATEMENTS = [
     # atribución en orders (una tabla existente que create_all nunca altera).
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS sales_agent_id INTEGER",
     "CREATE INDEX IF NOT EXISTS ix_orders_sales_agent_id ON orders(sales_agent_id)",
+    # Costo real de la paquetería (separado del envío cobrado al cliente).
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_cost DOUBLE PRECISION DEFAULT 0",
 ]
 
 

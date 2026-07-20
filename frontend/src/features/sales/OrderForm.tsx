@@ -24,7 +24,7 @@ function blankDraft(): OrderDraft {
   return {
     kind: "order", customer_id: null, seller_user_id: null, sales_agent_id: null, payment_method: "transfer", channel: "mostrador",
     status: undefined, discount_type: "amount", discount_value: 0, tax_rate: 16,
-    shipping_amount: 0, notes: "", due_date: "", valid_until: "",
+    shipping_amount: 0, shipping_cost: 0, notes: "", due_date: "", valid_until: "",
     bill_rfc: "", bill_name: "", bill_use: "G03", bill_regime: "", bill_zip: "",
     items: [emptyItem()],
   };
@@ -37,6 +37,7 @@ function fromOrder(o: Order): OrderDraft {
     payment_method: o.payment_method ?? "",
     channel: o.channel ?? "", status: o.status, discount_type: o.discount_type,
     discount_value: o.discount_value, tax_rate: o.tax_rate, shipping_amount: o.shipping_amount,
+    shipping_cost: o.shipping_cost ?? 0,
     notes: o.notes ?? "", due_date: o.due_date?.slice(0, 10) ?? "", valid_until: o.valid_until?.slice(0, 10) ?? "",
     bill_rfc: o.bill_rfc ?? "", bill_name: o.bill_name ?? "", bill_use: o.bill_use ?? "G03",
     bill_regime: o.bill_regime ?? "", bill_zip: o.bill_zip ?? "",
@@ -283,8 +284,11 @@ export function OrderForm({
             <Field tk={tk} label={tr("sales_tax", "IVA %")}>
               <NumberInput tk={tk} value={draft.tax_rate} onChange={(v) => set({ tax_rate: v })} />
             </Field>
-            <Field tk={tk} label={tr("sales_shipping", "Envío")}>
+            <Field tk={tk} label={tr("sales_shipping", "Envío cobrado")} hint={tr("sales_shipping_hint", "Lo que le cobras al cliente")}>
               <NumberInput tk={tk} value={draft.shipping_amount} onChange={(v) => set({ shipping_amount: v })} />
+            </Field>
+            <Field tk={tk} label={tr("sales_shipping_cost", "Costo de envío")} hint={tr("sales_shipping_cost_hint", "Lo que te cobra la paquetería")}>
+              <NumberInput tk={tk} value={draft.shipping_cost} onChange={(v) => set({ shipping_cost: v })} />
             </Field>
           </div>
         </div>

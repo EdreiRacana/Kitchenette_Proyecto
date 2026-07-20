@@ -78,7 +78,7 @@ type ReturnItem = CustomerReturnLine;
 
 const EMPTY_PNL: CustomerPnL = {
   gross_sales: 0, returns: 0, allowances: 0, discounts: 0, net_sales: 0, cogs: 0,
-  gross_margin: 0, shipping_costs: 0, withholdings: 0, net_contribution: 0, orders_count: 0,
+  gross_margin: 0, shipping_charged: 0, shipping_costs: 0, withholdings: 0, net_contribution: 0, orders_count: 0,
 };
 
 // Rango de fechas [start, end) para cada periodo, anclado a "ahora".
@@ -261,7 +261,8 @@ export default function Customer360({
     { label: "Venta neta", value: pnl.net_sales, prev: pnlPrev.net_sales, icon: TrendingUp, subtotal: true, strong: true },
     { label: "Costo de mercancía (COGS)", value: pnl.cogs, prev: pnlPrev.cogs, icon: Package, neg: true, invert: true },
     { label: "Margen bruto", value: pnl.gross_margin, prev: pnlPrev.gross_margin, icon: Wallet, subtotal: true, strong: true, pct: marginPct },
-    { label: "Costos de envío", value: pnl.shipping_costs, prev: pnlPrev.shipping_costs, icon: Truck, neg: true, invert: true },
+    { label: "Envío cobrado", value: pnl.shipping_charged ?? 0, prev: pnlPrev.shipping_charged ?? 0, icon: Truck },
+    { label: "Costo de paquetería", value: pnl.shipping_costs, prev: pnlPrev.shipping_costs, icon: Truck, neg: true, invert: true },
     { label: "Retenciones de impuestos", value: pnl.withholdings, prev: pnlPrev.withholdings, icon: Landmark, neg: true, invert: true },
     { label: "Contribución neta del cliente", value: pnl.net_contribution, prev: pnlPrev.net_contribution, icon: TrendingUp, subtotal: true, strong: true, pct: contribPct },
   ];
