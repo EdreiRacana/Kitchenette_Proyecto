@@ -91,6 +91,8 @@ export interface Order {
   events?: OrderEvent[];
   customer: CustomerLite | null;
   seller: SellerLite | null;
+  sales_agent_id?: number | null;
+  sales_agent?: { id: number; name: string; commission_pct: number } | null;
 }
 
 export interface Paginated<T> {
@@ -211,6 +213,7 @@ export interface OrderDraft {
   kind: OrderKind;
   customer_id: number | null;
   seller_user_id: number | null;
+  sales_agent_id: number | null;
   payment_method: string;
   channel: string;
   status?: string;

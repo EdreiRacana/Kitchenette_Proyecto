@@ -52,6 +52,39 @@ async def sellers(db: DB, _: CurrentUser):
     return await service.list_sellers(db)
 
 
+# ── Agentes de venta / comisionistas ──────────────────────────────────────────
+@router.get("/agents", response_model=List[schemas.SalesAgentInDB])
+async def list_agents(db: DB, _: CurrentUser, include_inactive: bool = False):
+    return await service.list_agents(db, include_inactive=include_inactive)
+
+
+@router.post("/agents", response_model=schemas.SalesAgentInDB, status_code=201)
+async def create_agent(data: schemas.SalesAgentCreate, db: DB, _: CurrentUser):
+    return await service.create_agent(db, data)
+
+
+@router.patch("/agents/{agent_id}", response_model=schemas.SalesAgentInDB)
+async def update_agent(agent_id: int, data: schemas.SalesAgentUpdate, db: DB, _: CurrentUser):
+    agent = await service.update_agent(db, agent_id, data)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agente no encontrado")
+    return agent
+
+
+@router.delete("/agents/{agent_id}", status_code=204)
+async def delete_agent(agent_id: int, db: DB, _: CurrentUser):
+    ok = await service.delete_agent(db, agent_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Agente no encontrado")
+
+
+@router.get("/agents/commissions", response_model=schemas.AgentCommissionReport)
+async def agent_commissions(db: DB, current_user: CurrentUser,
+                            start: Optional[datetime] = None, end: Optional[datetime] = None):
+    ids = await _branch_ids(db, current_user)
+    return await service.agent_commissions(db, start=start, end=end, branch_warehouse_ids=ids)
+
+
 @router.get("/analytics/returns-avg", response_model=schemas.AverageReturns)
 async def returns_avg(db: DB, current_user: CurrentUser, customer_id: Optional[int] = None):
     ids = await _branch_ids(db, current_user)
