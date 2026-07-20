@@ -45,6 +45,11 @@ export interface SettlementReport {
     commission_total: number;
     net_expected_before_returns: number;
     returns_deducted: number;
+    iva_retention?: number;
+    isr_retention?: number;
+    retention_total?: number;
+    iva_retention_pct?: number;
+    isr_retention_pct?: number;
     expected_deposit: number;
     deposited: number | null;
     variance: number | null;

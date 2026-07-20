@@ -46,6 +46,34 @@ WITHHOLDING_SCHEMES = {
     "custom":            {"label": "Personalizado",               "isr_pct": 0.0,  "iva_pct": 0.0},
 }
 
+# Tipos de cliente que operan vía plataforma con retención en la fuente.
+MARKETPLACE_TYPES = ("marketplace", "chain_physical")
+# Retenciones fiscales vigentes en México para plataformas digitales:
+#   IVA = la mitad del 16% = 8% · ISR = 2.5% (tasa fija de plataformas).
+DEFAULT_MARKETPLACE_IVA_RET = 8.0
+DEFAULT_MARKETPLACE_ISR_RET = 2.5
+
+
+def marketplace_retention_rates(customer) -> tuple:
+    """Devuelve (iva_pct, isr_pct) como fracciones, p. ej. (0.08, 0.025).
+
+    Las retenciones solo aplican a clientes marketplace/cadena (los que venden
+    a través de una plataforma que retiene y entera los impuestos por ti).
+    Para el resto de clientes regresa (0, 0). Respeta el esquema configurado
+    en el cliente; si no tiene uno explícito, usa las tasas fijas vigentes
+    (8% IVA + 2.5% ISR)."""
+    if (getattr(customer, "relationship_type", None) or "retail") not in MARKETPLACE_TYPES:
+        return 0.0, 0.0
+    scheme_key = getattr(customer, "withholding_scheme", None) or "none"
+    if scheme_key == "custom":
+        return (getattr(customer, "withholding_iva_pct", 0.0) or 0.0) / 100.0, \
+               (getattr(customer, "withholding_isr_pct", 0.0) or 0.0) / 100.0
+    if scheme_key != "none":
+        s = WITHHOLDING_SCHEMES.get(scheme_key, WITHHOLDING_SCHEMES["none"])
+        return s["iva_pct"] / 100.0, s["isr_pct"] / 100.0
+    # Marketplace/cadena sin esquema explícito → tasas fijas de plataforma.
+    return DEFAULT_MARKETPLACE_IVA_RET / 100.0, DEFAULT_MARKETPLACE_ISR_RET / 100.0
+
 
 class Customer(Base):
     __tablename__ = "customers"

@@ -1108,11 +1108,15 @@ async def _customer_pnl_breakdown(
     )
     net_sales = gross_sales - returns_amount - discounts
     gross_margin = net_sales - cogs
-    # Retenciones fiscales mexicanas vigentes: IVA 50% de la tasa estándar
-    # (50% * 16% = 8%) + ISR 2.5%, aplicadas sobre la venta neta.
-    IVA_RETENTION_RATE = 0.08
-    ISR_RETENTION_RATE = 0.025
-    withholdings = max(net_sales, 0) * (IVA_RETENTION_RATE + ISR_RETENTION_RATE)
+    # Retenciones fiscales: solo aplican a clientes marketplace/cadena, cuya
+    # plataforma retiene en la fuente (IVA 8% = mitad del 16%, ISR 2.5%).
+    # Se calculan sobre la venta bruta. Para el resto de clientes = 0.
+    from app.modules.customers.models import Customer, marketplace_retention_rates
+    cust = (await db.execute(
+        select(Customer).where(Customer.id == customer_id)
+    )).scalar_one_or_none()
+    iva_ret_pct, isr_ret_pct = marketplace_retention_rates(cust) if cust else (0.0, 0.0)
+    withholdings = max(gross_sales, 0) * (iva_ret_pct + isr_ret_pct)
     net_contribution = gross_margin - shipping_costs - withholdings
 
     breakdown = schemas.CustomerPnLBreakdown(

@@ -75,6 +75,10 @@ export default function SettlementModal({ tk, customerId, customerName, onClose 
         rows.push([`Comisiones`, data.totals.commission_total]);
         rows.push([`Neto esperado (antes de devoluciones)`, data.totals.net_expected_before_returns]);
         rows.push([`Devoluciones descontadas`, data.totals.returns_deducted]);
+        if ((data.totals.retention_total ?? 0) > 0) {
+            rows.push([`IVA retenido (${data.totals.iva_retention_pct ?? 0}% s/bruto)`, data.totals.iva_retention ?? 0]);
+            rows.push([`ISR retenido (${data.totals.isr_retention_pct ?? 0}% s/bruto)`, data.totals.isr_retention ?? 0]);
+        }
         rows.push([`Esperado a depositar`, data.totals.expected_deposit]);
         rows.push([`Depositado`, data.totals.deposited ?? ""]);
         rows.push([`Variance`, data.totals.variance ?? ""]);
@@ -148,7 +152,7 @@ export default function SettlementModal({ tk, customerId, customerName, onClose 
                         </button>
                     </div>
                     <div style={{ fontSize: 11.5, color: tk.textLo, marginTop: 10 }}>
-                        Compara órdenes marketplace (net_to_seller) menos devoluciones vs el depósito recibido para detectar faltantes.
+                        Compara el bruto de las órdenes marketplace menos comisión, retenciones fiscales (IVA 8% + ISR 2.5% s/bruto) y devoluciones, contra el depósito recibido, para detectar faltantes.
                     </div>
                 </div>
 
@@ -179,7 +183,13 @@ export default function SettlementModal({ tk, customerId, customerName, onClose 
                                 { label: "Venta bruta", value: money(data.totals.gross_sales), color: tk.accent, sub: `${data.orders_count} órdenes` },
                                 { label: "Comisiones", value: money(data.totals.commission_total), color: tk.warn, sub: "retenidas por la plataforma" },
                                 { label: "Devoluciones", value: money(data.totals.returns_deducted), color: tk.bad, sub: `${data.returns_count} devoluciones` },
-                                { label: "Esperado a depositar", value: money(data.totals.expected_deposit), color: tk.good, sub: "neto − devoluciones" },
+                                ...((data.totals.retention_total ?? 0) > 0 ? [{
+                                    label: "Retenciones fiscales",
+                                    value: money(data.totals.retention_total ?? 0),
+                                    color: tk.bad,
+                                    sub: `IVA ${data.totals.iva_retention_pct ?? 0}% + ISR ${data.totals.isr_retention_pct ?? 0}% s/bruto`,
+                                }] : []),
+                                { label: "Esperado a depositar", value: money(data.totals.expected_deposit), color: tk.good, sub: "neto − ret. − devol." },
                                 { label: "Depositado", value: data.totals.deposited != null ? money(data.totals.deposited) : "—", color: tk.textHi, sub: "capturado por ti" },
                             ].map(k => (
                                 <div key={k.label} style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "12px 14px" }}>
