@@ -440,6 +440,10 @@ async def register_sale(db: AsyncSession, session_id: int,
     paid = sum(payments.values())
     if paid + 0.005 < total:
         raise ValueError(f"El pago (${paid:,.2f}) es menor que el total (${total:,.2f})")
+    # El excedente es CAMBIO en efectivo, no un sobrepago. La orden se liquida
+    # exactamente por su total (saldo 0); el cambio se devuelve y sale del cajón.
+    change = round(max(0.0, paid - total), 2)
+    settled = round(min(paid, total), 2)
 
     # Folio
     res_c = await db.execute(select(func.count()).select_from(sales_models.Order))
@@ -457,7 +461,7 @@ async def register_sale(db: AsyncSession, session_id: int,
         currency="MXN", subtotal=round(subtotal, 2),
         discount_type="amount", discount_value=discount_amount, discount_amount=discount_amount,
         tax_rate=tax_rate, tax_amount=tax_amount,
-        shipping_amount=shipping_amount, total_amount=total, paid_amount=paid,
+        shipping_amount=shipping_amount, total_amount=total, paid_amount=settled,
         notes=notes, pos_session_id=s.id,
         relationship_type="retail",
     )
@@ -503,16 +507,21 @@ async def register_sale(db: AsyncSession, session_id: int,
                             extra={"order_id": order.id, "variant_id": variant_id, "error": str(e)},
                             exc_info=True)
 
-    # Registrar Payment(s) y POSTransaction(s) — una por método
+    # Registrar Payment(s) y POSTransaction(s) — una por método. El cambio se
+    # descuenta del efectivo: lo que realmente entra al cajón por la venta es el
+    # efectivo recibido menos el cambio devuelto. Así el arqueo cuadra (si no,
+    # el efectivo esperado quedaría inflado por el monto del cambio) y el saldo
+    # de la orden queda en 0 en lugar de negativo.
     for method, amount in payments.items():
-        if amount <= 0:
+        applied = round(amount - change, 2) if method == "cash" else round(amount, 2)
+        if applied <= 0.005:
             continue
         db.add(sales_models.Payment(
-            order_id=order.id, amount=amount, method=method,
+            order_id=order.id, amount=applied, method=method,
             user_id=user_id or s.cashier_id,
         ))
         db.add(pos_models.POSTransaction(
-            session_id=s.id, type="sale", amount=amount,
+            session_id=s.id, type="sale", amount=applied,
             payment_method=method, order_id=order.id,
             notes=f"Venta {folio}",
         ))
@@ -527,8 +536,9 @@ async def register_sale(db: AsyncSession, session_id: int,
         "tax_amount": tax_amount,
         "shipping_amount": shipping_amount,
         "total_amount": total,
-        "paid_amount": paid,
-        "change": round(paid - total, 2),
+        "paid_amount": settled,
+        "tendered": round(paid, 2),
+        "change": change,
     }
 
 
