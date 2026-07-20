@@ -9,7 +9,7 @@
 //     y botón "Generar desde historial" (POST /forecast/baseline).
 //   • Concentrado por dimensión (cliente/producto/vendedor) con barras.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus, Sparkles, Target, TrendingUp, Trash2, Save, X, RefreshCw,
   Users, Package, UserCircle2, ChevronDown, FileText, Download, Upload,
@@ -966,33 +966,56 @@ function LineRow({
   });
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  // Refs para auto-guardar al salir de la celda sin depender de estado "stale".
+  const draftRef = useRef(draft);
+  const dirtyRef = useRef(false);
+  const savingRef = useRef(false);
+  const editVersion = useRef(0);   // sube en cada edición; evita pisar cambios en curso
 
   useEffect(() => {
+    // No pises ediciones en progreso cuando el padre reemplaza la línea (p. ej.
+    // tras guardar otra celda): solo sincroniza si la fila no tiene cambios.
+    if (dirtyRef.current) return;
     const d: Record<string, number> = { unit_price: line.unit_price };
     for (const c of MONTH_COLS) d[c as string] = Number(line[c] || 0);
     setDraft(d);
-    setDirty(false);
+    draftRef.current = d;
+    setDirty(false); dirtyRef.current = false;
+    setSaveErr(null);
   }, [line]);
 
   const setField = (k: string, v: number) => {
-    setDraft((prev) => ({ ...prev, [k]: v }));
-    setDirty(true);
+    setDraft((prev) => { const next = { ...prev, [k]: v }; draftRef.current = next; return next; });
+    setDirty(true); dirtyRef.current = true; editVersion.current++;
   };
 
   const totalUnits = MONTH_COLS.reduce((a, c) => a + Number(draft[c as string] || 0), 0);
   const totalAmount = totalUnits * Number(draft.unit_price || 0);
 
   const save = async () => {
-    setSaving(true);
+    if (savingRef.current) return;
+    setSaving(true); savingRef.current = true; setSaveErr(null);
+    const v = editVersion.current;
     try {
-      const patch: Partial<ForecastLineDraft> = { unit_price: draft.unit_price };
-      for (const c of MONTH_COLS) (patch as Record<string, number>)[c as string] = draft[c as string];
+      const d = draftRef.current;
+      const patch: Partial<ForecastLineDraft> = { unit_price: d.unit_price };
+      for (const c of MONTH_COLS) (patch as Record<string, number>)[c as string] = d[c as string];
       await onUpdate(line.id, patch);
-      setDirty(false);
+      // Solo marca limpio si NO hubo ediciones nuevas mientras se guardaba.
+      if (editVersion.current === v) { setDirty(false); dirtyRef.current = false; }
+    } catch (e: any) {
+      // Antes fallaba en silencio: el usuario creía que guardó y no.
+      setSaveErr(e?.response?.data?.detail || e?.message || "No se pudo guardar");
     } finally {
-      setSaving(false);
+      setSaving(false); savingRef.current = false;
     }
   };
+
+  // Auto-guardar al salir de la celda (Excel-like): si la fila tiene cambios,
+  // se persiste sola. Así el usuario ya no tiene que hacer clic en cada 💾 y no
+  // pierde lo editado al navegar a otra sección.
+  const commit = () => { if (dirtyRef.current && !savingRef.current) void save(); };
 
   const confirmDelete = async () => {
     if (!window.confirm(tr("forecast.confirmDelete", "¿Eliminar esta línea?"))) return;
@@ -1012,11 +1035,11 @@ function LineRow({
         {line.salesperson_name ?? tr("forecast.noSalesperson", "—")}
       </td>
       <td style={{ padding: "8px 8px", borderBottom: `1px solid ${tk.border}` }}>
-        <NumInput tk={tk} value={draft.unit_price} onChange={(v) => setField("unit_price", v)} step={0.01} />
+        <NumInput tk={tk} value={draft.unit_price} onChange={(v) => setField("unit_price", v)} step={0.01} onCommit={commit} />
       </td>
       {MONTH_COLS.map((c) => (
         <td key={c as string} style={{ padding: "6px 4px", borderBottom: `1px solid ${tk.border}` }}>
-          <NumInput tk={tk} value={draft[c as string] ?? 0} onChange={(v) => setField(c as string, v)} />
+          <NumInput tk={tk} value={draft[c as string] ?? 0} onChange={(v) => setField(c as string, v)} onCommit={commit} />
         </td>
       ))}
       <td style={{ padding: "8px 8px", textAlign: "right", color: tk.textMid, borderBottom: `1px solid ${tk.border}`, fontVariantNumeric: "tabular-nums" }}>
@@ -1026,7 +1049,15 @@ function LineRow({
         {money(totalAmount)}
       </td>
       <td style={{ padding: "6px 8px", borderBottom: `1px solid ${tk.border}`, whiteSpace: "nowrap" }}>
-        {dirty && (
+        {saving && <span title="Guardando…" style={{ color: tk.textLo, fontSize: 11, marginRight: 6 }}>⏳</span>}
+        {saveErr && (
+          <button onClick={save} title={saveErr}
+                  style={{ background: tk.bad, color: "#fff", border: "none", padding: "4px 8px",
+                    borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, marginRight: 4 }}>
+            <Save size={12} /> Reintentar
+          </button>
+        )}
+        {dirty && !saving && !saveErr && (
           <button onClick={save} disabled={saving} title={tr("forecast.save", "Guardar")}
                   style={{ background: tk.good, color: "#0F172A", border: "none", padding: "4px 8px",
                     borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, marginRight: 4 }}>
@@ -1042,7 +1073,7 @@ function LineRow({
   );
 }
 
-function NumInput({ tk, value, onChange, step = 1 }: { tk: Tokens; value: number; onChange: (v: number) => void; step?: number }) {
+function NumInput({ tk, value, onChange, step = 1, onCommit }: { tk: Tokens; value: number; onChange: (v: number) => void; step?: number; onCommit?: () => void }) {
   return (
     <input
       type="number"
@@ -1051,6 +1082,8 @@ function NumInput({ tk, value, onChange, step = 1 }: { tk: Tokens; value: number
       min={0}
       onChange={(e) => onChange(Number(e.target.value))}
       onFocus={(e) => e.currentTarget.select()}
+      onBlur={() => onCommit?.()}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur(); }}
       style={{
         width: "100%", minWidth: 56, textAlign: "right", padding: "5px 6px",
         border: `1px solid ${tk.border}`, borderRadius: 6, background: tk.inputBg,
