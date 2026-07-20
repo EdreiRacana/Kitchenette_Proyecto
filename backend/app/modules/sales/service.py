@@ -603,12 +603,19 @@ async def cancel_order(db: AsyncSession, order_id: int, user_id: Optional[int] =
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
 async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None,
-                    branch_warehouse_ids: Optional[List[int]] = None) -> schemas.SalesStats:
+                    branch_warehouse_ids: Optional[List[int]] = None,
+                    status: Optional[str] = None, payment_method: Optional[str] = None,
+                    q: Optional[str] = None) -> schemas.SalesStats:
     """All KPIs in a SINGLE aggregated query (no rows pulled into Python).
 
     Uses portable conditional aggregation (CASE inside COUNT/SUM) so it runs the
     same on SQLite (dev) and Postgres (prod).
+
+    Los mismos filtros de la tabla (rango de fechas, estado, método de pago y
+    búsqueda) se aplican aquí para que los KPIs de arriba reflejen exactamente lo
+    que el usuario está viendo filtrado, no el total global.
     """
+    from app.modules.customers.models import Customer
     O = models.Order
     active = and_(O.kind == "order", O.status != "cancelled")
     pending = and_(active, O.status.in_(("pending", "partial")))
@@ -620,6 +627,16 @@ async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Opt
         date_filters.append(O.created_at < end)
     if branch_warehouse_ids is not None:
         date_filters.append(or_(O.warehouse_id.in_(branch_warehouse_ids), O.warehouse_id.is_(None)))
+    if status:
+        date_filters.append(O.status == status)
+    if payment_method:
+        date_filters.append(O.payment_method == payment_method)
+    if q:
+        like = f"%{q.strip().lower()}%"
+        date_filters.append(or_(
+            func.lower(func.coalesce(O.folio, "")).like(like),
+            O.customer.has(func.lower(func.coalesce(Customer.name, "")).like(like)),
+        ))
 
     stmt = select(
         func.count(case((active, 1))).label("orders_count"),

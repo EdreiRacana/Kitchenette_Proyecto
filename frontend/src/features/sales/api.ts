@@ -132,8 +132,8 @@ export const salesApi = {
     const { data } = await api.post<Order>(`/sales/${id}/cancel`, {});
     return data;
   },
-  async stats(start?: string, end?: string): Promise<SalesStats> {
-    const { data } = await api.get<SalesStats>(`/sales/stats`, { params: { start, end } });
+  async stats(params?: { start?: string; end?: string; status?: string; payment_method?: string; q?: string }): Promise<SalesStats> {
+    const { data } = await api.get<SalesStats>(`/sales/stats`, { params });
     return data;
   },
   async trend(granularity = "day", days = 30, end?: string, customerId?: number | null): Promise<TrendPoint[]> {

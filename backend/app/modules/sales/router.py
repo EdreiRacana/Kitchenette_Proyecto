@@ -24,10 +24,12 @@ CurrentUser = Annotated[User, Depends(deps.get_current_active_user)]
 # ── Analytics (declared before /{order_id} so paths don't collide) ────────────
 
 @router.get("/stats", response_model=schemas.SalesStats)
-async def stats(db: DB, current_user: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None):
+async def stats(db: DB, current_user: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None,
+                status: Optional[str] = None, payment_method: Optional[str] = None, q: Optional[str] = None):
     from app.modules.inventory.branch_scope import visible_warehouse_ids
     ids = await visible_warehouse_ids(db, current_user)
-    return await service.get_stats(db, start=start, end=end, branch_warehouse_ids=ids)
+    return await service.get_stats(db, start=start, end=end, branch_warehouse_ids=ids,
+                                   status=status, payment_method=payment_method, q=q)
 
 
 async def _branch_ids(db, user):
