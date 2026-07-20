@@ -232,35 +232,46 @@ async function loadDashboardData(preset, customStart, customEnd) {
   const { granularity, days } = dashTrendParams(preset);
 
   // Defaults seguros: en el plan free de Render el backend arranca en frío y
-  // el tablero dispara ~16 llamadas en paralelo. Antes, si UNA sola fallaba,
-  // Promise.all tumbaba TODO el tablero. Ahora solo `statsCur` es el "latido"
-  // (si falla, el backend está caído → pantalla de Reintentar); el resto cae a
-  // un default y el tablero se pinta con lo que sí cargó, degradando en vez de
-  // quedar en blanco.
+  // el tablero dispara ~15 llamadas en paralelo. NINGUNA sola debe tumbar todo:
+  // cada una cae a un default y el tablero se pinta con lo que sí cargó. Solo si
+  // TODAS fallan (backend realmente caído) se muestra la pantalla de Reintentar.
   const ZERO_STATS: any = { total_sold: 0, orders_count: 0, avg_ticket: 0, pending_amount: 0, paid_rate: 0, quotes_count: 0 };
   const ZERO_FINCMP: any = { current: { net_profit: 0, total_income: 0, total_expenses: 0, expenses_by_category: [] }, previous: { net_profit: 0, total_income: 0, total_expenses: 0, expenses_by_category: [] } };
   const ZERO_INV: any = { total_value: 0, total_units: 0, out_of_stock: 0, low_stock: 0, by_category: [] };
   const ZERO_FINDASH: any = { cxc_balance: 0, cxp_balance: 0 };
+  const ZERO_GOAL: any = { goal_amount: 0, plan_id: null, plan_name: null, plan_year: null, months_covered: [] };
+
+  // Envuelve cada promesa: nunca rechaza; marca si respondió (ok) y su valor.
+  const settle = <T,>(p: Promise<T>, fb: T) =>
+    p.then((value) => ({ ok: true, value })).catch(() => ({ ok: false, value: fb }));
+
+  const results = await Promise.all([
+    settle(salesApi.stats({ start: curStartISO, end: curEndISO }), ZERO_STATS),
+    settle(salesApi.stats({ start: prevStartISO, end: prevEndISO }), ZERO_STATS),
+    settle(salesApi.trend(granularity, days, curEndISO), [] as any),
+    settle(salesApi.trend(granularity, days, curStartISO), [] as any),
+    settle(financeService.getPeriodComparison(curStartISO, curEndISO), ZERO_FINCMP),
+    settle(inventoryService.getStats(), ZERO_INV),
+    settle(financeService.getDashboard(), ZERO_FINDASH),
+    settle(financeService.getBudgets(), [] as any),
+    // Forecast tiene prioridad; si no hay plan activo cae a los presupuestos de Finanzas.
+    settle(forecastApi.goalForRange(curStartISO, curEndISO), ZERO_GOAL),
+    settle(salesApi.topCustomers(5, curStartISO, curEndISO), [] as any),
+    settle(salesApi.topCustomers(20, prevStartISO, prevEndISO), [] as any),
+    settle(salesApi.byChannel(curStartISO, curEndISO), [] as any),
+    settle(financeService.getCashFlow(12), [] as any),
+    settle(inventoryService.getReorderAlerts(), [] as any),
+    settle(hrApi.alerts(), [] as any),
+  ]);
+
+  // Backend realmente caído = NADA respondió. Solo entonces se rechaza para
+  // mostrar "no se pudo conectar" + Reintentar. Si algo cargó, se pinta parcial.
+  if (!results.some((r) => r.ok)) {
+    throw new Error("No se pudo conectar con el servidor.");
+  }
 
   const [statsCur, statsPrev, trendCur, trendPrev, finComparison, invStats, finDashboard, budgets, forecastGoal,
-         topCustomers, topCustomersPrev, byChannel, cashFlow, reorderAlerts, hrAlerts] = await Promise.all([
-    salesApi.stats(curStartISO, curEndISO),   // latido: si esto falla, el backend está caído
-    salesApi.stats(prevStartISO, prevEndISO).catch(() => ZERO_STATS),
-    salesApi.trend(granularity, days, curEndISO).catch(() => []),
-    salesApi.trend(granularity, days, curStartISO).catch(() => []),
-    financeService.getPeriodComparison(curStartISO, curEndISO).catch(() => ZERO_FINCMP),
-    inventoryService.getStats().catch(() => ZERO_INV),
-    financeService.getDashboard().catch(() => ZERO_FINDASH),
-    financeService.getBudgets().catch(() => []),
-    // Forecast tiene prioridad; si no hay plan activo cae a los presupuestos de Finanzas.
-    forecastApi.goalForRange(curStartISO, curEndISO).catch(() => ({ goal_amount: 0, plan_id: null, plan_name: null, plan_year: null, months_covered: [] })),
-    salesApi.topCustomers(5, curStartISO, curEndISO).catch(() => []),
-    salesApi.topCustomers(20, prevStartISO, prevEndISO).catch(() => []),
-    salesApi.byChannel(curStartISO, curEndISO).catch(() => []),
-    financeService.getCashFlow(12).catch(() => []),
-    inventoryService.getReorderAlerts().catch(() => []),
-    hrApi.alerts().catch(() => []),
-  ]);
+         topCustomers, topCustomersPrev, byChannel, cashFlow, reorderAlerts, hrAlerts] = results.map((r) => r.value) as any[];
 
   const n = Math.max(trendCur.length, trendPrev.length);
   const seriesCur = Array.from({ length: n }, (_, i) => trendCur[i]?.total ?? 0);
