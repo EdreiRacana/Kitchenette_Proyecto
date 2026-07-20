@@ -9,11 +9,12 @@ import { Modal, Field, TextInput, NumberInput, Select, Button } from "../sales/u
 import type { Customer, CustomerDraft, CustomerDocument } from "./types";
 import { WITHHOLDING_SCHEMES, RELATIONSHIP_TYPES } from "./types";
 import { customersApi } from "./api";
+import { salesApi } from "../sales/api";
 
 const DOC_TYPES = ["INE/Identificación", "Constancia de situación fiscal", "Comprobante de domicilio", "Contrato", "Otro"];
 import {
   regimenesForRfc, USOS_CFDI, SUCURSALES, PRICE_LISTS,
-  CLIENT_TYPES, AGENTES, CUENTAS_CONTABLES, HOW_HEARD, ESTADOS, MUNICIPIOS, PAISES,
+  CLIENT_TYPES, CUENTAS_CONTABLES, HOW_HEARD, ESTADOS, MUNICIPIOS, PAISES,
 } from "./catalogs";
 
 const GRID: CSSProperties = {
@@ -73,6 +74,11 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
   // Sirve para saber si el usuario tocó algo (formulario "sucio").
   const [baseline, setBaseline] = useState<string>(JSON.stringify(emptyDraft()));
 
+  // Personal real dado de alta (RH / Usuarios) para sugerir en las asignaciones.
+  // Es un datalist: sugiere a los usuarios reales pero permite escribir el
+  // nombre de un agente externo (comisionista) que no está en el sistema.
+  const [personnel, setPersonnel] = useState<string[]>([]);
+
   const [docs, setDocs] = useState<CustomerDocument[]>([]);
   const [pendingDocs, setPendingDocs] = useState<{ docType: string; file: File }[]>([]);
   const [newDocType, setNewDocType] = useState(DOC_TYPES[0]);
@@ -93,6 +99,10 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
       } else {
         setDocs([]);
       }
+      // Trae al personal real para sugerirlo en Ventas / Créditos.
+      salesApi.listSellers()
+        .then((list) => setPersonnel(list.map((s) => (s.full_name || s.email || "").trim()).filter(Boolean)))
+        .catch(() => setPersonnel([]));
     }
   }, [open, editing]);
 
@@ -175,9 +185,16 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
           </div>
         </div>
         <div style={{ flex: 1, minWidth: 200 }}>
-          <Field tk={tk} label={tr("cust_type", "Tipo de cliente")} hint={tr("cust_type_hint", "Se sugiere automáticamente; puedes ajustarlo")}>
+          <Field tk={tk} label={tr("cust_type", "Tipo de cliente")} hint={tr("cust_type_hint", "Contado / crédito / mayorista…")}>
             <Select tk={tk} value={d.client_type || ""} onChange={(v) => set("client_type", v)}
               options={toOpts(CLIENT_TYPES)} placeholder={tr("cust_type_auto", "Automático")} />
+          </Field>
+        </div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <Field tk={tk} label={tr("cust_relationship_type", "Modelo comercial")} hint={tr("cust_relationship_hint", "Marketplace/Cadena activa comisiones y retenciones")}>
+            <Select tk={tk} value={d.relationship_type || "retail"}
+              onChange={(v) => set("relationship_type" as any, v)}
+              options={RELATIONSHIP_TYPES.map(r => ({ value: r.key, label: `${r.icon}  ${r.label}` }))} />
           </Field>
         </div>
       </div>
@@ -231,11 +248,19 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
       </Section>
 
       <Section tk={tk} icon={<Users size={16} />} title={tr("cust_sec_assign", "Asignaciones")}>
-        <Field tk={tk} label={tr("cust_sales_agent", "Ventas")}>
-          <Select tk={tk} value={d.sales_agent || ""} onChange={(v) => set("sales_agent", v)} options={toOpts(AGENTES)} placeholder={tr("select", "Selecciona…")} />
+        <Field tk={tk} label={tr("cust_sales_agent", "Ventas")} hint={tr("cust_agent_hint", "Personal del sistema o agente externo (escríbelo)")}>
+          <TextInput tk={tk} value={d.sales_agent || ""} onChange={(v) => set("sales_agent", v)}
+            placeholder={tr("cust_agent_ph", "Elige o escribe un nombre")} list="personal-ventas" />
+          <datalist id="personal-ventas">
+            {personnel.map((p) => <option key={p} value={p} />)}
+          </datalist>
         </Field>
-        <Field tk={tk} label={tr("cust_credit_agent", "Créditos")}>
-          <Select tk={tk} value={d.credit_agent || ""} onChange={(v) => set("credit_agent", v)} options={toOpts(AGENTES)} placeholder={tr("select", "Selecciona…")} />
+        <Field tk={tk} label={tr("cust_credit_agent", "Créditos")} hint={tr("cust_agent_hint", "Personal del sistema o agente externo (escríbelo)")}>
+          <TextInput tk={tk} value={d.credit_agent || ""} onChange={(v) => set("credit_agent", v)}
+            placeholder={tr("cust_agent_ph", "Elige o escribe un nombre")} list="personal-creditos" />
+          <datalist id="personal-creditos">
+            {personnel.map((p) => <option key={p} value={p} />)}
+          </datalist>
         </Field>
         <Field tk={tk} label={tr("cust_how_heard", "¿Cómo se enteró de nosotros?")}>
           <Select tk={tk} value={d.how_heard || ""} onChange={(v) => set("how_heard", v)} options={toOpts(HOW_HEARD)} placeholder={tr("select", "Selecciona…")} />
@@ -244,15 +269,9 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
 
       {/* ── Perfil comercial universal ─── */}
       <Section tk={tk} icon={<CreditCard size={16} />} title={tr("cust_sec_universal", "Perfil comercial (Universal ERP)")}>
-        <div style={{ gridColumn: "1 / -1" }}>
-          <Field tk={tk} label={tr("cust_relationship_type", "Modelo comercial")}>
-            <Select tk={tk} value={d.relationship_type || "retail"}
-                    onChange={(v) => set("relationship_type" as any, v)}
-                    options={RELATIONSHIP_TYPES.map(r => ({ value: r.key, label: `${r.icon}  ${r.label}` }))} />
-          </Field>
-          <div style={{ fontSize: 11, color: tk.textLo, marginTop: 6, marginBottom: 4, fontStyle: "italic" }}>
-            {RELATIONSHIP_TYPES.find(r => r.key === (d.relationship_type || "retail"))?.desc}
-          </div>
+        <div style={{ gridColumn: "1 / -1", fontSize: 12, color: tk.textLo, fontStyle: "italic", marginTop: -4 }}>
+          {RELATIONSHIP_TYPES.find(r => r.key === (d.relationship_type || "retail"))?.desc}
+          {" "}(el modelo comercial se elige arriba, junto al tipo de cliente)
         </div>
 
         {(d.relationship_type === "marketplace" || d.relationship_type === "chain_physical") && (

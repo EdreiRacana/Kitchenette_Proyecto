@@ -2183,13 +2183,15 @@ const HELP_GUIDES = [
     ],
   },
   {
-    id: "settlement", title: "Conciliar depósito de marketplace", icon: DollarSign, color: "#F97316",
+    id: "settlement", title: "Conciliar depósito de marketplace (con retenciones)", icon: DollarSign, color: "#F97316",
     steps: [
-      "Ve a Clientes → abre el cliente marketplace (Liverpool, Amazon, etc.).",
-      "Botón 'Conciliar liquidación' en el footer del panel.",
-      "Elige rango de fechas, pega el monto depositado.",
-      "El sistema calcula: bruto − comisiones − devoluciones = esperado, y compara vs depositado.",
-      "Variance en verde = cuadra, rojo = faltante (reclama), amarillo = sobrante."
+      "Primero marca al cliente como Marketplace: Clientes → Editar cliente → 'Modelo comercial' (arriba, junto al Tipo de cliente).",
+      "Eso activa la comisión de la plataforma y las retenciones fiscales (IVA 8% + ISR 2.5%, editables en 'Esquema de retenciones').",
+      "Abre el cliente y presiona 'Conciliar liquidación' en el pie del panel.",
+      "Elige el rango de fechas y pega el monto que te depositó la plataforma.",
+      "El sistema calcula: bruto − comisión − IVA retenido − ISR retenido − devoluciones = esperado a depositar.",
+      "Compara vs lo depositado: variance verde = cuadra, rojo = faltante (reclama), amarillo = sobrante.",
+      "Descarga el CSV para tu control: incluye el desglose de comisión, retenciones y devoluciones."
     ],
   },
   {

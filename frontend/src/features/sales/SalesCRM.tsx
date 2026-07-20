@@ -7,7 +7,7 @@ import {
   Search, List, Columns, BarChart3, Plus, Download, DollarSign, Clock,
   TrendingUp, Percent, ChevronRight, ArrowUp, ArrowDown, FileText, Info,
   Upload, Zap, Settings2, CheckCircle, AlertTriangle, FileSpreadsheet, Check, Trash2, ChevronLeft, Pencil,
-  RotateCcw,
+  RotateCcw, Filter,
 } from "lucide-react";
 import api, { onServerWaking } from "../../services/api";
 import { useServerRecovery } from "../../hooks/useServerRecovery";
@@ -675,8 +675,17 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
-    try { setStats(await salesApi.stats()); } catch { } finally { setStatsLoading(false); }
-  }, []);
+    // Los KPIs de arriba usan los MISMOS filtros que la tabla, para que al
+    // filtrar (estado, pago, búsqueda o fechas) los totales reflejen justo lo
+    // que se está viendo, y no el total global de la empresa.
+    try {
+      setStats(await salesApi.stats({
+        start: from || undefined, end: to || undefined,
+        status: status || undefined, payment_method: payment || undefined,
+        q: q || undefined,
+      }));
+    } catch { } finally { setStatsLoading(false); }
+  }, [from, to, status, payment, q]);
 
   const loadAnalytics = useCallback(async () => {
     setAnalyticsLoading(true);
@@ -838,6 +847,12 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
         </div>
       )}
 
+      {view !== "ingesta" && (q || kind || status || payment || from || to) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: tk.accent, fontWeight: 600 }}>
+          <Filter size={13} />
+          {tr("sales_kpi_filtered", "Indicadores calculados sobre los filtros activos")}
+        </div>
+      )}
       {view !== "ingesta" && (
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
           {statsLoading && !stats ? (
