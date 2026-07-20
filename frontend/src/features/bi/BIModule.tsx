@@ -871,6 +871,46 @@ async function loadBIState(period: Period): Promise<BIState> {
   const prevStartISO = prevStart.toISOString(), prevEndISO = prevEnd.toISOString();
   const { granularity, days } = trendParams(period);
 
+  // ── Carga tolerante a fallos parciales ───────────────────────────────────
+  // Igual que el Tablero (#100): cada llamada nunca rompe el conjunto. Si un
+  // endpoint falla o el backend está despertando, se usa un respaldo neutro y
+  // la pestaña se pinta con lo que sí cargó. Solo si NADA responde se lanza el
+  // error de "no se pudo conectar". Así una demo con cliente nunca queda en
+  // blanco por una sola llamada lenta o intermitente.
+  const settle = <T,>(p: Promise<T>, fb: T) =>
+    p.then((value) => ({ ok: true, value })).catch(() => ({ ok: false, value: fb }));
+
+  const ZERO_STATS: any = { total_sold: 0, orders_count: 0, avg_ticket: 0, pending_amount: 0, paid_rate: 0, quotes_count: 0 };
+  const ZERO_PNL: any = { total_income: 0, total_expenses: 0, net_profit: 0, income_by_category: [], expenses_by_category: [] };
+  const ZERO_FINCMP: any = { current: ZERO_PNL, previous: ZERO_PNL };
+  const ZERO_FINDASH: any = { cxc_balance: 0, cxp_balance: 0 };
+  const ZERO_INV: any = { total_value: 0, total_units: 0, out_of_stock: 0, low_stock: 0, by_category: [] };
+  const ZERO_HR: any = { total: 0, active: 0, on_trial: 0, expiring_30: 0, total_payroll_monthly: 0, present_today: 0, absent_today: 0, by_department: {} };
+
+  const results = await Promise.all([
+    settle(salesApi.stats({ start: curStartISO, end: curEndISO }), ZERO_STATS),
+    settle(salesApi.stats({ start: prevStartISO, end: prevEndISO }), ZERO_STATS),
+    settle(salesApi.trend(granularity, days, curEndISO), [] as any),   // fix: siempre pasar endDate simétrico
+    settle(salesApi.trend(granularity, days, prevEndISO), [] as any),  // fix: mismo tratamiento para período anterior
+    settle(salesApi.topCustomers(10, curStartISO, curEndISO), [] as any),
+    settle(salesApi.topProducts(5, curStartISO, curEndISO), [] as any),
+    settle(salesApi.bySeller(curStartISO, curEndISO), [] as any),
+    settle(salesApi.byChannel(curStartISO, curEndISO), [] as any),
+    settle(salesApi.heatmap(curStartISO, curEndISO), [] as any),
+    settle(financeService.getPeriodComparison(curStartISO, curEndISO), ZERO_FINCMP),
+    settle(financeService.getDashboard(), ZERO_FINDASH),
+    settle(inventoryService.getStats(), ZERO_INV),
+    settle(inventoryService.getReorderAlerts(), [] as any),
+    settle(hrApi.dashboard(), ZERO_HR),
+    settle(hrApi.employees(), [] as any),
+  ]);
+
+  // Backend realmente caído = NADA respondió. Solo entonces se rechaza para
+  // mostrar "no se pudo conectar" + Reintentar. Si algo cargó, se pinta parcial.
+  if (!results.some((r) => r.ok)) {
+    throw new Error("No se pudo conectar con el servidor.");
+  }
+
   const [
     statsCur, statsPrev,
     trendCur, trendPrev,
@@ -879,23 +919,7 @@ async function loadBIState(period: Period): Promise<BIState> {
     finComparison, finDashboard,
     invStats, reorderAlerts,
     hrDashboard, employees,
-  ] = await Promise.all([
-    salesApi.stats({ start: curStartISO, end: curEndISO }),
-    salesApi.stats({ start: prevStartISO, end: prevEndISO }),
-    salesApi.trend(granularity, days, curEndISO),      // fix: siempre pasar endDate simétrico
-    salesApi.trend(granularity, days, prevEndISO),     // fix: mismo tratamiento para período anterior
-    salesApi.topCustomers(10, curStartISO, curEndISO),
-    salesApi.topProducts(5, curStartISO, curEndISO),
-    salesApi.bySeller(curStartISO, curEndISO),
-    salesApi.byChannel(curStartISO, curEndISO),
-    salesApi.heatmap(curStartISO, curEndISO).catch(() => []),
-    financeService.getPeriodComparison(curStartISO, curEndISO),
-    financeService.getDashboard(),
-    inventoryService.getStats(),
-    inventoryService.getReorderAlerts(),
-    hrApi.dashboard(),
-    hrApi.employees().catch(() => []),
-  ]);
+  ] = results.map((r) => r.value) as any[];
 
   const n = Math.max(trendCur.length, trendPrev.length);
   const chartSales: ChartPoint[] = Array.from({ length: n }, (_, i) => ({
