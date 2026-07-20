@@ -92,10 +92,19 @@ from app.modules.retail import models as retail_models
 @app.on_event("startup")
 async def startup():
     from app.db.migrations import run_startup_migrations
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    # Migrations run isolated (own connection) and can never crash startup.
-    await run_startup_migrations(engine)
+    # La base de datos puede estar temporalmente inaccesible al arrancar (p. ej.
+    # Supabase free en pausa, o un reinicio de la BD). Si create_all lanza aquí,
+    # el arranque ENTERO fallaba y Render dejaba el servicio caído por horas en
+    # lugar de reintentar. Ahora el servidor SIEMPRE levanta: responde /health y
+    # se recupera solo en cuanto la BD vuelve (el frontend ya reintenta y pinta
+    # el estado "servidor despertando").
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        # Migrations run isolated (own connection) and can never crash startup.
+        await run_startup_migrations(engine)
+    except Exception as e:
+        logger.error("Init de BD diferido en el arranque (¿BD en pausa?): %s", e)
 
     # Seed RBAC (permisos + roles de sistema). Idempotente, nunca pisa datos.
     try:
