@@ -405,6 +405,7 @@ async def create_order(db: AsyncSession, order_in: schemas.OrderCreate,
         discount_value=order_in.discount_value or 0.0,
         tax_rate=order_in.tax_rate or 0.0,
         shipping_amount=order_in.shipping_amount or 0.0,
+        shipping_cost=order_in.shipping_cost or 0.0,
         due_date=order_in.due_date,
         valid_until=order_in.valid_until,
         notes=order_in.notes,
@@ -453,7 +454,7 @@ async def update_order(db: AsyncSession, order_id: int,
 
     # Header fields
     for f in ("customer_id", "warehouse_id", "payment_method", "channel",
-              "discount_type", "discount_value", "tax_rate", "shipping_amount",
+              "discount_type", "discount_value", "tax_rate", "shipping_amount", "shipping_cost",
               "due_date", "valid_until", "notes",
               "bill_rfc", "bill_name", "bill_use", "bill_regime", "bill_zip"):
         val = getattr(data, f)
@@ -572,6 +573,8 @@ async def convert_quote_to_order(db: AsyncSession, quote_id: int,
         payment_method=quote.payment_method, channel=quote.channel, currency=quote.currency,
         discount_type=quote.discount_type, discount_value=quote.discount_value,
         tax_rate=quote.tax_rate, shipping_amount=quote.shipping_amount,
+        shipping_cost=getattr(quote, "shipping_cost", 0.0) or 0.0,
+        sales_agent_id=quote.sales_agent_id,
         notes=quote.notes, bill_rfc=quote.bill_rfc, bill_name=quote.bill_name,
         bill_use=quote.bill_use, bill_regime=quote.bill_regime, bill_zip=quote.bill_zip,
         cfdi_status="none", paid_amount=0.0,
@@ -1265,7 +1268,9 @@ async def _customer_pnl_breakdown(
 
     gross_sales = sum(o.subtotal or 0 for o in active)
     discounts = sum(o.discount_amount or 0 for o in active)
-    shipping_costs = sum(o.shipping_amount or 0 for o in active)
+    # Envío COBRADO al cliente (ingreso) vs COSTO real de la paquetería (gasto).
+    shipping_charged = sum(o.shipping_amount or 0 for o in active)
+    shipping_costs = sum(getattr(o, "shipping_cost", 0) or 0 for o in active)
     returns_amount = sum(r.refund_amount or 0 for r in returns)
     cogs = sum(
         (it.quantity or 0) * (it.variant.cost_price or 0)
@@ -1282,12 +1287,14 @@ async def _customer_pnl_breakdown(
     )).scalar_one_or_none()
     iva_ret_pct, isr_ret_pct = marketplace_retention_rates(cust) if cust else (0.0, 0.0)
     withholdings = max(gross_sales, 0) * (iva_ret_pct + isr_ret_pct)
-    net_contribution = gross_margin - shipping_costs - withholdings
+    # El envío cobrado SUMA (lo recibes), el costo de paquetería RESTA (lo pagas).
+    net_contribution = gross_margin + shipping_charged - shipping_costs - withholdings
 
     breakdown = schemas.CustomerPnLBreakdown(
         gross_sales=_r(gross_sales), returns=_r(returns_amount), allowances=0.0,
         discounts=_r(discounts), net_sales=_r(net_sales), cogs=_r(cogs),
-        gross_margin=_r(gross_margin), shipping_costs=_r(shipping_costs),
+        gross_margin=_r(gross_margin), shipping_charged=_r(shipping_charged),
+        shipping_costs=_r(shipping_costs),
         withholdings=_r(withholdings), net_contribution=_r(net_contribution), orders_count=len(active),
     )
     return breakdown, orders, list(returns)

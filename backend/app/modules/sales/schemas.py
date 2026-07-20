@@ -97,7 +97,8 @@ class OrderBase(BaseModel):
     discount_type: Literal["amount", "percent"] = "amount"
     discount_value: float = Field(default=0.0, ge=0)
     tax_rate: float = Field(default=0.0, ge=0)
-    shipping_amount: float = Field(default=0.0, ge=0)
+    shipping_amount: float = Field(default=0.0, ge=0)   # cobrado al cliente
+    shipping_cost: float = Field(default=0.0, ge=0)     # costo de la paquetería
 
     due_date: Optional[datetime] = None
     valid_until: Optional[datetime] = None
@@ -135,6 +136,7 @@ class OrderUpdate(BaseModel):
     discount_value: Optional[float] = Field(default=None, ge=0)
     tax_rate: Optional[float] = Field(default=None, ge=0)
     shipping_amount: Optional[float] = Field(default=None, ge=0)
+    shipping_cost: Optional[float] = Field(default=None, ge=0)
     due_date: Optional[datetime] = None
     valid_until: Optional[datetime] = None
     notes: Optional[str] = None
@@ -244,6 +246,7 @@ class OrderInDB(BaseModel):
     tax_rate: float
     tax_amount: float
     shipping_amount: float
+    shipping_cost: float = 0.0
     total_amount: float
     paid_amount: float
     balance: float = 0.0
@@ -388,7 +391,8 @@ class CustomerPnLBreakdown(BaseModel):
     net_sales: float = 0.0
     cogs: float = 0.0
     gross_margin: float = 0.0
-    shipping_costs: float = 0.0
+    shipping_charged: float = 0.0   # envío cobrado al cliente (ingreso)
+    shipping_costs: float = 0.0     # costo real de la paquetería (gasto)
     withholdings: float = 0.0
     net_contribution: float = 0.0
     orders_count: int = 0

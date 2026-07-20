@@ -76,7 +76,8 @@ class Order(Base):
     discount_amount = Column(Float, default=0.0, nullable=False)       # resolved $
     tax_rate = Column(Float, default=0.0, nullable=False)              # e.g. 16 (%)
     tax_amount = Column(Float, default=0.0, nullable=False)
-    shipping_amount = Column(Float, default=0.0, nullable=False)
+    shipping_amount = Column(Float, default=0.0, nullable=False)   # envío COBRADO al cliente (ingreso)
+    shipping_cost = Column(Float, default=0.0, nullable=False)      # costo de la paquetería (gasto real)
     total_amount = Column(Float, default=0.0, nullable=False)
     paid_amount = Column(Float, default=0.0, nullable=False)
 

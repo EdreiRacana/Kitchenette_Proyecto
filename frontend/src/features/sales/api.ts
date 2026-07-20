@@ -120,6 +120,7 @@ function draftToPayload(d: OrderDraft) {
     discount_value: d.discount_value,
     tax_rate: d.tax_rate,
     shipping_amount: d.shipping_amount,
+    shipping_cost: d.shipping_cost ?? 0,
     notes: d.notes || null,
     due_date: d.due_date || null,
     valid_until: d.valid_until || null,
