@@ -37,6 +37,36 @@ export interface POSSession {
   closing_notes?: string;
 }
 
+export interface SessionListItem {
+  id: number;
+  terminal_id: number;
+  terminal_name: string;
+  cashier_id: number;
+  cashier_name: string;
+  status: "open" | "closed" | "reconciled";
+  opened_at: string;
+  closed_at?: string;
+  opening_balance: number;
+  expected_cash: number;
+  actual_cash: number;
+  variance: number;
+  total_sales_amount: number;
+  total_sales_count: number;
+  total_deposited: number;
+  total_float_next: number;
+  cash_remaining_after: number;
+  is_pending: boolean;
+}
+
+export interface SessionListResponse {
+  sessions: SessionListItem[];
+  summary: {
+    pending_count: number;
+    total_pending_deposit: number;
+    accumulated_variance: number;
+  };
+}
+
 export interface POSProduct {
   variant_id: number;
   product_id: number;
@@ -67,6 +97,8 @@ export const posApi = {
   currentSession: () => api.get<POSSession | { session: null }>("/pos/session/current").then(r => r.data),
   previousSession: (opts?: { terminal_id?: number; scope?: "auto" | "me" | "terminal" | "any" }) =>
     api.get<PreviousSessionReport>("/pos/session/previous", { params: opts }).then(r => r.data),
+  listSessions: (opts?: { status?: string; pending?: boolean; terminal_id?: number; limit?: number }) =>
+    api.get<SessionListResponse>("/pos/sessions", { params: opts }).then(r => r.data),
   openSession: (data: { terminal_id: number; opening_balance: number; opening_notes?: string }) =>
     api.post<POSSession>("/pos/session/open", data).then(r => r.data),
   closeSession: (data: { session_id: number; denominations: Record<string, number>; closing_notes?: string }) =>

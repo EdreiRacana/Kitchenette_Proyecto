@@ -8,12 +8,12 @@ import {
   Store, ShoppingCart, DollarSign, Plus, Minus, Trash2, Search,
   Lock, Unlock, LogIn, LogOut, Printer, RefreshCw, Package, Download,
   Banknote, CreditCard, ArrowLeftRight, Check, X, AlertTriangle,
-  Receipt, User, Clock, ChevronRight, History,
+  Receipt, User, Clock, ChevronRight, History, Scale,
 } from "lucide-react";
 import {
   posApi, DENOMINATIONS,
   type POSTerminal, type POSSession, type POSProduct, type POSSaleItem, type SessionSale,
-  type PreviousSessionReport, type POSTransactionRow,
+  type PreviousSessionReport, type POSTransactionRow, type SessionListResponse,
 } from "./api";
 
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -66,6 +66,7 @@ function SessionSetup({ t, terminals, onOpened, onTerminalsChanged }: {
   const [creatingTerminal, setCreatingTerminal] = useState(false);
   const [newTerm, setNewTerm] = useState({ name: "", code: "" });
   const [showPrev, setShowPrev] = useState<{ terminalId?: number; scope: "auto" | "me" | "terminal" } | null>(null);
+  const [showArqueos, setShowArqueos] = useState(false);
 
   const openNow = async () => {
     if (!selected) return;
@@ -85,11 +86,18 @@ function SessionSetup({ t, terminals, onOpened, onTerminalsChanged }: {
           <h1 style={{ margin: 0, fontSize: 24, color: t.textHi }}>Punto de venta</h1>
           <p style={{ color: t.textLo, fontSize: 13, marginTop: 4 }}>Selecciona la caja y captura el fondo inicial para abrir el turno.</p>
         </div>
-        <button onClick={() => setShowPrev({ terminalId: selected || undefined, scope: selected ? "terminal" : "me" })}
-          title="Revisar el reporte del último turno cerrado"
-          style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
-          <History size={14} /> Revisar turno anterior
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={() => setShowArqueos(true)}
+            title="Historial de turnos y conciliación de arqueos pendientes"
+            style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${t.nova}55`, background: t.nova + "1a", color: t.nova, cursor: "pointer", fontSize: 12.5, display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
+            <Scale size={14} /> Arqueos / Conciliación
+          </button>
+          <button onClick={() => setShowPrev({ terminalId: selected || undefined, scope: selected ? "terminal" : "me" })}
+            title="Revisar el reporte del último turno cerrado"
+            style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+            <History size={14} /> Revisar turno anterior
+          </button>
+        </div>
       </div>
 
       <div style={{ marginTop: 24, display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
@@ -158,6 +166,8 @@ function SessionSetup({ t, terminals, onOpened, onTerminalsChanged }: {
         />
       )}
 
+      {showArqueos && <ReconciliationPanel t={t} onClose={() => setShowArqueos(false)} />}
+
       {creatingTerminal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
           onClick={() => setCreatingTerminal(false)}>
@@ -199,6 +209,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const [showCash, setShowCash] = useState<"cash_in" | "cash_out" | null>(null);
   const [lastSale, setLastSale] = useState<any | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showArqueos, setShowArqueos] = useState(false);
   const [historyRefresh, setHistoryRefresh] = useState(0);
   const [showPrev, setShowPrev] = useState(false);
   const [scanFlash, setScanFlash] = useState<string | null>(null); // feedback breve al escanear
@@ -316,6 +327,11 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
               title="Revisar el reporte del último turno cerrado en esta caja"
               style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
               <History size={12} /> Turno anterior
+            </button>
+            <button onClick={() => setShowArqueos(true)}
+              title="Arqueos y conciliación de turnos (pendientes por depositar)"
+              style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+              <Scale size={12} /> Arqueos
             </button>
             <button onClick={() => setShowCash("cash_in")}
               style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
@@ -445,6 +461,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
           onClose={() => setShowPrev(false)}
         />
       )}
+      {showArqueos && <ReconciliationPanel t={t} onClose={() => setShowArqueos(false)} />}
     </div>
   );
 }
@@ -1045,11 +1062,126 @@ function SalesHistoryDrawer({ t, session, refreshKey, onClose }: {
 }
 
 
+// ── Arqueos / Conciliación: historial de turnos + pendientes ─────────────
+function ReconTile({ t, label, value, color }: { t: any; label: string; value: string; color: string }) {
+  return (
+    <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: "12px 14px" }}>
+      <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+    </div>
+  );
+}
+
+function ReconciliationPanel({ t, onClose }: { t: any; onClose: () => void }) {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<SessionListResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [pendingOnly, setPendingOnly] = useState(true);
+  const [openSessionId, setOpenSessionId] = useState<number | null>(null);
+
+  const load = async () => {
+    setLoading(true); setErr(null);
+    try {
+      setData(await posApi.listSessions({ pending: pendingOnly, limit: 200 }));
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || e?.message || "Error al cargar arqueos");
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [pendingOnly]);
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const fmtDate = (s?: string) => s ? new Date(s).toLocaleDateString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
+  const sum = data?.summary;
+
+  return createPortal(
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 300, display: "flex", justifyContent: "flex-end" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 880, maxWidth: "100%", height: "100vh", background: t.panel, borderLeft: `1px solid ${t.border}`, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, background: t.panel, zIndex: 2 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Scale size={20} color={t.nova} />
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: t.textHi }}>Arqueos / Conciliación</div>
+              <div style={{ fontSize: 12, color: t.textLo }}>Historial de turnos y saldos pendientes por depositar</div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+
+        {sum && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, padding: "16px 22px" }}>
+            <ReconTile t={t} label="Turnos pendientes" value={String(sum.pending_count)} color={sum.pending_count > 0 ? t.warn : t.good} />
+            <ReconTile t={t} label="Pendiente por depositar" value={mxn(sum.total_pending_deposit)} color={sum.total_pending_deposit > 0.005 ? t.warn : t.good} />
+            <ReconTile t={t} label={sum.accumulated_variance >= 0 ? "Saldo acumulado a favor" : "Saldo acumulado en contra"} value={(sum.accumulated_variance >= 0 ? "+" : "−") + mxn(Math.abs(sum.accumulated_variance))} color={Math.abs(sum.accumulated_variance) < 0.005 ? t.textMid : sum.accumulated_variance > 0 ? t.good : t.bad} />
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8, padding: "0 22px 12px" }}>
+          {[{ v: true, l: "Pendientes" }, { v: false, l: "Todos" }].map(o => (
+            <button key={String(o.v)} onClick={() => setPendingOnly(o.v)} style={{ padding: "7px 14px", borderRadius: 8, border: `1px solid ${pendingOnly === o.v ? t.nova : t.border}`, background: pendingOnly === o.v ? t.nova + "1a" : "transparent", color: pendingOnly === o.v ? t.nova : t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>{o.l}</button>
+          ))}
+        </div>
+
+        <div style={{ flex: 1, padding: "0 22px 22px" }}>
+          {loading ? <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>
+            : err ? <div style={{ padding: 20, color: t.bad }}>{err}</div>
+            : !data || data.sessions.length === 0 ? <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>{pendingOnly ? "No hay turnos pendientes por conciliar. 🎉" : "Sin turnos registrados."}</div>
+            : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {data.sessions.map(s => {
+                  const vColor = Math.abs(s.variance) < 0.005 ? t.textLo : s.variance > 0 ? t.good : t.bad;
+                  const stColor = s.status === "reconciled" ? t.good : s.status === "open" ? t.nova : t.warn;
+                  const stLabel = s.status === "reconciled" ? "Conciliado" : s.status === "open" ? "Abierto" : "Cerrado";
+                  const clickable = s.status !== "open";
+                  return (
+                    <div key={s.id} onClick={() => clickable && setOpenSessionId(s.id)}
+                      style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr auto", gap: 10, alignItems: "center", padding: "12px 14px", background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, cursor: clickable ? "pointer" : "default" }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>{s.terminal_name} · #{s.id}</div>
+                        <div style={{ fontSize: 11.5, color: t.textLo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.cashier_name} · {fmtDate(s.closed_at || s.opened_at)}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 10, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.3 }}>Varianza</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: vColor }}>{s.variance >= 0 ? "+" : "−"}{mxn(Math.abs(s.variance))}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 10, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.3 }}>Por depositar</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: s.cash_remaining_after > 0.005 ? t.warn : t.textLo }}>{mxn(s.cash_remaining_after)}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 10, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.3 }}>Ventas</div>
+                        <div style={{ fontSize: 13, color: t.textMid }}>{mxn(s.total_sales_amount)}</div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+                        <span style={{ fontSize: 10.5, fontWeight: 700, color: stColor, background: stColor + "1e", border: `1px solid ${stColor}44`, padding: "3px 8px", borderRadius: 999, whiteSpace: "nowrap" }}>{stLabel}</span>
+                        {clickable && <ChevronRight size={16} color={t.textLo} />}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+        </div>
+      </div>
+
+      {openSessionId !== null && (
+        <PreviousSessionDrawer t={t} scope="any" sessionId={openSessionId}
+          onClose={() => { setOpenSessionId(null); load(); }} />
+      )}
+    </div>,
+    document.body,
+  );
+}
+
 // ── Turno anterior: reporte del último turno cerrado ─────────────────────
-function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
+function PreviousSessionDrawer({ t, terminalId, scope, sessionId, onClose }: {
   t: any;
   terminalId?: number;
   scope: "auto" | "me" | "terminal" | "any";
+  sessionId?: number;               // si viene, abre ESE turno (no solo el último)
   onClose: () => void;
 }) {
   const [loading, setLoading] = useState(true);
@@ -1089,7 +1221,9 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
     (async () => {
       setLoading(true); setErr(null);
       try {
-        const r = await posApi.previousSession({ terminal_id: terminalId, scope });
+        const r = sessionId
+          ? await posApi.sessionReport(sessionId) as PreviousSessionReport
+          : await posApi.previousSession({ terminal_id: terminalId, scope });
         if (!cancelled) setReport(r);
       } catch (e: any) {
         if (!cancelled) {
@@ -1101,7 +1235,7 @@ function PreviousSessionDrawer({ t, terminalId, scope, onClose }: {
       } finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [terminalId, scope]);
+  }, [terminalId, scope, sessionId]);
 
   const flashOk = (msg: string) => {
     setFlash(msg);

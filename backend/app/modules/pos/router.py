@@ -84,6 +84,21 @@ async def previous_session(
     return r
 
 
+@router.get("/sessions")
+async def list_sessions(
+    db: DB, current_user: CurrentUser,
+    status: Optional[str] = Query(None, description="open | closed | reconciled | all"),
+    pending: bool = Query(False, description="Solo turnos cerrados sin conciliar (pendientes)"),
+    terminal_id: Optional[int] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Historial de turnos (arqueos) para el panel de conciliación, con resumen
+    de pendientes: total por depositar y saldo acumulado a favor/en contra."""
+    return await service.list_sessions(
+        db, status=status, pending_only=pending, terminal_id=terminal_id, limit=limit,
+    )
+
+
 @router.post("/session/open")
 async def open_session(data: schemas.OpenSessionRequest, db: DB, current_user: CurrentUser):
     try:
