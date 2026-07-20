@@ -1786,7 +1786,355 @@ function scheduledDueLabel(scheduledDate, lang) {
   return lang === "es" ? `Vence en ${diffDays} día(s)` : `Due in ${diffDays} day(s)`;
 }
 
-/* ============================ Help Menu ============================ */
+/* ============================ Centro de Ayuda ============================ */
+// Manual profesional por módulo: para qué sirve, herramientas principales,
+// cómo empezar, tips, y un tour opcional (no intrusivo, se lanza a mano).
+type ManualTool = { name: string; desc: string };
+type TourStep = { title: string; body: string };
+type ModuleManual = {
+  id: string; page: string; title: string; icon: any; color: string;
+  tagline: string; summary: string;
+  tools: ManualTool[]; start: string[]; tips: string[]; tour: TourStep[];
+};
+
+const MODULE_MANUALS: ModuleManual[] = [
+  {
+    id: "dashboard", page: "dashboard", title: "Tablero", icon: LayoutDashboard, color: "#33B2F5",
+    tagline: "Tu vista ejecutiva del negocio en un vistazo",
+    summary: "El Tablero reúne los indicadores clave del negocio (ventas, margen, cartera, inventario) en una sola pantalla. Es lo primero que ves al entrar: te dice cómo va el día, el mes y qué necesita tu atención — sin tener que abrir cada módulo por separado.",
+    tools: [
+      { name: "Tarjetas de KPIs", desc: "Ventas, margen, ticket promedio y crecimiento vs. el periodo anterior. El color indica si vas mejor (verde) o peor (rojo)." },
+      { name: "Selector de periodo", desc: "Semana · Mes · Trimestre · Año, o un rango personalizado. Todo el tablero se recalcula al instante." },
+      { name: "Gráficas de tendencia", desc: "Evolución de ventas y margen en el tiempo para detectar picos y caídas de un vistazo." },
+      { name: "Esfera de Meta vs. Real", desc: "El indicador líquido muestra qué tanto de la meta llevas cumplida en el periodo." },
+      { name: "Alertas y pendientes", desc: "Resumen de lo urgente: stock bajo, cartera vencida y tareas por hacer." },
+    ],
+    start: [
+      "Al iniciar sesión llegas directo al Tablero.",
+      "Elige el periodo arriba (por defecto: el mes en curso).",
+      "Lee las tarjetas de arriba: son el pulso del negocio hoy.",
+      "Revisa la sección de alertas para saber qué atender primero.",
+    ],
+    tips: [
+      "Usa 'Enviar resumen por correo' para recibir el estado del negocio en tu bandeja.",
+      "Cambia a modo claro/oscuro con el ícono de sol/luna según la iluminación.",
+    ],
+    tour: [
+      { title: "Bienvenido al Tablero", body: "Esta es tu vista ejecutiva. Aquí ves el estado del negocio sin abrir otros módulos. Te muestro las piezas principales." },
+      { title: "Indicadores (KPIs)", body: "Las tarjetas de arriba resumen ventas, margen y crecimiento. El color y la flecha te dicen si mejoraste o empeoraste frente al periodo anterior." },
+      { title: "Selector de periodo", body: "Con Semana / Mes / Trimestre / Año cambias el rango de todo el tablero. Úsalo para comparar cómo vas hoy vs. el mes pasado." },
+      { title: "Esfera de meta", body: "El indicador líquido llena según qué tanto de tu meta llevas cumplida. Verde = vas bien, ámbar = cuidado, rojo = vas corto." },
+      { title: "Alertas y pendientes", body: "Aquí aparece lo urgente: inventario bajo, cartera vencida, tareas. Empieza tu día resolviendo esto." },
+    ],
+  },
+  {
+    id: "ventas", page: "ventas", title: "Ventas / CRM", icon: ShoppingCart, color: "#10B981",
+    tagline: "Clientes, oportunidades y órdenes en un solo flujo",
+    summary: "El módulo de Ventas / CRM gestiona todo el ciclo comercial: desde el prospecto y la cotización hasta la orden facturada. Registra oportunidades, da seguimiento a clientes y convierte cotizaciones en ventas reales que impactan inventario y finanzas.",
+    tools: [
+      { name: "Órdenes de venta", desc: "Crea, edita y da seguimiento a pedidos. Cada orden descuenta inventario y genera cuentas por cobrar." },
+      { name: "Cotizaciones", desc: "Arma una propuesta y conviértela en orden con un clic cuando el cliente acepta." },
+      { name: "Pipeline / oportunidades", desc: "Visualiza tus prospectos por etapa para no perder ninguna venta en el camino." },
+      { name: "Ficha de cliente", desc: "Historial de compras, saldo y datos de contacto de cada cliente." },
+      { name: "Badge POS", desc: "Las ventas hechas en el Punto de venta aparecen marcadas; puedes reimprimir su ticket." },
+    ],
+    start: [
+      "Entra a Ventas / CRM desde el menú lateral.",
+      "Presiona 'Nueva orden' (o 'Nueva cotización' si aún no cierra).",
+      "Elige el cliente, agrega productos y cantidades.",
+      "Guarda: la orden descuenta stock y crea la cuenta por cobrar.",
+    ],
+    tips: [
+      "Una cotización no afecta inventario hasta que la conviertes en orden.",
+      "Desde la orden con badge POS puedes descargar el ticket 80mm/58mm.",
+    ],
+    tour: [
+      { title: "Ventas / CRM", body: "Aquí vive todo el ciclo comercial: prospecto → cotización → orden → cobro. Te muestro cómo se conecta." },
+      { title: "Órdenes", body: "La lista central son tus órdenes de venta. Cada una descuenta inventario y genera una cuenta por cobrar en Finanzas automáticamente." },
+      { title: "Cotizaciones", body: "Si el cliente aún no decide, crea una cotización. No mueve stock; cuando acepta, la conviertes en orden con un clic." },
+      { title: "Cliente", body: "Al abrir una orden ves la ficha del cliente: su historial y saldo. Así sabes con quién tratas antes de vender a crédito." },
+      { title: "Ventas del POS", body: "Las órdenes con el distintivo POS vienen del Punto de venta. Desde ahí puedes reimprimir su ticket cuando lo necesiten." },
+    ],
+  },
+  {
+    id: "pos", page: "pos", title: "Punto de venta", icon: Store, color: "#F59E0B",
+    tagline: "Cobra rápido y cuadra tu caja sin errores",
+    summary: "El Punto de venta (POS) es la caja registradora del sistema: abres turno con un fondo, cobras ventas por código de barras, aceptas efectivo/tarjeta/transferencia, imprimes tickets y al final del día haces el arqueo por denominación para cuadrar la caja. Cada venta actualiza inventario y finanzas al instante.",
+    tools: [
+      { name: "Apertura de turno", desc: "Registras el fondo inicial de caja con el que arrancas el día." },
+      { name: "Carrito y cobro", desc: "Escanea o teclea el SKU; presiona 'Cobrar' y elige método: efectivo, tarjeta, transferencia o mixto." },
+      { name: "Impresión de ticket", desc: "Al cobrar aparece el folio con botones para imprimir 80mm/58mm o descargar el PDF." },
+      { name: "Arqueo de caja", desc: "Al cerrar cuentas billetes y monedas por denominación; el sistema calcula la diferencia contra lo esperado." },
+      { name: "Panel de conciliación", desc: "Registra el depósito bancario, el fondo para el siguiente turno y ajustes. Marca la sesión como conciliada." },
+      { name: "Reporte Z / X", desc: "Descarga el corte del turno en PDF para tu control o el contador." },
+    ],
+    start: [
+      "Entra a Punto de venta y presiona 'Abrir turno'; captura el fondo inicial.",
+      "Escanea el código de barras o teclea el SKU: el producto entra al carrito.",
+      "Presiona 'Cobrar $XXX', elige el método de pago y confirma.",
+      "Imprime o descarga el ticket desde la ventana de folio.",
+      "Al terminar: 'Cerrar turno' → arqueo por denominación → descarga el Reporte Z.",
+    ],
+    tips: [
+      "Si te queda un arqueo pendiente de conciliar, el panel de conciliación te avisa al abrir el turno siguiente.",
+      "El botón 'Ventas del turno' te deja reimprimir cualquier ticket del día.",
+      "La diferencia (variance) en verde significa que la caja cuadra; en rojo, falta dinero.",
+    ],
+    tour: [
+      { title: "Punto de venta", body: "Esta es tu caja. Para cobrar necesitas un turno abierto. Te muestro el flujo completo de un día." },
+      { title: "1· Abrir turno", body: "Antes de cobrar, abre turno con el fondo inicial (el dinero con el que arrancas). Así el arqueo del cierre podrá cuadrar." },
+      { title: "2· Cobrar", body: "Escanea el código o teclea el SKU y el producto entra al carrito. Presiona 'Cobrar', elige efectivo/tarjeta/transferencia/mixto y confirma." },
+      { title: "3· Ticket", body: "Tras cobrar aparece el folio con botones para imprimir en 80mm/58mm o descargar el PDF. También puedes reimprimir desde 'Ventas del turno'." },
+      { title: "4· Cerrar y arquear", body: "Al final del día presiona 'Cerrar turno' y cuenta el efectivo por denominación. El sistema te dice si cuadra o hay diferencia." },
+      { title: "5· Conciliar", body: "El panel de conciliación registra el depósito al banco y el fondo para el próximo turno. Marca la sesión como conciliada y quedas al día." },
+    ],
+  },
+  {
+    id: "forecast", page: "forecast", title: "Forecast", icon: Target, color: "#8B5CF6",
+    tagline: "Planea la demanda mes a mes con datos, no corazonadas",
+    summary: "Forecast te ayuda a proyectar cuántas unidades venderás por producto en los próximos meses. Editas las cantidades en una cuadrícula tipo hoja de cálculo y el sistema las usa para anticipar compras, producción y flujo de caja. Se guarda automáticamente al salir de cada celda.",
+    tools: [
+      { name: "Cuadrícula editable", desc: "Filas por producto, columnas por mes. Escribes las unidades esperadas directamente en cada celda." },
+      { name: "Guardado automático", desc: "Al salir de la celda (Tab, Enter o clic afuera) el cambio se guarda solo; si falla, aparece 'Reintentar'." },
+      { name: "Totales y comparativos", desc: "Sumas por producto y por mes para revisar que el plan sea realista." },
+      { name: "Base histórica", desc: "Toma como referencia lo vendido antes para que tu proyección parta de datos reales." },
+    ],
+    start: [
+      "Entra a Forecast desde el menú.",
+      "Ubica el producto (fila) y el mes (columna) que quieres planear.",
+      "Escribe las unidades esperadas en la celda.",
+      "Sal de la celda con Tab/Enter: el número queda guardado automáticamente.",
+    ],
+    tips: [
+      "No necesitas un botón de 'Guardar': cada celda se guarda al salir de ella.",
+      "Si ves 'Reintentar' junto a una celda, hubo un error de red — vuelve a intentarlo sin perder el número.",
+    ],
+    tour: [
+      { title: "Forecast", body: "Aquí planeas cuánto venderás en los próximos meses. Es una cuadrícula como una hoja de cálculo, muy directa." },
+      { title: "La cuadrícula", body: "Cada fila es un producto y cada columna un mes. Haz clic en una celda y escribe las unidades que esperas vender." },
+      { title: "Guardado automático", body: "No busques un botón de guardar: al salir de la celda (Tab, Enter o clic afuera) el número se guarda solo." },
+      { title: "Si algo falla", body: "Si aparece 'Reintentar' junto a la celda hubo un problema de red. Tu número no se pierde; solo vuelve a intentar." },
+      { title: "Revisa los totales", body: "Las sumas por producto y por mes te ayudan a comprobar que el plan sea realista antes de comprar o producir." },
+    ],
+  },
+  {
+    id: "retail", page: "retail", title: "Retail", icon: Building2, color: "#EC4899",
+    tagline: "Controla tus tiendas y sucursales",
+    summary: "El módulo de Retail administra la operación por tienda o sucursal: existencias, ventas y desempeño de cada punto físico. Ideal si manejas más de una ubicación y necesitas comparar cómo va cada una.",
+    tools: [
+      { name: "Vista por tienda", desc: "Selecciona una sucursal para ver sus ventas, inventario y métricas propias." },
+      { name: "Comparativo entre tiendas", desc: "Contrasta desempeño para detectar cuál rinde mejor y cuál necesita apoyo." },
+      { name: "Existencias por ubicación", desc: "Sabes cuánto stock hay en cada tienda, no solo el total de la empresa." },
+    ],
+    start: [
+      "Entra a Retail desde el menú.",
+      "Elige la tienda o sucursal que quieres revisar.",
+      "Consulta sus ventas e inventario específicos.",
+      "Usa el comparativo para ver cuál sucursal va mejor.",
+    ],
+    tips: [
+      "El inventario por ubicación evita 'vender' algo que en realidad está en otra tienda.",
+    ],
+    tour: [
+      { title: "Retail", body: "Si tienes varias tiendas, aquí las controlas por separado. Te muestro cómo." },
+      { title: "Elige la tienda", body: "Selecciona una sucursal para ver solo sus números: ventas, inventario y métricas de ese punto." },
+      { title: "Compara", body: "El comparativo entre tiendas te dice cuál rinde mejor, para replicar lo que funciona y apoyar a las rezagadas." },
+      { title: "Stock por ubicación", body: "El inventario se ve por tienda, así no prometes producto que en realidad está en otra sucursal." },
+    ],
+  },
+  {
+    id: "clientes", page: "clientes", title: "Clientes", icon: Users, color: "#06B6D4",
+    tagline: "Toda la relación con cada cliente en un lugar",
+    summary: "El módulo de Clientes es tu directorio y expediente comercial: datos de contacto, historial de compras, saldo pendiente y condiciones. Desde aquí también concilias liquidaciones de marketplaces (Liverpool, Amazon, etc.).",
+    tools: [
+      { name: "Directorio de clientes", desc: "Busca y administra a todos tus clientes con sus datos y estado de cuenta." },
+      { name: "Historial de compras", desc: "Cada cliente muestra qué te ha comprado y cuándo." },
+      { name: "Saldo y crédito", desc: "Ves cuánto te debe y sus condiciones de pago." },
+      { name: "Conciliar liquidación", desc: "Para clientes marketplace: compara el depósito recibido contra bruto − comisiones − devoluciones." },
+    ],
+    start: [
+      "Entra a Clientes desde el menú.",
+      "Busca al cliente por nombre o usa la lista.",
+      "Abre su ficha para ver historial, saldo y contacto.",
+      "Para marketplaces, usa 'Conciliar liquidación' en el pie del panel.",
+    ],
+    tips: [
+      "En la conciliación: verde = el depósito cuadra, rojo = faltante (reclama), amarillo = sobrante.",
+    ],
+    tour: [
+      { title: "Clientes", body: "Tu directorio comercial completo. Cada cliente tiene su expediente. Te lo muestro." },
+      { title: "La ficha", body: "Al abrir un cliente ves su historial de compras, su saldo y sus datos. Todo lo que necesitas antes de venderle a crédito." },
+      { title: "Saldo y crédito", body: "El saldo pendiente y las condiciones de pago te dicen si conviene dar más crédito o cobrar primero." },
+      { title: "Conciliar marketplace", body: "Si vendes en Liverpool, Amazon, etc., 'Conciliar liquidación' compara lo que te depositaron contra bruto − comisiones − devoluciones. Así sabes si te pagaron completo." },
+    ],
+  },
+  {
+    id: "inventario", page: "inventario", title: "Inventario", icon: Package, color: "#3B82F6",
+    tagline: "Stock, costos y movimientos siempre al día",
+    summary: "El módulo de Inventario controla existencias, costos y movimientos de cada producto. Registra entradas y salidas, valúa el inventario con costeo FIFO y te alerta cuando el stock baja. Es la base para no vender lo que no tienes ni comprar de más.",
+    tools: [
+      { name: "Lista de productos", desc: "Catálogo con SKU, existencia actual, costo y precio de cada artículo." },
+      { name: "Kardex FIFO", desc: "Historial cronológico de entradas/salidas con el costo FIFO aplicado en cada movimiento." },
+      { name: "Ajustes de inventario", desc: "Corrige existencias tras un conteo físico, con motivo auditado." },
+      { name: "Alertas de stock bajo", desc: "El sistema marca los productos que llegaron al mínimo para que compres a tiempo." },
+      { name: "Valuación", desc: "Ves el valor total del inventario y el costo promedio por producto." },
+    ],
+    start: [
+      "Entra a Inventario desde el menú.",
+      "Busca el producto por SKU o nombre en la lista.",
+      "Para ver su movimiento, abre la pestaña 'Kardex FIFO' y elige el SKU y almacén.",
+      "Revisa las alertas de stock bajo para saber qué reponer.",
+    ],
+    tips: [
+      "El Kardex muestra el costo FIFO real de cada salida — útil para calcular margen exacto.",
+      "Haz ajustes solo tras un conteo físico y anota el motivo; queda auditado.",
+    ],
+    tour: [
+      { title: "Inventario", body: "Aquí controlas tu stock, costos y movimientos. Es lo que evita vender lo que no tienes. Te muestro." },
+      { title: "Catálogo", body: "La lista central tiene cada producto con su SKU, existencia, costo y precio. Búscalo por nombre o código." },
+      { title: "Kardex FIFO", body: "En la pestaña 'Kardex FIFO' eliges un SKU y ves su historial: cada entrada y salida con el costo FIFO aplicado en ese momento." },
+      { title: "Alertas de stock", body: "Los productos que llegan al mínimo se marcan solos. Revísalos para reponer antes de quedarte sin producto." },
+      { title: "Ajustes", body: "Tras un conteo físico, corrige la existencia con un ajuste. Anota el motivo: queda registrado para auditoría." },
+    ],
+  },
+  {
+    id: "finanzas", page: "finanzas", title: "Finanzas", icon: Wallet, color: "#22C55E",
+    tagline: "Cobra, paga y concilia el banco a tiempo",
+    summary: "El módulo de Finanzas maneja el dinero que entra y sale: cuentas por cobrar (lo que te deben), cuentas por pagar (lo que debes), bancos y conciliación. Te dice a quién cobrar, a quién pagar y si tu banco cuadra con tus registros.",
+    tools: [
+      { name: "Por cobrar (cartera)", desc: "Lista de lo que te deben tus clientes, con antigüedad por semáforo. Incluye 'PDF de cartera' para cobranza." },
+      { name: "Por pagar", desc: "Lo que debes a proveedores, con su vencimiento y PDF equivalente." },
+      { name: "Bancos", desc: "Saldos de tus cuentas y el botón 'Conciliar extracto bancario'." },
+      { name: "Conciliación bancaria", desc: "Sube el CSV/XLSX del banco y el sistema hace matching automático por fecha ±3 días y monto exacto." },
+    ],
+    start: [
+      "Entra a Finanzas desde el menú.",
+      "Revisa 'Por cobrar' para ver a quién cobrar primero (los rojos están vencidos).",
+      "En 'Bancos', usa 'Conciliar extracto bancario' y sube el archivo de tu banco.",
+      "Descarga el 'PDF de cartera' para tu equipo de cobranza.",
+    ],
+    tips: [
+      "El semáforo de antigüedad: verde = al corriente, amarillo = por vencer, rojo = vencido.",
+      "Tras conciliar, los movimientos sin match quedan en 'Ver movimientos' para cuadrarlos a mano.",
+    ],
+    tour: [
+      { title: "Finanzas", body: "El control del dinero: lo que te deben, lo que debes y tu banco. Te muestro las cuatro piezas." },
+      { title: "Por cobrar", body: "La pestaña 'Por cobrar' lista lo que tus clientes te deben, con semáforo por antigüedad. Los rojos ya vencieron: cóbralos primero." },
+      { title: "Por pagar", body: "Igual pero al revés: lo que debes a proveedores y cuándo vence. Así no te pasas de fecha ni pagas antes de tiempo." },
+      { title: "Bancos y conciliación", body: "En 'Bancos' subes el extracto (CSV/XLSX) y el sistema empareja automáticamente por fecha ±3 días y monto. Lo que no cuadre queda a la vista para revisarlo." },
+      { title: "PDF para cobranza", body: "El botón 'PDF de cartera' genera un reporte ejecutivo con colores por antigüedad, listo para tu equipo de cobranza." },
+    ],
+  },
+  {
+    id: "contabilidad", page: "contabilidad", title: "Contabilidad", icon: BookText, color: "#A855F7",
+    tagline: "Pólizas, estados financieros y cierre de mes",
+    summary: "El módulo de Contabilidad lleva los libros formales: pólizas (asientos), balanza de comprobación, estado de resultados y balance general. Aquí también cierras el mes para congelar las cifras y evitar cambios accidentales en periodos ya reportados.",
+    tools: [
+      { name: "Pólizas / asientos", desc: "Los registros contables de cada operación. Muchos se generan solos desde ventas, compras y pagos." },
+      { name: "Balanza de comprobación", desc: "Suma de cargos y abonos por cuenta para verificar que todo cuadre." },
+      { name: "Estados financieros", desc: "Estado de resultados (utilidad) y balance general (activos vs. pasivos)." },
+      { name: "Cierre mensual", desc: "Congela el mes con un snapshot; bloquea las pólizas para que nadie las altere por error." },
+      { name: "Reapertura auditada", desc: "Si necesitas corregir, reabres el mes indicando la razón, que queda registrada." },
+    ],
+    start: [
+      "Entra a Contabilidad desde el menú.",
+      "Revisa la balanza y los estados financieros del periodo.",
+      "Cuando el mes esté listo, ve a 'Cierre mensual', elige año y mes y presiona 'Cerrar mes'.",
+      "Si debes corregir algo cerrado, usa 'Reabrir' e indica la razón.",
+    ],
+    tips: [
+      "Cerrar el mes protege tus cifras: nadie podrá editar pólizas de ese periodo sin reabrirlo.",
+      "La reapertura siempre pide un motivo y queda auditada — úsala solo cuando sea necesario.",
+    ],
+    tour: [
+      { title: "Contabilidad", body: "Los libros formales del negocio. Buena parte se llena solo desde ventas y compras. Te muestro lo esencial." },
+      { title: "Pólizas", body: "Cada operación genera un asiento. Muchos se crean automáticamente; aquí los consultas y, si hace falta, capturas manuales." },
+      { title: "Estados financieros", body: "El estado de resultados te dice si ganaste o perdiste; el balance, qué tienes y qué debes. La balanza confirma que todo cuadra." },
+      { title: "Cierre mensual", body: "Cuando el mes está listo, ve a 'Cierre mensual', elige año y mes y presiona 'Cerrar mes'. Se guarda un snapshot y las pólizas quedan bloqueadas." },
+      { title: "Reabrir con motivo", body: "¿Hay que corregir un mes cerrado? El botón 'Reabrir' lo permite, pero pide una razón que queda auditada. Úsalo con cuidado." },
+    ],
+  },
+  {
+    id: "rh", page: "rh", title: "RH / Nómina", icon: IdCard, color: "#F97316",
+    tagline: "Empleados, asistencia y pago de nómina",
+    summary: "El módulo de RH / Nómina administra a tu personal: expedientes de empleados, puestos, sueldos y el cálculo de la nómina. Centraliza la información de tu equipo y prepara los pagos de cada periodo.",
+    tools: [
+      { name: "Expediente de empleado", desc: "Datos personales, puesto, sueldo y estatus de cada colaborador." },
+      { name: "Nómina", desc: "Calcula percepciones y deducciones del periodo para generar el pago." },
+      { name: "Puestos y sueldos", desc: "Define roles y su remuneración para estandarizar el pago." },
+    ],
+    start: [
+      "Entra a RH / Nómina desde el menú.",
+      "Revisa o da de alta al empleado con sus datos y sueldo.",
+      "Genera la nómina del periodo correspondiente.",
+      "Verifica percepciones y deducciones antes de pagar.",
+    ],
+    tips: [
+      "Mantén los sueldos y puestos actualizados: la nómina se calcula a partir de ellos.",
+    ],
+    tour: [
+      { title: "RH / Nómina", body: "Aquí administras a tu equipo y su pago. Te muestro las partes principales." },
+      { title: "Expedientes", body: "Cada empleado tiene su ficha: datos, puesto, sueldo y estatus. Es la fuente para calcular su pago." },
+      { title: "Nómina", body: "Al generar la nómina del periodo, el sistema calcula percepciones y deducciones. Revísalas antes de pagar." },
+      { title: "Puestos y sueldos", body: "Definir puestos con su sueldo estandariza el pago y evita errores al dar de alta gente nueva." },
+    ],
+  },
+  {
+    id: "reportes", page: "reportes", title: "Reportes / BI", icon: BarChart3, color: "#14B8A6",
+    tagline: "Análisis visual para decidir con datos",
+    summary: "El módulo de Reportes / BI convierte tus datos en gráficas y tableros de análisis: ventas por producto, por cliente, márgenes, tendencias e indicadores. Es donde exploras el 'por qué' detrás de los números del Tablero.",
+    tools: [
+      { name: "Tableros de análisis", desc: "Gráficas de ventas, margen y tendencias con estilo claro y legible." },
+      { name: "Indicadores (gauges)", desc: "Medidores tipo esfera que muestran el avance frente a metas." },
+      { name: "Filtros y periodos", desc: "Segmenta por fecha, producto o cliente para responder preguntas específicas." },
+      { name: "Exportación", desc: "Descarga lo que ves para compartirlo o presentarlo." },
+    ],
+    start: [
+      "Entra a Reportes / BI desde el menú.",
+      "Elige el tablero o gráfica que quieres analizar.",
+      "Ajusta el periodo y los filtros a tu pregunta.",
+      "Exporta o descarga si necesitas compartirlo.",
+    ],
+    tips: [
+      "El Tablero te dice 'qué' pasa; Reportes / BI te ayuda a entender el 'por qué'.",
+    ],
+    tour: [
+      { title: "Reportes / BI", body: "Aquí exploras tus datos a fondo con gráficas y tableros. Te muestro cómo sacarles provecho." },
+      { title: "Tableros", body: "Las gráficas de ventas, margen y tendencias están diseñadas para leerse fácil. Elige la que responda tu pregunta." },
+      { title: "Indicadores", body: "Los medidores tipo esfera muestran el avance frente a metas de un vistazo, sin tener que leer tablas." },
+      { title: "Filtros", body: "Segmenta por periodo, producto o cliente para pasar de 'las ventas bajaron' a 'bajaron en este producto con este cliente'." },
+      { title: "Exporta", body: "Cuando encuentres el insight, descárgalo para compartirlo o presentarlo a tu equipo." },
+    ],
+  },
+  {
+    id: "config", page: "config", title: "Configuración", icon: Settings, color: "#64748B",
+    tagline: "Ajusta el sistema a tu empresa",
+    summary: "El módulo de Configuración define cómo funciona el sistema para tu empresa: datos del negocio, usuarios y permisos, integraciones (correo, facturación) y preferencias generales. Es el 'cuarto de máquinas' — lo tocas de vez en cuando, no todos los días.",
+    tools: [
+      { name: "Datos de la empresa", desc: "Nombre, logo y datos fiscales que aparecen en tickets y reportes." },
+      { name: "Usuarios y permisos", desc: "Da de alta personas y define qué módulos puede ver y usar cada rol." },
+      { name: "Integraciones", desc: "Conecta correo (para enviar resúmenes) y otros servicios." },
+      { name: "Preferencias", desc: "Idioma, tema y ajustes generales del sistema." },
+    ],
+    start: [
+      "Entra a Configuración desde el menú.",
+      "Completa los datos de tu empresa (para que salgan en tickets y PDFs).",
+      "Crea usuarios y asígnales permisos según su rol.",
+      "Configura el correo en Integraciones si quieres enviar resúmenes.",
+    ],
+    tips: [
+      "Configura el correo aquí para poder usar 'Enviar resumen por correo' desde el Tablero.",
+      "Da a cada persona solo los permisos que necesita: es más seguro.",
+    ],
+    tour: [
+      { title: "Configuración", body: "El cuarto de máquinas del sistema. Se ajusta de vez en cuando. Te muestro lo importante." },
+      { title: "Datos de la empresa", body: "Nombre, logo y datos fiscales. Esto es lo que aparece en tus tickets y reportes, así que déjalo correcto." },
+      { title: "Usuarios y permisos", body: "Da de alta a tu equipo y define qué puede ver cada rol. Otorga solo lo necesario: es más seguro." },
+      { title: "Integraciones", body: "Conecta el correo aquí para poder enviar los resúmenes del Tablero. También otros servicios como facturación." },
+    ],
+  },
+];
+
 const HELP_GUIDES = [
   {
     id: "pos", title: "Cobrar en el POS", icon: Store, color: "#10B981",
@@ -1855,57 +2203,188 @@ const HELP_GUIDES = [
   },
 ];
 
-function HelpMenu({ t, lang }: any) {
+// Sección con encabezado dentro del manual
+function ManualSection({ t, icon: Icon, title, color, children }: any) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+        <Icon size={13} color={color} />
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: t.textMid }}>{title}</div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// Tour opcional: tarjeta centrada, se lanza a mano (nada intrusivo).
+function HelpTour({ t, manual, onClose }: { t: any; manual: ModuleManual; onClose: () => void }) {
+  const [step, setStep] = useState(0);
+  const total = manual.tour.length;
+  const cur = manual.tour[step];
+  const isLast = step === total - 1;
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 90, display: "grid", placeItems: "center", background: "rgba(2,6,23,0.55)", backdropFilter: "blur(2px)", padding: 16 }}>
+      <div style={{ width: "min(460px, 96vw)", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.45)", overflow: "hidden" }}>
+        <div style={{ height: 4, background: t.panel3 }}>
+          <div style={{ height: "100%", width: `${((step + 1) / total) * 100}%`, background: manual.color, transition: "width .25s ease" }} />
+        </div>
+        <div style={{ padding: "18px 20px 20px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ background: manual.color + "22", color: manual.color, borderRadius: 9, padding: 8, display: "flex" }}>
+                <manual.icon size={16} />
+              </div>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: t.textLo }}>
+                {manual.title} · Tour {step + 1}/{total}
+              </div>
+            </div>
+            <button onClick={onClose} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 2 }}>
+              <X size={16} />
+            </button>
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi, marginBottom: 8, lineHeight: 1.3 }}>{cur.title}</div>
+          <div style={{ fontSize: 13.5, color: t.textMid, lineHeight: 1.6, minHeight: 66 }}>{cur.body}</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, margin: "16px 0 14px" }}>
+            {manual.tour.map((_, i) => (
+              <span key={i} style={{ width: i === step ? 18 : 6, height: 6, borderRadius: 3, background: i === step ? manual.color : t.border, transition: "all .2s" }} />
+            ))}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <button onClick={onClose} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", fontSize: 12.5, fontWeight: 600, padding: "8px 4px" }}>
+              Cerrar tour
+            </button>
+            <div style={{ display: "flex", gap: 8 }}>
+              {step > 0 && (
+                <button onClick={() => setStep(s => s - 1)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "9px 14px", borderRadius: 9, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }}>
+                  <ChevronLeft size={14} /> Anterior
+                </button>
+              )}
+              <button onClick={() => { if (isLast) onClose(); else setStep(s => s + 1); }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "9px 16px", borderRadius: 9, border: "none", background: manual.color, color: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 700 }}>
+                {isLast ? "Terminar" : "Siguiente"} {!isLast && <ChevronRight size={14} />}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function HelpMenu({ t, lang, onNavigate }: any) {
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
-  const guide = HELP_GUIDES.find(g => g.id === selected);
+  const [tab, setTab] = useState<"manuales" | "guias">("manuales");
+  const [selManual, setSelManual] = useState<string | null>(null);
+  const [selGuide, setSelGuide] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [tour, setTour] = useState<ModuleManual | null>(null);
+
+  const manual = MODULE_MANUALS.find(m => m.id === selManual);
+  const guide = HELP_GUIDES.find(g => g.id === selGuide);
+
+  const close = () => { setOpen(false); setSelManual(null); setSelGuide(null); setQuery(""); };
+
+  const q = query.trim().toLowerCase();
+  const filteredManuals = q
+    ? MODULE_MANUALS.filter(m =>
+        (m.title + " " + m.tagline + " " + m.summary + " " + m.tools.map(x => x.name + " " + x.desc).join(" ")).toLowerCase().includes(q))
+    : MODULE_MANUALS;
+  const filteredGuides = q
+    ? HELP_GUIDES.filter(g => (g.title + " " + g.steps.join(" ")).toLowerCase().includes(q))
+    : HELP_GUIDES;
+
+  const startTour = (m: ModuleManual) => {
+    if (onNavigate) onNavigate(m.page);
+    close();
+    setTour(m);
+  };
+
+  const inDetail = !!(manual || guide);
+  const headerTitle = manual ? manual.title : guide ? guide.title : (lang === "es" ? "Centro de ayuda" : "Help center");
 
   return (
     <div style={{ position: "relative" }}>
-      <button onClick={() => setOpen(v => !v)} style={iconBtn(t)} title={lang === "es" ? "Ayuda / Guías" : "Help / Guides"}>
+      <button onClick={() => setOpen(v => !v)} style={iconBtn(t)} title={lang === "es" ? "Centro de ayuda" : "Help center"}>
         <HelpCircle size={18} />
       </button>
+      {tour && <HelpTour t={t} manual={tour} onClose={() => setTour(null)} />}
       {open && (
         <>
-          <div onClick={() => { setOpen(false); setSelected(null); }} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
-          <div style={{ position: "absolute", top: 44, right: 0, width: "min(440px, 96vw)", maxHeight: "78vh", overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
-            <div style={{ padding: "14px 16px", borderBottom: `1px solid ${t.border}`, background: t.panel2, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {selected ? (
-                  <button onClick={() => setSelected(null)} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 2, display: "flex" }}>
+          <div onClick={close} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
+          <div style={{ position: "absolute", top: 44, right: 0, width: "min(460px, 96vw)", maxHeight: "80vh", overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
+            {/* Header */}
+            <div style={{ padding: "13px 16px", borderBottom: `1px solid ${t.border}`, background: t.panel2, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 2 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                {inDetail ? (
+                  <button onClick={() => { setSelManual(null); setSelGuide(null); }} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 2, display: "flex" }}>
                     <ChevronLeft size={16} />
                   </button>
                 ) : <Sparkles size={15} color={t.nova} />}
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi }}>
-                  {selected ? guide?.title : (lang === "es" ? "Guías rápidas" : "Quick guides")}
-                </div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{headerTitle}</div>
               </div>
-              <button onClick={() => { setOpen(false); setSelected(null); }} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 2 }}>
+              <button onClick={close} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 2 }}>
                 <X size={16} />
               </button>
             </div>
-            {!selected ? (
-              <div style={{ padding: 6 }}>
-                {HELP_GUIDES.map(g => (
-                  <button key={g.id} onClick={() => setSelected(g.id)}
-                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", textAlign: "left", color: t.textHi }}
-                    onMouseEnter={e => (e.currentTarget.style.background = t.panel2)}
-                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                    <div style={{ background: g.color + "22", color: g.color, borderRadius: 8, padding: 8, display: "flex", flexShrink: 0 }}>
-                      <g.icon size={15} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: t.textHi }}>{g.title}</div>
-                      <div style={{ fontSize: 11, color: t.textLo, marginTop: 1 }}>{g.steps.length} pasos</div>
-                    </div>
-                    <ChevronRight size={14} color={t.textLo} />
-                  </button>
-                ))}
-                <div style={{ padding: "10px 12px", fontSize: 11, color: t.textLo, textAlign: "center", borderTop: `1px solid ${t.border}`, marginTop: 4 }}>
-                  Sthenova ERP · v1.0
+
+            {/* ---------- Manual detail ---------- */}
+            {manual ? (
+              <div style={{ padding: "16px 18px 20px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+                  <div style={{ background: manual.color + "22", color: manual.color, borderRadius: 11, padding: 11, display: "flex" }}>
+                    <manual.icon size={22} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi }}>{manual.title}</div>
+                    <div style={{ fontSize: 12, color: manual.color, fontWeight: 600 }}>{manual.tagline}</div>
+                  </div>
                 </div>
+                {manual.tour.length > 0 && (
+                  <button onClick={() => startTour(manual)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, margin: "12px 0 18px", padding: "11px 14px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${manual.color}, ${manual.color}cc)`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700, boxShadow: `0 6px 16px ${manual.color}44` }}>
+                    <Sparkles size={15} /> Iniciar tour guiado ({manual.tour.length} pasos)
+                  </button>
+                )}
+                <ManualSection t={t} icon={Info} title="¿Para qué sirve?" color={manual.color}>
+                  <div style={{ fontSize: 13, color: t.textMid, lineHeight: 1.6 }}>{manual.summary}</div>
+                </ManualSection>
+                <ManualSection t={t} icon={Sliders} title="Herramientas principales" color={manual.color}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                    {manual.tools.map((tool, i) => (
+                      <div key={i} style={{ display: "flex", gap: 9 }}>
+                        <CircleDot size={13} color={manual.color} style={{ marginTop: 3, flexShrink: 0 }} />
+                        <div>
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: t.textHi }}>{tool.name}. </span>
+                          <span style={{ fontSize: 12.5, color: t.textMid, lineHeight: 1.55 }}>{tool.desc}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ManualSection>
+                <ManualSection t={t} icon={Zap} title="Cómo empezar" color={manual.color}>
+                  <ol style={{ margin: 0, padding: "0 0 0 20px", display: "flex", flexDirection: "column", gap: 7 }}>
+                    {manual.start.map((s, i) => (
+                      <li key={i} style={{ fontSize: 12.5, color: t.textMid, lineHeight: 1.55 }}>{s}</li>
+                    ))}
+                  </ol>
+                </ManualSection>
+                {manual.tips.length > 0 && (
+                  <div style={{ background: manual.color + "12", border: `1px solid ${manual.color}33`, borderRadius: 10, padding: "11px 13px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7 }}>
+                      <Star size={12} color={manual.color} />
+                      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: manual.color }}>Tips</div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {manual.tips.map((tip, i) => (
+                        <div key={i} style={{ fontSize: 12, color: t.textMid, lineHeight: 1.5, display: "flex", gap: 7 }}>
+                          <Check size={13} color={manual.color} style={{ marginTop: 2, flexShrink: 0 }} />{tip}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            ) : guide && (
+            ) : guide ? (
+              /* ---------- Quick guide detail ---------- */
               <div style={{ padding: 18 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
                   <div style={{ background: guide.color + "22", color: guide.color, borderRadius: 10, padding: 10, display: "flex" }}>
@@ -1915,11 +2394,85 @@ function HelpMenu({ t, lang }: any) {
                 </div>
                 <ol style={{ margin: 0, padding: "0 0 0 22px", display: "flex", flexDirection: "column", gap: 10 }}>
                   {guide.steps.map((s, i) => (
-                    <li key={i} style={{ fontSize: 13, color: t.textMid, lineHeight: 1.55 }}>
-                      {s}
-                    </li>
+                    <li key={i} style={{ fontSize: 13, color: t.textMid, lineHeight: 1.55 }}>{s}</li>
                   ))}
                 </ol>
+              </div>
+            ) : (
+              /* ---------- List view ---------- */
+              <div>
+                {/* Search */}
+                <div style={{ padding: "12px 14px 8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.panel3, border: `1px solid ${t.border}`, borderRadius: 9, padding: "8px 11px" }}>
+                    <Search size={14} color={t.textLo} />
+                    <input value={query} onChange={e => setQuery(e.target.value)} placeholder={lang === "es" ? "Buscar en la ayuda…" : "Search help…"}
+                      style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: t.textHi, fontSize: 13 }} />
+                    {query && <button onClick={() => setQuery("")} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", display: "flex", padding: 0 }}><X size={14} /></button>}
+                  </div>
+                </div>
+                {/* Tabs */}
+                {!q && (
+                  <div style={{ display: "flex", gap: 4, padding: "2px 14px 8px" }}>
+                    {([["manuales", lang === "es" ? "Manuales por módulo" : "Module manuals"], ["guias", lang === "es" ? "Guías rápidas" : "Quick guides"]] as const).map(([id, label]) => (
+                      <button key={id} onClick={() => setTab(id)}
+                        style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: `1px solid ${tab === id ? t.nova : t.border}`, background: tab === id ? t.nova + "1a" : "transparent", color: tab === id ? t.nova : t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div style={{ padding: "0 8px 6px" }}>
+                  {/* When searching, show both sets under labels */}
+                  {(q || tab === "manuales") && filteredManuals.length > 0 && (
+                    <>
+                      {q && <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: t.textLo, padding: "8px 8px 4px" }}>Manuales</div>}
+                      {filteredManuals.map(m => (
+                        <button key={m.id} onClick={() => setSelManual(m.id)}
+                          style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 10px", borderRadius: 9, border: "none", background: "transparent", cursor: "pointer", textAlign: "left" }}
+                          onMouseEnter={e => (e.currentTarget.style.background = t.panel2)}
+                          onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                          <div style={{ background: m.color + "22", color: m.color, borderRadius: 9, padding: 8, display: "flex", flexShrink: 0 }}>
+                            <m.icon size={16} />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>{m.title}</div>
+                            <div style={{ fontSize: 11, color: t.textLo, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.tagline}</div>
+                          </div>
+                          {m.tour.length > 0 && <Sparkles size={13} color={m.color} style={{ flexShrink: 0, opacity: 0.8 }} />}
+                          <ChevronRight size={14} color={t.textLo} style={{ flexShrink: 0 }} />
+                        </button>
+                      ))}
+                    </>
+                  )}
+                  {(q || tab === "guias") && filteredGuides.length > 0 && (
+                    <>
+                      {q && <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: t.textLo, padding: "10px 8px 4px" }}>Guías rápidas</div>}
+                      {filteredGuides.map(g => (
+                        <button key={g.id} onClick={() => setSelGuide(g.id)}
+                          style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "10px 10px", borderRadius: 9, border: "none", background: "transparent", cursor: "pointer", textAlign: "left" }}
+                          onMouseEnter={e => (e.currentTarget.style.background = t.panel2)}
+                          onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                          <div style={{ background: g.color + "22", color: g.color, borderRadius: 9, padding: 8, display: "flex", flexShrink: 0 }}>
+                            <g.icon size={15} />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: t.textHi }}>{g.title}</div>
+                            <div style={{ fontSize: 11, color: t.textLo, marginTop: 1 }}>{g.steps.length} pasos</div>
+                          </div>
+                          <ChevronRight size={14} color={t.textLo} style={{ flexShrink: 0 }} />
+                        </button>
+                      ))}
+                    </>
+                  )}
+                  {q && filteredManuals.length === 0 && filteredGuides.length === 0 && (
+                    <div style={{ padding: "24px 12px", textAlign: "center", color: t.textLo, fontSize: 12.5 }}>
+                      {lang === "es" ? `Sin resultados para "${query}"` : `No results for "${query}"`}
+                    </div>
+                  )}
+                </div>
+                <div style={{ padding: "10px 12px", fontSize: 11, color: t.textLo, textAlign: "center", borderTop: `1px solid ${t.border}` }}>
+                  Sthenova ERP · Centro de ayuda · v1.0
+                </div>
               </div>
             )}
           </div>
@@ -2133,7 +2686,7 @@ function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMe
           </button>
         )}
         <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title="Tema / Theme" style={iconBtn(t)}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
-        <HelpMenu t={t} lang={lang} />
+        <HelpMenu t={t} lang={lang} onNavigate={onNavigate} />
         <NotificationBell t={t} lang={lang} onNavigate={onNavigate} />
         <div style={{ width: 1, height: 26, background: t.border, margin: "0 4px" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
