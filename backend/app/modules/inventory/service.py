@@ -505,7 +505,14 @@ def _compute_landed_unit_costs(
     - "by_quantity": peso = quantity / total_quantity
 
     El extra prorrateado se divide entre `quantity` para volver a costo unit.
-    Redondeo a 4 decimales (mismo que el kardex FIFO)."""
+    Redondeo a 4 decimales (mismo que el kardex FIFO).
+
+    **Cierre exacto (nivel contable):** después de prorratear, la suma de
+    (qty × extra_prorrateado) puede desviarse por centavos del extras_total
+    original por errores de coma flotante (típico cuando el peso es 1/3, 1/6,
+    etc.). Para que el kardex jamás pierda o gane un centavo, la última
+    partida elegible absorbe el residuo. Así el total prorrateado === total
+    de extras, dígito por dígito."""
     if extras_total <= 0 or not items:
         return [round(float(it.get("unit_cost") or 0.0), 4) for it in items]
 
@@ -518,17 +525,44 @@ def _compute_landed_unit_costs(
     if total_value <= 0:
         return [round(float(it.get("unit_cost") or 0.0), 4) for it in items]
 
-    landed = []
+    # Paso 1: reparto en dinero por partida a 2 decimales (moneda real).
+    # Trabajamos siempre con dinero, no con costo unitario, para tener control
+    # exacto sobre el cierre a nivel centavo.
+    shares_money = []
     for it in items:
         qty = float(it.get("quantity") or 0)
         unit_cost = float(it.get("unit_cost") or 0.0)
         if qty <= 0:
-            landed.append(round(unit_cost, 4))
+            shares_money.append(0.0)
             continue
         line_weight = (qty * unit_cost) if method == "by_value" else qty
-        share = extras_total * (line_weight / total_value)
-        landed_unit = unit_cost + (share / qty)
-        landed.append(round(landed_unit, 4))
+        shares_money.append(round(extras_total * (line_weight / total_value), 2))
+
+    # Paso 2: cierre por residuo — la última partida elegible absorbe la
+    # diferencia por redondeo para que sum(shares) === extras_total.
+    diff = round(extras_total - sum(shares_money), 2)
+    if abs(diff) >= 0.01:
+        for idx in range(len(items) - 1, -1, -1):
+            if float(items[idx].get("quantity") or 0) > 0:
+                shares_money[idx] = round(shares_money[idx] + diff, 2)
+                break
+
+    # Paso 3: costo unitario integrado. Sin redondeo intermedio a 4 decimales
+    # aquí — con qty grandes eso reintroduce el residuo. El StockLot.unit_cost
+    # es Float (doble precisión), así que aguantamos la precisión completa.
+    # La invariante contable que importa:
+    #   sum_i(qty_i * (landed_i - unit_cost_i)) === extras_total
+    # se mantiene exacta a nivel centavo porque partimos de shares_money (2 dec)
+    # y unit_cost integrado = unit_cost + share_money / qty (division exacta
+    # en float64 mientras qty sea entero, que es el caso — quantity es Integer).
+    landed = []
+    for it, share in zip(items, shares_money):
+        qty = float(it.get("quantity") or 0)
+        unit_cost = float(it.get("unit_cost") or 0.0)
+        if qty <= 0:
+            landed.append(unit_cost)
+            continue
+        landed.append(unit_cost + (share / qty))
     return landed
 
 

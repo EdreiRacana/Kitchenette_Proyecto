@@ -234,10 +234,41 @@ class PurchaseOrderExtraCost(BaseModel):
     description: str
     amount: float
 
+    @field_validator("amount")
+    @classmethod
+    def _non_negative(cls, v):
+        if v < 0:
+            raise ValueError("El monto del costo adicional no puede ser negativo")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def _description_present(cls, v):
+        if not v or not v.strip():
+            raise ValueError("La descripción del costo adicional es obligatoria")
+        return v.strip()
+
 class PurchaseOrderItemCreate(BaseModel):
     variant_id: int
     quantity: int
     unit_cost: float
+
+    @field_validator("quantity")
+    @classmethod
+    def _positive_qty(cls, v):
+        if v <= 0:
+            raise ValueError("La cantidad debe ser mayor a 0")
+        return v
+
+    @field_validator("unit_cost")
+    @classmethod
+    def _non_negative_cost(cls, v):
+        if v < 0:
+            raise ValueError("El costo unitario no puede ser negativo")
+        return v
+
+_ALLOCATION_METHODS = ("by_value", "by_quantity")
+
 
 class PurchaseOrderCreate(BaseModel):
     supplier_id: int
@@ -248,8 +279,22 @@ class PurchaseOrderCreate(BaseModel):
     # Costos indirectos que se prorratean al recibir (landed cost).
     extra_costs: List[PurchaseOrderExtraCost] = []
     # Método de prorrateo: "by_value" (default, por costo × cantidad) o
-    # "by_quantity" (por cantidad de unidades). Validado en el service.
+    # "by_quantity" (por cantidad de unidades).
     landed_cost_allocation: str = "by_value"
+
+    @field_validator("items")
+    @classmethod
+    def _at_least_one_item(cls, v):
+        if not v:
+            raise ValueError("La orden de compra debe tener al menos una partida")
+        return v
+
+    @field_validator("landed_cost_allocation")
+    @classmethod
+    def _valid_allocation(cls, v):
+        if v not in _ALLOCATION_METHODS:
+            raise ValueError(f"Método de prorrateo inválido: debe ser uno de {list(_ALLOCATION_METHODS)}")
+        return v
 
 class PurchaseOrderItemInDB(PurchaseOrderItemCreate):
     id: int
@@ -266,6 +311,20 @@ class PurchaseOrderUpdate(BaseModel):
     items: Optional[List[PurchaseOrderItemCreate]] = None
     extra_costs: Optional[List[PurchaseOrderExtraCost]] = None
     landed_cost_allocation: Optional[str] = None
+
+    @field_validator("items")
+    @classmethod
+    def _at_least_one_item(cls, v):
+        if v is not None and not v:
+            raise ValueError("La orden de compra debe tener al menos una partida")
+        return v
+
+    @field_validator("landed_cost_allocation")
+    @classmethod
+    def _valid_allocation(cls, v):
+        if v is not None and v not in _ALLOCATION_METHODS:
+            raise ValueError(f"Método de prorrateo inválido: debe ser uno de {list(_ALLOCATION_METHODS)}")
+        return v
 
 class SupplierPaymentCreate(BaseModel):
     amount: float
@@ -350,10 +409,18 @@ class RecipeInDB(BaseModel):
     name: Optional[str] = None
     labor_cost: float
     overhead_cost: float
+    # Recipes viejas (creadas antes de la migración de extra_costs) traen
+    # extra_costs = NULL en la DB. El validator normaliza None → [] para
+    # que la ruta GET /inventory/recipes no truene serializándolas.
     extra_costs: List[RecipeExtraCost] = []
     yield_quantity: int
     is_active: bool
     items: List[RecipeItemInDB] = []
+
+    @field_validator("extra_costs", mode="before")
+    @classmethod
+    def _empty_if_null(cls, v):
+        return v or []
 
     class Config:
         from_attributes = True

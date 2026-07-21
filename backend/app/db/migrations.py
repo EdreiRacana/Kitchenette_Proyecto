@@ -303,6 +303,10 @@ _INVENTORY_STATEMENTS = [
     "UPDATE purchase_orders SET paid_amount = 0 WHERE paid_amount IS NULL",
     "UPDATE stock_movements SET movement_type = lower(movement_type) WHERE movement_type <> lower(movement_type)",
     "ALTER TABLE recipes ADD COLUMN IF NOT EXISTS extra_costs JSONB",
+    # Rellena recetas históricas: mismo patrón que en purchase_orders. Sin
+    # este UPDATE, /inventory/recipes truena en Pydantic si existen
+    # recetas creadas antes de que se agregara la columna extra_costs.
+    "UPDATE recipes SET extra_costs = '[]'::jsonb WHERE extra_costs IS NULL",
     # Landed cost en compras: extras (flete, aduana, seguros, IVA no
     # acreditable, etc.) que se prorratean entre las partidas al recibir.
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS extra_costs JSONB",

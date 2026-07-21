@@ -2089,22 +2089,45 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, edit
   const extrasTotal = extraCosts.reduce((a, c) => a + (Number(c.amount) || 0), 0);
   const total = goodsTotal + extrasTotal;
 
-  // Preview del landed cost en vivo — mismo cálculo que el backend, para que
-  // el usuario vea EN EL FORMULARIO cómo se prorratean los extras entre sus
-  // partidas antes de confirmar la orden. Sin sorpresas al recibir.
+  // Preview del landed cost en vivo. DEBE seguir el mismo algoritmo que
+  // _compute_landed_unit_costs en el backend (inventory/service.py), incluido
+  // el cierre por residuo — de otro modo el usuario ve un número aquí y al
+  // recibir la orden queda otro, aunque sea por centavos. Alineamos ambos.
   const landedPreview = useMemo(() => {
     if (extrasTotal <= 0) return items.map(it => ({ landed: Number(it.unit_cost) || 0, deltaPct: 0 }));
     const denom = allocation === "by_value"
       ? items.reduce((a, it) => a + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0)
       : items.reduce((a, it) => a + (Number(it.quantity) || 0), 0);
     if (denom <= 0) return items.map(it => ({ landed: Number(it.unit_cost) || 0, deltaPct: 0 }));
-    return items.map(it => {
+
+    // Paso 1: share en dinero por partida, redondeado a 2 decimales.
+    const shares = items.map(it => {
+      const qty = Number(it.quantity) || 0;
+      const unit = Number(it.unit_cost) || 0;
+      if (qty <= 0) return 0;
+      const weight = allocation === "by_value" ? qty * unit : qty;
+      return Math.round(extrasTotal * (weight / denom) * 100) / 100;
+    });
+
+    // Paso 2: cierre por residuo — la última partida elegible absorbe la
+    // diferencia por redondeo, exactamente como lo hace el backend.
+    const sumShares = Math.round(shares.reduce((a, s) => a + s, 0) * 100) / 100;
+    const diff = Math.round((extrasTotal - sumShares) * 100) / 100;
+    if (Math.abs(diff) >= 0.01) {
+      for (let i = items.length - 1; i >= 0; i--) {
+        if ((Number(items[i].quantity) || 0) > 0) {
+          shares[i] = Math.round((shares[i] + diff) * 100) / 100;
+          break;
+        }
+      }
+    }
+
+    // Paso 3: costo integrado por unidad (sin redondear intermedio a 4 dec).
+    return items.map((it, i) => {
       const qty = Number(it.quantity) || 0;
       const unit = Number(it.unit_cost) || 0;
       if (qty <= 0) return { landed: unit, deltaPct: 0 };
-      const weight = allocation === "by_value" ? qty * unit : qty;
-      const share = extrasTotal * (weight / denom);
-      const landed = unit + share / qty;
+      const landed = unit + shares[i] / qty;
       const deltaPct = unit > 0 ? ((landed - unit) / unit) * 100 : 0;
       return { landed, deltaPct };
     });
