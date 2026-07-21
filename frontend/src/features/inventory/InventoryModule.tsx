@@ -22,6 +22,7 @@ import {
   type Recipe, type RecipeItem, type RecipeCostBreakdown, type ProductionOrder,
   type BulkImportResult, type CustomerReturn,
   type StockTransfer, type StockTransferStatus, type StockTransferItem, type ScanResult,
+  type OverstockAlert,
 } from "./service";
 import { resolveMediaUrl } from "../../services/api";
 import { useServerRecovery } from "../../hooks/useServerRecovery";
@@ -94,7 +95,7 @@ const exportMovementsCSV = (movements: Movement[]) => {
   downloadCSV(`movimientos_${new Date().toISOString().slice(0, 10)}.csv`, [header, ...rows]);
 };
 
-type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "kardex" | "adjustments" | "purchase-orders" | "transfers" | "recipes" | "production" | "import";
+type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "kardex" | "adjustments" | "purchase-orders" | "transfers" | "overstock" | "recipes" | "production" | "import";
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any; initialQuery?: string }) {
@@ -297,6 +298,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
     { id: "adjustments", label: lang === "es" ? "Ajustes" : "Adjustments", icon: SlidersHorizontal },
     { id: "purchase-orders", label: lang === "es" ? "Compras" : "Purchase orders", icon: ClipboardList },
     { id: "transfers", label: lang === "es" ? "Traspasos" : "Transfers", icon: ArrowLeftRight },
+    { id: "overstock", label: lang === "es" ? "Sobreinventario" : "Overstock", icon: AlertTriangle },
     { id: "recipes", label: lang === "es" ? "Construcción" : "Recipes / BOM", icon: FlaskConical },
     { id: "production", label: lang === "es" ? "Producción" : "Production", icon: Factory },
     { id: "import", label: lang === "es" ? "Carga masiva" : "Bulk import", icon: Upload },
@@ -1028,6 +1030,11 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       {/* ── TAB: Traspasos entre almacenes ── */}
       {tab === "transfers" && (
         <TransfersView t={t} lang={lang} warehouses={warehouses} products={products} demo={demo} onRefreshInventory={load} />
+      )}
+
+      {/* ── TAB: Sobreinventario ── */}
+      {tab === "overstock" && (
+        <OverstockView t={t} warehouses={warehouses} />
       )}
 
       {/* ── TAB: Recipes / BOM ── */}
@@ -3161,5 +3168,171 @@ function TransferDetailModal({ t, transfer, onClose, onChanged }: {
       </div>
     </div>,
     document.body
+  );
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// SOBREINVENTARIO — variantes con más días de stock del umbral configurado
+// ═════════════════════════════════════════════════════════════════════════
+
+function OverstockView({ t, warehouses }: { t: any; warehouses: WarehouseT[] }) {
+  const [alerts, setAlerts] = useState<OverstockAlert[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [lookback, setLookback] = useState(60);
+  const [threshold, setThreshold] = useState(90);
+  const [warehouseFilter, setWarehouseFilter] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true); setErr(null);
+    try {
+      const r = await inventoryService.getOverstockAlerts({
+        lookback_days: lookback, days_threshold: threshold,
+      });
+      setAlerts(r);
+    } catch (e: any) { setErr(e?.response?.data?.detail || "No se pudo cargar"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [lookback, threshold]);
+
+  const filtered = warehouseFilter
+    ? alerts.filter(a => a.warehouse_id === Number(warehouseFilter))
+    : alerts;
+
+  const totalExcess = filtered.reduce((s, a) => s + a.excess_value, 0);
+  const critical = filtered.filter(a => a.severity === "critical").length;
+  const warning = filtered.filter(a => a.severity === "warning").length;
+
+  const inp: React.CSSProperties = { padding: "8px 11px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, outline: "none" };
+
+  const severityMeta = (s: string) => s === "critical"
+    ? { color: t.bad, label: "Crítico" }
+    : s === "warning"
+    ? { color: t.warn, label: "Exceso" }
+    : { color: t.textMid, label: "Info" };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Header */}
+      <div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: t.textHi }}>Alertas de sobreinventario</div>
+        <div style={{ fontSize: 12, color: t.textLo, marginTop: 3 }}>
+          Variantes con más días de stock que el umbral. Se calcula:
+          <b> días de stock = disponible ÷ velocidad diaria de venta</b> (ventas de los últimos {lookback} días).
+        </div>
+      </div>
+
+      {/* Controles */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end" }}>
+        <div>
+          <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" }}>Ventana de análisis</label>
+          <select value={lookback} onChange={e => setLookback(Number(e.target.value))} style={{ ...inp, cursor: "pointer" }}>
+            <option value={30}>Últimos 30 días</option>
+            <option value={60}>Últimos 60 días</option>
+            <option value={90}>Últimos 90 días</option>
+            <option value={180}>Últimos 180 días</option>
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" }}>Umbral mínimo</label>
+          <select value={threshold} onChange={e => setThreshold(Number(e.target.value))} style={{ ...inp, cursor: "pointer" }}>
+            <option value={60}>60+ días</option>
+            <option value={90}>90+ días (exceso)</option>
+            <option value={120}>120+ días</option>
+            <option value={180}>180+ días (crítico)</option>
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" }}>Almacén</label>
+          <select value={warehouseFilter} onChange={e => setWarehouseFilter(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+            <option value="">Todos</option>
+            {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+        </div>
+        <button onClick={load} style={{ ...inp, background: t.panel2, display: "flex", alignItems: "center", gap: 6, color: t.textMid, cursor: "pointer" }}>
+          <RefreshCw size={13} /> Actualizar
+        </button>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Alertas totales</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: t.textHi, marginTop: 4 }}>{filtered.length}</div>
+        </div>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Críticas (180+ días)</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: t.bad, marginTop: 4 }}>{critical}</div>
+        </div>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Exceso (90-180)</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: t.warn, marginTop: 4 }}>{warning}</div>
+        </div>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Capital atrapado</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: t.warn, marginTop: 4 }}>${totalExcess.toLocaleString("es-MX", { maximumFractionDigits: 0 })}</div>
+          <div style={{ fontSize: 10, color: t.textLo, marginTop: 2 }}>vs target 60 días</div>
+        </div>
+      </div>
+
+      {err && (
+        <div style={{ padding: "10px 14px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 13 }}>
+          <AlertTriangle size={14} style={{ verticalAlign: "middle", marginRight: 6 }} /> {err}
+        </div>
+      )}
+
+      {/* Lista */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
+        {loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: t.textLo, fontSize: 13 }}>Analizando…</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: 60, textAlign: "center", color: t.textLo }}>
+            <Check size={40} color={t.good} style={{ opacity: 0.6, marginBottom: 12 }} />
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Sin alertas de sobreinventario</div>
+            <div style={{ fontSize: 12 }}>Todas las variantes con ventas están dentro del umbral seleccionado.</div>
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: t.panel2 }}>
+                <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Producto</th>
+                <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Almacén</th>
+                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Stock</th>
+                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Vel. diaria</th>
+                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Días stock</th>
+                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Exceso</th>
+                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>$ Atrapado</th>
+                <th style={{ textAlign: "center", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Estado</th>
+                <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Acción sugerida</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((a, i) => {
+                const sev = severityMeta(a.severity);
+                return (
+                  <tr key={`${a.variant_id}-${a.warehouse_id}`} style={{ background: i % 2 === 0 ? t.panel : t.panel2 }}>
+                    <td style={{ padding: "12px 14px" }}>
+                      <div style={{ fontWeight: 600, color: t.textHi }}>{a.product_name}</div>
+                      <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace", marginTop: 2 }}>{a.sku}</div>
+                    </td>
+                    <td style={{ padding: "12px 14px", color: t.textMid }}>{a.warehouse_name}</td>
+                    <td style={{ padding: "12px 14px", textAlign: "right", color: t.textHi, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{a.available}</td>
+                    <td style={{ padding: "12px 14px", textAlign: "right", color: t.textMid, fontVariantNumeric: "tabular-nums" }}>{a.daily_velocity.toFixed(2)}</td>
+                    <td style={{ padding: "12px 14px", textAlign: "right", color: sev.color, fontWeight: 800, fontVariantNumeric: "tabular-nums", fontSize: 14 }}>{a.days_of_stock.toFixed(0)}d</td>
+                    <td style={{ padding: "12px 14px", textAlign: "right", color: t.textMid, fontVariantNumeric: "tabular-nums" }}>{a.excess_units}u</td>
+                    <td style={{ padding: "12px 14px", textAlign: "right", color: sev.color, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{mxn(a.excess_value)}</td>
+                    <td style={{ padding: "12px 14px", textAlign: "center" }}>
+                      <span style={{ padding: "3px 10px", borderRadius: 999, background: sev.color + "22", color: sev.color, fontSize: 11, fontWeight: 700 }}>{sev.label}</span>
+                    </td>
+                    <td style={{ padding: "12px 14px", color: t.textMid, fontSize: 12 }}>{a.recommendation}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
   );
 }
