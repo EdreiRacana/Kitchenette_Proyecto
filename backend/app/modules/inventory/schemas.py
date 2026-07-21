@@ -227,6 +227,13 @@ class InventoryStats(BaseModel):
     by_category: List[CategoryValue]
 
 # --- Purchase Orders ---
+class PurchaseOrderExtraCost(BaseModel):
+    """Costo indirecto asociado a una orden de compra (flete, aduana, seguro,
+    IVA no acreditable, maniobras, etc.). Se prorratea entre las partidas
+    al recibir la orden."""
+    description: str
+    amount: float
+
 class PurchaseOrderItemCreate(BaseModel):
     variant_id: int
     quantity: int
@@ -238,9 +245,15 @@ class PurchaseOrderCreate(BaseModel):
     notes: Optional[str] = None
     due_date: Optional[datetime] = None
     items: List[PurchaseOrderItemCreate]
+    # Costos indirectos que se prorratean al recibir (landed cost).
+    extra_costs: List[PurchaseOrderExtraCost] = []
+    # Método de prorrateo: "by_value" (default, por costo × cantidad) o
+    # "by_quantity" (por cantidad de unidades). Validado en el service.
+    landed_cost_allocation: str = "by_value"
 
 class PurchaseOrderItemInDB(PurchaseOrderItemCreate):
     id: int
+    landed_unit_cost: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -251,6 +264,8 @@ class PurchaseOrderUpdate(BaseModel):
     notes: Optional[str] = None
     due_date: Optional[datetime] = None
     items: Optional[List[PurchaseOrderItemCreate]] = None
+    extra_costs: Optional[List[PurchaseOrderExtraCost]] = None
+    landed_cost_allocation: Optional[str] = None
 
 class SupplierPaymentCreate(BaseModel):
     amount: float
@@ -277,6 +292,10 @@ class PurchaseOrderInDB(BaseModel):
     total_amount: float = 0.0
     paid_amount: float = 0.0
     balance: float = 0.0
+    # Landed cost — extras + total prorrateado
+    extra_costs: List[PurchaseOrderExtraCost] = []
+    extra_costs_total: float = 0.0
+    landed_cost_allocation: str = "by_value"
     due_date: Optional[datetime] = None
     created_at: datetime
     received_at: Optional[datetime] = None

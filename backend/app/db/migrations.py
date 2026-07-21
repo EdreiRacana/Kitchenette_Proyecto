@@ -303,6 +303,14 @@ _INVENTORY_STATEMENTS = [
     "UPDATE purchase_orders SET paid_amount = 0 WHERE paid_amount IS NULL",
     "UPDATE stock_movements SET movement_type = lower(movement_type) WHERE movement_type <> lower(movement_type)",
     "ALTER TABLE recipes ADD COLUMN IF NOT EXISTS extra_costs JSONB",
+    # Landed cost en compras: extras (flete, aduana, seguros, IVA no
+    # acreditable, etc.) que se prorratean entre las partidas al recibir.
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS extra_costs JSONB",
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS landed_cost_allocation VARCHAR DEFAULT 'by_value'",
+    "UPDATE purchase_orders SET landed_cost_allocation = 'by_value' WHERE landed_cost_allocation IS NULL",
+    # Snapshot del costo integrado por partida (con extras prorrateados). Se
+    # llena al recibir la OC; se preserva `unit_cost` (factura) para trazabilidad.
+    "ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS landed_unit_cost DOUBLE PRECISION",
 ]
 
 _FINANCE_STATEMENTS = [

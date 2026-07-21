@@ -1417,6 +1417,8 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
             const payload = {
               supplier_id: Number(data.supplier_id), warehouse_id: Number(data.warehouse_id), notes: data.notes || undefined,
               items: data.items.map((it: any) => ({ variant_id: Number(it.variant_id), quantity: Number(it.quantity), unit_cost: Number(it.unit_cost) })),
+              extra_costs: (data.extra_costs || []).map((c: any) => ({ description: c.description, amount: Number(c.amount) || 0 })),
+              landed_cost_allocation: data.landed_cost_allocation || "by_value",
             };
             if (editingPO) {
               await inventoryService.updatePurchaseOrder(editingPO.id, payload);
@@ -2062,6 +2064,14 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, edit
       ? editing.items.map((it: any) => ({ variant_id: String(it.variant_id), quantity: String(it.quantity), unit_cost: String(it.unit_cost) }))
       : [{ variant_id: "", quantity: "", unit_cost: "" }]
   );
+  // Costos adicionales (landed cost): flete, aduana, seguros, etc. Mismo
+  // formato JSON que en Recipe → consistente con el módulo de producción.
+  const [extraCosts, setExtraCosts] = useState<{ description: string; amount: string }[]>(
+    editing?.extra_costs?.length
+      ? editing.extra_costs.map((c: any) => ({ description: c.description || "", amount: String(c.amount ?? "") }))
+      : []
+  );
+  const [allocation, setAllocation] = useState<"by_value" | "by_quantity">(editing?.landed_cost_allocation || "by_value");
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const allVariants = products.flatMap((p: Product) => p.variants.map((v: Variant) => ({ ...v, product_name: p.name })));
@@ -2070,12 +2080,48 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, edit
   const removeItem = (idx: number) => setItems(i => i.filter((_, k) => k !== idx));
   const updateItem = (idx: number, field: string, val: any) => setItems(i => i.map((it, k) => k === idx ? { ...it, [field]: val } : it));
 
-  const total = items.reduce((a, it) => a + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0);
-  const valid = supplierId && warehouseId && items.length > 0 && items.every(it => it.variant_id && it.quantity && it.unit_cost);
+  const addExtra = () => setExtraCosts(x => [...x, { description: "", amount: "" }]);
+  const removeExtra = (idx: number) => setExtraCosts(x => x.filter((_, k) => k !== idx));
+  const updateExtra = (idx: number, field: "description" | "amount", val: string) =>
+    setExtraCosts(x => x.map((c, k) => k === idx ? { ...c, [field]: val } : c));
+
+  const goodsTotal = items.reduce((a, it) => a + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0);
+  const extrasTotal = extraCosts.reduce((a, c) => a + (Number(c.amount) || 0), 0);
+  const total = goodsTotal + extrasTotal;
+
+  // Preview del landed cost en vivo — mismo cálculo que el backend, para que
+  // el usuario vea EN EL FORMULARIO cómo se prorratean los extras entre sus
+  // partidas antes de confirmar la orden. Sin sorpresas al recibir.
+  const landedPreview = useMemo(() => {
+    if (extrasTotal <= 0) return items.map(it => ({ landed: Number(it.unit_cost) || 0, deltaPct: 0 }));
+    const denom = allocation === "by_value"
+      ? items.reduce((a, it) => a + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0)
+      : items.reduce((a, it) => a + (Number(it.quantity) || 0), 0);
+    if (denom <= 0) return items.map(it => ({ landed: Number(it.unit_cost) || 0, deltaPct: 0 }));
+    return items.map(it => {
+      const qty = Number(it.quantity) || 0;
+      const unit = Number(it.unit_cost) || 0;
+      if (qty <= 0) return { landed: unit, deltaPct: 0 };
+      const weight = allocation === "by_value" ? qty * unit : qty;
+      const share = extrasTotal * (weight / denom);
+      const landed = unit + share / qty;
+      const deltaPct = unit > 0 ? ((landed - unit) / unit) * 100 : 0;
+      return { landed, deltaPct };
+    });
+  }, [items, extrasTotal, allocation]);
+
+  const valid = supplierId && warehouseId && items.length > 0 && items.every(it => it.variant_id && it.quantity && it.unit_cost)
+    && extraCosts.every(c => !c.description || Number(c.amount) >= 0);
 
   const handleSave = async () => {
     setSaving(true); setError("");
-    try { await onSave({ supplier_id: supplierId, warehouse_id: warehouseId, due_date: dueDate || undefined, notes, items }); }
+    try {
+      await onSave({
+        supplier_id: supplierId, warehouse_id: warehouseId, due_date: dueDate || undefined, notes, items,
+        extra_costs: extraCosts.filter(c => c.description && Number(c.amount) > 0).map(c => ({ description: c.description, amount: Number(c.amount) })),
+        landed_cost_allocation: allocation,
+      });
+    }
     catch (err: any) { setError(err?.response?.data?.detail || (lang === "es" ? "Error al crear la orden de compra" : "Error creating purchase order")); }
     finally { setSaving(false); }
   };
@@ -2112,34 +2158,117 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, edit
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, marginBottom: 10 }}>{lang === "es" ? "Artículos" : "Items"}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {items.map((it, i) => (
-                <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: 8, alignItems: "end" }}>
-                  <div>
-                    {i === 0 && <label style={label}>{lang === "es" ? "Producto / Variante" : "Product / Variant"}</label>}
-                    <select value={it.variant_id} onChange={e => updateItem(i, "variant_id", e.target.value)} style={{ ...inp, cursor: "pointer" }}>
-                      <option value="">{lang === "es" ? "Seleccionar…" : "Select…"}</option>
-                      {allVariants.map((v: any) => <option key={v.id} value={v.id}>{v.product_name} — {v.sku}</option>)}
-                    </select>
+              {items.map((it, i) => {
+                const preview = landedPreview[i];
+                const showLanded = extrasTotal > 0 && Number(it.quantity) > 0 && Number(it.unit_cost) > 0;
+                return (
+                  <div key={i} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: 8, alignItems: "end" }}>
+                      <div>
+                        {i === 0 && <label style={label}>{lang === "es" ? "Producto / Variante" : "Product / Variant"}</label>}
+                        <select value={it.variant_id} onChange={e => updateItem(i, "variant_id", e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                          <option value="">{lang === "es" ? "Seleccionar…" : "Select…"}</option>
+                          {allVariants.map((v: any) => <option key={v.id} value={v.id}>{v.product_name} — {v.sku}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        {i === 0 && <label style={label}>{lang === "es" ? "Cantidad" : "Quantity"}</label>}
+                        <input type="number" min={1} value={it.quantity} onChange={e => updateItem(i, "quantity", e.target.value)} style={inp} />
+                      </div>
+                      <div>
+                        {i === 0 && <label style={label}>{lang === "es" ? "Costo unit." : "Unit cost"}</label>}
+                        <input type="number" min={0} value={it.unit_cost} onChange={e => updateItem(i, "unit_cost", e.target.value)} style={inp} />
+                      </div>
+                      <button onClick={() => removeItem(i)} disabled={items.length === 1} style={{ background: "transparent", border: "none", cursor: items.length === 1 ? "default" : "pointer", color: items.length === 1 ? t.textLo : t.bad, opacity: items.length === 1 ? 0.4 : 1 }}><Trash2 size={16} /></button>
+                    </div>
+                    {showLanded && (
+                      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: 8, paddingLeft: 2 }}>
+                        <div />
+                        <div />
+                        <div style={{ fontSize: 11, color: t.nova, display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ color: t.textLo }}>{lang === "es" ? "→ landed:" : "→ landed:"}</span>
+                          <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{mxn(preview.landed)}</span>
+                          <span style={{ color: t.textLo, fontSize: 10 }}>(+{preview.deltaPct.toFixed(1)}%)</span>
+                        </div>
+                        <div />
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    {i === 0 && <label style={label}>{lang === "es" ? "Cantidad" : "Quantity"}</label>}
-                    <input type="number" min={1} value={it.quantity} onChange={e => updateItem(i, "quantity", e.target.value)} style={inp} />
-                  </div>
-                  <div>
-                    {i === 0 && <label style={label}>{lang === "es" ? "Costo unit." : "Unit cost"}</label>}
-                    <input type="number" min={0} value={it.unit_cost} onChange={e => updateItem(i, "unit_cost", e.target.value)} style={inp} />
-                  </div>
-                  <button onClick={() => removeItem(i)} disabled={items.length === 1} style={{ background: "transparent", border: "none", cursor: items.length === 1 ? "default" : "pointer", color: items.length === 1 ? t.textLo : t.bad, opacity: items.length === 1 ? 0.4 : 1 }}><Trash2 size={16} /></button>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <button onClick={addItem} style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 8, border: `2px dashed ${t.border}`, background: "transparent", color: t.textLo, cursor: "pointer", fontSize: 12.5 }}>
               <Plus size={14} /> {lang === "es" ? "Agregar artículo" : "Add item"}
             </button>
           </div>
 
-          <div style={{ display: "flex", justifyContent: "flex-end", fontSize: 14, fontWeight: 700, color: t.textHi }}>
-            {lang === "es" ? "Total estimado:" : "Estimated total:"} <span style={{ color: t.nova, marginLeft: 6 }}>{mxn(total)}</span>
+          {/* ── Costos adicionales (landed cost) ─────────────────────────── */}
+          <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, gap: 10 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>{lang === "es" ? "Costos adicionales (landed cost)" : "Additional costs (landed cost)"}</div>
+                <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 2 }}>
+                  {lang === "es"
+                    ? "Flete, aduana, aranceles, IVA no acreditable, seguro, maniobras… Se prorratean entre las partidas al recibir la orden."
+                    : "Freight, customs, tariffs, non-deductible VAT, insurance, handling… Prorated across items at receipt."}
+                </div>
+              </div>
+              {extraCosts.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                  <div style={{ fontSize: 10.5, color: t.textLo, fontWeight: 600, letterSpacing: 0.4, textTransform: "uppercase" }}>{lang === "es" ? "Prorrateo" : "Allocation"}</div>
+                  <select value={allocation} onChange={e => setAllocation(e.target.value as any)}
+                    style={{ ...inp, padding: "5px 8px", fontSize: 12, marginTop: 2, minWidth: 150, cursor: "pointer" }}>
+                    <option value="by_value">{lang === "es" ? "Por valor (recomendado)" : "By value (recommended)"}</option>
+                    <option value="by_quantity">{lang === "es" ? "Por cantidad de piezas" : "By unit count"}</option>
+                  </select>
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+              {extraCosts.map((c, i) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 8, alignItems: "center" }}>
+                  <input value={c.description} onChange={e => updateExtra(i, "description", e.target.value)}
+                    placeholder={lang === "es" ? "Descripción (ej. Flete China-MX)" : "Description (e.g. Freight)"} style={inp} />
+                  <input type="number" min={0} value={c.amount} onChange={e => updateExtra(i, "amount", e.target.value)}
+                    placeholder={lang === "es" ? "Monto" : "Amount"} style={inp} />
+                  <button onClick={() => removeExtra(i)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.bad }}><Trash2 size={16} /></button>
+                </div>
+              ))}
+            </div>
+            <button onClick={addExtra} style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, padding: "7px 11px", borderRadius: 8, border: `2px dashed ${t.border}`, background: "transparent", color: t.textLo, cursor: "pointer", fontSize: 12 }}>
+              <Plus size={13} /> {lang === "es" ? "Agregar costo" : "Add cost"}
+            </button>
+            {extrasTotal > 0 && (
+              <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", fontSize: 12.5, color: t.textMid, paddingTop: 8, borderTop: `1px solid ${t.border}` }}>
+                <span>{lang === "es" ? "Total costos adicionales" : "Total additional costs"}</span>
+                <span style={{ color: t.textHi, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{mxn(extrasTotal)}</span>
+              </div>
+            )}
+          </div>
+
+          {/* ── Totales ──────────────────────────────────────────────────── */}
+          {/* La OC solo genera CxP por la mercancía (lo que le pagas a este
+              proveedor). Los extras son deudas con otros terceros (transportista,
+              agente aduanal, aseguradora); cada uno con su propia factura, cada
+              uno se registra por separado en Finanzas cuando se pague. Aquí se
+              muestran para que el usuario vea el desembolso total del proyecto. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end", fontSize: 13 }}>
+            <div style={{ display: "flex", gap: 10, fontWeight: 700, color: t.textHi }}>
+              <span>{lang === "es" ? "Total OC (al proveedor):" : "PO total (to supplier):"}</span>
+              <span style={{ color: t.nova, fontVariantNumeric: "tabular-nums", minWidth: 100, textAlign: "right" }}>{mxn(goodsTotal)}</span>
+            </div>
+            {extrasTotal > 0 && (
+              <>
+                <div style={{ display: "flex", gap: 10, color: t.textMid, fontSize: 12 }}>
+                  <span>{lang === "es" ? "+ Extras (a terceros):" : "+ Extras (to third parties):"}</span>
+                  <span style={{ color: t.textMid, fontVariantNumeric: "tabular-nums", minWidth: 100, textAlign: "right" }}>{mxn(extrasTotal)}</span>
+                </div>
+                <div style={{ display: "flex", gap: 10, fontSize: 12, marginTop: 2, paddingTop: 4, borderTop: `1px solid ${t.border}`, color: t.textMid, fontStyle: "italic" }}>
+                  <span>{lang === "es" ? "Desembolso total del proyecto:" : "Total project outlay:"}</span>
+                  <span style={{ color: t.textHi, fontVariantNumeric: "tabular-nums", minWidth: 100, textAlign: "right", fontWeight: 700 }}>{mxn(total)}</span>
+                </div>
+              </>
+            )}
           </div>
 
           <div><label style={label}>{lang === "es" ? "Notas" : "Notes"}</label><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...inp, resize: "vertical" }} /></div>
