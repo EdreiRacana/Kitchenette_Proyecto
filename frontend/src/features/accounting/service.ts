@@ -106,6 +106,28 @@ export interface AccountMapItem {
     account_name?: string | null;
 }
 
+// ── Políticas contables (Fase 4) — versionadas por effective_from ─────────────
+export interface WithholdingRate { isr: number; iva: number; }
+export interface AccountingPolicy {
+    id?: number;
+    branch_id?: number | null;
+    iva_acreditable_scheme: 'pending_payment' | 'direct_paid';
+    iva_trasladado_scheme: 'pending_collection' | 'direct_collected';
+    cogs_scheme: 'perpetual' | 'analytic';
+    purchase_recognition: 'on_receive' | 'on_bill' | 'on_pay';
+    payroll_scheme: 'itemized' | 'consolidated' | 'admin_expense';
+    expense_basis: 'accrual' | 'cash';
+    withholding_enabled: boolean;
+    withholding_rates?: Record<string, WithholdingRate>;
+    fx_scheme: 'transaction_date' | 'month_end_close';
+    labor_benefits_scheme: 'monthly_provision' | 'at_payment';
+    depreciation_scheme: 'straight_line_monthly' | 'manual';
+    effective_from: string;
+    status?: string;
+    notes?: string | null;
+    created_at?: string;
+}
+
 export const accountingService = {
     // Catálogo de cuentas
     getAccounts: async (onlyActive = false) =>
@@ -137,6 +159,12 @@ export const accountingService = {
     getAccountMap: async () => (await api.get<AccountMapItem[]>('/accounting/config/account-map')).data,
     setAccountMap: async (mapping: Record<string, number | null>) =>
         (await api.put('/accounting/config/account-map', { mapping })).data,
+
+    // Políticas contables — el contador escoge el flujo que mejor le acomode
+    getCurrentPolicy: async () => (await api.get<AccountingPolicy>('/accounting/policies/current')).data,
+    upsertPolicy: async (data: Partial<AccountingPolicy>) =>
+        (await api.put<AccountingPolicy>('/accounting/policies', data)).data,
+    listPolicies: async () => (await api.get<AccountingPolicy[]>('/accounting/policies')).data,
 
     // Contabilidad Electrónica SAT (XML del Anexo 24)
     downloadSatCatalogo: (params: any) => downloadXml('/accounting/sat/catalogo', params),

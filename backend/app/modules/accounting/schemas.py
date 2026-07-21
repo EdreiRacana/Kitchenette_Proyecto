@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ── Cuentas ───────────────────────────────────────────────────────────────────
@@ -183,3 +183,118 @@ class AccountMapItem(BaseModel):
 
 class AccountMapUpdate(BaseModel):
     mapping: dict[str, Optional[int]]
+
+
+# ── Políticas contables (Fase 4) ──────────────────────────────────────────────
+
+class WithholdingRate(BaseModel):
+    isr: float = 0.0
+    iva: float = 0.0
+
+
+class AccountingPolicyIn(BaseModel):
+    """Payload para crear/actualizar la política vigente. Todos los campos son
+    opcionales — se conservan los valores actuales cuando no se envían."""
+    iva_acreditable_scheme: Optional[str] = None  # pending_payment | direct_paid
+    iva_trasladado_scheme: Optional[str] = None   # pending_collection | direct_collected
+    cogs_scheme: Optional[str] = None             # perpetual | analytic
+    purchase_recognition: Optional[str] = None    # on_receive | on_bill | on_pay
+    payroll_scheme: Optional[str] = None          # itemized | consolidated | admin_expense
+    expense_basis: Optional[str] = None           # accrual | cash
+    withholding_enabled: Optional[bool] = None
+    withholding_rates: Optional[dict] = None      # {"honorarios": {"isr":10,"iva":10.67}, ...}
+    fx_scheme: Optional[str] = None               # transaction_date | month_end_close
+    labor_benefits_scheme: Optional[str] = None   # monthly_provision | at_payment
+    depreciation_scheme: Optional[str] = None     # straight_line_monthly | manual
+    effective_from: Optional[datetime] = None
+    branch_id: Optional[int] = None
+    notes: Optional[str] = None
+
+    @field_validator("iva_acreditable_scheme")
+    @classmethod
+    def _v_iva_acr(cls, v):
+        if v is not None and v not in ("pending_payment", "direct_paid"):
+            raise ValueError("iva_acreditable_scheme debe ser 'pending_payment' o 'direct_paid'")
+        return v
+
+    @field_validator("iva_trasladado_scheme")
+    @classmethod
+    def _v_iva_tras(cls, v):
+        if v is not None and v not in ("pending_collection", "direct_collected"):
+            raise ValueError("iva_trasladado_scheme debe ser 'pending_collection' o 'direct_collected'")
+        return v
+
+    @field_validator("cogs_scheme")
+    @classmethod
+    def _v_cogs(cls, v):
+        if v is not None and v not in ("perpetual", "analytic"):
+            raise ValueError("cogs_scheme debe ser 'perpetual' o 'analytic'")
+        return v
+
+    @field_validator("purchase_recognition")
+    @classmethod
+    def _v_purchase(cls, v):
+        if v is not None and v not in ("on_receive", "on_bill", "on_pay"):
+            raise ValueError("purchase_recognition debe ser 'on_receive', 'on_bill' o 'on_pay'")
+        return v
+
+    @field_validator("payroll_scheme")
+    @classmethod
+    def _v_payroll(cls, v):
+        if v is not None and v not in ("itemized", "consolidated", "admin_expense"):
+            raise ValueError("payroll_scheme debe ser 'itemized', 'consolidated' o 'admin_expense'")
+        return v
+
+    @field_validator("expense_basis")
+    @classmethod
+    def _v_expense(cls, v):
+        if v is not None and v not in ("accrual", "cash"):
+            raise ValueError("expense_basis debe ser 'accrual' o 'cash'")
+        return v
+
+    @field_validator("fx_scheme")
+    @classmethod
+    def _v_fx(cls, v):
+        if v is not None and v not in ("transaction_date", "month_end_close"):
+            raise ValueError("fx_scheme debe ser 'transaction_date' o 'month_end_close'")
+        return v
+
+    @field_validator("labor_benefits_scheme")
+    @classmethod
+    def _v_labor(cls, v):
+        if v is not None and v not in ("monthly_provision", "at_payment"):
+            raise ValueError("labor_benefits_scheme debe ser 'monthly_provision' o 'at_payment'")
+        return v
+
+    @field_validator("depreciation_scheme")
+    @classmethod
+    def _v_dep(cls, v):
+        if v is not None and v not in ("straight_line_monthly", "manual"):
+            raise ValueError("depreciation_scheme debe ser 'straight_line_monthly' o 'manual'")
+        return v
+
+
+class AccountingPolicyInDB(BaseModel):
+    id: int
+    branch_id: Optional[int] = None
+    iva_acreditable_scheme: str
+    iva_trasladado_scheme: str
+    cogs_scheme: str
+    purchase_recognition: str
+    payroll_scheme: str
+    expense_basis: str
+    withholding_enabled: bool
+    withholding_rates: Optional[dict] = None
+    fx_scheme: str
+    labor_benefits_scheme: str
+    depreciation_scheme: str
+    effective_from: datetime
+    status: str
+    superseded_at: Optional[datetime] = None
+    superseded_by_id: Optional[int] = None
+    notes: Optional[str] = None
+    created_by_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

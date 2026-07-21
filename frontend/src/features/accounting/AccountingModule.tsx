@@ -685,8 +685,35 @@ function ReportsView({ t, lang }: { t: any; lang: string }) {
   );
 }
 
-// ── Vista: Configuración contable (mapeo de cuentas para pólizas automáticas) ──
+// ── Vista: Configuración contable — 2 sub-tabs ────────────────────────────────
+// (a) Mapeo de cuentas para pólizas automáticas (rol → cuenta contable)
+// (b) Políticas contables: flujo/devengado, perpetuo/analítico, nómina, etc.
 function ConfigView({ t, lang, accounts }: { t: any; lang: string; accounts: Account[] }) {
+  const [subtab, setSubtab] = useState<"map" | "policies">("map");
+  const tabBtn: (active: boolean) => React.CSSProperties = (active) => ({
+    padding: "9px 16px", borderRadius: "10px 10px 0 0", border: "none", cursor: "pointer",
+    fontSize: 13, fontWeight: active ? 700 : 500,
+    background: active ? t.panel : "transparent",
+    color: active ? t.nova : t.textLo,
+    borderBottom: active ? `2px solid ${t.nova}` : "2px solid transparent",
+  });
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 900 }}>
+      <div style={{ display: "flex", borderBottom: `1px solid ${t.border}`, gap: 2 }}>
+        <button onClick={() => setSubtab("map")} style={tabBtn(subtab === "map")}>
+          {lang === "es" ? "Cuentas para pólizas automáticas" : "Account mapping"}
+        </button>
+        <button onClick={() => setSubtab("policies")} style={tabBtn(subtab === "policies")}>
+          {lang === "es" ? "Políticas contables" : "Accounting policies"}
+        </button>
+      </div>
+      {subtab === "map" && <AccountMapView t={t} lang={lang} accounts={accounts} />}
+      {subtab === "policies" && <PoliciesView t={t} lang={lang} />}
+    </div>
+  );
+}
+
+function AccountMapView({ t, lang, accounts }: { t: any; lang: string; accounts: Account[] }) {
   const [map, setMap] = useState<AccountMapItem[]>([]);
   const [draft, setDraft] = useState<Record<string, number | null>>({});
   const [saving, setSaving] = useState(false);
@@ -736,6 +763,212 @@ function ConfigView({ t, lang, accounts }: { t: any; lang: string; accounts: Acc
           <button onClick={save} disabled={saving} style={{ padding: "9px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>{saving ? "…" : (lang === "es" ? "Guardar" : "Save")}</button>
           {msg && <span style={{ fontSize: 12.5, color: msg.includes("✓") ? t.good : t.bad }}>{msg}</span>}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Vista: Políticas contables (Fase 4) ───────────────────────────────────────
+// El contador escoge la política que mejor se ajuste al régimen fiscal y a la
+// forma de llevar los libros de SU cliente. Cada política tiene una descripción
+// legal breve, opciones documentadas y referencia a NIF/LISR/LIVA vigentes.
+type PolicyOptDef = { value: string; label: string; desc: string };
+type PolicyFieldDef = {
+  key: string; title: string; nif?: string; help: string; options: PolicyOptDef[];
+};
+
+const POLICY_FIELDS: PolicyFieldDef[] = [
+  {
+    key: "iva_acreditable_scheme", title: "IVA acreditable (compras)",
+    nif: "LIVA art. 4 · NIF C-9",
+    help: "Momento en que el IVA de las facturas de proveedor se puede acreditar en la declaración mensual.",
+    options: [
+      { value: "pending_payment", label: "Pendiente de pago → pagado al liquidar", desc: "Cuenta 1106 al recibir la factura; se traslada a 1105 al pagarla. Régimen de flujo — recomendado para PyMEs, RESICO y personas físicas actividad empresarial." },
+      { value: "direct_paid", label: "Pagado directo (al recibir la factura)", desc: "Cuenta 1105 desde el momento de la factura. Devengado clásico — solo si el régimen fiscal lo permite y así lo lleva el contador." },
+    ],
+  },
+  {
+    key: "iva_trasladado_scheme", title: "IVA trasladado (ventas)",
+    nif: "LIVA art. 1-B · NIF C-9",
+    help: "Momento en que el IVA cobrado a clientes se declara.",
+    options: [
+      { value: "pending_collection", label: "Pendiente de cobro → cobrado al liquidar", desc: "Cuenta 2104 al facturar; se traslada a 2103 al cobrar. Simétrico con el acreditable en base flujo." },
+      { value: "direct_collected", label: "Cobrado directo (al facturar)", desc: "Cuenta 2103 desde la factura. Devengado clásico." },
+    ],
+  },
+  {
+    key: "cogs_scheme", title: "Costo de ventas",
+    nif: "NIF C-4",
+    help: "¿Cuándo se registra contablemente el costo de la mercancía vendida?",
+    options: [
+      { value: "perpetual", label: "Perpetuo (al vender, con costo FIFO)", desc: "Cada venta baja Inventarios y sube Costo de ventas con el costo integrado (landed) del FIFO. Máxima precisión — refleja el margen real cada día." },
+      { value: "analytic", label: "Analítico (al cierre mensual)", desc: "Al cerrar el mes: Inv. inicial + Compras − Inv. final = Costo del período. Simple pero solo tienes el costo real al cierre." },
+    ],
+  },
+  {
+    key: "purchase_recognition", title: "Reconocimiento de compras",
+    nif: "NIF A-2 (esencia sobre forma)",
+    help: "¿En qué momento entra la compra al Estado de Resultados y a Proveedores?",
+    options: [
+      { value: "on_receive", label: "Al recibir la mercancía (recomendado)", desc: "El control físico marca el momento contable. Alineado con NIF A-2." },
+      { value: "on_bill", label: "Al capturar la factura del proveedor", desc: "Si el flujo del cliente es que la mercancía llega antes que la factura, y quiere esperar al CFDI para contabilizar." },
+      { value: "on_pay", label: "Al momento del pago", desc: "Solo si el cliente lleva 100% base flujo." },
+    ],
+  },
+  {
+    key: "payroll_scheme", title: "Nómina",
+    nif: "LFT · LISR · LSS",
+    help: "Nivel de detalle contable de la nómina en el Estado de Resultados.",
+    options: [
+      { value: "itemized", label: "Desglosada (sueldos + patronal + retenciones)", desc: "Sueldos, IMSS patronal, provisión aguinaldo y retenciones ISR/IMSS por separado. Nivel profesional — máxima trazabilidad." },
+      { value: "consolidated", label: "Consolidada en Sueldos", desc: "Todo en la cuenta de Sueldos y salarios. Menor detalle pero suficiente para negocios pequeños." },
+      { value: "admin_expense", label: "Cargada como gasto único de administración", desc: "Todo va a Gastos de administración. Solo si la empresa no requiere detalle por rubro." },
+    ],
+  },
+  {
+    key: "expense_basis", title: "Gastos operativos",
+    nif: "LISR art. 27 · NIF C-9",
+    help: "¿Los gastos se reconocen al capturarlos o al pagarlos?",
+    options: [
+      { value: "accrual", label: "Devengado (al capturar)", desc: "El gasto pega en el mes de la operación aunque se pague después. Base para PM régimen general." },
+      { value: "cash", label: "Flujo (al pagar)", desc: "El gasto solo pega cuando sale el efectivo. RESICO / PF actividad empresarial." },
+    ],
+  },
+  {
+    key: "fx_scheme", title: "Tipo de cambio (operaciones USD/EUR)",
+    nif: "NIF B-15",
+    help: "¿Cómo se contabilizan las diferencias cambiarias en operaciones en moneda extranjera?",
+    options: [
+      { value: "transaction_date", label: "TC del día + póliza de dif. cambiaria al pagar", desc: "La factura entra al TC del día; al pagar, la diferencia va a Ganancia (4103) o Pérdida cambiaria (6103). Alineado con NIF B-15." },
+      { value: "month_end_close", label: "Ajuste al cierre mensual (Banxico)", desc: "Menos preciso — solo se reevalúa la cartera al TC del último día del mes." },
+    ],
+  },
+  {
+    key: "labor_benefits_scheme", title: "Provisión de beneficios laborales",
+    nif: "NIF D-3",
+    help: "¿Cómo se acumula el aguinaldo, prima vacacional y PTU?",
+    options: [
+      { value: "monthly_provision", label: "Provisión mensual de 1/12 (recomendado)", desc: "Cada mes se acumula la doceava parte. Evita el 'salto' contable en diciembre cuando se paga el aguinaldo." },
+      { value: "at_payment", label: "Registro al momento del pago", desc: "El aguinaldo pega solo en diciembre. Simple pero distorsiona el resultado mensual." },
+    ],
+  },
+  {
+    key: "depreciation_scheme", title: "Depreciación de activos fijos",
+    nif: "LISR art. 34 · NIF C-6",
+    help: "¿Cómo se registra la depreciación mensual?",
+    options: [
+      { value: "straight_line_monthly", label: "Línea recta automática mensual", desc: "El sistema genera la póliza el último día de cada mes según la vida útil fiscal de cada activo. Requiere activos con fecha de alta y tasa capturados." },
+      { value: "manual", label: "Manual (el contador la registra)", desc: "Sin automatización — el contador arma la póliza cuando le convenga." },
+    ],
+  },
+];
+
+function PoliciesView({ t, lang }: { t: any; lang: string }) {
+  void lang;
+  const [policy, setPolicy] = useState<import("./service").AccountingPolicy | null>(null);
+  const [draft, setDraft] = useState<Record<string, any>>({});
+  const [withholdingEnabled, setWithholdingEnabled] = useState(true);
+  const [effectiveFrom, setEffectiveFrom] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    accountingService.getCurrentPolicy()
+      .then(p => {
+        setPolicy(p);
+        const d: Record<string, any> = {};
+        POLICY_FIELDS.forEach(f => { d[f.key] = (p as any)[f.key]; });
+        setDraft(d);
+        setWithholdingEnabled(!!p.withholding_enabled);
+        if (p.effective_from) setEffectiveFrom(String(p.effective_from).slice(0, 10));
+      })
+      .catch(() => { });
+  }, []);
+
+  const save = async () => {
+    setSaving(true); setMsg(null);
+    try {
+      await accountingService.upsertPolicy({
+        ...draft,
+        withholding_enabled: withholdingEnabled,
+        effective_from: new Date(effectiveFrom + "T00:00:00Z").toISOString(),
+      });
+      setMsg("Política guardada ✓");
+      const p = await accountingService.getCurrentPolicy();
+      setPolicy(p);
+    } catch (e: any) {
+      setMsg(e?.response?.data?.detail || "No se pudo guardar");
+    } finally { setSaving(false); }
+  };
+
+  if (!policy) return <div style={{ padding: 40, color: t.textLo, fontSize: 13.5 }}>Cargando política vigente…</div>;
+
+  const inp: React.CSSProperties = { padding: "8px 11px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, outline: "none", width: "100%", boxSizing: "border-box", cursor: "pointer" };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>
+          Políticas contables
+        </div>
+        <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 8, lineHeight: 1.5 }}>
+          Cada opción cambia cómo se generan las pólizas automáticas del sistema. Escoge la que
+          mejor se ajuste al régimen fiscal y a la forma de llevar los libros de la empresa —
+          revisa la descripción y la referencia legal antes de guardar.
+        </div>
+        <div style={{ fontSize: 11.5, color: t.warn, marginBottom: 18, padding: "8px 12px", background: t.warn + "16", border: `1px solid ${t.warn}44`, borderRadius: 8 }}>
+          ⚠ El cambio solo aplica a operaciones NUEVAS a partir de la fecha efectiva.
+          Las pólizas históricas mantienen la política con la que se generaron.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+          <div>
+            <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600, display: "block", marginBottom: 6 }}>Fecha efectiva</label>
+            <input type="date" value={effectiveFrom} onChange={e => setEffectiveFrom(e.target.value)} style={inp} />
+          </div>
+          <div style={{ display: "flex", alignItems: "end" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: t.textHi, cursor: "pointer" }}>
+              <input type="checkbox" checked={withholdingEnabled} onChange={e => setWithholdingEnabled(e.target.checked)} />
+              Aplicar retenciones automáticas a proveedores (LISR art. 106, 116)
+            </label>
+          </div>
+        </div>
+      </div>
+
+      {POLICY_FIELDS.map(f => (
+        <div key={f.key} style={{ ...glass(t), borderRadius: 12, padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 4 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi }}>{f.title}</div>
+            {f.nif && <span style={{ fontSize: 10.5, color: t.textLo, background: t.panel3, padding: "3px 8px", borderRadius: 4, whiteSpace: "nowrap", fontFamily: "monospace" }}>{f.nif}</span>}
+          </div>
+          <div style={{ fontSize: 12, color: t.textLo, marginBottom: 12, lineHeight: 1.5 }}>{f.help}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {f.options.map(opt => {
+              const active = draft[f.key] === opt.value;
+              return (
+                <label key={opt.value} onClick={() => setDraft(d => ({ ...d, [f.key]: opt.value }))}
+                  style={{ display: "flex", gap: 10, padding: "10px 12px", borderRadius: 8, cursor: "pointer",
+                           background: active ? t.nova + "18" : t.panel2,
+                           border: `1px solid ${active ? t.nova : t.border}`, transition: "all .12s" }}>
+                  <input type="radio" checked={active} readOnly style={{ marginTop: 3 }} />
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: active ? t.nova : t.textHi }}>{opt.label}</div>
+                    <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 3, lineHeight: 1.4 }}>{opt.desc}</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 4px" }}>
+        <button onClick={save} disabled={saving}
+          style={{ padding: "10px 24px", borderRadius: 10, border: "none",
+                   background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`,
+                   color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>
+          {saving ? "Guardando…" : "Guardar política vigente"}
+        </button>
+        {msg && <span style={{ fontSize: 12.5, color: msg.includes("✓") ? t.good : t.bad }}>{msg}</span>}
       </div>
     </div>
   );

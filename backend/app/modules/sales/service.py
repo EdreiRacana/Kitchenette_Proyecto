@@ -234,9 +234,37 @@ async def _accounting_record_payment(db: AsyncSession, order: models.Order, amou
 async def _accounting_void_order(db: AsyncSession, order: models.Order) -> None:
     try:
         from app.modules.accounting import service as acc
-        await acc.void_order(db, order_id=order.id)
+        # Cancelación en cascada — cubre la póliza principal, COGS y los cobros.
+        # Reemplaza al void_order original que solo cancelaba venta y cobros.
+        await acc.void_sale_cascade(db, order_id=order.id)
     except Exception as e:
         log.warning("hook contable void falló", extra={"order_id": order.id, "error": str(e)}, exc_info=True)
+
+
+async def _accounting_record_cogs(db: AsyncSession, order: models.Order,
+                                  items: List[models.OrderItem]) -> None:
+    """Hook 5 — Costo de ventas al vender (política #3 = perpetual).
+    Suma qty × unit_cost snapshoteado por FIFO de cada partida física y genera
+    la póliza (Cargo COGS / Abono Inventarios). Solo se dispara para pedidos
+    con productos físicos; si todas son 'is_service', no hay COGS."""
+    try:
+        total_cost = 0.0
+        for it in items:
+            if getattr(it, "is_service", False):
+                continue
+            qty = int(it.quantity or 0)
+            unit_cost = float(getattr(it, "unit_cost", 0.0) or 0.0)
+            total_cost += qty * unit_cost
+        if total_cost <= 0:
+            return
+        from app.modules.accounting import service as acc
+        await acc.record_cogs_at_sale(
+            db, order_id=order.id, total_cost=total_cost,
+            concept=f"Costo de ventas — {order.folio or '#' + str(order.id)}",
+            user_id=order.user_id,
+        )
+    except Exception as e:
+        log.warning("hook contable COGS falló", extra={"order_id": order.id, "error": str(e)}, exc_info=True)
 
 
 # ── Item materialization (snapshots from catalog) ──────────────────────────────
@@ -431,6 +459,9 @@ async def create_order(db: AsyncSession, order_in: schemas.OrderCreate,
     if kind == "order" and status not in ("draft", "cancelled"):
         await _apply_stock_for_items(db, order, items, "out", user_id)
         await _accounting_record_sale(db, order)
+        # Hook 5: COGS al vender (perpetuo). Requiere unit_cost snapshoteado
+        # por FIFO en el paso anterior — por eso va DESPUÉS de _apply_stock_for_items.
+        await _accounting_record_cogs(db, order, items)
 
     # If created already paid, register the full payment (finance + ledger).
     # Un total de $0 (ej. filas de ingesta con precio vacío) no genera pago:
@@ -481,6 +512,9 @@ async def update_order(db: AsyncSession, order_id: int,
         order = await get_order(db, order_id)
         if order.kind == "order" and order.status not in ("draft", "cancelled"):
             await _apply_stock_for_items(db, order, order.items, "out", user_id)  # take new
+            # El COGS de la póliza anterior se cancela vía void_sale_cascade cuando
+            # cambia el status; aquí re-registramos el COGS con los items nuevos.
+            await _accounting_record_cogs(db, order, order.items)
 
     if data.status is not None:
         order.status = data.status
@@ -510,6 +544,9 @@ async def change_status(db: AsyncSession, order_id: int, new_status: str,
     # Re-activating a draft order commits stock
     if old == "draft" and new_status in ("pending", "partial", "paid") and order.kind == "order":
         await _apply_stock_for_items(db, order, order.items, "out", user_id)
+        # Hook 5: al pasar de borrador a pedido real, el COGS se materializa aquí
+        # (los borradores no tocan inventario ni contabilidad).
+        await _accounting_record_cogs(db, order, order.items)
 
     order.status = new_status
     if new_status == "converted":
@@ -595,6 +632,8 @@ async def convert_quote_to_order(db: AsyncSession, quote_id: int,
     _compute_totals(order, items)
     await _apply_stock_for_items(db, order, items, "out", user_id)
     await _accounting_record_sale(db, order)
+    # Hook 5: COGS de la venta convertida desde la cotización.
+    await _accounting_record_cogs(db, order, items)
 
     quote.status = "converted"
     _log_event(db, quote.id, "status_change", from_status="quote", to_status="converted",

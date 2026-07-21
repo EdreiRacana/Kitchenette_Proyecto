@@ -386,6 +386,35 @@ _BRANCH_STATEMENTS = [
         notes         TEXT
     )""",
     "CREATE INDEX IF NOT EXISTS ix_period_close_year_month ON accounting_period_close (year, month)",
+    # Políticas contables (versionadas por effective_from) — permiten al
+    # contador escoger el flujo que mejor le acomode a la empresa: base flujo
+    # vs devengado, perpetuo vs analítico, nómina consolidada vs desglosada,
+    # retenciones automáticas, tipo de cambio, provisiones y depreciación.
+    """CREATE TABLE IF NOT EXISTS accounting_policies (
+        id                        SERIAL PRIMARY KEY,
+        branch_id                 INTEGER REFERENCES branches(id),
+        iva_acreditable_scheme    VARCHAR NOT NULL DEFAULT 'pending_payment',
+        iva_trasladado_scheme     VARCHAR NOT NULL DEFAULT 'pending_collection',
+        cogs_scheme               VARCHAR NOT NULL DEFAULT 'perpetual',
+        purchase_recognition      VARCHAR NOT NULL DEFAULT 'on_receive',
+        payroll_scheme            VARCHAR NOT NULL DEFAULT 'itemized',
+        expense_basis             VARCHAR NOT NULL DEFAULT 'accrual',
+        withholding_enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+        withholding_rates         JSONB,
+        fx_scheme                 VARCHAR NOT NULL DEFAULT 'transaction_date',
+        labor_benefits_scheme     VARCHAR NOT NULL DEFAULT 'monthly_provision',
+        depreciation_scheme       VARCHAR NOT NULL DEFAULT 'straight_line_monthly',
+        effective_from            TIMESTAMP WITH TIME ZONE NOT NULL,
+        status                    VARCHAR NOT NULL DEFAULT 'active',
+        superseded_at             TIMESTAMP WITH TIME ZONE,
+        superseded_by_id          INTEGER REFERENCES accounting_policies(id),
+        notes                     TEXT,
+        created_by_id             INTEGER REFERENCES users(id),
+        created_at                TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_accounting_policies_effective ON accounting_policies (effective_from DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_accounting_policies_status    ON accounting_policies (status)",
+    "CREATE INDEX IF NOT EXISTS ix_accounting_policies_branch    ON accounting_policies (branch_id)",
     # Conciliación bancaria
     "ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS bank_date TIMESTAMP WITH TIME ZONE",
     "ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS matched_transaction_id INTEGER REFERENCES transactions(id)",
