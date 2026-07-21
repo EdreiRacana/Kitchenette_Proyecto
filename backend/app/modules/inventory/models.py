@@ -220,6 +220,15 @@ class PurchaseOrder(Base):
     #                   el costo indirecto depende del volumen físico y las
     #                   piezas pesan/ocupan lo mismo).
     landed_cost_allocation = Column(String, default="by_value", nullable=False)
+    # Multi-currency (para Hook 8 diferencia cambiaria):
+    #   currency: divisa de la factura del proveedor (MXN | USD | EUR | ...)
+    #   fx_rate:  tipo de cambio del día de la operación (peso por unidad divisa)
+    # Si currency=MXN, fx_rate no se usa; total_amount ya está en pesos.
+    # Si currency!=MXN, total_amount se guarda en pesos convertidos al fx_rate
+    # del momento de la recepción; los pagos posteriores generan diferencia
+    # cambiaria al TC del día del pago.
+    currency = Column(String, default="MXN", nullable=False)
+    fx_rate = Column(Float, default=1.0, nullable=False)
 
     supplier = relationship("Supplier", back_populates="purchase_orders")
     warehouse = relationship("Warehouse")

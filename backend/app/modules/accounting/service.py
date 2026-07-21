@@ -1074,3 +1074,567 @@ async def void_purchase_cascade(db: AsyncSession, *, po_id: int) -> None:
     for e in res.scalars().all():
         e.status = "cancelled"
         e.cancelled_at = _now()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HOOK 6 — NÓMINA (al aprobar el período)
+#
+# Genera póliza según payroll_scheme:
+#   itemized      → 4 cargos separados (Sueldos + IMSS patronal + ISN patronal +
+#                   INFONAVIT patronal) y N abonos (net + cada retención + cada
+#                   pasivo por pagar patronal). Nivel profesional.
+#   consolidated  → 1 cargo (Sueldos y salarios) con TODO, mismos abonos
+#                   desglosados.
+#   admin_expense → 1 cargo (Gastos de administración), mismos abonos.
+#
+# Al DISPERSAR (pago real al banco), se genera una segunda póliza:
+#   Cargo Sueldos por pagar / Abono Bancos
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _sum_payroll_details(details: list) -> dict:
+    """Suma los importes de todas las partidas de nómina en el período.
+    Devuelve un dict con los agregados listos para armar la póliza."""
+    total_salary_earned = 0.0
+    total_overtime = 0.0
+    total_bonus = 0.0
+    total_food_vouchers = 0.0
+    total_vacation_premium = 0.0
+    total_aguinaldo = 0.0
+    total_savings_fund = 0.0
+    total_subsidy = 0.0
+    total_isr = 0.0
+    total_imss_obrero = 0.0
+    total_infonavit = 0.0
+    total_fonacot = 0.0
+    total_loan = 0.0
+    total_imss_patronal = 0.0
+    total_infonavit_patronal = 0.0
+    total_isn = 0.0
+    total_net = 0.0
+
+    for d in details:
+        total_salary_earned += float(getattr(d, "salary_earned", 0.0) or 0.0)
+        total_overtime += float(getattr(d, "overtime_double", 0.0) or 0.0) + float(getattr(d, "overtime_triple", 0.0) or 0.0)
+        total_bonus += float(getattr(d, "bonus", 0.0) or 0.0)
+        total_food_vouchers += float(getattr(d, "food_vouchers", 0.0) or 0.0)
+        total_vacation_premium += float(getattr(d, "vacation_premium", 0.0) or 0.0)
+        total_aguinaldo += float(getattr(d, "aguinaldo", 0.0) or 0.0)
+        total_savings_fund += float(getattr(d, "savings_fund", 0.0) or 0.0)
+        total_subsidy += float(getattr(d, "subsidy_applied", 0.0) or 0.0)
+        total_isr += float(getattr(d, "isr", 0.0) or 0.0)
+        total_imss_obrero += float(getattr(d, "imss_employee", 0.0) or 0.0)
+        total_infonavit += float(getattr(d, "infonavit", 0.0) or 0.0)
+        total_fonacot += float(getattr(d, "fonacot", 0.0) or 0.0)
+        total_loan += float(getattr(d, "loan_deduction", 0.0) or 0.0)
+        total_imss_patronal += float(getattr(d, "imss_employer", 0.0) or 0.0)
+        total_infonavit_patronal += float(getattr(d, "infonavit_employer", 0.0) or 0.0)
+        total_isn += float(getattr(d, "state_payroll_tax", 0.0) or 0.0)
+        total_net += float(getattr(d, "total_net", 0.0) or 0.0)
+
+    gross_perceptions = (
+        total_salary_earned + total_overtime + total_bonus + total_food_vouchers
+        + total_vacation_premium + total_aguinaldo + total_savings_fund
+    )
+    # ISR retenido se reduce por el subsidio al empleo pagado (que la empresa
+    # acredita contra ISR según art. 8 LSSE, LISR): el patrón adelanta el
+    # subsidio y luego lo acredita a su ISR retenido a pagar.
+    isr_neto_pagar = max(0.0, total_isr - total_subsidy)
+
+    return {
+        "gross_perceptions": _r(gross_perceptions),
+        "imss_patronal": _r(total_imss_patronal),
+        "infonavit_patronal": _r(total_infonavit_patronal),
+        "isn": _r(total_isn),
+        "isr_neto_pagar": _r(isr_neto_pagar),
+        "imss_obrero": _r(total_imss_obrero),
+        "infonavit_obrero": _r(total_infonavit),
+        "fonacot": _r(total_fonacot),
+        "loan_deduction": _r(total_loan),
+        "subsidy": _r(total_subsidy),
+        "net_paid": _r(total_net),
+    }
+
+
+async def record_payroll_period(db: AsyncSession, *, period_id: int, period_name: str,
+                                 details: list, branch_id=None, user_id=None) -> None:
+    """Genera la póliza de nómina al aprobar el período según payroll_scheme.
+    Cubre percepciones, patronales, retenciones y provisiones.
+    Idempotente por source='nomina:{period_id}'."""
+    policy = await get_active_policy(db, branch_id=branch_id)
+    m = await get_account_map(db)
+    expenses = m.get("expenses")           # 6101 Gastos de administración
+    payroll_payable = m.get("payroll_payable")  # 2102 Sueldos por pagar
+    taxes_withheld = m.get("taxes_withheld")     # 2106 Impuestos retenidos
+    # Impuestos patronales por pagar → mismo rol taxes_payable si existe,
+    # o payroll_payable como fallback (para que cuadre).
+    if not expenses or not payroll_payable:
+        return
+
+    sums = _sum_payroll_details(details)
+    total_charges = (
+        sums["gross_perceptions"] + sums["imss_patronal"]
+        + sums["infonavit_patronal"] + sums["isn"]
+    )
+    if total_charges <= 0:
+        return
+
+    specs = []
+    # ── Cargos (según scheme) ────────────────────────────────────────────
+    if policy.payroll_scheme == "itemized":
+        # 4 cargos separados — máximo detalle para el Estado de Resultados
+        specs.append((expenses, sums["gross_perceptions"], 0.0))
+        if sums["imss_patronal"] > 0:
+            specs.append((expenses, sums["imss_patronal"], 0.0))
+        if sums["infonavit_patronal"] > 0:
+            specs.append((expenses, sums["infonavit_patronal"], 0.0))
+        if sums["isn"] > 0:
+            specs.append((expenses, sums["isn"], 0.0))
+    else:
+        # consolidated y admin_expense: un solo cargo con TODO
+        specs.append((expenses, total_charges, 0.0))
+
+    # ── Abonos (siempre desglosados para trazabilidad) ────────────────────
+    # Neto a pagar al trabajador
+    if sums["net_paid"] > 0:
+        specs.append((payroll_payable, 0.0, sums["net_paid"]))
+    # Retenciones
+    if sums["isr_neto_pagar"] > 0 and taxes_withheld:
+        specs.append((taxes_withheld, 0.0, sums["isr_neto_pagar"]))
+    if sums["imss_obrero"] > 0 and taxes_withheld:
+        specs.append((taxes_withheld, 0.0, sums["imss_obrero"]))
+    if sums["infonavit_obrero"] > 0 and taxes_withheld:
+        specs.append((taxes_withheld, 0.0, sums["infonavit_obrero"]))
+    if sums["fonacot"] > 0 and taxes_withheld:
+        specs.append((taxes_withheld, 0.0, sums["fonacot"]))
+    if sums["loan_deduction"] > 0 and payroll_payable:
+        specs.append((payroll_payable, 0.0, sums["loan_deduction"]))
+    # Patronales por pagar (usa taxes_withheld como cuenta genérica de pasivo
+    # laboral por pagar; si el catálogo tiene 2105 separado, cae ahí)
+    if sums["imss_patronal"] > 0 and taxes_withheld:
+        specs.append((taxes_withheld, 0.0, sums["imss_patronal"]))
+    if sums["infonavit_patronal"] > 0 and taxes_withheld:
+        specs.append((taxes_withheld, 0.0, sums["infonavit_patronal"]))
+    if sums["isn"] > 0 and taxes_withheld:
+        specs.append((taxes_withheld, 0.0, sums["isn"]))
+
+    # Verificación: cargos - abonos deben ser 0 (partida doble)
+    td = _r(sum(s[1] for s in specs))
+    tc = _r(sum(s[2] for s in specs))
+    if abs(td - tc) > 0.01:
+        # La póliza no cuadra — típicamente porque taxes_withheld no está
+        # configurado. NO grabamos una póliza descuadrada, mejor que no se
+        # genere y quede aviso en el log.
+        return
+
+    await _auto_entry(
+        db, source=f"nomina:{period_id}", entry_type="egreso",
+        concept=f"Nómina — período {period_name}",
+        specs=specs, branch_id=branch_id, user_id=user_id,
+    )
+
+
+async def record_payroll_dispersion(db: AsyncSession, *, period_id: int,
+                                     period_name: str, total_net: float,
+                                     branch_id=None, user_id=None) -> None:
+    """Al dispersar (pago real al banco):
+       Cargo Sueldos por pagar / Abono Bancos"""
+    m = await get_account_map(db)
+    payroll_payable = m.get("payroll_payable")
+    bank = m.get("bank")
+    if not payroll_payable or not bank:
+        return
+    total_net = _r(total_net)
+    if total_net <= 0:
+        return
+    await _auto_entry(
+        db, source=f"nomina_pago:{period_id}", entry_type="egreso",
+        concept=f"Pago de nómina — período {period_name}",
+        specs=[(payroll_payable, total_net, 0.0), (bank, 0.0, total_net)],
+        branch_id=branch_id, user_id=user_id,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HOOK 7 — GASTOS OPERATIVOS DE FINANZAS
+#
+# Trigger: al crear una Transaction de tipo 'expense' desde el módulo Finanzas.
+# Se registra en momento distinto según expense_basis:
+#   accrual → al crear la transacción (aunque no se pague aún)
+#   cash    → al crear también (asumiendo que Transaction en Finanzas ya
+#             representa la salida real del efectivo — no hay estado 'pending')
+#
+# Para gastos con IVA acreditable, mejor usar SupplierBill (con su propio hook)
+# porque Transaction no desglosa impuesto. Aquí generamos póliza sin IVA.
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def record_expense_transaction(db: AsyncSession, *, transaction_id: int,
+                                     amount: float, category: Optional[str],
+                                     description: str, branch_id=None, user_id=None) -> None:
+    """Cargo Gastos / Abono Bancos. Simple, sin IVA — el importe capturado
+    en Finanzas debe ya incluir todo (concepto neto)."""
+    m = await get_account_map(db)
+    expenses = m.get("expenses")
+    bank = m.get("bank")
+    if not expenses or not bank:
+        return
+    amount = _r(amount)
+    if amount <= 0:
+        return
+    concept = f"Gasto — {category or 'general'}: {description}"[:200]
+    await _auto_entry(
+        db, source=f"gasto:{transaction_id}", entry_type="egreso",
+        concept=concept,
+        specs=[(expenses, amount, 0.0), (bank, 0.0, amount)],
+        branch_id=branch_id, user_id=user_id,
+    )
+
+
+async def record_income_transaction(db: AsyncSession, *, transaction_id: int,
+                                    amount: float, category: Optional[str],
+                                    description: str, branch_id=None, user_id=None) -> None:
+    """Ingreso manual desde Finanzas (no relacionado con una venta): p.ej.
+    intereses ganados, ingresos por rentas, otros ingresos.
+    Cargo Bancos / Abono Otros ingresos (4104 vía rol 'sales' como fallback
+    si no hay 'other_income' configurado — en fase 4C se separan)."""
+    m = await get_account_map(db)
+    bank = m.get("bank")
+    # No hay rol 'other_income' aún; usa 'sales' como fallback. En fase 4C
+    # agregamos una cuenta y rol separado.
+    income = m.get("sales")
+    if not bank or not income:
+        return
+    amount = _r(amount)
+    if amount <= 0:
+        return
+    concept = f"Ingreso — {category or 'general'}: {description}"[:200]
+    await _auto_entry(
+        db, source=f"ingreso:{transaction_id}", entry_type="ingreso",
+        concept=concept,
+        specs=[(bank, amount, 0.0), (income, 0.0, amount)],
+        branch_id=branch_id, user_id=user_id,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HOOK 10 — CIERRE ANUAL DEL EJERCICIO
+#
+# Al terminar el año fiscal (o cuando el contador lo dispare):
+#   1. Suma ingresos, costos y gastos del año.
+#   2. Genera póliza de cierre:
+#         Cargo:  Ingresos (todos)                total ingresos
+#         Abono:  Costos (todos)                        total costos
+#         Abono:  Gastos (todos)                        total gastos
+#         Abono:  Resultado del ejercicio (3103)        utilidad neta
+#      Si es pérdida, se invierten los movimientos (Cargo Resultado / Abono
+#      cuentas de resultado no se hace en la práctica; se maneja con signo).
+#   3. Deja las cuentas de resultado en cero para arrancar el siguiente año.
+#
+# NO se hace el traspaso 3103 → 3102 aquí — eso lo dispara el contador al
+# inicio del ejercicio siguiente, cuando decide qué hacer con la utilidad
+# (retenida, dividendo, aplicación a pérdidas anteriores, etc.).
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def close_year(db: AsyncSession, *, year: int, branch_id=None, user_id=None) -> dict:
+    """Genera la póliza de cierre anual del ejercicio. Idempotente por año."""
+    from datetime import datetime as _dt
+
+    # Bloqueo: no se puede cerrar si ya hay una póliza de cierre para el año
+    existing = (await db.execute(
+        select(models.JournalEntry).where(
+            models.JournalEntry.source == f"cierre_anual:{year}",
+            models.JournalEntry.status != "cancelled",
+        )
+    )).scalars().first()
+    if existing:
+        raise ValueError(f"El ejercicio {year} ya fue cerrado (póliza {existing.folio}).")
+
+    date_from = _dt(year, 1, 1, tzinfo=timezone.utc)
+    date_to = _dt(year + 1, 1, 1, tzinfo=timezone.utc)
+    # Suma por cuenta desde JournalLines contabilizadas
+    stmt = (
+        select(models.JournalLine.account_id,
+               func.coalesce(func.sum(models.JournalLine.debit), 0.0),
+               func.coalesce(func.sum(models.JournalLine.credit), 0.0))
+        .join(models.JournalEntry, models.JournalLine.entry_id == models.JournalEntry.id)
+        .where(
+            models.JournalEntry.status == "posted",
+            models.JournalEntry.date >= date_from,
+            models.JournalEntry.date < date_to,
+        )
+        .group_by(models.JournalLine.account_id)
+    )
+    sums = {r[0]: (float(r[1] or 0.0), float(r[2] or 0.0)) for r in (await db.execute(stmt)).all()}
+    if not sums:
+        raise ValueError(f"No hay pólizas contabilizadas en {year} — nada que cerrar.")
+
+    accounts = {a.id: a for a in await list_accounts(db)}
+    # Netos por tipo de cuenta (naturaleza)
+    ingresos_netos = defaultdict(float)   # {acc_id: neto acreedor}
+    costos_gastos_netos = defaultdict(float)  # {acc_id: neto deudor}
+    for acc_id, (d, c) in sums.items():
+        acc = accounts.get(acc_id)
+        if not acc or not acc.is_postable:
+            continue
+        if acc.account_type == "ingreso":
+            neto = c - d  # ingresos: neto acreedor
+            if abs(neto) >= 0.01:
+                ingresos_netos[acc_id] = _r(neto)
+        elif acc.account_type in ("costo", "gasto"):
+            neto = d - c  # costos/gastos: neto deudor
+            if abs(neto) >= 0.01:
+                costos_gastos_netos[acc_id] = _r(neto)
+
+    total_ingresos = _r(sum(ingresos_netos.values()))
+    total_costos_gastos = _r(sum(costos_gastos_netos.values()))
+    utilidad_neta = _r(total_ingresos - total_costos_gastos)
+
+    # Buscar cuenta 3103 Resultado del ejercicio en el catálogo
+    resultado_acc = next((a for a in accounts.values() if a.code == "3103"), None)
+    if not resultado_acc:
+        raise ValueError(
+            "No se encontró la cuenta 3103 'Resultado del ejercicio' en el catálogo. "
+            "Créala antes de cerrar el ejercicio."
+        )
+
+    # Armar la póliza: cargo a ingresos (reversar), abono a costos/gastos (reversar),
+    # y contrapartida en 3103 con el resultado neto.
+    specs = []
+    for acc_id, neto in ingresos_netos.items():
+        # Reversar el saldo acreedor → cargo
+        specs.append((acc_id, neto, 0.0))
+    for acc_id, neto in costos_gastos_netos.items():
+        # Reversar el saldo deudor → abono
+        specs.append((acc_id, 0.0, neto))
+    # Contrapartida
+    if utilidad_neta > 0:
+        specs.append((resultado_acc.id, 0.0, utilidad_neta))
+    elif utilidad_neta < 0:
+        specs.append((resultado_acc.id, abs(utilidad_neta), 0.0))
+    # (si utilidad_neta == 0 la póliza cuadra sin contrapartida)
+
+    td = _r(sum(s[1] for s in specs))
+    tc = _r(sum(s[2] for s in specs))
+    if abs(td - tc) > 0.01:
+        raise ValueError(
+            f"Póliza de cierre no cuadra: cargos ${td:,.2f} vs abonos ${tc:,.2f}. "
+            f"Revisa saldos antes de cerrar."
+        )
+
+    await _auto_entry(
+        db, source=f"cierre_anual:{year}", entry_type="diario",
+        concept=f"Cierre anual del ejercicio {year}",
+        specs=specs, branch_id=branch_id, user_id=user_id,
+    )
+    return {
+        "year": year,
+        "total_ingresos": total_ingresos,
+        "total_costos_gastos": total_costos_gastos,
+        "utilidad_neta": utilidad_neta,
+        "cuentas_cerradas": len(ingresos_netos) + len(costos_gastos_netos),
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HOOK 8 — DIFERENCIA CAMBIARIA (operaciones en moneda extranjera)
+#
+# Al pagar una OC en USD (o EUR), el TC del día del pago puede diferir del
+# TC del día de la recepción. La diferencia se contabiliza:
+#   - TC subió (peso más débil): pierdes → 6103 Pérdida cambiaria
+#   - TC bajó (peso más fuerte): ganas  → 4103 Ganancia cambiaria
+# NIF B-15 · política #8 fx_scheme = transaction_date
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def record_fx_difference(db: AsyncSession, *, source_ref: str,
+                                original_mxn: float, paid_mxn: float,
+                                concept: str, branch_id=None, user_id=None) -> None:
+    """Registra la diferencia cambiaria entre lo que se debía (original_mxn,
+    convertido al TC del día de la operación) y lo que efectivamente se pagó
+    en pesos al TC del día del pago (paid_mxn).
+    Si abs(diff) < 0.01, no genera póliza."""
+    policy = await get_active_policy(db, branch_id=branch_id)
+    if policy.fx_scheme != "transaction_date":
+        return  # month_end_close se maneja en cierre mensual, no aquí
+    m = await get_account_map(db)
+    fx_gain = m.get("fx_gain")
+    fx_loss = m.get("fx_loss")
+    suppliers = m.get("suppliers")
+    if not suppliers:
+        return
+    diff = round(paid_mxn - original_mxn, 2)
+    if abs(diff) < 0.01:
+        return
+    if diff > 0:
+        # Se pagó más pesos de los que se debía → pérdida cambiaria
+        if not fx_loss:
+            return
+        specs = [(fx_loss, diff, 0.0), (suppliers, 0.0, diff)]
+    else:
+        # Se pagó menos pesos de los que se debía → ganancia cambiaria
+        gain = abs(diff)
+        if not fx_gain:
+            return
+        specs = [(suppliers, gain, 0.0), (fx_gain, 0.0, gain)]
+    await _auto_entry(
+        db, source=f"dif_cambio:{source_ref}", entry_type="diario",
+        concept=concept, specs=specs, branch_id=branch_id, user_id=user_id,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HOOK 9 — DEPRECIACIÓN MENSUAL AUTOMÁTICA (línea recta, LISR art. 34)
+#
+# Al final de cada mes calendario, para cada activo activo:
+#   monthly_depr = (acquisition_cost - salvage_value) × annual_rate_pct / 100 / 12
+# Y se genera póliza:
+#   Cargo Gasto de depreciación / Abono Depreciación acumulada
+# Se detiene automáticamente cuando accumulated_depreciation >= (cost - salvage).
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _monthly_depreciation(asset: models.FixedAsset) -> float:
+    """Depreciación mensual usando línea recta. Considera:
+    - No exceder el valor depreciable (cost - salvage)
+    - No depreciar activos dados de baja
+    - Máximo (annual_rate_pct / 12) del costo depreciable
+    """
+    if not asset.is_active or asset.disposed_at is not None:
+        return 0.0
+    depreciable_base = float(asset.acquisition_cost or 0.0) - float(asset.salvage_value or 0.0)
+    if depreciable_base <= 0:
+        return 0.0
+    already = float(asset.accumulated_depreciation or 0.0)
+    remaining = depreciable_base - already
+    if remaining <= 0:
+        return 0.0
+    monthly = depreciable_base * float(asset.annual_rate_pct or 0.0) / 100.0 / 12.0
+    # No pasarnos del remanente en el último mes
+    return round(min(monthly, remaining), 2)
+
+
+async def record_monthly_depreciation(db: AsyncSession, *, year: int, month: int,
+                                       branch_id=None, user_id=None) -> dict:
+    """Corre la depreciación de TODOS los activos activos para el mes dado.
+    Genera UNA póliza consolidada (Cargo Depreciación / Abono Depr. acumulada)
+    para todos los activos, más filas separadas si usan cuentas distintas.
+    Idempotente por source='depreciacion:{year}-{month}'."""
+    from calendar import monthrange
+    last_day = monthrange(year, month)[1]
+    posting_date = datetime(year, month, last_day, 23, 59, 59, tzinfo=timezone.utc)
+
+    policy = await get_active_policy(db, at_date=posting_date, branch_id=branch_id)
+    if policy.depreciation_scheme != "straight_line_monthly":
+        return {"skipped": True, "reason": "policy is not straight_line_monthly"}
+
+    # Guardia: no duplicar
+    existing = (await db.execute(
+        select(models.JournalEntry).where(
+            models.JournalEntry.source == f"depreciacion:{year}-{month:02d}",
+            models.JournalEntry.status != "cancelled",
+        )
+    )).scalars().first()
+    if existing:
+        return {"skipped": True, "reason": f"ya existe póliza {existing.folio}"}
+
+    # Cargar activos activos
+    assets = (await db.execute(
+        select(models.FixedAsset).where(
+            models.FixedAsset.is_active == True,  # noqa: E712
+            models.FixedAsset.acquisition_date <= posting_date,
+        )
+    )).scalars().all()
+
+    m = await get_account_map(db)
+    default_expense = m.get("expenses")
+    # Buscamos cuenta 1204 Depreciación acumulada por default
+    accounts_by_code = {a.code: a for a in await list_accounts(db)}
+    default_accum = accounts_by_code.get("1204")
+
+    # Agregar cargos y abonos por cuenta (para consolidar si varios activos usan
+    # las mismas cuentas)
+    charges = defaultdict(float)   # {account_id: monto de cargo}
+    credits = defaultdict(float)   # {account_id: monto de abono}
+    total_monthly = 0.0
+    depreciated_assets: list[dict] = []
+
+    for asset in assets:
+        monthly = _monthly_depreciation(asset)
+        if monthly <= 0:
+            continue
+        expense_acc = asset.expense_account_id or (default_expense if default_expense else None)
+        accum_acc = asset.accumulated_depr_account_id or (default_accum.id if default_accum else None)
+        if not expense_acc or not accum_acc:
+            continue
+        charges[expense_acc] += monthly
+        credits[accum_acc] += monthly
+        # Actualizar snapshot del activo
+        asset.accumulated_depreciation = round(float(asset.accumulated_depreciation or 0.0) + monthly, 2)
+        total_monthly += monthly
+        depreciated_assets.append({"asset_id": asset.id, "name": asset.name, "amount": monthly})
+
+    if total_monthly <= 0:
+        return {"skipped": True, "reason": "no hay depreciación para el mes"}
+
+    specs = []
+    for acc_id, amt in charges.items():
+        specs.append((acc_id, round(amt, 2), 0.0))
+    for acc_id, amt in credits.items():
+        specs.append((acc_id, 0.0, round(amt, 2)))
+
+    await _auto_entry(
+        db, source=f"depreciacion:{year}-{month:02d}", entry_type="diario",
+        concept=f"Depreciación mensual — {year}-{month:02d} ({len(depreciated_assets)} activos)",
+        specs=specs, branch_id=branch_id, user_id=user_id,
+    )
+    return {
+        "year": year, "month": month, "total": round(total_monthly, 2),
+        "assets_depreciated": depreciated_assets,
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CRUD de activos fijos (Hook 9 apoyo)
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def create_fixed_asset(db: AsyncSession, data: dict,
+                              user_id: Optional[int] = None) -> models.FixedAsset:
+    annual_rate = float(data.get("annual_rate_pct") or 0.0)
+    useful_life_months = int(round(1200.0 / annual_rate)) if annual_rate > 0 else 120
+    asset = models.FixedAsset(
+        name=data["name"],
+        category=data.get("category"),
+        acquisition_date=data["acquisition_date"],
+        acquisition_cost=data["acquisition_cost"],
+        salvage_value=data.get("salvage_value", 0.0),
+        annual_rate_pct=annual_rate,
+        useful_life_months=useful_life_months,
+        asset_account_id=data.get("asset_account_id"),
+        accumulated_depr_account_id=data.get("accumulated_depr_account_id"),
+        expense_account_id=data.get("expense_account_id"),
+        branch_id=data.get("branch_id"),
+        notes=data.get("notes"),
+        created_by_id=user_id,
+    )
+    db.add(asset)
+    await db.commit()
+    await db.refresh(asset)
+    return asset
+
+
+async def list_fixed_assets(db: AsyncSession, only_active: bool = True) -> list:
+    stmt = select(models.FixedAsset).order_by(
+        models.FixedAsset.acquisition_date.desc(), models.FixedAsset.id.desc()
+    )
+    if only_active:
+        stmt = stmt.where(models.FixedAsset.is_active == True)  # noqa: E712
+    return (await db.execute(stmt)).scalars().all()
+
+
+async def dispose_fixed_asset(db: AsyncSession, asset_id: int,
+                               user_id: Optional[int] = None) -> Optional[models.FixedAsset]:
+    asset = await db.get(models.FixedAsset, asset_id)
+    if not asset:
+        return None
+    asset.is_active = False
+    asset.disposed_at = _now()
+    await db.commit()
+    await db.refresh(asset)
+    return asset

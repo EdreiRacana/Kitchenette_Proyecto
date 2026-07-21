@@ -825,6 +825,24 @@ async def approve_period(db: AsyncSession, period_id: int, user_id: Optional[int
     period.status = "approved"
     period.approved_by_id = user_id
     period.approved_at = datetime.utcnow()
+
+    # ── Hook 6 contable: póliza de nómina al aprobar ────────────────────
+    try:
+        details_res = await db.execute(
+            select(models.PayrollDetail).where(models.PayrollDetail.period_id == period_id)
+        )
+        details = details_res.scalars().all()
+        from app.modules.accounting import service as acc
+        await acc.record_payroll_period(
+            db, period_id=period.id, period_name=period.name or f"#{period.id}",
+            details=details, user_id=user_id,
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "hook contable nómina falló", extra={"period_id": period_id, "error": str(e)}, exc_info=True,
+        )
+
     await db.commit()
     await _log_audit(db, user_id, "APPROVE_PAYROLL", f"Período '{period.name}' aprobado", {"id": period_id})
     return await get_period_detail(db, period_id)
@@ -867,10 +885,26 @@ async def disperse_period(db: AsyncSession, period_id: int, user_id: Optional[in
     if period.status != "approved":
         raise ValueError("Solo se pueden dispersar períodos aprobados")
     res2 = await db.execute(select(models.PayrollDetail).where(models.PayrollDetail.period_id == period_id))
-    for d in res2.scalars().all():
+    details = res2.scalars().all()
+    total_net = sum(float(getattr(d, "total_net", 0.0) or 0.0) for d in details)
+    for d in details:
         d.dispersion_status = "confirmado"
     period.status = "dispersed"
     period.dispersed_at = datetime.utcnow()
+
+    # ── Hook 6 contable: pago de nómina al dispersar ────────────────────
+    try:
+        from app.modules.accounting import service as acc
+        await acc.record_payroll_dispersion(
+            db, period_id=period.id, period_name=period.name or f"#{period.id}",
+            total_net=total_net, user_id=user_id,
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "hook contable pago nómina falló", extra={"period_id": period_id, "error": str(e)}, exc_info=True,
+        )
+
     await db.commit()
     await _log_audit(db, user_id, "DISPERSE_PAYROLL", f"Período '{period.name}' dispersado", {"id": period_id})
     return await get_period_detail(db, period_id)

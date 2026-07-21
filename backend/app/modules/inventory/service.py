@@ -620,6 +620,8 @@ async def create_purchase_order(db: AsyncSession, po_in: schemas.PurchaseOrderCr
         notes=po_in.notes, status=PurchaseOrderStatus.ORDERED.value, user_id=user_id,
         total_amount=total_amount, paid_amount=0.0, due_date=po_in.due_date,
         extra_costs=extras, landed_cost_allocation=method,
+        currency=(po_in.currency or "MXN"),
+        fx_rate=float(po_in.fx_rate or 1.0),
     )
     db.add(po)
     await db.flush()
@@ -898,6 +900,28 @@ async def pay_purchase_order(db: AsyncSession, po_id: int, pay_in: "schemas.Supp
             concept=f"Pago a proveedor — OC {po.folio or '#' + str(po.id)}",
             user_id=user_id,
         )
+
+        # ── Hook 8: Diferencia cambiaria si la OC es en moneda extranjera ──
+        # La OC se recibió a un TC (fx_rate); el pago es en MXN al TC del día.
+        # Si el proveedor factura en USD/EUR, el importe pagado en MXN puede
+        # diferir de lo originalmente registrado en Proveedores.
+        po_currency = getattr(po, "currency", "MXN") or "MXN"
+        if po_currency != "MXN":
+            po_fx = float(getattr(po, "fx_rate", 1.0) or 1.0)
+            # `pay_in.amount` viene en MXN ya (el usuario ingresa lo que sale del banco)
+            # Fracción del pago sobre el total (para calcular la porción original)
+            paid_mxn = float(pay_in.amount)
+            frac = paid_mxn / total_po if total_po > 0 else 0.0
+            # Lo que "debía" ser (a TC original): frac × total en divisa × po_fx
+            # Como total_po ya está en MXN al TC original, la parte original = frac × total_po
+            original_portion = round(frac * total_po, 2)
+            if abs(paid_mxn - original_portion) >= 0.01:
+                await acc.record_fx_difference(
+                    db, source_ref=f"po:{po.id}:pay:{last_payment or 0}",
+                    original_mxn=original_portion, paid_mxn=paid_mxn,
+                    concept=f"Diferencia cambiaria — OC {po.folio or '#' + str(po.id)} ({po_currency})",
+                    user_id=user_id,
+                )
     except Exception as e:
         log.warning("hook contable pago proveedor falló", extra={"po_id": po.id, "error": str(e)}, exc_info=True)
 

@@ -106,6 +106,27 @@ export interface AccountMapItem {
     account_name?: string | null;
 }
 
+// ── Activos fijos y depreciación (Hook 9) ────────────────────────────────────
+export interface FixedAsset {
+    id?: number;
+    name: string;
+    category?: string;
+    acquisition_date: string;
+    acquisition_cost: number;
+    salvage_value?: number;
+    annual_rate_pct: number;
+    useful_life_months?: number;
+    asset_account_id?: number | null;
+    accumulated_depr_account_id?: number | null;
+    expense_account_id?: number | null;
+    is_active?: boolean;
+    disposed_at?: string | null;
+    accumulated_depreciation?: number;
+    branch_id?: number | null;
+    notes?: string | null;
+    created_at?: string;
+}
+
 // ── Políticas contables (Fase 4) — versionadas por effective_from ─────────────
 export interface WithholdingRate { isr: number; iva: number; }
 export interface AccountingPolicy {
@@ -165,6 +186,22 @@ export const accountingService = {
     upsertPolicy: async (data: Partial<AccountingPolicy>) =>
         (await api.put<AccountingPolicy>('/accounting/policies', data)).data,
     listPolicies: async () => (await api.get<AccountingPolicy[]>('/accounting/policies')).data,
+
+    // Cierre anual del ejercicio (Hook 10)
+    closeYear: async (year: number) => (await api.post<{
+        year: number; total_ingresos: number; total_costos_gastos: number;
+        utilidad_neta: number; cuentas_cerradas: number;
+    }>(`/accounting/close-year/${year}`)).data,
+
+    // Activos fijos y depreciación (Hook 9)
+    listFixedAssets: async (onlyActive = true) =>
+        (await api.get<FixedAsset[]>('/accounting/fixed-assets', { params: { only_active: onlyActive } })).data,
+    createFixedAsset: async (data: Partial<FixedAsset>) =>
+        (await api.post<FixedAsset>('/accounting/fixed-assets', data)).data,
+    disposeFixedAsset: async (id: number) =>
+        (await api.post<FixedAsset>(`/accounting/fixed-assets/${id}/dispose`)).data,
+    runDepreciation: async (year: number, month: number) =>
+        (await api.post<{ year: number; month: number; total: number; assets_depreciated: any[] } | { skipped: boolean; reason: string }>(`/accounting/depreciation/run/${year}/${month}`)).data,
 
     // Contabilidad Electrónica SAT (XML del Anexo 24)
     downloadSatCatalogo: (params: any) => downloadXml('/accounting/sat/catalogo', params),
