@@ -4,7 +4,7 @@ Catálogo de cuentas + pólizas (asientos) con movimientos de cargo/abono. Todo
 calculado de pólizas contabilizadas (status='posted'); las canceladas se
 excluyen de saldos. Sin dependencias externas.
 """
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -84,6 +84,86 @@ class JournalLine(Base):
 
     entry = relationship("JournalEntry", back_populates="lines")
     account = relationship("Account")
+
+
+class AccountingPolicy(Base):
+    """Políticas contables por empresa/sucursal, con versionado por fecha efectiva.
+    Cuando el contador cambia una política, se crea un registro NUEVO con la nueva
+    effective_from y el anterior queda como histórico. Los hooks buscan la política
+    vigente al momento de la operación (no la última) — así una póliza generada en
+    junio respeta la política que estaba activa en junio, no la de julio.
+
+    Compatible con las tres principales prácticas mexicanas:
+      - Régimen general PM (devengado)
+      - RESICO / persona física actividad empresarial (flujo)
+      - Régimen simplificado
+    """
+    __tablename__ = "accounting_policies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
+
+    # #1 IVA acreditable (compras)
+    #   pending_payment: 1106 al recibir, se pasa a 1105 al pagar (base flujo)
+    #   direct_paid:     1105 directo al recibir (base devengado clásico)
+    iva_acreditable_scheme = Column(String, default="pending_payment", nullable=False)
+
+    # #2 IVA trasladado (ventas)
+    #   pending_collection: 2104 al vender, se pasa a 2103 al cobrar (base flujo)
+    #   direct_collected:   2103 directo al vender (base devengado clásico)
+    iva_trasladado_scheme = Column(String, default="pending_collection", nullable=False)
+
+    # #3 Costo de ventas
+    #   perpetual: póliza al vender con el costo FIFO integrado (recomendado)
+    #   analytic:  al cierre mensual: inv. inicial + compras − inv. final
+    cogs_scheme = Column(String, default="perpetual", nullable=False)
+
+    # #4 Reconocimiento de compra
+    #   on_receive: al recibir la mercancía (recomendado, esencia sobre forma NIF A-2)
+    #   on_bill:    al capturar la factura del proveedor
+    #   on_pay:     al momento del pago (solo si el cliente es 100% flujo)
+    purchase_recognition = Column(String, default="on_receive", nullable=False)
+
+    # #5 Nómina
+    #   itemized:      desglose completo (sueldos + patronal + provisiones + retenciones)
+    #   consolidated:  todo consolidado en Sueldos
+    #   admin_expense: cargado como gasto único de administración
+    payroll_scheme = Column(String, default="itemized", nullable=False)
+
+    # #6 Gastos operativos
+    #   accrual: devengado (al capturar en Finanzas)
+    #   cash:    flujo (al pagar)
+    expense_basis = Column(String, default="accrual", nullable=False)
+
+    # #7 Retenciones a proveedores
+    withholding_enabled = Column(Boolean, default=True, nullable=False)
+    # Tasas por tipo de proveedor (JSON: {"honorarios": {"isr":10,"iva":10.6667}, ...})
+    # Vive en JSON para que se ajuste sin migración cuando SAT actualice tasas.
+    withholding_rates = Column(JSON, nullable=True)
+
+    # #8 Tipo de cambio
+    #   transaction_date: TC del día de la operación + póliza de dif. cambiaria al pagar
+    #   month_end_close:  ajuste solo al cierre mensual (menos preciso)
+    fx_scheme = Column(String, default="transaction_date", nullable=False)
+
+    # #9 Provisión de beneficios laborales (aguinaldo, prima vacacional)
+    #   monthly_provision: provisión de 1/12 mensual (NIF D-3, evita salto en dic)
+    #   at_payment:        registro solo al momento del pago
+    labor_benefits_scheme = Column(String, default="monthly_provision", nullable=False)
+
+    # #10 Depreciación
+    #   straight_line_monthly: línea recta automática mensual (LISR art. 34)
+    #   manual:                el contador la registra a mano
+    depreciation_scheme = Column(String, default="straight_line_monthly", nullable=False)
+
+    # Metadatos de versionado y auditoría
+    effective_from = Column(DateTime(timezone=True), nullable=False, index=True)
+    status = Column(String, default="active", nullable=False, index=True)  # active | superseded
+    superseded_at = Column(DateTime(timezone=True), nullable=True)
+    superseded_by_id = Column(Integer, ForeignKey("accounting_policies.id"), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class PeriodClose(Base):

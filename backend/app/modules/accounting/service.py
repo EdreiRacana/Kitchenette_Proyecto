@@ -481,18 +481,26 @@ async def income_statement(db: AsyncSession, date_from: Optional[datetime] = Non
 # ── Pólizas automáticas (Fase 3): mapeo de cuentas + generación desde operación ─
 ROLE_DEFAULTS = {
     "bank": "1102", "cash": "1101", "clients": "1103", "sales": "4101",
-    "iva_trasladado": "2103", "iva_acreditable": "1105", "suppliers": "2101",
-    "inventory": "1107", "cogs": "5101", "expenses": "6101",
+    "iva_trasladado": "2103", "iva_trasladado_pending": "2104",
+    "iva_acreditable": "1105", "iva_acreditable_pending": "1106",
+    "suppliers": "2101", "inventory": "1107", "cogs": "5101", "expenses": "6101",
     "payroll_payable": "2102", "taxes_withheld": "2106",
+    # Diferencia cambiaria (política #8)
+    "fx_gain": "4103", "fx_loss": "6103",
 }
 ROLE_LABELS = {
     "bank": "Bancos (cobros/pagos)", "cash": "Caja", "clients": "Clientes", "sales": "Ventas",
-    "iva_trasladado": "IVA trasladado (cobrado)", "iva_acreditable": "IVA acreditable",
+    "iva_trasladado": "IVA trasladado (cobrado)",
+    "iva_trasladado_pending": "IVA trasladado pendiente de cobro",
+    "iva_acreditable": "IVA acreditable (pagado)",
+    "iva_acreditable_pending": "IVA acreditable pendiente de pago",
     "suppliers": "Proveedores", "inventory": "Inventarios", "cogs": "Costo de ventas",
     "expenses": "Gastos", "payroll_payable": "Sueldos por pagar", "taxes_withheld": "Impuestos retenidos",
+    "fx_gain": "Ganancia cambiaria", "fx_loss": "Pérdida cambiaria",
 }
-ROLE_ORDER = ["bank", "cash", "clients", "sales", "iva_trasladado", "iva_acreditable",
-              "suppliers", "inventory", "cogs", "expenses", "payroll_payable", "taxes_withheld"]
+ROLE_ORDER = ["bank", "cash", "clients", "sales", "iva_trasladado", "iva_trasladado_pending",
+              "iva_acreditable", "iva_acreditable_pending", "suppliers", "inventory", "cogs",
+              "expenses", "payroll_payable", "taxes_withheld", "fx_gain", "fx_loss"]
 
 
 async def get_account_map(db: AsyncSession) -> dict:
@@ -570,9 +578,14 @@ async def _auto_entry(db: AsyncSession, *, source: str, entry_type: str, concept
 
 async def record_sale(db: AsyncSession, *, order_id: int, total: float, tax: float,
                       concept: str, branch_id=None, user_id=None) -> None:
-    """Devengo de la venta: cargo Clientes / abono Ventas (+ IVA trasladado)."""
+    """Devengo de la venta: cargo Clientes / abono Ventas (+ IVA trasladado).
+    La cuenta de IVA (2103 cobrado directo vs 2104 pendiente de cobro) depende
+    de la política contable vigente (#2 iva_trasladado_scheme)."""
+    policy = await get_active_policy(db, branch_id=branch_id)
     m = await get_account_map(db)
-    clients, sales, iva = m.get("clients"), m.get("sales"), m.get("iva_trasladado")
+    clients, sales = m.get("clients"), m.get("sales")
+    iva_role = _pick_iva_trasladado_role(policy)
+    iva = m.get(iva_role)
     if not clients or not sales:
         return
     total = _r(total)
@@ -590,18 +603,37 @@ async def record_sale(db: AsyncSession, *, order_id: int, total: float, tax: flo
 
 
 async def record_payment(db: AsyncSession, *, order_id: int, paid_cumulative: float,
-                         amount: float, concept: str, branch_id=None, user_id=None) -> None:
-    """Cobro: cargo Bancos / abono Clientes."""
+                         amount: float, concept: str, branch_id=None, user_id=None,
+                         tax_portion: float = 0.0) -> None:
+    """Cobro: cargo Bancos / abono Clientes.
+    Si política #2 = pending_collection, además genera un pase de IVA:
+    Cargo IVA trasladado cobrado (2103) / Abono IVA pendiente cobro (2104).
+    tax_portion: parte del pago que corresponde a IVA (se calcula upstream).
+    """
+    policy = await get_active_policy(db, branch_id=branch_id)
     m = await get_account_map(db)
     bank, clients = m.get("bank"), m.get("clients")
     if not bank or not clients:
         return
     amount = _r(amount)
+    tax_portion = _r(tax_portion or 0)
     if amount <= 0:
         return
     await _auto_entry(db, source=f"cobro:{order_id}:{_r(paid_cumulative)}", entry_type="ingreso",
                       concept=concept, specs=[(bank, amount, 0.0), (clients, 0.0, amount)],
                       branch_id=branch_id, user_id=user_id)
+
+    # Pase de IVA pendiente → cobrado si aplica
+    if policy.iva_trasladado_scheme == "pending_collection" and tax_portion > 0:
+        iva_col = m.get("iva_trasladado")
+        iva_pend = m.get("iva_trasladado_pending")
+        if iva_col and iva_pend:
+            await _auto_entry(
+                db, source=f"cobro_iva:{order_id}:{_r(paid_cumulative)}", entry_type="diario",
+                concept=f"Traslado IVA cobrado — {concept}",
+                specs=[(iva_pend, tax_portion, 0.0), (iva_col, 0.0, tax_portion)],
+                branch_id=branch_id, user_id=user_id,
+            )
 
 
 async def void_order(db: AsyncSession, *, order_id: int) -> None:
@@ -733,3 +765,312 @@ async def reopen_period(db: AsyncSession, year: int, month: int,
     await db.commit()
     return {"period": f"{year}-{month:02d}", "status": "reopened",
             "reopened_at": pc.reopened_at.isoformat()}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# POLÍTICAS CONTABLES — versionadas por effective_from
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Cada hook automático consulta la política vigente al momento de la operación,
+# no la última. Esto garantiza que una venta de junio genere pólizas conforme
+# a la política que estaba activa en junio, aunque el contador cambie la
+# política en julio.
+#
+# Tasas de retención por defecto — 2026, LISR/LIVA vigentes. Editables sin
+# migración porque viven en la columna JSON `withholding_rates`.
+#   - honorarios (persona física servicios profesionales): ISR 10%, IVA 10.6667%
+#   - arrendamiento (persona física): ISR 10%, IVA 10.6667%
+#   - autotransporte de carga: IVA 4%
+#   - fletes (persona moral autotransporte): IVA 4%
+DEFAULT_WITHHOLDING_RATES = {
+    "honorarios":       {"isr": 10.0,  "iva": 10.6667},
+    "arrendamiento":    {"isr": 10.0,  "iva": 10.6667},
+    "autotransporte":   {"isr": 0.0,   "iva": 4.0},
+    "servicios":        {"isr": 0.0,   "iva": 0.0},        # PM general: sin retención
+    "productos":        {"isr": 0.0,   "iva": 0.0},        # PM general: sin retención
+}
+
+
+async def get_active_policy(db: AsyncSession, at_date: Optional[datetime] = None,
+                            branch_id: Optional[int] = None) -> models.AccountingPolicy:
+    """Devuelve la política vigente al momento `at_date`. Si no hay ninguna,
+    crea (y regresa) la política default. NUNCA falla por 'sin config'."""
+    at_date = at_date or _now()
+    stmt = (
+        select(models.AccountingPolicy)
+        .where(models.AccountingPolicy.effective_from <= at_date)
+        .order_by(models.AccountingPolicy.effective_from.desc(),
+                  models.AccountingPolicy.id.desc())
+    )
+    if branch_id is not None:
+        # Prioridad: política de la sucursal → política global (branch_id NULL)
+        stmt = stmt.where(
+            or_(models.AccountingPolicy.branch_id == branch_id,
+                models.AccountingPolicy.branch_id.is_(None))
+        )
+    else:
+        stmt = stmt.where(models.AccountingPolicy.branch_id.is_(None))
+    row = (await db.execute(stmt)).scalars().first()
+    if row is not None:
+        return row
+    # Ninguna política registrada — crear default y regresarla
+    default = models.AccountingPolicy(
+        effective_from=at_date, status="active",
+        withholding_rates=DEFAULT_WITHHOLDING_RATES,
+    )
+    db.add(default)
+    await db.flush()
+    return default
+
+
+async def upsert_policy(db: AsyncSession, data: dict, user_id: Optional[int] = None,
+                        branch_id: Optional[int] = None) -> models.AccountingPolicy:
+    """Guarda una política nueva con `effective_from`. Si ya hay política
+    vigente con esa misma fecha, la actualiza in-place; si no, crea nueva y
+    marca la anterior como superseded para dejar rastro auditable."""
+    effective_from = data.get("effective_from") or _now()
+    if isinstance(effective_from, str):
+        effective_from = datetime.fromisoformat(effective_from.replace("Z", "+00:00"))
+    if effective_from.tzinfo is None:
+        effective_from = effective_from.replace(tzinfo=timezone.utc)
+
+    # Bloqueo: no permitir efectivo en un período ya cerrado
+    if await is_period_closed(db, effective_from):
+        raise ValueError(
+            f"No puedes fijar la política vigente en un período ya cerrado "
+            f"({effective_from.year}-{effective_from.month:02d}). Elige una fecha posterior."
+        )
+
+    # ¿Ya existe una política EXACTAMENTE con esa fecha? → update in-place
+    same_day = (await db.execute(
+        select(models.AccountingPolicy).where(
+            models.AccountingPolicy.effective_from == effective_from,
+            models.AccountingPolicy.branch_id == branch_id,
+        )
+    )).scalars().first()
+    target = same_day
+    if target is None:
+        # Marca la política vigente anterior como superseded
+        prev = await get_active_policy(db, effective_from, branch_id)
+        if prev.id is not None:  # no marcar el default recién creado in-memory
+            prev.status = "superseded"
+            prev.superseded_at = _now()
+        target = models.AccountingPolicy(
+            effective_from=effective_from, status="active",
+            branch_id=branch_id, created_by_id=user_id,
+        )
+        db.add(target)
+        if prev.id is not None:
+            await db.flush()
+            prev.superseded_by_id = target.id
+
+    _POLICY_FIELDS = (
+        "iva_acreditable_scheme", "iva_trasladado_scheme", "cogs_scheme",
+        "purchase_recognition", "payroll_scheme", "expense_basis",
+        "withholding_enabled", "withholding_rates", "fx_scheme",
+        "labor_benefits_scheme", "depreciation_scheme", "notes",
+    )
+    for f in _POLICY_FIELDS:
+        if f in data:
+            setattr(target, f, data[f])
+    if target.withholding_rates is None:
+        target.withholding_rates = DEFAULT_WITHHOLDING_RATES
+
+    await db.commit()
+    await db.refresh(target)
+    return target
+
+
+async def list_policies(db: AsyncSession, branch_id: Optional[int] = None) -> list:
+    """Historial de políticas, más recientes primero. Para auditoría."""
+    stmt = select(models.AccountingPolicy).order_by(
+        models.AccountingPolicy.effective_from.desc(),
+        models.AccountingPolicy.id.desc(),
+    )
+    if branch_id is not None:
+        stmt = stmt.where(
+            or_(models.AccountingPolicy.branch_id == branch_id,
+                models.AccountingPolicy.branch_id.is_(None))
+        )
+    return (await db.execute(stmt)).scalars().all()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HOOKS DE POLÍTICAS APLICADAS — record_sale / record_payment ajustadas
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _pick_iva_trasladado_role(policy: models.AccountingPolicy) -> str:
+    """Devuelve el ROL del AccountMap que corresponde según política #2."""
+    if policy.iva_trasladado_scheme == "direct_collected":
+        return "iva_trasladado"
+    return "iva_trasladado_pending"
+
+
+def _pick_iva_acreditable_role(policy: models.AccountingPolicy) -> str:
+    """Devuelve el ROL del AccountMap que corresponde según política #1."""
+    if policy.iva_acreditable_scheme == "direct_paid":
+        return "iva_acreditable"
+    return "iva_acreditable_pending"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HOOK 3 — Recepción de OC (compra):
+#   Cargo: Inventarios (con landed cost)
+#   Cargo: IVA acreditable (pendiente o pagado según política #1)
+#   Abono: Proveedores
+#   [Opcional] Abono: Impuestos retenidos por pagar (si política #7 activa)
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def record_purchase_receipt(db: AsyncSession, *, po_id: int,
+                                  goods_total: float, tax_total: float,
+                                  withholding_isr: float = 0.0,
+                                  withholding_iva: float = 0.0,
+                                  concept: str, branch_id=None, user_id=None) -> None:
+    """Devengo de la compra al recibir la OC.
+    goods_total: total mercancía a costo (incluye landed cost prorrateado)
+    tax_total:   IVA trasladado por el proveedor (16% típicamente)
+    withholding_*: retenciones al proveedor (política #7, ya calculadas)
+    """
+    policy = await get_active_policy(db, branch_id=branch_id)
+    if policy.purchase_recognition != "on_receive":
+        # Si el cliente usa on_bill / on_pay, el hook se dispara desde otro flujo
+        return
+    m = await get_account_map(db)
+    inv, sup = m.get("inventory"), m.get("suppliers")
+    iva_role = _pick_iva_acreditable_role(policy)
+    iva_acc = m.get(iva_role)
+    if not inv or not sup:
+        return
+    goods_total = _r(goods_total)
+    tax_total = _r(tax_total or 0)
+    withholding_isr = _r(withholding_isr or 0)
+    withholding_iva = _r(withholding_iva or 0)
+    if goods_total <= 0:
+        return
+    specs = [(inv, goods_total, 0.0)]
+    if iva_acc and tax_total > 0:
+        specs.append((iva_acc, tax_total, 0.0))
+    supplier_credit = goods_total + tax_total - withholding_isr - withholding_iva
+    specs.append((sup, 0.0, supplier_credit))
+    if withholding_isr > 0 or withholding_iva > 0:
+        tw = m.get("taxes_withheld")
+        if tw:
+            if withholding_isr > 0:
+                specs.append((tw, 0.0, withholding_isr))
+            if withholding_iva > 0:
+                specs.append((tw, 0.0, withholding_iva))
+    await _auto_entry(db, source=f"compra:{po_id}", entry_type="egreso",
+                      concept=concept, specs=specs, branch_id=branch_id, user_id=user_id)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HOOK 4 — Pago a proveedor:
+#   Cargo: Proveedores
+#   Abono: Bancos
+#   [Opcional] Cargo: IVA acreditable pagado / Abono: IVA acreditable pendiente
+#             (pase por política #1 = pending_payment)
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def record_supplier_payment(db: AsyncSession, *, po_id: int, payment_id: int,
+                                  amount: float, tax_portion: float = 0.0,
+                                  concept: str, branch_id=None, user_id=None) -> None:
+    """Pago (parcial o total) a proveedor.
+    amount: importe pagado en pesos
+    tax_portion: fracción del pago que corresponde a IVA (para pase pendiente→pagado)
+    """
+    policy = await get_active_policy(db, branch_id=branch_id)
+    m = await get_account_map(db)
+    bank, sup = m.get("bank"), m.get("suppliers")
+    if not bank or not sup:
+        return
+    amount = _r(amount)
+    tax_portion = _r(tax_portion or 0)
+    if amount <= 0:
+        return
+
+    # Póliza principal: Cargo Proveedores / Abono Bancos
+    await _auto_entry(
+        db, source=f"pago_prov:{po_id}:{payment_id}", entry_type="egreso",
+        concept=concept, specs=[(sup, amount, 0.0), (bank, 0.0, amount)],
+        branch_id=branch_id, user_id=user_id,
+    )
+
+    # Pase de IVA pendiente → pagado (solo si política #1 = pending_payment)
+    if policy.iva_acreditable_scheme == "pending_payment" and tax_portion > 0:
+        iva_paid = m.get("iva_acreditable")
+        iva_pending = m.get("iva_acreditable_pending")
+        if iva_paid and iva_pending:
+            await _auto_entry(
+                db, source=f"pago_prov_iva:{po_id}:{payment_id}", entry_type="diario",
+                concept=f"Traslado IVA acreditable — {concept}",
+                specs=[(iva_paid, tax_portion, 0.0), (iva_pending, 0.0, tax_portion)],
+                branch_id=branch_id, user_id=user_id,
+            )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HOOK 5 — Costo de ventas al vender (política #3 = perpetual):
+#   Cargo: Costo de ventas
+#   Abono: Inventarios
+# El costo unitario ya viene del FIFO integrado (con landed cost) por partida.
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def record_cogs_at_sale(db: AsyncSession, *, order_id: int, total_cost: float,
+                              concept: str, branch_id=None, user_id=None) -> None:
+    """Registro perpetuo del costo de ventas al momento de la venta. Se llama
+    desde sales._apply_stock_for_items después de consumir stock por FIFO."""
+    policy = await get_active_policy(db, branch_id=branch_id)
+    if policy.cogs_scheme != "perpetual":
+        return  # analítico → se hace al cierre mensual, no aquí
+    m = await get_account_map(db)
+    cogs, inv = m.get("cogs"), m.get("inventory")
+    if not cogs or not inv:
+        return
+    total_cost = _r(total_cost)
+    if total_cost <= 0:
+        return
+    await _auto_entry(
+        db, source=f"cogs:{order_id}", entry_type="egreso", concept=concept,
+        specs=[(cogs, total_cost, 0.0), (inv, 0.0, total_cost)],
+        branch_id=branch_id, user_id=user_id,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Cancelación en cascada — cuando se cancela una operación con pólizas hijas,
+# también se cancelan las asociadas (COGS y pase de IVA).
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def void_sale_cascade(db: AsyncSession, *, order_id: int) -> None:
+    """Cancela la póliza principal, la de COGS y el pase de IVA (si existieran).
+    NO hace commit — el flujo anfitrión lo hace."""
+    res = await db.execute(
+        select(models.JournalEntry).where(
+            or_(
+                models.JournalEntry.source == f"venta:{order_id}",
+                models.JournalEntry.source == f"cogs:{order_id}",
+                models.JournalEntry.source.like(f"cobro:{order_id}:%"),
+            ),
+            models.JournalEntry.status != "cancelled",
+        )
+    )
+    for e in res.scalars().all():
+        e.status = "cancelled"
+        e.cancelled_at = _now()
+
+
+async def void_purchase_cascade(db: AsyncSession, *, po_id: int) -> None:
+    """Cancela la póliza de compra y sus pagos + pases de IVA."""
+    res = await db.execute(
+        select(models.JournalEntry).where(
+            or_(
+                models.JournalEntry.source == f"compra:{po_id}",
+                models.JournalEntry.source.like(f"pago_prov:{po_id}:%"),
+                models.JournalEntry.source.like(f"pago_prov_iva:{po_id}:%"),
+            ),
+            models.JournalEntry.status != "cancelled",
+        )
+    )
+    for e in res.scalars().all():
+        e.status = "cancelled"
+        e.cancelled_at = _now()

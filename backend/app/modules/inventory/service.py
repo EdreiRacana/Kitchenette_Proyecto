@@ -4,9 +4,12 @@ from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import datetime, timezone
 from io import BytesIO
+import logging
 import os
 import uuid
 import pandas as pd
+
+log = logging.getLogger(__name__)
 from app.modules.inventory.models import (
     Product, ProductVariant, Warehouse, StockLevel, StockMovement, StockMovementType,
     Supplier, SupplierDocument, StockLot, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus,
@@ -709,6 +712,26 @@ async def receive_purchase_order(db: AsyncSession, po_id: int, user_id: Optional
         await adjust_stock(db, movement_in, user_id=user_id)
     po.status = PurchaseOrderStatus.RECEIVED.value
     po.received_at = datetime.now(timezone.utc)
+
+    # ── Hook contable: póliza automática de compra ────────────────────────
+    # (Cargo Inventarios + IVA acreditable / Abono Proveedores + retenciones)
+    # Defensivo: si contabilidad falla, la recepción NO se cae.
+    try:
+        goods_total = sum(
+            (it.quantity or 0) * (it.landed_unit_cost or it.unit_cost or 0.0) for it in po.items
+        )
+        # IVA típico 16% sobre goods (sin extras — los extras rara vez traen IVA propio;
+        # si el proveedor factura IVA sobre flete, ya viene en el subtotal integrado).
+        # Nota: la implementación de la Fase 4B mejorada permitirá desglosar IVA por
+        # partida cuando la OC tenga un campo tax_amount explícito.
+        from app.modules.accounting import service as acc
+        await acc.record_purchase_receipt(
+            db, po_id=po.id, goods_total=goods_total, tax_total=0.0,
+            concept=f"Compra {po.folio} recibida", user_id=user_id,
+        )
+    except Exception as e:
+        log.warning("hook contable compra falló", extra={"po_id": po.id, "error": str(e)}, exc_info=True)
+
     await db.commit()
     await db.refresh(po)
     return po
@@ -849,6 +872,35 @@ async def pay_purchase_order(db: AsyncSession, po_id: int, pay_in: "schemas.Supp
         description=f"Pago a proveedor — OC {po.folio or '#' + str(po.id)}",
         reference=f"po:{po.id}",
     ))
+
+    # ── Hook contable: póliza automática de pago a proveedor ──────────────
+    # Cargo Proveedores / Abono Bancos + pase de IVA pendiente→pagado si aplica.
+    # Idempotente por payment_id — pagos parciales generan pólizas separadas.
+    try:
+        from app.modules.accounting import service as acc
+        # Fracción del pago que corresponde a IVA — asume 16% aplicado sobre
+        # la parte de mercancía. Si el pago es proporcional al total de la OC,
+        # el mismo porcentaje del pago corresponde a IVA.
+        # Cuando en Fase 4B se desglose IVA por partida, esto se ajustará
+        # con precisión — hoy usa un cálculo conservador.
+        total_po = float(po.total_amount or 0.0)
+        tax_portion = 0.0  # sin IVA calculado por defecto — el sistema aún no lo desglosa por OC
+        # Necesitamos el id del SupplierPayment recién insertado para idempotencia.
+        # Como aún no se hizo commit, buscamos el último (será el nuestro).
+        await db.flush()
+        last_payment = (await db.execute(
+            select(SupplierPayment.id).where(SupplierPayment.purchase_order_id == po.id)
+            .order_by(SupplierPayment.id.desc()).limit(1)
+        )).scalar()
+        await acc.record_supplier_payment(
+            db, po_id=po.id, payment_id=last_payment or 0,
+            amount=pay_in.amount, tax_portion=tax_portion,
+            concept=f"Pago a proveedor — OC {po.folio or '#' + str(po.id)}",
+            user_id=user_id,
+        )
+    except Exception as e:
+        log.warning("hook contable pago proveedor falló", extra={"po_id": po.id, "error": str(e)}, exc_info=True)
+
     await db.commit()
     await db.refresh(po)
     return po

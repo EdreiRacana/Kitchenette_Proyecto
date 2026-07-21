@@ -218,3 +218,42 @@ async def reopen_month(year: int, month: int, db: DB, current_user: CurrentUser,
         return await service.reopen_period(db, year, month, user_id=current_user.id, reason=reason)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+# ── Políticas contables (Fase 4) ─────────────────────────────────────────────
+
+@router.get("/policies/current", response_model=schemas.AccountingPolicyInDB)
+async def get_current_policy(db: DB, current_user: CurrentUser,
+                              branch_id: Optional[int] = None):
+    """Devuelve la política vigente HOY para la sucursal (o global si no se pasa)."""
+    from datetime import datetime, timezone
+    policy = await service.get_active_policy(db, at_date=datetime.now(timezone.utc),
+                                              branch_id=branch_id)
+    # Puede que sea la creada in-memory sin id; hacer commit para persistir
+    if policy.id is None:
+        await db.commit()
+        await db.refresh(policy)
+    return policy
+
+
+@router.get("/policies", response_model=List[schemas.AccountingPolicyInDB])
+async def list_policies(db: DB, current_user: CurrentUser,
+                         branch_id: Optional[int] = None):
+    """Historial completo de políticas (para auditoría). Más recientes primero."""
+    return await service.list_policies(db, branch_id=branch_id)
+
+
+@router.put("/policies", response_model=schemas.AccountingPolicyInDB)
+async def upsert_current_policy(data: schemas.AccountingPolicyIn, db: DB,
+                                 current_user: CurrentUser):
+    """Actualiza la política vigente. Si effective_from es hoy o el pasado
+    inmediato, actualiza in-place; si es futuro, crea una nueva versión con
+    esa fecha efectiva y marca la anterior como superseded (auditable)."""
+    try:
+        payload = data.model_dump(exclude_none=True)
+        policy = await service.upsert_policy(
+            db, payload, user_id=current_user.id, branch_id=data.branch_id,
+        )
+        return policy
+    except ValueError as e:
+        raise HTTPException(400, str(e))
