@@ -367,3 +367,111 @@ async def get_variant_valuation(variant_id: int, db: DB, current_user: CurrentUs
     for wh in warehouses:
         per_wh[wh] = await fifo_service.get_current_cost(db, variant_id, wh)
     return {"variant_id": variant_id, "per_warehouse": per_wh}
+
+
+# ── Traspasos entre almacenes (Stock Transfer Orders) ────────────────────
+
+@router.post("/transfers", response_model=schemas.StockTransferInDB, status_code=201)
+async def create_transfer(data: schemas.StockTransferCreate, db: DB, current_user: CurrentUser):
+    """Crea un nuevo traspaso en estado 'draft'."""
+    try:
+        return await service.create_stock_transfer(db, data.model_dump(), user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/transfers", response_model=List[schemas.StockTransferInDB])
+async def list_transfers(db: DB, current_user: CurrentUser,
+                          warehouse_id: Optional[int] = None,
+                          status: Optional[str] = None,
+                          limit: int = 100):
+    """Lista traspasos. `warehouse_id` filtra tanto origen como destino."""
+    return await service.list_stock_transfers(db, warehouse_id=warehouse_id, status=status, limit=limit)
+
+
+@router.get("/transfers/{transfer_id}", response_model=schemas.StockTransferInDB)
+async def get_transfer(transfer_id: int, db: DB, current_user: CurrentUser):
+    t = await service.get_stock_transfer(db, transfer_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Traspaso no encontrado")
+    return t
+
+
+@router.post("/transfers/{transfer_id}/approve", response_model=schemas.StockTransferInDB)
+async def approve_transfer(transfer_id: int, db: DB, current_user: CurrentUser):
+    """Aprueba un traspaso 'draft' → 'approved'."""
+    try:
+        t = await service.approve_stock_transfer(db, transfer_id, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not t:
+        raise HTTPException(status_code=404, detail="Traspaso no encontrado")
+    return t
+
+
+@router.post("/transfers/{transfer_id}/start-preparation", response_model=schemas.StockTransferInDB)
+async def start_preparation(transfer_id: int, db: DB, current_user: CurrentUser):
+    """Marca el traspaso como 'in_preparation' — CEDIS empezó a armarlo."""
+    try:
+        t = await service.start_preparation(db, transfer_id, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not t:
+        raise HTTPException(status_code=404, detail="Traspaso no encontrado")
+    return t
+
+
+@router.post("/transfers/{transfer_id}/ship", response_model=schemas.StockTransferInDB)
+async def ship_transfer(transfer_id: int, data: schemas.StockTransferShipPayload,
+                         db: DB, current_user: CurrentUser):
+    """CEDIS confirma salida — consume stock del origen vía FIFO. Cambia a 'shipped'."""
+    try:
+        t = await service.ship_stock_transfer(
+            db, transfer_id, [it.model_dump() for it in data.items], user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not t:
+        raise HTTPException(status_code=404, detail="Traspaso no encontrado")
+    return t
+
+
+@router.post("/transfers/{transfer_id}/receive", response_model=schemas.StockTransferInDB)
+async def receive_transfer(transfer_id: int, data: schemas.StockTransferReceivePayload,
+                            db: DB, current_user: CurrentUser):
+    """Destino confirma recepción — ingresa stock al destino. Cambia a 'received'.
+    Si received != shipped, marca discrepancia."""
+    try:
+        t = await service.receive_stock_transfer(
+            db, transfer_id, [it.model_dump() for it in data.items], user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not t:
+        raise HTTPException(status_code=404, detail="Traspaso no encontrado")
+    return t
+
+
+@router.post("/transfers/{transfer_id}/cancel", response_model=schemas.StockTransferInDB)
+async def cancel_transfer(transfer_id: int, db: DB, current_user: CurrentUser,
+                           reason: str = ""):
+    """Cancela un traspaso NO enviado. Motivo obligatorio para auditoría."""
+    if not reason or not reason.strip():
+        raise HTTPException(status_code=400, detail="La razón de cancelación es obligatoria")
+    try:
+        t = await service.cancel_stock_transfer(db, transfer_id, reason.strip(), user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not t:
+        raise HTTPException(status_code=404, detail="Traspaso no encontrado")
+    return t
+
+
+@router.get("/scan/{code}")
+async def scan_lookup(code: str, db: DB, current_user: CurrentUser):
+    """Busca un producto por SKU o código de barras.
+    Usado por la UI de traspasos para el escáner rápido."""
+    v = await service.find_variant_by_code(db, code)
+    if not v:
+        raise HTTPException(status_code=404, detail=f"Producto no encontrado con código '{code}'")
+    return v

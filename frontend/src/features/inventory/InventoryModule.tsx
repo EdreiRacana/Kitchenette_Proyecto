@@ -11,7 +11,7 @@ import {
   AlertTriangle, BoxSelect, RefreshCw,
   BarChart3, X, Check, Info, FileSpreadsheet, Truck,
   RotateCcw, ArrowLeftRight, Eye, Edit2, Trash2, Trash,
-  DollarSign,
+  DollarSign, Barcode, Zap, PackageCheck, Send,
   Users, ClipboardList, Factory, FlaskConical,
   FileText, Mail, MessageCircle,
 } from "lucide-react";
@@ -21,6 +21,7 @@ import {
   type Supplier, type ReorderAlert, type PurchaseOrder, type PurchaseOrderItem,
   type Recipe, type RecipeItem, type RecipeCostBreakdown, type ProductionOrder,
   type BulkImportResult, type CustomerReturn,
+  type StockTransfer, type StockTransferStatus, type StockTransferItem, type ScanResult,
 } from "./service";
 import { resolveMediaUrl } from "../../services/api";
 import { useServerRecovery } from "../../hooks/useServerRecovery";
@@ -93,7 +94,7 @@ const exportMovementsCSV = (movements: Movement[]) => {
   downloadCSV(`movimientos_${new Date().toISOString().slice(0, 10)}.csv`, [header, ...rows]);
 };
 
-type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "kardex" | "adjustments" | "purchase-orders" | "recipes" | "production" | "import";
+type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "kardex" | "adjustments" | "purchase-orders" | "transfers" | "recipes" | "production" | "import";
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any; initialQuery?: string }) {
@@ -295,6 +296,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
     { id: "kardex", label: lang === "es" ? "Kardex FIFO" : "Kardex FIFO", icon: FileSpreadsheet },
     { id: "adjustments", label: lang === "es" ? "Ajustes" : "Adjustments", icon: SlidersHorizontal },
     { id: "purchase-orders", label: lang === "es" ? "Compras" : "Purchase orders", icon: ClipboardList },
+    { id: "transfers", label: lang === "es" ? "Traspasos" : "Transfers", icon: ArrowLeftRight },
     { id: "recipes", label: lang === "es" ? "Construcción" : "Recipes / BOM", icon: FlaskConical },
     { id: "production", label: lang === "es" ? "Producción" : "Production", icon: Factory },
     { id: "import", label: lang === "es" ? "Carga masiva" : "Bulk import", icon: Upload },
@@ -1021,6 +1023,11 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── TAB: Traspasos entre almacenes ── */}
+      {tab === "transfers" && (
+        <TransfersView t={t} lang={lang} warehouses={warehouses} products={products} demo={demo} onRefreshInventory={load} />
       )}
 
       {/* ── TAB: Recipes / BOM ── */}
@@ -2586,6 +2593,570 @@ function ProductionOrderFormModal({ t, lang, recipes, warehouses, productNameByV
               {saving ? "…" : editing ? (lang === "es" ? "Guardar cambios" : "Save changes") : (lang === "es" ? "Crear orden" : "Create order")}
             </button>
           </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// TRASPASOS ENTRE ALMACENES (Stock Transfer Orders)
+//
+// Flujo profesional de 6 estados: draft → approved → in_preparation →
+// shipped → received (con posibilidad de cancelled desde estados previos
+// a shipped). Con escaneo por SKU/barcode al preparar y al recibir.
+// ═════════════════════════════════════════════════════════════════════════
+
+const TRANSFER_STATUS_META: Record<StockTransferStatus, { label: string; color: string; icon: any }> = {
+  draft:          { label: "Borrador",       color: "#94A3B8", icon: FileText },
+  approved:       { label: "Aprobado",       color: "#33B2F5", icon: Check },
+  in_preparation: { label: "Preparando",     color: "#FBBF24", icon: Package },
+  shipped:        { label: "Enviado",        color: "#A78BFA", icon: Send },
+  received:       { label: "Recibido",       color: "#34D399", icon: PackageCheck },
+  cancelled:      { label: "Cancelado",      color: "#94A3B8", icon: X },
+};
+
+function TransfersView({ t, lang, warehouses, products, demo, onRefreshInventory }: {
+  t: any; lang: string; warehouses: WarehouseT[]; products: Product[]; demo: boolean;
+  onRefreshInventory: () => void;
+}) {
+  void lang;
+  const [transfers, setTransfers] = useState<StockTransfer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [warehouseFilter, setWarehouseFilter] = useState<string>("");
+  const [showForm, setShowForm] = useState(false);
+  const [detail, setDetail] = useState<StockTransfer | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true); setErr(null);
+    try {
+      const rows = await inventoryService.listTransfers({
+        status: statusFilter || undefined,
+        warehouse_id: warehouseFilter ? Number(warehouseFilter) : undefined,
+      });
+      setTransfers(rows);
+    } catch (e: any) { setErr(e?.response?.data?.detail || "No se pudieron cargar los traspasos"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [statusFilter, warehouseFilter]);
+
+  const openDetail = async (id: number) => {
+    try { setDetail(await inventoryService.getTransfer(id)); }
+    catch (e: any) { alert(e?.response?.data?.detail || "Error al abrir detalle"); }
+  };
+
+  const inp: React.CSSProperties = { padding: "8px 11px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, outline: "none", cursor: "pointer" };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Header + acción */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: t.textHi }}>Traspasos entre almacenes</div>
+          <div style={{ fontSize: 12, color: t.textLo, marginTop: 3 }}>
+            Solicitud → Aprobación → Preparación con escaneo → Envío → Recepción con escaneo
+          </div>
+        </div>
+        <button onClick={() => setShowForm(true)}
+          style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy || "#1e40af"})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+          <Plus size={15} /> Nuevo traspaso
+        </button>
+      </div>
+
+      {/* Filtros */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={inp}>
+          <option value="">Todos los estados</option>
+          {Object.entries(TRANSFER_STATUS_META).map(([k, v]) => (
+            <option key={k} value={k}>{v.label}</option>
+          ))}
+        </select>
+        <select value={warehouseFilter} onChange={e => setWarehouseFilter(e.target.value)} style={inp}>
+          <option value="">Todos los almacenes</option>
+          {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+        <button onClick={load} title="Recargar" style={{ ...inp, background: t.panel2, display: "flex", alignItems: "center", gap: 6, color: t.textMid }}>
+          <RefreshCw size={13} /> Actualizar
+        </button>
+      </div>
+
+      {err && (
+        <div style={{ padding: "10px 14px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 13 }}>
+          <AlertTriangle size={14} style={{ verticalAlign: "middle", marginRight: 6 }} /> {err}
+        </div>
+      )}
+
+      {/* Lista */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
+        {loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: t.textLo, fontSize: 13 }}>Cargando…</div>
+        ) : transfers.length === 0 ? (
+          <div style={{ padding: 60, textAlign: "center", color: t.textLo }}>
+            <ArrowLeftRight size={40} style={{ opacity: 0.3, marginBottom: 12 }} />
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Sin traspasos</div>
+            <div style={{ fontSize: 12 }}>Crea uno para mover mercancía entre tus almacenes</div>
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: t.panel2 }}>
+                <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Folio</th>
+                <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Origen</th>
+                <th style={{ padding: "12px 14px", fontSize: 11, color: t.textLo }}></th>
+                <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Destino</th>
+                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Items</th>
+                <th style={{ textAlign: "center", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Estado</th>
+                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Creado</th>
+                <th style={{ padding: "12px 14px" }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {transfers.map((tr, i) => {
+                const meta = TRANSFER_STATUS_META[tr.status];
+                const StatusIcon = meta.icon;
+                const totalRequested = tr.items.reduce((a, it) => a + it.quantity_requested, 0);
+                return (
+                  <tr key={tr.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2, cursor: "pointer" }}
+                    onClick={() => openDetail(tr.id)}>
+                    <td style={{ padding: "12px 14px", color: t.nova, fontWeight: 700, fontFamily: "monospace" }}>{tr.folio}</td>
+                    <td style={{ padding: "12px 14px", color: t.textHi, fontWeight: 600 }}>{tr.source_warehouse_name}</td>
+                    <td style={{ padding: "12px 14px", color: t.textLo }}><ChevronRight size={14} /></td>
+                    <td style={{ padding: "12px 14px", color: t.textHi, fontWeight: 600 }}>{tr.destination_warehouse_name}</td>
+                    <td style={{ padding: "12px 14px", textAlign: "right", color: t.textMid, fontVariantNumeric: "tabular-nums" }}>
+                      {tr.items.length} <span style={{ color: t.textLo }}>({totalRequested} uds)</span>
+                    </td>
+                    <td style={{ padding: "12px 14px", textAlign: "center" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 999, background: meta.color + "22", color: meta.color, fontSize: 11.5, fontWeight: 700 }}>
+                        <StatusIcon size={11} /> {meta.label}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 14px", textAlign: "right", color: t.textLo, fontSize: 11.5 }}>
+                      {new Date(tr.created_at).toLocaleDateString("es-MX", { day: "2-digit", month: "short" })}
+                    </td>
+                    <td style={{ padding: "12px 14px", textAlign: "right" }}>
+                      <ChevronRight size={16} color={t.textLo} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Formulario nuevo */}
+      {showForm && !demo && (
+        <TransferFormModal t={t} warehouses={warehouses} products={products}
+          onClose={() => setShowForm(false)}
+          onSaved={() => { setShowForm(false); load(); }} />
+      )}
+
+      {/* Detalle con acciones (aprobar, preparar, enviar, recibir, cancelar) */}
+      {detail && (
+        <TransferDetailModal t={t} transfer={detail}
+          onClose={() => setDetail(null)}
+          onChanged={(updated) => { setDetail(updated); load(); onRefreshInventory(); }} />
+      )}
+    </div>
+  );
+}
+
+
+function TransferFormModal({ t, warehouses, products, onClose, onSaved }: {
+  t: any; warehouses: WarehouseT[]; products: Product[];
+  onClose: () => void; onSaved: () => void;
+}) {
+  const [sourceId, setSourceId] = useState("");
+  const [destId, setDestId] = useState("");
+  const [notes, setNotes] = useState("");
+  const [expectedDate, setExpectedDate] = useState("");
+  const [items, setItems] = useState<{ variant_id: string; quantity_requested: string }[]>([{ variant_id: "", quantity_requested: "" }]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const allVariants = products.flatMap(p => p.variants.map((v: any) => ({ ...v, product_name: p.name })));
+
+  const addItem = () => setItems(prev => [...prev, { variant_id: "", quantity_requested: "" }]);
+  const removeItem = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx));
+  const updateItem = (idx: number, field: string, val: string) =>
+    setItems(prev => prev.map((it, i) => i === idx ? { ...it, [field]: val } : it));
+
+  const valid = sourceId && destId && sourceId !== destId && items.length > 0
+    && items.every(it => it.variant_id && Number(it.quantity_requested) > 0);
+
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await inventoryService.createTransfer({
+        source_warehouse_id: Number(sourceId),
+        destination_warehouse_id: Number(destId),
+        notes: notes || undefined,
+        expected_delivery_date: expectedDate ? new Date(expectedDate + "T00:00:00Z").toISOString() : undefined,
+        items: items.map(it => ({ variant_id: Number(it.variant_id), quantity_requested: Number(it.quantity_requested) })),
+      });
+      onSaved();
+    } catch (e: any) { setErr(e?.response?.data?.detail || "Error al guardar el traspaso"); }
+    finally { setBusy(false); }
+  };
+
+  const inp: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" };
+  const label: React.CSSProperties = { fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" };
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
+      <div style={{ width: "100%", maxWidth: 640, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "18px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 8, padding: 8 }}><ArrowLeftRight size={18} /></div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>Nuevo traspaso entre almacenes</h2>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+        <div style={{ padding: 24, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "end" }}>
+            <div>
+              <label style={label}>Almacén origen *</label>
+              <select value={sourceId} onChange={e => setSourceId(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="">Seleccionar…</option>
+                {warehouses.filter(w => String(w.id) !== destId).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            </div>
+            <div style={{ paddingBottom: 8 }}><ArrowLeftRight size={20} color={t.nova} /></div>
+            <div>
+              <label style={label}>Almacén destino *</label>
+              <select value={destId} onChange={e => setDestId(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="">Seleccionar…</option>
+                {warehouses.filter(w => String(w.id) !== sourceId).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label style={label}>Fecha estimada de entrega</label>
+            <input type="date" value={expectedDate} onChange={e => setExpectedDate(e.target.value)} style={inp} />
+          </div>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>Productos a trasladar</div>
+              <button onClick={addItem}
+                style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", gap: 5 }}>
+                <Plus size={12} /> Añadir línea
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {items.map((it, i) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "3fr 1fr auto", gap: 8, alignItems: "center" }}>
+                  <select value={it.variant_id} onChange={e => updateItem(i, "variant_id", e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                    <option value="">Buscar producto…</option>
+                    {allVariants.map((v: any) => <option key={v.id} value={v.id}>{v.product_name} — {v.sku}</option>)}
+                  </select>
+                  <input type="number" min="1" value={it.quantity_requested} onChange={e => updateItem(i, "quantity_requested", e.target.value)} placeholder="Cantidad" style={inp} />
+                  <button onClick={() => removeItem(i)} disabled={items.length === 1}
+                    style={{ padding: 9, borderRadius: 6, border: "none", background: "transparent", color: items.length === 1 ? t.textLo : t.bad, cursor: items.length === 1 ? "default" : "pointer", opacity: items.length === 1 ? 0.4 : 1 }}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label style={label}>Notas del traspaso</label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Ej. Reabasto semanal por promo…" style={{ ...inp, resize: "vertical" }} />
+          </div>
+          {err && <div style={{ fontSize: 12.5, color: t.bad }}>{err}</div>}
+        </div>
+        <div style={{ padding: "14px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+          <button onClick={save} disabled={!valid || busy}
+            style={{ padding: "9px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy || "#1e40af"})`, color: "#fff", cursor: (!valid || busy) ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 600, opacity: !valid ? 0.5 : 1 }}>
+            {busy ? "Guardando…" : "Crear traspaso"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+
+function TransferDetailModal({ t, transfer, onClose, onChanged }: {
+  t: any; transfer: StockTransfer;
+  onClose: () => void; onChanged: (updated: StockTransfer) => void;
+}) {
+  const [tr, setTr] = useState(transfer);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [scanCode, setScanCode] = useState("");
+  const [scanFlash, setScanFlash] = useState<string | null>(null);
+  const [scanCounts, setScanCounts] = useState<Record<number, number>>({});
+  const [receiveDiscrepancy, setReceiveDiscrepancy] = useState<Record<number, string>>({});
+  const scanRef = useRef<HTMLInputElement>(null);
+
+  const meta = TRANSFER_STATUS_META[tr.status];
+  const StatusIcon = meta.icon;
+
+  // ¿Estamos en modo escaneo? En 'in_preparation' o 'approved' (para enviar),
+  // y en 'shipped' (para recibir). El escaneo cuenta la cantidad detectada
+  // por item para pre-llenar los inputs al confirmar.
+  const isShippingMode = tr.status === "approved" || tr.status === "in_preparation";
+  const isReceivingMode = tr.status === "shipped";
+  const scanActive = isShippingMode || isReceivingMode;
+
+  useEffect(() => { if (scanActive) scanRef.current?.focus(); }, [scanActive, tr.status]);
+  useEffect(() => {
+    // Precargar scanCounts con los valores actuales según la etapa
+    if (isShippingMode) {
+      // Al preparar, arrancar en 0 (el usuario escanea para contar)
+      setScanCounts({});
+    } else if (isReceivingMode) {
+      // Al recibir, precargar con las cantidades enviadas (el receptor las
+      // confirma escaneando; si escanea distinto, hay discrepancia)
+      const initial: Record<number, number> = {};
+      tr.items.forEach(it => { initial[it.id] = 0; });
+      setScanCounts(initial);
+    }
+  }, [tr.status]);
+
+  const flash = (msg: string, ms = 1200) => {
+    setScanFlash(msg);
+    setTimeout(() => setScanFlash(null), ms);
+  };
+
+  const doScan = async (code: string) => {
+    const q = code.trim();
+    if (!q) return;
+    try {
+      const res: ScanResult = await inventoryService.scanLookup(q);
+      // Buscar el item del traspaso que corresponde a esta variante
+      const item = tr.items.find(it => it.variant_id === res.variant_id);
+      if (!item) {
+        flash("⚠ Producto escaneado NO está en este traspaso");
+        return;
+      }
+      // Aumentar el contador de escaneo para ese item
+      const target = isShippingMode ? item.quantity_requested : item.quantity_shipped;
+      const current = scanCounts[item.id] || 0;
+      if (current >= target) {
+        flash(`⚠ Ya escaneaste ${target}/${target} de ${res.product_name}`);
+        return;
+      }
+      setScanCounts(prev => ({ ...prev, [item.id]: current + 1 }));
+      flash(`✓ ${res.product_name} (${current + 1}/${target})`);
+    } catch (e: any) {
+      flash(`✗ ${e?.response?.data?.detail || "Producto no encontrado"}`);
+    }
+    setScanCode("");
+  };
+
+  const onScanKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") { e.preventDefault(); doScan(scanCode); }
+  };
+
+  const totalRequested = tr.items.reduce((a, it) => a + it.quantity_requested, 0);
+  const totalScanned = Object.values(scanCounts).reduce((a, n) => a + n, 0);
+  const totalShipped = tr.items.reduce((a, it) => a + it.quantity_shipped, 0);
+  const totalReceived = tr.items.reduce((a, it) => a + it.quantity_received, 0);
+
+  const doAction = async (action: string, fn: () => Promise<StockTransfer>) => {
+    setBusy(action); setErr(null);
+    try { const updated = await fn(); setTr(updated); onChanged(updated); }
+    catch (e: any) { setErr(e?.response?.data?.detail || "Error"); }
+    finally { setBusy(null); }
+  };
+
+  const canApprove = tr.status === "draft";
+  const canStartPrep = tr.status === "approved";
+  const canShip = tr.status === "approved" || tr.status === "in_preparation";
+  const canReceive = tr.status === "shipped";
+  const canCancel = ["draft", "approved", "in_preparation"].includes(tr.status);
+
+  const inp: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" };
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "3vh 20px", overflowY: "auto" }}>
+      <div style={{ width: "100%", maxWidth: 820, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "94vh", display: "flex", flexDirection: "column" }}>
+        {/* Header */}
+        <div style={{ padding: "18px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ background: meta.color + "22", color: meta.color, borderRadius: 10, padding: 10 }}>
+              <StatusIcon size={22} />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: t.textLo, marginBottom: 2 }}>Traspaso</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: t.textHi, fontFamily: "monospace" }}>{tr.folio}</div>
+              <div style={{ fontSize: 12, color: t.textMid, marginTop: 3 }}>
+                {tr.source_warehouse_name} <ArrowLeftRight size={12} style={{ verticalAlign: "middle" }} /> {tr.destination_warehouse_name}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ padding: "6px 14px", borderRadius: 999, background: meta.color + "22", color: meta.color, fontSize: 12.5, fontWeight: 700 }}>{meta.label}</span>
+            <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+          </div>
+        </div>
+
+        {/* Escáner (solo en estados relevantes) */}
+        {scanActive && (
+          <div style={{ padding: 16, background: t.panel2, borderBottom: `1px solid ${t.border}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Zap size={14} color={t.nova} />
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>
+                {isShippingMode ? "Escanea cada producto para preparar el envío" : "Escanea cada producto al recibir"}
+              </div>
+              <div style={{ marginLeft: "auto", fontSize: 12, color: t.textMid, fontVariantNumeric: "tabular-nums" }}>
+                {totalScanned} / {isShippingMode ? totalRequested : totalShipped} escaneados
+              </div>
+            </div>
+            <div style={{ position: "relative" }}>
+              <Barcode size={18} color={t.nova} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
+              <input ref={scanRef} value={scanCode} onChange={e => setScanCode(e.target.value)} onKeyDown={onScanKeyDown}
+                placeholder="Escanea código o teclea SKU y Enter…"
+                autoFocus autoComplete="off" spellCheck={false}
+                style={{ width: "100%", padding: "14px 14px 14px 44px", borderRadius: 10, border: `2px solid ${t.nova}44`, background: t.inputBg, color: t.textHi, fontSize: 15, outline: "none", boxSizing: "border-box" }} />
+              {scanFlash && (
+                <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", padding: "5px 12px", borderRadius: 999, background: (scanFlash.startsWith("✓") ? t.good : t.warn) + "22", color: scanFlash.startsWith("✓") ? t.good : t.warn, fontSize: 12, fontWeight: 700 }}>
+                  {scanFlash}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Items */}
+        <div style={{ padding: 20, overflowY: "auto", flex: 1 }}>
+          <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 10 }}>Productos del traspaso</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: t.panel2 }}>
+                <th style={{ textAlign: "left", padding: "10px 12px", fontSize: 11, color: t.textLo }}>Producto</th>
+                <th style={{ textAlign: "center", padding: "10px 12px", fontSize: 11, color: t.textLo }}>Solicitado</th>
+                {tr.status !== "draft" && tr.status !== "approved" && (
+                  <th style={{ textAlign: "center", padding: "10px 12px", fontSize: 11, color: t.textLo }}>Enviado</th>
+                )}
+                {(tr.status === "received" || tr.status === "shipped") && (
+                  <th style={{ textAlign: "center", padding: "10px 12px", fontSize: 11, color: t.textLo }}>{tr.status === "shipped" ? "Contar recibido" : "Recibido"}</th>
+                )}
+                {isShippingMode && (
+                  <th style={{ textAlign: "center", padding: "10px 12px", fontSize: 11, color: t.textLo }}>Escaneados</th>
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {tr.items.map((it, idx) => {
+                const scanned = scanCounts[it.id] || 0;
+                const hasDiscrepancy = it.discrepancy_reason || (it.quantity_shipped > 0 && it.quantity_received > 0 && it.quantity_shipped !== it.quantity_received);
+                return (
+                  <tr key={it.id} style={{ background: idx % 2 === 0 ? t.panel : t.panel2 }}>
+                    <td style={{ padding: "10px 12px" }}>
+                      <div style={{ fontWeight: 600, color: t.textHi }}>{it.product_name}</div>
+                      <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace", marginTop: 2 }}>{it.sku}{it.barcode ? ` · ${it.barcode}` : ""}</div>
+                      {hasDiscrepancy && (
+                        <div style={{ fontSize: 11, color: t.warn, marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                          <AlertTriangle size={11} /> {it.discrepancy_reason || `Discrepancia: enviado ${it.quantity_shipped}, recibido ${it.quantity_received}`}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ padding: "10px 12px", textAlign: "center", fontVariantNumeric: "tabular-nums", color: t.textHi, fontWeight: 700 }}>{it.quantity_requested}</td>
+                    {tr.status !== "draft" && tr.status !== "approved" && (
+                      <td style={{ padding: "10px 12px", textAlign: "center", fontVariantNumeric: "tabular-nums", color: t.textMid }}>{it.quantity_shipped}</td>
+                    )}
+                    {tr.status === "received" && (
+                      <td style={{ padding: "10px 12px", textAlign: "center", fontVariantNumeric: "tabular-nums", color: it.quantity_received === it.quantity_shipped ? t.good : t.warn, fontWeight: 700 }}>
+                        {it.quantity_received}
+                      </td>
+                    )}
+                    {tr.status === "shipped" && (
+                      <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                          <div style={{ fontVariantNumeric: "tabular-nums", fontWeight: 700, color: scanned === it.quantity_shipped ? t.good : scanned > it.quantity_shipped ? t.warn : t.textHi }}>
+                            {scanned} / {it.quantity_shipped}
+                          </div>
+                          {scanned !== it.quantity_shipped && scanned > 0 && (
+                            <input placeholder="Razón discrepancia (opcional)"
+                              value={receiveDiscrepancy[it.id] || ""}
+                              onChange={e => setReceiveDiscrepancy(prev => ({ ...prev, [it.id]: e.target.value }))}
+                              style={{ ...inp, padding: "4px 8px", fontSize: 11, width: 200 }} />
+                          )}
+                        </div>
+                      </td>
+                    )}
+                    {isShippingMode && (
+                      <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                        <div style={{ fontVariantNumeric: "tabular-nums", fontWeight: 700, color: scanned === it.quantity_requested ? t.good : scanned > 0 ? t.nova : t.textLo }}>
+                          {scanned} / {it.quantity_requested}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {tr.notes && (
+            <div style={{ marginTop: 14, padding: 12, background: t.panel2, borderRadius: 8, fontSize: 12.5, color: t.textMid }}>
+              <span style={{ color: t.textLo, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, marginRight: 8 }}>Notas:</span>
+              {tr.notes}
+            </div>
+          )}
+        </div>
+
+        {/* Acciones */}
+        <div style={{ padding: "14px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+          {err && <div style={{ flex: 1, fontSize: 12.5, color: t.bad, display: "flex", alignItems: "center" }}>
+            <AlertTriangle size={13} style={{ marginRight: 5 }} /> {err}
+          </div>}
+          {canCancel && (
+            <button onClick={() => {
+              const reason = prompt("Razón de cancelación:");
+              if (reason && reason.trim()) doAction("cancel", () => inventoryService.cancelTransfer(tr.id, reason.trim()));
+            }}
+              style={{ padding: "9px 16px", borderRadius: 10, border: `1px solid ${t.bad}55`, background: "transparent", color: t.bad, cursor: "pointer", fontSize: 13 }}>
+              Cancelar
+            </button>
+          )}
+          {canApprove && (
+            <button onClick={() => doAction("approve", () => inventoryService.approveTransfer(tr.id))} disabled={!!busy}
+              style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: t.nova, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              {busy === "approve" ? "…" : "Aprobar"}
+            </button>
+          )}
+          {canStartPrep && (
+            <button onClick={() => doAction("prep", () => inventoryService.startPreparationTransfer(tr.id))} disabled={!!busy}
+              style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: t.warn, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              {busy === "prep" ? "…" : "Iniciar preparación"}
+            </button>
+          )}
+          {canShip && (
+            <button onClick={() => {
+              const items = tr.items
+                .map(it => ({ item_id: it.id, quantity_shipped: scanCounts[it.id] || it.quantity_requested }))
+                .filter(x => x.quantity_shipped > 0);
+              if (!confirm(`¿Confirmar envío?\n\nSe consumirá stock del origen (${totalScanned || totalRequested} unidades).`)) return;
+              doAction("ship", () => inventoryService.shipTransfer(tr.id, items));
+            }} disabled={!!busy}
+              style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, #A78BFA, #7C3AED)`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+              <Send size={13} /> {busy === "ship" ? "…" : `Confirmar envío (${totalScanned || totalRequested})`}
+            </button>
+          )}
+          {canReceive && (
+            <button onClick={() => {
+              const items = tr.items.map(it => ({
+                item_id: it.id,
+                quantity_received: scanCounts[it.id] || 0,
+                discrepancy_reason: receiveDiscrepancy[it.id] || undefined,
+              })).filter(x => x.quantity_received > 0);
+              if (items.length === 0) { setErr("Escanea al menos un producto para confirmar recepción"); return; }
+              if (!confirm(`¿Confirmar recepción?\n\nSe ingresará stock al destino (${totalScanned} unidades escaneadas).`)) return;
+              doAction("receive", () => inventoryService.receiveTransfer(tr.id, items));
+            }} disabled={!!busy || totalScanned === 0}
+              style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: (!!busy || totalScanned === 0) ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, opacity: totalScanned === 0 ? 0.5 : 1, display: "flex", alignItems: "center", gap: 6 }}>
+              <PackageCheck size={13} /> {busy === "receive" ? "…" : `Confirmar recepción (${totalScanned})`}
+            </button>
+          )}
+          <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cerrar</button>
         </div>
       </div>
     </div>,

@@ -303,6 +303,42 @@ _INVENTORY_STATEMENTS = [
     "UPDATE purchase_orders SET paid_amount = 0 WHERE paid_amount IS NULL",
     "UPDATE stock_movements SET movement_type = lower(movement_type) WHERE movement_type <> lower(movement_type)",
     "ALTER TABLE recipes ADD COLUMN IF NOT EXISTS extra_costs JSONB",
+    # Traspasos entre almacenes (Stock Transfer Orders)
+    """CREATE TABLE IF NOT EXISTS stock_transfers (
+        id                          SERIAL PRIMARY KEY,
+        folio                       VARCHAR UNIQUE,
+        source_warehouse_id         INTEGER NOT NULL REFERENCES warehouses(id),
+        destination_warehouse_id    INTEGER NOT NULL REFERENCES warehouses(id),
+        status                      VARCHAR NOT NULL DEFAULT 'draft',
+        notes                       TEXT,
+        expected_delivery_date      TIMESTAMP WITH TIME ZONE,
+        created_at                  TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        created_by_id               INTEGER REFERENCES users(id),
+        approved_at                 TIMESTAMP WITH TIME ZONE,
+        approved_by_id              INTEGER REFERENCES users(id),
+        shipped_at                  TIMESTAMP WITH TIME ZONE,
+        shipped_by_id               INTEGER REFERENCES users(id),
+        received_at                 TIMESTAMP WITH TIME ZONE,
+        received_by_id              INTEGER REFERENCES users(id),
+        cancelled_at                TIMESTAMP WITH TIME ZONE,
+        cancelled_by_id             INTEGER REFERENCES users(id),
+        cancelled_reason            TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_transfers_folio  ON stock_transfers (folio)",
+    "CREATE INDEX IF NOT EXISTS ix_transfers_source ON stock_transfers (source_warehouse_id)",
+    "CREATE INDEX IF NOT EXISTS ix_transfers_dest   ON stock_transfers (destination_warehouse_id)",
+    "CREATE INDEX IF NOT EXISTS ix_transfers_status ON stock_transfers (status, created_at DESC)",
+    """CREATE TABLE IF NOT EXISTS stock_transfer_items (
+        id                          SERIAL PRIMARY KEY,
+        transfer_id                 INTEGER NOT NULL REFERENCES stock_transfers(id) ON DELETE CASCADE,
+        variant_id                  INTEGER NOT NULL REFERENCES product_variants(id),
+        quantity_requested          INTEGER NOT NULL DEFAULT 0,
+        quantity_shipped            INTEGER NOT NULL DEFAULT 0,
+        quantity_received           INTEGER NOT NULL DEFAULT 0,
+        unit_cost_snapshot          DOUBLE PRECISION NOT NULL DEFAULT 0,
+        discrepancy_reason          TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_transfer_items_transfer ON stock_transfer_items (transfer_id)",
     # Rellena recetas históricas: mismo patrón que en purchase_orders. Sin
     # este UPDATE, /inventory/recipes truena en Pydantic si existen
     # recetas creadas antes de que se agregara la columna extra_costs.

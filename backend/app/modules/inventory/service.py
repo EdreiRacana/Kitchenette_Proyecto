@@ -1315,3 +1315,276 @@ async def bulk_import_recipes(db: AsyncSession, file_bytes: bytes, filename: str
             errors.append(schemas.BulkImportRowError(row=0, message=f"Receta para {output_sku}: {e}"))
 
     return schemas.BulkImportResult(total_rows=len(df), created=created, updated=updated, errors=errors)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Traspasos entre almacenes (Stock Transfer Orders)
+#
+# Flujo profesional de 6 estados:
+#   draft → approved → in_preparation → shipped → received
+#         ↘ cancelled (desde draft/approved/in_preparation, NO desde shipped)
+#
+# Contablemente NO afecta P&L — es solo movimiento físico de un almacén a otro.
+# El kardex de ambos almacenes refleja el traspaso con la misma referencia
+# (folio TR-XXXXXX), lo que permite conciliar visualmente que lo que salió
+# del origen es lo mismo que entró al destino.
+# ═════════════════════════════════════════════════════════════════════════════
+
+from app.modules.inventory.models import (
+    StockTransfer, StockTransferItem, StockTransferStatus,
+)
+
+
+async def _next_transfer_folio(db: AsyncSession) -> str:
+    n = (await db.execute(select(func.count(StockTransfer.id)))).scalar() or 0
+    return f"TR-{n + 1:06d}"
+
+
+def _serialize_transfer(t: StockTransfer) -> dict:
+    """Convierte el ORM a dict con nombres de almacén y de productos resueltos."""
+    return {
+        "id": t.id, "folio": t.folio, "status": t.status,
+        "source_warehouse_id": t.source_warehouse_id,
+        "destination_warehouse_id": t.destination_warehouse_id,
+        "source_warehouse_name": t.source_warehouse.name if t.source_warehouse else None,
+        "destination_warehouse_name": t.destination_warehouse.name if t.destination_warehouse else None,
+        "notes": t.notes, "expected_delivery_date": t.expected_delivery_date,
+        "created_at": t.created_at, "approved_at": t.approved_at,
+        "shipped_at": t.shipped_at, "received_at": t.received_at,
+        "cancelled_at": t.cancelled_at, "cancelled_reason": t.cancelled_reason,
+        "items": [
+            {
+                "id": it.id, "variant_id": it.variant_id,
+                "quantity_requested": it.quantity_requested,
+                "quantity_shipped": it.quantity_shipped,
+                "quantity_received": it.quantity_received,
+                "unit_cost_snapshot": it.unit_cost_snapshot,
+                "discrepancy_reason": it.discrepancy_reason,
+                "product_name": (it.variant.product.name if it.variant and it.variant.product else None),
+                "sku": (it.variant.sku if it.variant else None),
+                "barcode": (it.variant.barcode if it.variant else None),
+            } for it in (t.items or [])
+        ],
+    }
+
+
+async def create_stock_transfer(db: AsyncSession, data: dict, user_id: Optional[int] = None) -> dict:
+    folio = await _next_transfer_folio(db)
+    transfer = StockTransfer(
+        folio=folio,
+        source_warehouse_id=data["source_warehouse_id"],
+        destination_warehouse_id=data["destination_warehouse_id"],
+        status=StockTransferStatus.DRAFT.value,
+        notes=data.get("notes"),
+        expected_delivery_date=data.get("expected_delivery_date"),
+        created_by_id=user_id,
+    )
+    db.add(transfer)
+    await db.flush()
+    for item in data["items"]:
+        db.add(StockTransferItem(
+            transfer_id=transfer.id,
+            variant_id=item["variant_id"],
+            quantity_requested=int(item["quantity_requested"]),
+        ))
+    await db.commit()
+    return await get_stock_transfer(db, transfer.id)
+
+
+async def get_stock_transfer(db: AsyncSession, transfer_id: int) -> Optional[dict]:
+    res = await db.execute(
+        select(StockTransfer).where(StockTransfer.id == transfer_id).options(
+            selectinload(StockTransfer.source_warehouse),
+            selectinload(StockTransfer.destination_warehouse),
+            selectinload(StockTransfer.items).selectinload(StockTransferItem.variant).selectinload(ProductVariant.product),
+        )
+    )
+    t = res.scalars().first()
+    return _serialize_transfer(t) if t else None
+
+
+async def list_stock_transfers(db: AsyncSession, *, warehouse_id: Optional[int] = None,
+                                status: Optional[str] = None,
+                                limit: int = 100) -> list[dict]:
+    """Lista traspasos. Filtro `warehouse_id` incluye tanto origen como destino
+    (así el encargado de una tienda ve TODO lo que le compete: lo que envió y
+    lo que va a recibir)."""
+    stmt = select(StockTransfer).options(
+        selectinload(StockTransfer.source_warehouse),
+        selectinload(StockTransfer.destination_warehouse),
+        selectinload(StockTransfer.items).selectinload(StockTransferItem.variant).selectinload(ProductVariant.product),
+    ).order_by(StockTransfer.created_at.desc()).limit(limit)
+    if status:
+        stmt = stmt.where(StockTransfer.status == status)
+    if warehouse_id is not None:
+        stmt = stmt.where(
+            or_(StockTransfer.source_warehouse_id == warehouse_id,
+                StockTransfer.destination_warehouse_id == warehouse_id)
+        )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [_serialize_transfer(t) for t in rows]
+
+
+async def approve_stock_transfer(db: AsyncSession, transfer_id: int,
+                                  user_id: Optional[int] = None) -> Optional[dict]:
+    t = await db.get(StockTransfer, transfer_id)
+    if not t:
+        return None
+    if t.status != StockTransferStatus.DRAFT.value:
+        raise ValueError(f"Solo se pueden aprobar traspasos en estado 'draft' (actual: {t.status})")
+    t.status = StockTransferStatus.APPROVED.value
+    t.approved_at = datetime.now(timezone.utc)
+    t.approved_by_id = user_id
+    await db.commit()
+    return await get_stock_transfer(db, transfer_id)
+
+
+async def start_preparation(db: AsyncSession, transfer_id: int,
+                             user_id: Optional[int] = None) -> Optional[dict]:
+    """Marca el traspaso como 'en preparación' (CEDIS empieza a armarlo).
+    Estado intermedio para que el destino sepa que ya se está preparando."""
+    t = await db.get(StockTransfer, transfer_id)
+    if not t:
+        return None
+    if t.status != StockTransferStatus.APPROVED.value:
+        raise ValueError(f"Solo se puede iniciar preparación desde 'approved' (actual: {t.status})")
+    t.status = StockTransferStatus.IN_PREPARATION.value
+    await db.commit()
+    return await get_stock_transfer(db, transfer_id)
+
+
+async def ship_stock_transfer(db: AsyncSession, transfer_id: int, items_shipped: list,
+                               user_id: Optional[int] = None) -> Optional[dict]:
+    """CEDIS confirma la salida. Consume stock del origen vía FIFO, snapshot el
+    unit_cost y marca 'shipped'. items_shipped: [{item_id, quantity_shipped}]."""
+    result = await db.execute(
+        select(StockTransfer).where(StockTransfer.id == transfer_id).options(
+            selectinload(StockTransfer.items),
+        )
+    )
+    t = result.scalars().first()
+    if not t:
+        return None
+    if t.status not in (StockTransferStatus.APPROVED.value, StockTransferStatus.IN_PREPARATION.value):
+        raise ValueError(f"Solo se puede enviar desde 'approved' o 'in_preparation' (actual: {t.status})")
+
+    from app.modules.inventory import fifo_service
+    ship_map = {int(x["item_id"]): int(x["quantity_shipped"]) for x in items_shipped}
+
+    for item in t.items:
+        qty_ship = ship_map.get(item.id, 0)
+        if qty_ship <= 0:
+            continue
+        try:
+            r = await fifo_service.consume_stock(
+                db, variant_id=item.variant_id, warehouse_id=t.source_warehouse_id,
+                quantity=qty_ship, reference=t.folio,
+                user_id=user_id, allow_negative=False, commit=False,
+            )
+            item.quantity_shipped = qty_ship
+            item.unit_cost_snapshot = float(r.get("unit_cost_avg") or 0.0)
+        except fifo_service.InsufficientStockError as e:
+            raise ValueError(
+                f"Stock insuficiente en origen para SKU (variant {item.variant_id}): "
+                f"requerido {qty_ship}, disponible {e.available}"
+            )
+
+    t.status = StockTransferStatus.SHIPPED.value
+    t.shipped_at = datetime.now(timezone.utc)
+    t.shipped_by_id = user_id
+    await db.commit()
+    return await get_stock_transfer(db, transfer_id)
+
+
+async def receive_stock_transfer(db: AsyncSession, transfer_id: int, items_received: list,
+                                  user_id: Optional[int] = None) -> Optional[dict]:
+    """Destino confirma la recepción. Ingresa stock al destino como lote nuevo
+    con el costo snapshoteado en el envío (continuidad FIFO cruzando almacenes).
+    items_received: [{item_id, quantity_received, discrepancy_reason}].
+    Si received != shipped, se marca discrepancia con la razón dada."""
+    result = await db.execute(
+        select(StockTransfer).where(StockTransfer.id == transfer_id).options(
+            selectinload(StockTransfer.items),
+        )
+    )
+    t = result.scalars().first()
+    if not t:
+        return None
+    if t.status != StockTransferStatus.SHIPPED.value:
+        raise ValueError(f"Solo se puede recibir un traspaso 'shipped' (actual: {t.status})")
+
+    from app.modules.inventory import fifo_service
+    recv_map = {int(x["item_id"]): {"qty": int(x["quantity_received"]),
+                                     "reason": x.get("discrepancy_reason")}
+                for x in items_received}
+
+    for item in t.items:
+        rec = recv_map.get(item.id)
+        if rec is None or rec["qty"] <= 0:
+            continue
+        qty_recv = rec["qty"]
+        # Ingresar al destino como lote nuevo con el costo snapshoteado.
+        await fifo_service.receive_stock(
+            db, variant_id=item.variant_id, warehouse_id=t.destination_warehouse_id,
+            quantity=qty_recv, unit_cost=item.unit_cost_snapshot,
+            reference=t.folio, user_id=user_id, commit=False,
+        )
+        item.quantity_received = qty_recv
+        if qty_recv != item.quantity_shipped:
+            item.discrepancy_reason = rec.get("reason") or (
+                f"Faltante: enviado {item.quantity_shipped}, recibido {qty_recv}"
+                if qty_recv < item.quantity_shipped else
+                f"Sobrante: enviado {item.quantity_shipped}, recibido {qty_recv}"
+            )
+
+    t.status = StockTransferStatus.RECEIVED.value
+    t.received_at = datetime.now(timezone.utc)
+    t.received_by_id = user_id
+    await db.commit()
+    return await get_stock_transfer(db, transfer_id)
+
+
+async def cancel_stock_transfer(db: AsyncSession, transfer_id: int, reason: str,
+                                 user_id: Optional[int] = None) -> Optional[dict]:
+    t = await db.get(StockTransfer, transfer_id)
+    if not t:
+        return None
+    if t.status == StockTransferStatus.SHIPPED.value:
+        raise ValueError(
+            "No se puede cancelar un traspaso ya enviado — el stock ya salió del origen. "
+            "Marca como recibido en destino (aunque no lo llegara) y luego crea un ajuste "
+            "manual con la razón de pérdida."
+        )
+    if t.status == StockTransferStatus.RECEIVED.value:
+        raise ValueError("No se puede cancelar un traspaso ya recibido.")
+    if t.status == StockTransferStatus.CANCELLED.value:
+        return _serialize_transfer(t)  # idempotente
+    t.status = StockTransferStatus.CANCELLED.value
+    t.cancelled_at = datetime.now(timezone.utc)
+    t.cancelled_by_id = user_id
+    t.cancelled_reason = reason
+    await db.commit()
+    return await get_stock_transfer(db, transfer_id)
+
+
+async def find_variant_by_code(db: AsyncSession, code: str) -> Optional[dict]:
+    """Búsqueda unificada por SKU o barcode — usada por el escáner del módulo
+    Traspasos para identificar productos rápidamente."""
+    code = (code or "").strip()
+    if not code:
+        return None
+    res = await db.execute(
+        select(ProductVariant).where(
+            or_(ProductVariant.sku == code, ProductVariant.barcode == code)
+        ).options(selectinload(ProductVariant.product))
+    )
+    v = res.scalars().first()
+    if not v:
+        return None
+    return {
+        "variant_id": v.id,
+        "sku": v.sku,
+        "barcode": v.barcode,
+        "product_name": v.product.name if v.product else None,
+        "price": v.price,
+    }

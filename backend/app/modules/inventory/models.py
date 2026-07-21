@@ -333,3 +333,81 @@ class ProductionOrder(Base):
 
     recipe = relationship("Recipe")
     warehouse = relationship("Warehouse")
+
+
+# ── Traspasos entre almacenes (Stock Transfer Orders) ──────────────────────
+# Terminología profesional: en SAP se llama Stock Transport Order (STO), en
+# Odoo Internal Transfer, en NetSuite Transfer Order. En español México el
+# término contable/legal correcto es "Traspaso entre almacenes" (o "Nota de
+# traspaso"). NO es una compra ni una venta — no afecta P&L, solo mueve
+# inventario físico de un almacén a otro con trazabilidad completa.
+
+class StockTransferStatus(str, enum.Enum):
+    """Los 6 estados del ciclo de vida profesional de un traspaso."""
+    DRAFT = "draft"                 # borrador — se está capturando
+    APPROVED = "approved"           # aprobado — listo para preparar
+    IN_PREPARATION = "in_preparation"  # CEDIS armando el pedido (escaneando)
+    SHIPPED = "shipped"             # salió del origen (stock consumido en origen)
+    RECEIVED = "received"           # llegó al destino (stock ingresado en destino)
+    CANCELLED = "cancelled"         # cancelado antes de shipped
+
+
+class StockTransfer(Base):
+    """Traspaso de mercancía de un almacén origen a un almacén destino.
+    Con auditoría completa por estado — quién solicitó, aprobó, preparó,
+    envió y recibió, con timestamp por acción.
+
+    Contablemente NO genera póliza (no afecta P&L). Solo mueve inventario
+    físico entre almacenes. El kardex de AMBOS refleja el movimiento con
+    referencia al mismo folio TR-XXXXXX."""
+    __tablename__ = "stock_transfers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    folio = Column(String, unique=True, index=True, nullable=True)   # TR-000001
+    source_warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False, index=True)
+    destination_warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False, index=True)
+    status = Column(String, default=StockTransferStatus.DRAFT.value, nullable=False, index=True)
+    notes = Column(Text, nullable=True)
+    expected_delivery_date = Column(DateTime(timezone=True), nullable=True)
+
+    # Auditoría por estado
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    shipped_at = Column(DateTime(timezone=True), nullable=True)
+    shipped_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    received_at = Column(DateTime(timezone=True), nullable=True)
+    received_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_reason = Column(Text, nullable=True)
+
+    source_warehouse = relationship("Warehouse", foreign_keys=[source_warehouse_id])
+    destination_warehouse = relationship("Warehouse", foreign_keys=[destination_warehouse_id])
+    items = relationship("StockTransferItem", back_populates="transfer", cascade="all, delete-orphan")
+
+
+class StockTransferItem(Base):
+    """Línea de un traspaso. Tres cantidades para trazar discrepancias:
+      - quantity_requested: lo que se pidió al capturar el traspaso
+      - quantity_shipped:   lo que realmente salió del origen (puede ser menos
+                            si el CEDIS no tenía stock suficiente)
+      - quantity_received:  lo que llegó al destino (puede ser menos por daño,
+                            robo, pérdida en tránsito)
+    Si received != shipped, se marca discrepancia con la razón."""
+    __tablename__ = "stock_transfer_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    transfer_id = Column(Integer, ForeignKey("stock_transfers.id"), nullable=False, index=True)
+    variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=False)
+    quantity_requested = Column(Integer, nullable=False, default=0)
+    quantity_shipped = Column(Integer, nullable=False, default=0)
+    quantity_received = Column(Integer, nullable=False, default=0)
+    # Costo unitario del origen al momento de enviar (FIFO ponderado).
+    # Se transfiere al lote de entrada en el destino para mantener continuidad.
+    unit_cost_snapshot = Column(Float, default=0.0, nullable=False)
+    discrepancy_reason = Column(Text, nullable=True)  # se llena si received != shipped
+
+    transfer = relationship("StockTransfer", back_populates="items")
+    variant = relationship("ProductVariant")
