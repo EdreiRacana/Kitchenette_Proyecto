@@ -14,15 +14,18 @@ import {
   DollarSign, Barcode, Zap, PackageCheck, Send,
   Users, ClipboardList, Factory, FlaskConical,
   FileText, Mail, MessageCircle,
+  Sparkles, Calendar as CalendarIcon, Wand2, ArrowRightCircle,
 } from "lucide-react";
 import {
   inventoryService,
+  promotionsService,
   type Product, type Variant, type Warehouse as WarehouseT, type Movement,
   type Supplier, type ReorderAlert, type PurchaseOrder, type PurchaseOrderItem,
   type Recipe, type RecipeItem, type RecipeCostBreakdown, type ProductionOrder,
   type BulkImportResult, type CustomerReturn,
   type StockTransfer, type StockTransferStatus, type StockTransferItem, type ScanResult,
   type OverstockAlert,
+  type Promotion, type PromotionCreatePayload, type PromotionSuggestion,
 } from "./service";
 import { resolveMediaUrl } from "../../services/api";
 import { useServerRecovery } from "../../hooks/useServerRecovery";
@@ -95,7 +98,7 @@ const exportMovementsCSV = (movements: Movement[]) => {
   downloadCSV(`movimientos_${new Date().toISOString().slice(0, 10)}.csv`, [header, ...rows]);
 };
 
-type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "kardex" | "adjustments" | "purchase-orders" | "transfers" | "overstock" | "recipes" | "production" | "import";
+type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "kardex" | "adjustments" | "purchase-orders" | "transfers" | "overstock" | "promotions" | "recipes" | "production" | "import";
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any; initialQuery?: string }) {
@@ -299,6 +302,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
     { id: "purchase-orders", label: lang === "es" ? "Compras" : "Purchase orders", icon: ClipboardList },
     { id: "transfers", label: lang === "es" ? "Traspasos" : "Transfers", icon: ArrowLeftRight },
     { id: "overstock", label: lang === "es" ? "Sobreinventario" : "Overstock", icon: AlertTriangle },
+    { id: "promotions", label: lang === "es" ? "Promociones" : "Promotions", icon: Sparkles },
     { id: "recipes", label: lang === "es" ? "Construcción" : "Recipes / BOM", icon: FlaskConical },
     { id: "production", label: lang === "es" ? "Producción" : "Production", icon: Factory },
     { id: "import", label: lang === "es" ? "Carga masiva" : "Bulk import", icon: Upload },
@@ -1035,6 +1039,11 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       {/* ── TAB: Sobreinventario ── */}
       {tab === "overstock" && (
         <OverstockView t={t} warehouses={warehouses} />
+      )}
+
+      {/* ── TAB: Planificador de promociones ── */}
+      {tab === "promotions" && (
+        <PromotionsView t={t} warehouses={warehouses} products={products} />
       )}
 
       {/* ── TAB: Recipes / BOM ── */}
@@ -3334,5 +3343,551 @@ function OverstockView({ t, warehouses }: { t: any; warehouses: WarehouseT[] }) 
         )}
       </div>
     </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PLANIFICADOR DE PROMOCIONES
+// Reemplaza el Excel manual: captura la promoción (productos, tiendas, uplift),
+// genera sugerencias de traspaso con base en histórico + demanda esperada, y
+// las convierte en traspasos reales con un click.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PROMO_STATUS_META = {
+  planned: { label: "Planeada", color: "#33B2F5" },
+  active: { label: "En curso", color: "#34D399" },
+  finished: { label: "Terminada", color: "#94A3B8" },
+  cancelled: { label: "Cancelada", color: "#F87171" },
+} as const;
+
+function PromotionsView({ t, warehouses, products }: {
+  t: any; warehouses: WarehouseT[]; products: Product[];
+}) {
+  const [promos, setPromos] = useState<Promotion[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [selected, setSelected] = useState<Promotion | null>(null);
+
+  const load = async () => {
+    setLoading(true); setErr(null);
+    try { setPromos(await promotionsService.list({ limit: 200 })); }
+    catch (e: any) { setErr(e?.response?.data?.detail || "No se pudo cargar"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const inp: React.CSSProperties = { padding: "8px 11px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, outline: "none" };
+
+  const summary = useMemo(() => {
+    const active = promos.filter(p => p.status === "active" || p.status === "planned");
+    const upcoming = active.filter(p => new Date(p.start_date) > new Date()).length;
+    const shortage = promos.reduce((n, p) =>
+      n + p.suggestions.filter(s => s.shortage_flag).length, 0);
+    return { total: promos.length, active: active.length, upcoming, shortage };
+  }, [promos]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}>
+            <Sparkles size={18} color={t.nova} /> Planificador de promociones
+          </div>
+          <div style={{ fontSize: 12, color: t.textLo, marginTop: 3 }}>
+            Captura la promoción, define los productos y las tiendas, y el motor calcula automáticamente cuánto traspasar desde el CEDIS para que llegues con inventario suficiente el día del arranque.
+          </div>
+        </div>
+        <button onClick={() => setFormOpen(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+          <Plus size={15} /> Nueva promoción
+        </button>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Promociones totales</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: t.textHi, marginTop: 4 }}>{summary.total}</div>
+        </div>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Activas / planeadas</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: t.good, marginTop: 4 }}>{summary.active}</div>
+        </div>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Por arrancar</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: t.nova, marginTop: 4 }}>{summary.upcoming}</div>
+        </div>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Sugerencias con faltante</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: summary.shortage > 0 ? t.warn : t.textHi, marginTop: 4 }}>{summary.shortage}</div>
+        </div>
+      </div>
+
+      {err && (
+        <div style={{ padding: "10px 14px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 13 }}>
+          <AlertTriangle size={14} style={{ verticalAlign: "middle", marginRight: 6 }} /> {err}
+        </div>
+      )}
+
+      {/* Lista de promociones */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
+        {loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: t.textLo, fontSize: 13 }}>Cargando…</div>
+        ) : promos.length === 0 ? (
+          <div style={{ padding: 60, textAlign: "center", color: t.textLo }}>
+            <Sparkles size={40} color={t.nova} style={{ opacity: 0.6, marginBottom: 12 }} />
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Aún no hay promociones planeadas</div>
+            <div style={{ fontSize: 12 }}>Crea tu primera promoción y el motor generará las sugerencias de traspaso automáticamente.</div>
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: t.panel2 }}>
+                {["Folio", "Promoción", "Ventana", "Uplift", "Tiendas", "Productos", "Sugerencias", "Estado", ""].map((h, i) => (
+                  <th key={i} style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {promos.map((p, i) => {
+                const meta = PROMO_STATUS_META[p.status] || PROMO_STATUS_META.planned;
+                const start = new Date(p.start_date), end = new Date(p.end_date);
+                const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+                const shortage = p.suggestions.filter(s => s.shortage_flag).length;
+                const materialized = p.suggestions.filter(s => s.transfer_id).length;
+                return (
+                  <tr key={p.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2, cursor: "pointer" }} onClick={() => setSelected(p)}>
+                    <td style={{ padding: "12px 14px", fontFamily: "monospace", color: t.textMid }}>{p.folio || `PRM-${p.id}`}</td>
+                    <td style={{ padding: "12px 14px" }}>
+                      <div style={{ fontWeight: 600, color: t.textHi }}>{p.name}</div>
+                      {p.description && <div style={{ fontSize: 11, color: t.textLo, marginTop: 2, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.description}</div>}
+                    </td>
+                    <td style={{ padding: "12px 14px", color: t.textMid, whiteSpace: "nowrap" }}>
+                      {start.toLocaleDateString("es-MX", { day: "2-digit", month: "short" })} → {end.toLocaleDateString("es-MX", { day: "2-digit", month: "short" })}
+                      <div style={{ fontSize: 11, color: t.textLo }}>{days} días</div>
+                    </td>
+                    <td style={{ padding: "12px 14px", color: t.nova, fontWeight: 700 }}>+{p.expected_uplift_pct.toFixed(0)}%</td>
+                    <td style={{ padding: "12px 14px", color: t.textMid }}>{p.stores.length}</td>
+                    <td style={{ padding: "12px 14px", color: t.textMid }}>{p.items.length}</td>
+                    <td style={{ padding: "12px 14px" }}>
+                      <div style={{ color: t.textHi, fontWeight: 600 }}>{p.suggestions.length}</div>
+                      {shortage > 0 && <div style={{ fontSize: 10.5, color: t.warn }}>⚠ {shortage} con faltante</div>}
+                      {materialized > 0 && <div style={{ fontSize: 10.5, color: t.good }}>✓ {materialized} en traspaso</div>}
+                    </td>
+                    <td style={{ padding: "12px 14px" }}>
+                      <span style={{ padding: "3px 10px", borderRadius: 999, background: meta.color + "22", color: meta.color, fontSize: 11, fontWeight: 700 }}>{meta.label}</span>
+                    </td>
+                    <td style={{ padding: "12px 14px", textAlign: "right" }}>
+                      <ChevronRight size={16} color={t.textLo} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {formOpen && (
+        <PromotionFormModal t={t} warehouses={warehouses} products={products}
+          onClose={() => setFormOpen(false)}
+          onCreated={async () => { setFormOpen(false); await load(); }} />
+      )}
+
+      {selected && (
+        <PromotionDetailModal t={t} promotion={selected} warehouses={warehouses} products={products}
+          onClose={() => setSelected(null)}
+          onChanged={async () => { const fresh = await promotionsService.get(selected.id); setSelected(fresh); await load(); }} />
+      )}
+    </div>
+  );
+}
+
+
+function PromotionFormModal({ t, warehouses, products, onClose, onCreated }: {
+  t: any; warehouses: WarehouseT[]; products: Product[];
+  onClose: () => void; onCreated: () => Promise<void>;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const in7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [startDate, setStartDate] = useState(in7);
+  const [endDate, setEndDate] = useState(new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10));
+  const [uplift, setUplift] = useState(50);
+  const [lookback, setLookback] = useState(30);
+  const [leadTime, setLeadTime] = useState(5);
+  const [selectedVariants, setSelectedVariants] = useState<Set<number>>(new Set());
+  const [selectedWarehouses, setSelectedWarehouses] = useState<Set<number>>(new Set());
+  const [productQ, setProductQ] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const inp: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
+
+  const allVariants = useMemo(() => {
+    const rows: { variant_id: number; sku: string; product_name: string }[] = [];
+    for (const p of products) {
+      for (const v of (p.variants || [])) {
+        if (v.is_active === false) continue;
+        rows.push({ variant_id: v.id, sku: v.sku, product_name: p.name });
+      }
+    }
+    const q = productQ.trim().toLowerCase();
+    return q
+      ? rows.filter(r => r.product_name.toLowerCase().includes(q) || r.sku.toLowerCase().includes(q))
+      : rows;
+  }, [products, productQ]);
+
+  const toggleV = (id: number) => {
+    const s = new Set(selectedVariants);
+    s.has(id) ? s.delete(id) : s.add(id);
+    setSelectedVariants(s);
+  };
+  const toggleW = (id: number) => {
+    const s = new Set(selectedWarehouses);
+    s.has(id) ? s.delete(id) : s.add(id);
+    setSelectedWarehouses(s);
+  };
+
+  const submit = async () => {
+    setErr(null);
+    if (!name.trim()) { setErr("Nombre requerido"); return; }
+    if (selectedVariants.size === 0) { setErr("Selecciona al menos un producto"); return; }
+    if (selectedWarehouses.size === 0) { setErr("Selecciona al menos una tienda destino"); return; }
+    if (new Date(endDate) < new Date(startDate)) { setErr("La fecha de fin no puede ser anterior a la de inicio"); return; }
+
+    setSaving(true);
+    try {
+      const payload: PromotionCreatePayload = {
+        name: name.trim(),
+        description: description.trim() || undefined,
+        start_date: new Date(startDate + "T00:00:00").toISOString(),
+        end_date: new Date(endDate + "T23:59:59").toISOString(),
+        expected_uplift_pct: Number(uplift),
+        baseline_lookback_days: Number(lookback),
+        lead_time_days: Number(leadTime),
+        items: Array.from(selectedVariants).map(vid => ({ variant_id: vid })),
+        warehouse_ids: Array.from(selectedWarehouses),
+      };
+      await promotionsService.create(payload);
+      await onCreated();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "No se pudo crear la promoción");
+    } finally { setSaving(false); }
+  };
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, width: "min(760px, 100%)", maxHeight: "90vh", overflow: "auto" }}>
+        <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Sparkles size={18} color={t.nova} />
+            <div style={{ fontSize: 16, fontWeight: 700, color: t.textHi }}>Nueva promoción</div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" }}>Nombre *</label>
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="Ej. Buen Fin 2026" style={inp} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" }}>Descripción</label>
+              <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Detalles internos…" style={inp} />
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+            <div>
+              <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" }}>Fecha inicio *</label>
+              <input type="date" value={startDate} min={today} onChange={e => setStartDate(e.target.value)} style={inp} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" }}>Fecha fin *</label>
+              <input type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} style={inp} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" }}>Uplift esperado (%)</label>
+              <input type="number" value={uplift} onChange={e => setUplift(Number(e.target.value) || 0)} style={inp} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" }}>Ventana histórica (días)</label>
+              <input type="number" value={lookback} onChange={e => setLookback(Number(e.target.value) || 0)} style={inp} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" }}>Lead time (días)</label>
+              <input type="number" value={leadTime} onChange={e => setLeadTime(Number(e.target.value) || 0)} style={inp} />
+            </div>
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6, display: "block" }}>
+              Tiendas destino * <span style={{ color: t.textMid, fontWeight: 400 }}>({selectedWarehouses.size} seleccionadas)</span>
+            </label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {warehouses.filter(w => w.is_active !== false).map(w => (
+                <button key={w.id} type="button" onClick={() => toggleW(w.id)}
+                  style={{
+                    padding: "6px 12px", borderRadius: 999,
+                    border: `1px solid ${selectedWarehouses.has(w.id) ? t.nova : t.border}`,
+                    background: selectedWarehouses.has(w.id) ? t.nova + "22" : "transparent",
+                    color: selectedWarehouses.has(w.id) ? t.nova : t.textMid,
+                    fontSize: 12, fontWeight: 600, cursor: "pointer",
+                  }}>
+                  {w.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6, display: "block" }}>
+              Productos en promoción * <span style={{ color: t.textMid, fontWeight: 400 }}>({selectedVariants.size} seleccionados)</span>
+            </label>
+            <input value={productQ} onChange={e => setProductQ(e.target.value)} placeholder="Buscar por nombre o SKU…" style={{ ...inp, marginBottom: 8 }} />
+            <div style={{ maxHeight: 220, overflow: "auto", border: `1px solid ${t.border}`, borderRadius: 8 }}>
+              {allVariants.length === 0 ? (
+                <div style={{ padding: 20, textAlign: "center", color: t.textLo, fontSize: 12 }}>Sin resultados</div>
+              ) : allVariants.map((v, i) => (
+                <label key={v.variant_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: i % 2 === 0 ? "transparent" : t.panel2, cursor: "pointer" }}>
+                  <input type="checkbox" checked={selectedVariants.has(v.variant_id)} onChange={() => toggleV(v.variant_id)} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, color: t.textHi }}>{v.product_name}</div>
+                    <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace" }}>{v.sku}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {err && (
+            <div style={{ padding: "10px 14px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 13 }}>
+              <AlertTriangle size={14} style={{ verticalAlign: "middle", marginRight: 6 }} /> {err}
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: "14px 20px", borderTop: `1px solid ${t.border}`, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onClose} disabled={saving} style={{ padding: "9px 16px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, fontSize: 13, cursor: "pointer" }}>
+            Cancelar
+          </button>
+          <button onClick={submit} disabled={saving} style={{ padding: "9px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", fontSize: 13, fontWeight: 600, cursor: saving ? "wait" : "pointer" }}>
+            {saving ? "Guardando…" : "Crear promoción"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+
+function PromotionDetailModal({ t, promotion, warehouses, products, onClose, onChanged }: {
+  t: any; promotion: Promotion; warehouses: WarehouseT[]; products: Product[];
+  onClose: () => void; onChanged: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [selectedSug, setSelectedSug] = useState<Set<number>>(new Set());
+
+  const meta = PROMO_STATUS_META[promotion.status] || PROMO_STATUS_META.planned;
+  const start = new Date(promotion.start_date);
+  const end = new Date(promotion.end_date);
+  const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+  const warehouseName = (id?: number | null) => warehouses.find(w => w.id === id)?.name || (id ? `#${id}` : "—");
+  const productName = (variantId: number) => {
+    for (const p of products) for (const v of (p.variants || [])) if (v.id === variantId) return `${p.name} · ${v.sku}`;
+    const it = promotion.items.find(i => i.variant_id === variantId);
+    return it ? `${it.product_name || "—"} · ${it.sku || ""}` : `#${variantId}`;
+  };
+
+  const toggleSug = (id: number) => {
+    const s = new Set(selectedSug); s.has(id) ? s.delete(id) : s.add(id); setSelectedSug(s);
+  };
+  const selectAll = () => {
+    const pending = promotion.suggestions.filter(s => !s.transfer_id && s.quantity_suggested > 0 && s.source_warehouse_id);
+    setSelectedSug(new Set(pending.map(s => s.id)));
+  };
+  const clearSel = () => setSelectedSug(new Set());
+
+  const doCompute = async () => {
+    setBusy("compute"); setErr(null);
+    try { await promotionsService.compute(promotion.id); await onChanged(); }
+    catch (e: any) { setErr(e?.response?.data?.detail || "No se pudo calcular"); }
+    finally { setBusy(null); }
+  };
+  const doMaterialize = async () => {
+    if (selectedSug.size === 0) { setErr("Selecciona al menos una sugerencia"); return; }
+    setBusy("materialize"); setErr(null);
+    try {
+      await promotionsService.materialize(promotion.id, Array.from(selectedSug));
+      setSelectedSug(new Set());
+      await onChanged();
+    }
+    catch (e: any) { setErr(e?.response?.data?.detail || "No se pudieron crear los traspasos"); }
+    finally { setBusy(null); }
+  };
+  const doCancel = async () => {
+    if (!confirm("¿Cancelar esta promoción?")) return;
+    setBusy("cancel"); setErr(null);
+    try { await promotionsService.cancel(promotion.id); await onChanged(); }
+    catch (e: any) { setErr(e?.response?.data?.detail || "No se pudo cancelar"); }
+    finally { setBusy(null); }
+  };
+
+  const pendingCount = promotion.suggestions.filter(s => !s.transfer_id && s.quantity_suggested > 0 && s.source_warehouse_id).length;
+  const materializedCount = promotion.suggestions.filter(s => s.transfer_id).length;
+  const shortageCount = promotion.suggestions.filter(s => s.shortage_flag).length;
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, width: "min(1000px, 100%)", maxHeight: "92vh", overflow: "auto" }}>
+        <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <Sparkles size={18} color={t.nova} />
+              <div style={{ fontSize: 16, fontWeight: 700, color: t.textHi }}>{promotion.name}</div>
+              <span style={{ padding: "2px 10px", borderRadius: 999, background: meta.color + "22", color: meta.color, fontSize: 11, fontWeight: 700 }}>{meta.label}</span>
+              <span style={{ fontFamily: "monospace", color: t.textLo, fontSize: 12 }}>{promotion.folio}</span>
+            </div>
+            <div style={{ fontSize: 12, color: t.textLo, marginTop: 4 }}>
+              <CalendarIcon size={11} style={{ verticalAlign: "middle" }} /> {start.toLocaleDateString("es-MX")} → {end.toLocaleDateString("es-MX")} · {days} días · uplift +{promotion.expected_uplift_pct.toFixed(0)}% · lead time {promotion.lead_time_days}d
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+          {promotion.description && (
+            <div style={{ fontSize: 13, color: t.textMid, background: t.panel2, padding: "10px 14px", borderRadius: 8 }}>{promotion.description}</div>
+          )}
+
+          {/* Barra de acciones */}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            {promotion.status !== "cancelled" && promotion.status !== "finished" && (
+              <>
+                <button onClick={doCompute} disabled={busy !== null}
+                  style={{ padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                  <Wand2 size={14} /> {busy === "compute" ? "Calculando…" : "Recalcular sugerencias"}
+                </button>
+                {pendingCount > 0 && (
+                  <button onClick={doMaterialize} disabled={busy !== null || selectedSug.size === 0}
+                    style={{ padding: "9px 16px", borderRadius: 10, border: `1px solid ${t.good}`, background: selectedSug.size > 0 ? t.good : "transparent", color: selectedSug.size > 0 ? "#fff" : t.good, fontSize: 13, fontWeight: 600, cursor: selectedSug.size > 0 ? "pointer" : "not-allowed", display: "flex", alignItems: "center", gap: 6 }}>
+                    <ArrowRightCircle size={14} /> Crear traspasos ({selectedSug.size})
+                  </button>
+                )}
+                <button onClick={doCancel} disabled={busy !== null}
+                  style={{ padding: "9px 12px", borderRadius: 10, border: `1px solid ${t.bad}55`, background: "transparent", color: t.bad, fontSize: 13, cursor: "pointer" }}>
+                  Cancelar promoción
+                </button>
+              </>
+            )}
+          </div>
+
+          {err && (
+            <div style={{ padding: "10px 14px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 13 }}>
+              <AlertTriangle size={14} style={{ verticalAlign: "middle", marginRight: 6 }} /> {err}
+            </div>
+          )}
+
+          {/* Resumen scope */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 12 }}>
+              <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>Tiendas destino ({promotion.stores.length})</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {promotion.stores.map(s => (
+                  <span key={s.id} style={{ padding: "3px 10px", borderRadius: 999, background: t.nova + "22", color: t.nova, fontSize: 11.5, fontWeight: 600 }}>{s.warehouse_name || warehouseName(s.warehouse_id)}</span>
+                ))}
+              </div>
+            </div>
+            <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 12 }}>
+              <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>Productos ({promotion.items.length})</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 80, overflow: "auto" }}>
+                {promotion.items.map(it => (
+                  <div key={it.id} style={{ fontSize: 12, color: t.textMid }}>
+                    <span style={{ color: t.textHi, fontWeight: 500 }}>{it.product_name}</span>
+                    <span style={{ fontFamily: "monospace", color: t.textLo, marginLeft: 6 }}>{it.sku}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Sugerencias */}
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}>
+                Sugerencias de traspaso
+                {shortageCount > 0 && <span style={{ padding: "2px 8px", borderRadius: 999, background: t.warn + "22", color: t.warn, fontSize: 11, fontWeight: 700 }}>⚠ {shortageCount} con faltante</span>}
+                {materializedCount > 0 && <span style={{ padding: "2px 8px", borderRadius: 999, background: t.good + "22", color: t.good, fontSize: 11, fontWeight: 700 }}>✓ {materializedCount} en traspaso</span>}
+              </div>
+              {promotion.suggestions.length > 0 && (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={selectAll} style={{ fontSize: 11.5, padding: "4px 10px", border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, borderRadius: 6, cursor: "pointer" }}>Todo</button>
+                  <button onClick={clearSel} style={{ fontSize: 11.5, padding: "4px 10px", border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, borderRadius: 6, cursor: "pointer" }}>Ninguno</button>
+                </div>
+              )}
+            </div>
+            {promotion.suggestions.length === 0 ? (
+              <div style={{ padding: 30, textAlign: "center", background: t.panel2, borderRadius: 10, border: `1px dashed ${t.border}` }}>
+                <Wand2 size={30} color={t.nova} style={{ opacity: 0.5, marginBottom: 10 }} />
+                <div style={{ color: t.textMid, fontSize: 13 }}>Presiona "Recalcular sugerencias" para que el motor analice el histórico y genere las cantidades a traspasar.</div>
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto", border: `1px solid ${t.border}`, borderRadius: 10 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 780 }}>
+                  <thead>
+                    <tr style={{ background: t.panel2 }}>
+                      <th style={{ padding: "10px 12px", textAlign: "center", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}></th>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Producto</th>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Origen → Destino</th>
+                      <th style={{ padding: "10px 12px", textAlign: "right", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Vel/día</th>
+                      <th style={{ padding: "10px 12px", textAlign: "right", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Demanda proyectada</th>
+                      <th style={{ padding: "10px 12px", textAlign: "right", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Stock destino</th>
+                      <th style={{ padding: "10px 12px", textAlign: "right", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Sugerido</th>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Nota</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {promotion.suggestions.map((s, i) => {
+                      const disabled = !!s.transfer_id || s.quantity_suggested <= 0 || !s.source_warehouse_id;
+                      const rowColor = s.transfer_id ? t.good + "12" : s.shortage_flag ? t.warn + "10" : "transparent";
+                      return (
+                        <tr key={s.id} style={{ background: rowColor || (i % 2 === 0 ? t.panel : t.panel2) }}>
+                          <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                            {s.transfer_id ? (
+                              <span title={`Ya en traspaso #${s.transfer_id}`} style={{ color: t.good }}>✓</span>
+                            ) : (
+                              <input type="checkbox" disabled={disabled}
+                                checked={selectedSug.has(s.id)}
+                                onChange={() => toggleSug(s.id)} />
+                            )}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: t.textHi, fontWeight: 500 }}>{productName(s.variant_id)}</td>
+                          <td style={{ padding: "10px 12px", color: t.textMid, whiteSpace: "nowrap" }}>
+                            {warehouseName(s.source_warehouse_id)} <ChevronRight size={11} style={{ verticalAlign: "middle" }} /> <b style={{ color: t.textHi }}>{warehouseName(s.destination_warehouse_id)}</b>
+                          </td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: t.textMid, fontVariantNumeric: "tabular-nums" }}>{s.baseline_daily_velocity.toFixed(2)}</td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: t.textMid, fontVariantNumeric: "tabular-nums" }}>{Math.round(s.expected_units_during_promo)}</td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: t.textMid, fontVariantNumeric: "tabular-nums" }}>{s.current_stock}</td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: s.quantity_suggested > 0 ? (s.shortage_flag ? t.warn : t.nova) : t.textLo, fontVariantNumeric: "tabular-nums", fontSize: 14 }}>{s.quantity_suggested}</td>
+                          <td style={{ padding: "10px 12px", color: s.shortage_flag ? t.warn : t.textLo, fontSize: 11.5 }}>{s.note || (s.transfer_id ? `En traspaso #${s.transfer_id}` : "OK")}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
