@@ -476,13 +476,78 @@ async def _next_folio(db: AsyncSession, model, prefix: str) -> str:
     last_id = result.scalar()
     return f"{prefix}-{(last_id or 0) + 1:05d}"
 
+_ALLOCATION_METHODS = ("by_value", "by_quantity")
+
+
+def _validate_allocation(method: str) -> str:
+    if method not in _ALLOCATION_METHODS:
+        raise ValueError(f"landed_cost_allocation debe ser uno de: {', '.join(_ALLOCATION_METHODS)}")
+    return method
+
+
+def _extras_total(extras: Optional[List[dict]]) -> float:
+    if not extras:
+        return 0.0
+    return round(sum(float((c or {}).get("amount", 0.0) or 0.0) for c in extras), 2)
+
+
+def _compute_landed_unit_costs(
+    items: List[dict], extras_total: float, method: str,
+) -> List[float]:
+    """Prorratea `extras_total` entre las partidas y devuelve el costo unitario
+    integrado (landed) por partida, en el mismo orden que `items`.
+
+    Cada partida debe tener {'quantity', 'unit_cost'}. Si no hay extras o
+    todas las partidas suman cero (denominador cero), regresa el costo unitario
+    original — sin prorrateo, sin dividir entre cero.
+
+    - "by_value":    peso = quantity × unit_cost / total_value
+    - "by_quantity": peso = quantity / total_quantity
+
+    El extra prorrateado se divide entre `quantity` para volver a costo unit.
+    Redondeo a 4 decimales (mismo que el kardex FIFO)."""
+    if extras_total <= 0 or not items:
+        return [round(float(it.get("unit_cost") or 0.0), 4) for it in items]
+
+    method = _validate_allocation(method)
+    if method == "by_value":
+        total_value = sum(float(it.get("quantity") or 0) * float(it.get("unit_cost") or 0.0) for it in items)
+    else:  # by_quantity
+        total_value = sum(float(it.get("quantity") or 0) for it in items)
+
+    if total_value <= 0:
+        return [round(float(it.get("unit_cost") or 0.0), 4) for it in items]
+
+    landed = []
+    for it in items:
+        qty = float(it.get("quantity") or 0)
+        unit_cost = float(it.get("unit_cost") or 0.0)
+        if qty <= 0:
+            landed.append(round(unit_cost, 4))
+            continue
+        line_weight = (qty * unit_cost) if method == "by_value" else qty
+        share = extras_total * (line_weight / total_value)
+        landed_unit = unit_cost + (share / qty)
+        landed.append(round(landed_unit, 4))
+    return landed
+
+
 async def create_purchase_order(db: AsyncSession, po_in: schemas.PurchaseOrderCreate, user_id: Optional[int] = None) -> PurchaseOrder:
     folio = await _next_folio(db, PurchaseOrder, "OC")
+    extras = [c.model_dump() for c in (po_in.extra_costs or [])]
+    method = _validate_allocation(po_in.landed_cost_allocation or "by_value")
+    # total_amount = SOLO mercancía. Es lo que el negocio le debe al proveedor
+    # de la OC (la CxP se salda al pagarle su factura). Los extras (flete,
+    # aduana, seguros) son deudas con terceros distintos — cada uno con su
+    # propia factura y su propia CxP — así que NO entran en el total_amount
+    # de esta OC. Sí se usan para prorratear el landed cost del inventario,
+    # y el UI los muestra por separado como 'Extras' + 'Total desembolso'.
     total_amount = round(sum(item.quantity * item.unit_cost for item in po_in.items), 2)
     po = PurchaseOrder(
         folio=folio, supplier_id=po_in.supplier_id, warehouse_id=po_in.warehouse_id,
         notes=po_in.notes, status=PurchaseOrderStatus.ORDERED.value, user_id=user_id,
         total_amount=total_amount, paid_amount=0.0, due_date=po_in.due_date,
+        extra_costs=extras, landed_cost_allocation=method,
     )
     db.add(po)
     await db.flush()
@@ -511,6 +576,10 @@ async def update_purchase_order(db: AsyncSession, po_id: int, po_in: schemas.Pur
         po.notes = po_in.notes
     if po_in.due_date is not None:
         po.due_date = po_in.due_date
+    if po_in.extra_costs is not None:
+        po.extra_costs = [c.model_dump() for c in po_in.extra_costs]
+    if po_in.landed_cost_allocation is not None:
+        po.landed_cost_allocation = _validate_allocation(po_in.landed_cost_allocation)
     if po_in.items is not None:
         for item in list(po.items):
             await db.delete(item)
@@ -519,7 +588,9 @@ async def update_purchase_order(db: AsyncSession, po_id: int, po_in: schemas.Pur
             db.add(PurchaseOrderItem(purchase_order_id=po.id, variant_id=item.variant_id, quantity=item.quantity, unit_cost=item.unit_cost))
         await db.flush()
         await db.refresh(po, attribute_names=["items"])
-        po.total_amount = round(sum(it.quantity * it.unit_cost for it in po.items), 2)
+    # Recalcular total_amount: SOLO mercancía (deuda con este proveedor).
+    # Los extras se muestran por separado y no afectan la CxP de esta OC.
+    po.total_amount = round(sum((it.quantity or 0) * (it.unit_cost or 0.0) for it in po.items), 2)
 
     await db.commit()
     result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po.id).options(selectinload(PurchaseOrder.items)))
@@ -533,15 +604,38 @@ async def get_purchase_orders(db: AsyncSession, warehouse_ids: Optional[List[int
     return result.scalars().all()
 
 async def receive_purchase_order(db: AsyncSession, po_id: int, user_id: Optional[int] = None) -> Optional[PurchaseOrder]:
+    """Recibe la orden de compra: prorratea los costos extra (landed cost)
+    entre las partidas y crea los StockLots FIFO con el costo INTEGRADO
+    (unit_cost de factura + fracción de flete/aduana/etc.). Guarda el costo
+    integrado en `landed_unit_cost` de cada partida como snapshot histórico
+    para trazabilidad contable — el `unit_cost` original (factura) se preserva
+    intacto."""
     result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == po_id).options(selectinload(PurchaseOrder.items)))
     po = result.scalars().first()
     if not po or po.status == PurchaseOrderStatus.RECEIVED.value:
         return po
-    for item in po.items:
+
+    # Prorrateo de extras — los mismos que se ven en el frontend de la OC.
+    extras_total = _extras_total(po.extra_costs)
+    items_data = [
+        {"quantity": it.quantity, "unit_cost": it.unit_cost} for it in po.items
+    ]
+    landed_costs = _compute_landed_unit_costs(
+        items_data, extras_total, po.landed_cost_allocation or "by_value",
+    )
+
+    for item, landed_unit_cost in zip(po.items, landed_costs):
+        # Snapshot del costo integrado en la partida (auditable).
+        item.landed_unit_cost = landed_unit_cost
+        # El FIFO / kardex entran con el costo integrado — desde este punto
+        # cada venta que consuma este lote reporta un margen honesto.
+        note = f"Recepción de orden de compra {po.folio}"
+        if extras_total > 0 and abs(landed_unit_cost - (item.unit_cost or 0.0)) > 0.005:
+            note += f" · landed cost prorrateado (factura {item.unit_cost:.2f} → integrado {landed_unit_cost:.2f})"
         movement_in = schemas.StockMovementCreate(
             variant_id=item.variant_id, warehouse_id=po.warehouse_id, quantity=item.quantity,
-            movement_type=StockMovementType.IN.value, unit_cost=item.unit_cost,
-            reference=po.folio, notes=f"Recepción de orden de compra {po.folio}",
+            movement_type=StockMovementType.IN.value, unit_cost=landed_unit_cost,
+            reference=po.folio, notes=note,
         )
         await adjust_stock(db, movement_in, user_id=user_id)
     po.status = PurchaseOrderStatus.RECEIVED.value

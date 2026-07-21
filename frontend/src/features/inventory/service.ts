@@ -117,7 +117,15 @@ export interface InventoryStats {
     by_category: CategoryValue[];
 }
 
-export interface PurchaseOrderItem { variant_id: number; quantity: number; unit_cost: number; }
+export interface PurchaseOrderExtraCost { description: string; amount: number; }
+export interface PurchaseOrderItem {
+    variant_id: number;
+    quantity: number;
+    unit_cost: number;
+    // Costo unitario integrado (con extras prorrateados). Se llena al
+    // recibir la orden y queda como snapshot histórico.
+    landed_unit_cost?: number | null;
+}
 export interface PurchaseOrder {
     id: number;
     folio?: string;
@@ -128,6 +136,14 @@ export interface PurchaseOrder {
     created_at: string;
     received_at?: string;
     items: PurchaseOrderItem[];
+    // Landed cost: costos indirectos que se prorratean entre las partidas al
+    // recibir (flete, aduana, seguros, IVA no acreditable, etc.).
+    extra_costs?: PurchaseOrderExtraCost[];
+    extra_costs_total?: number;
+    landed_cost_allocation?: 'by_value' | 'by_quantity';
+    total_amount?: number;
+    paid_amount?: number;
+    balance?: number;
 }
 
 export interface RecipeItem { input_variant_id: number; quantity: number; }

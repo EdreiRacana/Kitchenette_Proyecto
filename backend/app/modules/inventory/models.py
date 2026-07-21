@@ -203,6 +203,23 @@ class PurchaseOrder(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     received_at = Column(DateTime(timezone=True), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # ── Landed cost (costo integrado) ─────────────────────────────────────
+    # Costos indirectos de la compra que se prorratean entre las partidas al
+    # recibir: flete internacional, agente aduanal, aranceles, IVA no
+    # acreditable, seguro, maniobras, etc. Mismo formato JSON que Recipe
+    # (extra_costs: [{description, amount}, ...]) para consistencia visual y
+    # de código en el frontend.
+    extra_costs = Column(JSON, nullable=True)
+    # Método de prorrateo entre partidas cuando se reciba:
+    #   "by_value"    → cada partida carga con % del extra proporcional a su
+    #                   (cantidad × costo unitario) sobre el total (default;
+    #                   apropiado para la mayoría de compras nacionales e
+    #                   importaciones estándar).
+    #   "by_quantity" → cada partida carga con % del extra proporcional a su
+    #                   cantidad sobre el total de unidades (apropiado cuando
+    #                   el costo indirecto depende del volumen físico y las
+    #                   piezas pesan/ocupan lo mismo).
+    landed_cost_allocation = Column(String, default="by_value", nullable=False)
 
     supplier = relationship("Supplier", back_populates="purchase_orders")
     warehouse = relationship("Warehouse")
@@ -212,6 +229,12 @@ class PurchaseOrder(Base):
     @property
     def balance(self) -> float:
         return round((self.total_amount or 0.0) - (self.paid_amount or 0.0), 2)
+
+    @property
+    def extra_costs_total(self) -> float:
+        if not self.extra_costs:
+            return 0.0
+        return round(sum(float((c or {}).get("amount", 0.0) or 0.0) for c in self.extra_costs), 2)
 
 class SupplierPayment(Base):
     __tablename__ = "supplier_payments"
@@ -235,6 +258,11 @@ class PurchaseOrderItem(Base):
     variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=False)
     quantity = Column(Integer, nullable=False)
     unit_cost = Column(Float, nullable=False)
+    # Costo unitario integrado (con extras prorrateados) snapshoteado en el
+    # momento en que se recibe la orden. Se calcula al pasar a status
+    # "received" y es el costo con el que entran los StockLots FIFO. Se
+    # preserva `unit_cost` (de factura) para trazabilidad contable.
+    landed_unit_cost = Column(Float, nullable=True)
 
     purchase_order = relationship("PurchaseOrder", back_populates="items")
     variant = relationship("ProductVariant")

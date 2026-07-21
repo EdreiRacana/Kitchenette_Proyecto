@@ -100,7 +100,7 @@ const STRINGS = {
       goalProgress: "Avance hacia la meta", trend: "Tendencia del periodo",
       stockMonths: "Meses de inventario", stockCost: "Costo del inventario",
       stockMonthsUnit: (m: number) => (m === 1 ? "mes" : "meses"),
-      stockMonthsNoSales: "Sin ventas este mes",
+      stockMonthsNoSales: "Captura costos en compras y ventas para activarlo",
       seeAnalysis: "Ver análisis completo",
     },
     kpi: { "Ventas": "Ventas", "Utilidad neta": "Utilidad neta", "Pedidos": "Pedidos", "Ticket promedio": "Ticket promedio" },
@@ -137,7 +137,7 @@ const STRINGS = {
       goalProgress: "Progress to goal", trend: "Period trend",
       stockMonths: "Months of inventory", stockCost: "Inventory cost",
       stockMonthsUnit: (m: number) => (m === 1 ? "month" : "months"),
-      stockMonthsNoSales: "No sales this month",
+      stockMonthsNoSales: "Capture costs in purchases and sales to enable it",
       seeAnalysis: "See full analysis",
     },
     kpi: { "Ventas": "Sales", "Utilidad neta": "Net profit", "Pedidos": "Orders", "Ticket promedio": "Avg. ticket" },
@@ -283,12 +283,20 @@ async function loadDashboardData(preset, customStart, customEnd) {
          topCustomers, topCustomersPrev, byChannel, cashFlow, reorderAlerts, hrAlerts, execSummary] = results.map((r) => r.value) as any[];
 
   // ── Meses de inventario ───────────────────────────────────────────────
-  // Cobertura de almacén = valor de inventario a costo ÷ COGS mensual real.
-  // Es la métrica clásica de rotación ("¿cuántos meses aguanto vendiendo lo
-  // que tengo?"). El COGS mensual viene de /bi/executive-summary, que suma
-  // quantity*unit_cost de los pedidos del mes actual: es dato real, no una
-  // estimación por margen. Si el negocio aún no factura este mes (cogs_month
-  // = 0), no podemos calcular meses y devolvemos null para pintar "—".
+  // Cobertura de almacén = valor de inventario a costo ÷ COGS mensual REAL.
+  // Fórmula clásica de rotación: "¿cuántos meses aguanto vendiendo lo que tengo?"
+  //
+  // Fuente ÚNICA: /bi/executive-summary.sales.cogs_month, que suma
+  // quantity × unit_cost de los OrderItem del mes actual. Ese unit_cost
+  // viene del FIFO al vender (fifo_service.consume_stock → unit_cost_avg),
+  // que a su vez viene del landed_unit_cost del StockLot al recibir la OC.
+  // El ciclo cierra sin ningún supuesto inventado.
+  //
+  // Si cogs_month = 0, la tarjeta muestra "—". No estimamos, no asumimos
+  // márgenes: el sistema no tiene por qué mentir con números aproximados.
+  // Para que el número exista, el usuario captura costo por partida en las
+  // OCs (y sus extras/landed cost), y las ventas empiezan a snapshotear
+  // costo real. Cuando el ciclo esté completo, el número aparece solo.
   const invCost = invStats.total_value || 0;
   const cogsMonth = execSummary?.sales?.cogs_month || 0;
   const stockMonths = cogsMonth > 0 ? Math.round((invCost / cogsMonth) * 10) / 10 : null;
@@ -1126,17 +1134,17 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
             //   1-6 meses → verde (rotación sana)
             //   >6 meses → ámbar (efectivo atado en inventario ocioso)
             const m = data.stockCoverage.months;
-            const hasSales = m !== null;
-            const gc = !hasSales ? t.textLo
+            const hasValue = m !== null;
+            const gc = !hasValue ? t.textLo
               : m < 1 ? t.bad
               : m <= 6 ? t.good
               : t.warn;
             // Barra: 100% = 3 meses (rotación ideal); todo lo demás se recorta.
-            const barPct = hasSales ? Math.max(0, Math.min(100, Math.round((m / 3) * 100))) : 0;
+            const barPct = hasValue ? Math.max(0, Math.min(100, Math.round((m / 3) * 100))) : 0;
             return (
               <div style={{ minWidth: 132 }}>
                 <div style={{ fontSize: 10.5, color: t.textLo, fontWeight: 600, letterSpacing: 0.6, textTransform: "uppercase" }}>{s.dash.stockMonths}</div>
-                {hasSales ? (
+                {hasValue ? (
                   <>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 5, marginTop: 2 }}>
                       <span style={{ fontSize: 25, fontWeight: 800, color: gc, fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{m.toLocaleString("es-MX", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>
@@ -1153,7 +1161,7 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
                   <span>{s.dash.stockCost}</span>
                   <span style={{ color: t.textMid, fontWeight: 700 }}>{mxnShort(data.stockCoverage.cost)}</span>
                 </div>
-                {!hasSales && data.stockCoverage.cost > 0 && (
+                {!hasValue && data.stockCoverage.cost > 0 && (
                   <div style={{ fontSize: 10, color: t.textLo, marginTop: 3, fontStyle: "italic" }}>{s.dash.stockMonthsNoSales}</div>
                 )}
               </div>
