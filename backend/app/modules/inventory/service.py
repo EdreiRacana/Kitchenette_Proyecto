@@ -14,6 +14,13 @@ from app.modules.inventory.models import (
 )
 from app.modules.inventory import schemas
 
+# Umbral por default para "stock bajo" cuando una variante no tiene
+# reorder_point ni safety_stock configurados. Sirve para que el KPI del
+# Tablero alerte útilmente en la etapa de setup del cliente, antes de
+# haber terminado de configurar cada SKU. Valor sensible para catálogos
+# típicos de distribución/venta minorista.
+DEFAULT_LOW_STOCK_THRESHOLD = 10
+
 # --- Product Services ---
 async def create_product(db: AsyncSession, product_in: schemas.ProductCreate) -> Product:
     db_product = Product(**product_in.model_dump())
@@ -401,10 +408,21 @@ async def get_reorder_alerts(db: AsyncSession, warehouse_ids: Optional[List[int]
     alerts: List[schemas.ReorderAlert] = []
     for lvl in levels:
         v = lvl.variant
-        if not v or v.reorder_point is None:
+        if not v:
             continue
         available = lvl.quantity - lvl.reserved_quantity
-        if available > v.reorder_point:
+        # Umbral efectivo — misma regla que get_inventory_stats para que el
+        # KPI del Tablero y esta lista siempre coincidan (si el Tablero dice
+        # "3 stock bajo", esta lista tiene exactamente esos 3 SKUs).
+        effective_reorder = v.reorder_point
+        if effective_reorder is None:
+            effective_reorder = v.safety_stock
+        if effective_reorder is None:
+            effective_reorder = DEFAULT_LOW_STOCK_THRESHOLD
+        # Solo alertar si hay stock disponible y está bajo o al ras del umbral;
+        # los agotados (available <= 0) aparecen en su propio KPI y no en esta
+        # lista de "reorden inminente".
+        if available <= 0 or available > effective_reorder:
             continue
         safety = v.safety_stock or 0
         level = "red" if available <= safety else "yellow"
@@ -412,7 +430,7 @@ async def get_reorder_alerts(db: AsyncSession, warehouse_ids: Optional[List[int]
             variant_id=v.id, sku=v.sku, product_name=v.product.name if v.product else "",
             warehouse_id=lvl.warehouse_id, warehouse_name=lvl.warehouse.name if lvl.warehouse else "",
             available=available, reserved=lvl.reserved_quantity,
-            reorder_point=v.reorder_point, safety_stock=safety, level=level,
+            reorder_point=effective_reorder, safety_stock=safety, level=level,
             preferred_supplier_id=v.preferred_supplier_id,
             preferred_supplier_name=v.preferred_supplier.name if v.preferred_supplier else None,
             lead_time_days=v.lead_time_days,
@@ -452,8 +470,25 @@ async def get_inventory_stats(db: AsyncSession, warehouse_ids: Optional[List[int
 
         if available <= 0:
             out_of_stock += 1
-        elif v.reorder_point is not None and available <= v.reorder_point:
-            low_stock += 1
+        else:
+            # Umbral de stock bajo — regla profesional en 3 pasos:
+            #  1. Si la variante tiene punto de reorden configurado, ese es
+            #     el umbral autoritario (lo definió el usuario para este SKU).
+            #  2. Si no, usar safety_stock (el "colchón mínimo seguro" es
+            #     también un umbral de alerta razonable).
+            #  3. Si tampoco, usar DEFAULT_LOW_STOCK_THRESHOLD como último
+            #     recurso, para que el sistema alerte útilmente en la etapa
+            #     de setup del cliente antes de que hayan configurado cada
+            #     SKU. Si un cliente serio no quiere alertas por default,
+            #     configura reorder_point=0 en el SKU correspondiente y
+            #     nunca aparece como bajo (mientras haya al menos 1 unidad).
+            threshold = v.reorder_point
+            if threshold is None:
+                threshold = v.safety_stock
+            if threshold is None:
+                threshold = DEFAULT_LOW_STOCK_THRESHOLD
+            if available <= threshold:
+                low_stock += 1
 
     cats = [
         schemas.CategoryValue(

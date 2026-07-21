@@ -39,6 +39,23 @@ const PROD_STATUS = { draft: { label: "Borrador", color: "#94A3B8" }, completed:
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const totalStock = (p: Product) => p.variants.reduce((a, v) => a + (v.stock_levels?.reduce((s, l) => s + l.quantity, 0) || 0), 0);
 const inventoryValue = (p: Product) => p.variants.reduce((a, v) => a + (v.cost_price || v.price) * (v.stock_levels?.reduce((s, l) => s + l.quantity, 0) || 0), 0);
+
+// Umbral por default para 'stock bajo' — IGUAL que DEFAULT_LOW_STOCK_THRESHOLD
+// en backend/inventory/service.py. Cualquier cambio debe replicarse allá para
+// que el KPI del Tablero (backend) y el conteo del módulo Inventario (aquí)
+// nunca digan cosas distintas.
+const DEFAULT_LOW_STOCK_THRESHOLD = 10;
+
+// ¿Alguna variante del producto está en stock bajo? Regla profesional:
+// respetar reorder_point del SKU, si no safety_stock, si no un default.
+// Excluye agotados (esos aparecen en su propio KPI de 'agotados').
+const hasLowStockVariant = (p: Product): boolean =>
+  p.variants.some((v: any) => {
+    const available = (v.stock_levels || []).reduce((s: number, l: any) => s + Math.max(0, (l.quantity || 0) - (l.reserved_quantity || 0)), 0);
+    if (available <= 0) return false;
+    const threshold = v.reorder_point ?? v.safety_stock ?? DEFAULT_LOW_STOCK_THRESHOLD;
+    return available <= threshold;
+  });
 const margin = (v: Variant) => v.cost_price && v.price ? Math.round(((v.price - v.cost_price) / v.price) * 100) : null;
 
 // Vidrio: en modo oscuro devuelve panel translúcido + blur; en claro, sólido.
@@ -174,7 +191,10 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
   const kpis = useMemo(() => {
     const totalVal = products.reduce((a, p) => a + inventoryValue(p), 0);
     const outOfStock = products.filter(p => totalStock(p) === 0).length;
-    const lowStock = products.filter(p => { const s = totalStock(p); return s > 0 && s < 20; }).length;
+    // Regla profesional (misma que backend): usa reorder_point del SKU,
+    // fallback a safety_stock, fallback a DEFAULT_LOW_STOCK_THRESHOLD.
+    // Ya no hardcodeamos '< 20'.
+    const lowStock = products.filter(p => totalStock(p) > 0 && hasLowStockVariant(p)).length;
     const totalProds = products.length;
     const activeProds = products.filter(p => p.is_active).length;
     const openPOs = purchaseOrders.filter(po => po.status === "draft" || po.status === "ordered").length;
@@ -191,7 +211,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       || (statusFilter === "active" && p.is_active)
       || (statusFilter === "inactive" && !p.is_active)
       || (statusFilter === "out" && totalStock(p) === 0)
-      || (statusFilter === "low" && totalStock(p) > 0 && totalStock(p) < 20);
+      || (statusFilter === "low" && totalStock(p) > 0 && hasLowStockVariant(p));
     return matchQ && matchCat && matchWh && matchStatus;
   }), [products, q, catFilter, whFilter, statusFilter]);
 
@@ -418,7 +438,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                     <span style={{ fontSize: 12, fontWeight: 700, color: t.bad, background: t.bad + "18", padding: "3px 10px", borderRadius: 20 }}>{lang === "es" ? "AGOTADO" : "OUT OF STOCK"}</span>
                   </div>
                 ))}
-                {products.filter(p => totalStock(p) > 0 && totalStock(p) < 20).map(p => (
+                {products.filter(p => totalStock(p) > 0 && hasLowStockVariant(p)).map(p => (
                   <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderRadius: 8, background: t.warn + "12", border: `1px solid ${t.warn}30` }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <AlertTriangle size={15} color={t.warn} />

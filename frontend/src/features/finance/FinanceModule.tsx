@@ -577,8 +577,12 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
                     const ac = AGING_COLORS[b.aging] || t.textLo;
                     const cancelled = b.status === "cancelled";
                     const disabled = b.status === "paid" || cancelled;
-                    const daysColor = (b.days_to_due ?? 999) < 0 ? t.bad : (b.days_to_due ?? 999) <= 7 ? t.warn : t.textMid;
-                    const daysText = b.days_to_due == null ? "—" : b.days_to_due < 0 ? `${-b.days_to_due} d. vencida` : b.days_to_due === 0 ? "Vence hoy" : `en ${b.days_to_due} d.`;
+                    // Si la factura ya está pagada/cancelada, no tiene sentido mostrar
+                    // 'Vence hoy' o 'X d. vencida' — no hay urgencia. Se rellena con
+                    // '—' para que la columna Días quede limpia.
+                    const settled = b.status === "paid" || b.status === "cancelled";
+                    const daysColor = settled ? t.textLo : (b.days_to_due ?? 999) < 0 ? t.bad : (b.days_to_due ?? 999) <= 7 ? t.warn : t.textMid;
+                    const daysText = settled ? "—" : b.days_to_due == null ? "—" : b.days_to_due < 0 ? `${-b.days_to_due} d. vencida` : b.days_to_due === 0 ? "Vence hoy" : `en ${b.days_to_due} d.`;
                     return (
                       <tr key={b.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2, opacity: cancelled ? 0.55 : 1 }}>
                         <td style={{ padding: "10px 12px" }}>
