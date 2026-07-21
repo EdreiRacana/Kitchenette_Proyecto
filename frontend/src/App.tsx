@@ -19,6 +19,7 @@ import { financeService } from "./features/finance/service";
 import AccountingModule from "./features/accounting/AccountingModule";
 import HRModule from "./features/hr/HRModule";
 import BIModule from "./features/bi/BIModule";
+import { biService } from "./features/bi/service";
 import ConfigModule from "./features/config/ConfigModule";
 import ForecastModule from "./features/forecast/ForecastModule";
 import RetailModule from "./features/retail/RetailModule";
@@ -97,6 +98,9 @@ const STRINGS = {
       ofTarget: "de meta", current: "Periodo actual", previous: "Periodo anterior",
       variation: "vs periodo anterior", growth: "Crecimiento", drop: "Caída",
       goalProgress: "Avance hacia la meta", trend: "Tendencia del periodo",
+      stockMonths: "Meses de inventario", stockCost: "Costo del inventario",
+      stockMonthsUnit: (m: number) => (m === 1 ? "mes" : "meses"),
+      stockMonthsNoSales: "Sin ventas este mes",
       seeAnalysis: "Ver análisis completo",
     },
     kpi: { "Ventas": "Ventas", "Utilidad neta": "Utilidad neta", "Pedidos": "Pedidos", "Ticket promedio": "Ticket promedio" },
@@ -131,6 +135,9 @@ const STRINGS = {
       ofTarget: "of target", current: "Current period", previous: "Previous period",
       variation: "vs previous period", growth: "Growth", drop: "Drop",
       goalProgress: "Progress to goal", trend: "Period trend",
+      stockMonths: "Months of inventory", stockCost: "Inventory cost",
+      stockMonthsUnit: (m: number) => (m === 1 ? "month" : "months"),
+      stockMonthsNoSales: "No sales this month",
       seeAnalysis: "See full analysis",
     },
     kpi: { "Ventas": "Sales", "Utilidad neta": "Net profit", "Pedidos": "Orders", "Ticket promedio": "Avg. ticket" },
@@ -240,6 +247,7 @@ async function loadDashboardData(preset, customStart, customEnd) {
   const ZERO_INV: any = { total_value: 0, total_units: 0, out_of_stock: 0, low_stock: 0, by_category: [] };
   const ZERO_FINDASH: any = { cxc_balance: 0, cxp_balance: 0 };
   const ZERO_GOAL: any = { goal_amount: 0, plan_id: null, plan_name: null, plan_year: null, months_covered: [] };
+  const ZERO_EXEC: any = { sales: { cogs_month: 0, month: { total: 0 } } };
 
   // Envuelve cada promesa: nunca rechaza; marca si respondió (ok) y su valor.
   const settle = <T,>(p: Promise<T>, fb: T) =>
@@ -262,6 +270,7 @@ async function loadDashboardData(preset, customStart, customEnd) {
     settle(financeService.getCashFlow(12), [] as any),
     settle(inventoryService.getReorderAlerts(), [] as any),
     settle(hrApi.alerts(), [] as any),
+    settle(biService.executiveSummary(), ZERO_EXEC),
   ]);
 
   // Backend realmente caído = NADA respondió. Solo entonces se rechaza para
@@ -271,7 +280,18 @@ async function loadDashboardData(preset, customStart, customEnd) {
   }
 
   const [statsCur, statsPrev, trendCur, trendPrev, finComparison, invStats, finDashboard, budgets, forecastGoal,
-         topCustomers, topCustomersPrev, byChannel, cashFlow, reorderAlerts, hrAlerts] = results.map((r) => r.value) as any[];
+         topCustomers, topCustomersPrev, byChannel, cashFlow, reorderAlerts, hrAlerts, execSummary] = results.map((r) => r.value) as any[];
+
+  // ── Meses de inventario ───────────────────────────────────────────────
+  // Cobertura de almacén = valor de inventario a costo ÷ COGS mensual real.
+  // Es la métrica clásica de rotación ("¿cuántos meses aguanto vendiendo lo
+  // que tengo?"). El COGS mensual viene de /bi/executive-summary, que suma
+  // quantity*unit_cost de los pedidos del mes actual: es dato real, no una
+  // estimación por margen. Si el negocio aún no factura este mes (cogs_month
+  // = 0), no podemos calcular meses y devolvemos null para pintar "—".
+  const invCost = invStats.total_value || 0;
+  const cogsMonth = execSummary?.sales?.cogs_month || 0;
+  const stockMonths = cogsMonth > 0 ? Math.round((invCost / cogsMonth) * 10) / 10 : null;
 
   const n = Math.max(trendCur.length, trendPrev.length);
   const seriesCur = Array.from({ length: n }, (_, i) => trendCur[i]?.total ?? 0);
@@ -368,6 +388,7 @@ async function loadDashboardData(preset, customStart, customEnd) {
     kpis,
     margin, marginTarget: 35,
     goal: { actual: statsCur.total_sold, target: goalTarget, configured: goalTarget > 0, source: goalSource },
+    stockCoverage: { months: stockMonths, cost: invCost, cogsMonth },
     attention: { agotados: invStats.out_of_stock, cartera: finDashboard.cxc_balance ?? 0, stockBajo: invStats.low_stock },
     series: { cur: seriesCur, prev: seriesPrev },
     xlabels,
@@ -1095,24 +1116,49 @@ function Dashboard({ t, s, lang, setPage, isMobile }) {
             </div>
           </div>
           <div style={{ width: 1, alignSelf: "stretch", background: t.border, margin: "6px 0" }} />
-          {data.goal.configured ? (() => {
-            const gc = goalPct >= 90 ? t.good : goalPct >= 65 ? t.nova : t.warn;
+          {(() => {
+            // "Meses de inventario" reemplaza a "Avance hacia la meta" en esta
+            // esquina: la esfera de Meta vs real ya cubre la meta con más
+            // detalle abajo, así que este espacio ahora sirve para la métrica
+            // de rotación que sí es única en el Tablero (¿cuántos meses aguanto
+            // vendiendo lo que tengo en almacén?). Semáforo:
+            //   <1 mes   → rojo (a punto de agotarse)
+            //   1-6 meses → verde (rotación sana)
+            //   >6 meses → ámbar (efectivo atado en inventario ocioso)
+            const m = data.stockCoverage.months;
+            const hasSales = m !== null;
+            const gc = !hasSales ? t.textLo
+              : m < 1 ? t.bad
+              : m <= 6 ? t.good
+              : t.warn;
+            // Barra: 100% = 3 meses (rotación ideal); todo lo demás se recorta.
+            const barPct = hasSales ? Math.max(0, Math.min(100, Math.round((m / 3) * 100))) : 0;
             return (
               <div style={{ minWidth: 132 }}>
-                <div style={{ fontSize: 10.5, color: t.textLo, fontWeight: 600, letterSpacing: 0.6, textTransform: "uppercase" }}>{s.dash.goalProgress}</div>
-                <div style={{ fontSize: 25, fontWeight: 800, color: gc, fontVariantNumeric: "tabular-nums", lineHeight: 1.1, marginTop: 2 }}>{goalPct}%</div>
-                <div style={{ height: 5, background: t.panel3, borderRadius: 999, marginTop: 6, overflow: "hidden" }}>
-                  <div style={{ width: `${Math.min(100, goalPct)}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${gc}99, ${gc})`, boxShadow: `0 0 8px ${gc}88`, transition: "width .4s" }} />
+                <div style={{ fontSize: 10.5, color: t.textLo, fontWeight: 600, letterSpacing: 0.6, textTransform: "uppercase" }}>{s.dash.stockMonths}</div>
+                {hasSales ? (
+                  <>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 5, marginTop: 2 }}>
+                      <span style={{ fontSize: 25, fontWeight: 800, color: gc, fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{m.toLocaleString("es-MX", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>
+                      <span style={{ fontSize: 11, color: t.textLo, fontWeight: 600 }}>{s.dash.stockMonthsUnit(m)}</span>
+                    </div>
+                    <div style={{ height: 5, background: t.panel3, borderRadius: 999, marginTop: 6, overflow: "hidden" }}>
+                      <div style={{ width: `${barPct}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${gc}99, ${gc})`, boxShadow: `0 0 8px ${gc}88`, transition: "width .4s" }} />
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 20, fontWeight: 700, color: t.textLo, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>—</div>
+                )}
+                <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4, fontVariantNumeric: "tabular-nums", display: "flex", justifyContent: "space-between", gap: 6 }}>
+                  <span>{s.dash.stockCost}</span>
+                  <span style={{ color: t.textMid, fontWeight: 700 }}>{mxnShort(data.stockCoverage.cost)}</span>
                 </div>
-                <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{mxnShort(data.goal.actual)} / {mxnShort(data.goal.target)}</div>
+                {!hasSales && data.stockCoverage.cost > 0 && (
+                  <div style={{ fontSize: 10, color: t.textLo, marginTop: 3, fontStyle: "italic" }}>{s.dash.stockMonthsNoSales}</div>
+                )}
               </div>
             );
-          })() : (
-            <div style={{ minWidth: 132 }}>
-              <div style={{ fontSize: 10.5, color: t.textLo, fontWeight: 600, letterSpacing: 0.6, textTransform: "uppercase" }}>{s.dash.goalProgress}</div>
-              <div style={{ fontSize: 12.5, color: t.textLo, marginTop: 8, fontStyle: "italic" }}>{lang === "en" ? "No goal set" : "Sin meta configurada"}</div>
-            </div>
-          )}
+          })()}
         </Card>
       </div>
 
