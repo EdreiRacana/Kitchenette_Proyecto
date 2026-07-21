@@ -166,6 +166,46 @@ class AccountingPolicy(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class FixedAsset(Base):
+    """Activo fijo depreciable. Alimenta la depreciación automática mensual
+    (línea recta) según LISR art. 34-35. La póliza se genera el último día
+    del mes con: Cargo Gasto de depreciación / Abono Depreciación acumulada.
+
+    Vida útil típica (tasa anual):
+      - Equipo de cómputo: 30% → 3.33 años
+      - Mobiliario y equipo oficina: 10% → 10 años
+      - Equipo de transporte: 25% → 4 años
+      - Maquinaria: 10% → 10 años
+      - Edificios: 5% → 20 años
+    """
+    __tablename__ = "accounting_fixed_assets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    category = Column(String, nullable=True)          # equipo_computo | mobiliario | transporte | maquinaria | edificio | otro
+    acquisition_date = Column(DateTime(timezone=True), nullable=False, index=True)
+    acquisition_cost = Column(Float, nullable=False)  # costo original
+    salvage_value = Column(Float, default=0.0, nullable=False)  # valor residual estimado al final
+    annual_rate_pct = Column(Float, nullable=False)   # tasa anual de depreciación (ej. 30 = 30%)
+    useful_life_months = Column(Integer, nullable=False)  # meses de vida útil (auto-calc de annual_rate)
+    # Cuentas contables donde se registran
+    asset_account_id = Column(Integer, ForeignKey("accounting_accounts.id"), nullable=True)      # p.ej. 1201, 1202
+    accumulated_depr_account_id = Column(Integer, ForeignKey("accounting_accounts.id"), nullable=True)  # p.ej. 1204
+    expense_account_id = Column(Integer, ForeignKey("accounting_accounts.id"), nullable=True)    # p.ej. 6101
+    # Estado
+    is_active = Column(Boolean, default=True, nullable=False)     # false cuando se dio de baja
+    disposed_at = Column(DateTime(timezone=True), nullable=True)
+    accumulated_depreciation = Column(Float, default=0.0, nullable=False)  # snapshot corriente
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
+    notes = Column(Text, nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    asset_account = relationship("Account", foreign_keys=[asset_account_id])
+    accumulated_depr_account = relationship("Account", foreign_keys=[accumulated_depr_account_id])
+    expense_account = relationship("Account", foreign_keys=[expense_account_id])
+
+
 class PeriodClose(Base):
     """Cierre de período contable. Cuando existe un registro con status=closed
     para (year, month), las pólizas con date en ese mes se consideran

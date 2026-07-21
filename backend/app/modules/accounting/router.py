@@ -257,3 +257,51 @@ async def upsert_current_policy(data: schemas.AccountingPolicyIn, db: DB,
         return policy
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+# ── Cierre anual del ejercicio (Hook 10) ─────────────────────────────────────
+
+@router.post("/close-year/{year}")
+async def close_year(year: int, db: DB, current_user: CurrentUser):
+    """Cierra el ejercicio fiscal del año dado. Genera la póliza que traslada
+    los saldos de todas las cuentas de resultado (ingresos, costos, gastos)
+    contra la cuenta 3103 'Resultado del ejercicio'. Idempotente: si el año
+    ya está cerrado, devuelve 400. Solo para superusuario."""
+    if not current_user.is_superuser:
+        raise HTTPException(403, "Sólo el superusuario puede cerrar el ejercicio")
+    try:
+        return await service.close_year(db, year=year, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+# ── Activos fijos y depreciación (Hook 9) ────────────────────────────────────
+
+@router.get("/fixed-assets", response_model=List[schemas.FixedAssetInDB])
+async def list_assets(db: DB, current_user: CurrentUser, only_active: bool = True):
+    """Lista de activos fijos. Filtro `only_active=false` incluye los dados de baja."""
+    return await service.list_fixed_assets(db, only_active=only_active)
+
+
+@router.post("/fixed-assets", response_model=schemas.FixedAssetInDB, status_code=201)
+async def create_asset(data: schemas.FixedAssetIn, db: DB, current_user: CurrentUser):
+    """Alta de un activo fijo depreciable (LISR art. 34-35)."""
+    return await service.create_fixed_asset(db, data.model_dump(), user_id=current_user.id)
+
+
+@router.post("/fixed-assets/{asset_id}/dispose", response_model=schemas.FixedAssetInDB)
+async def dispose_asset(asset_id: int, db: DB, current_user: CurrentUser):
+    """Baja del activo — deja de depreciarse desde el mes siguiente."""
+    asset = await service.dispose_fixed_asset(db, asset_id, user_id=current_user.id)
+    if not asset:
+        raise HTTPException(404, "Activo no encontrado")
+    return asset
+
+
+@router.post("/depreciation/run/{year}/{month}")
+async def run_depreciation(year: int, month: int, db: DB, current_user: CurrentUser):
+    """Genera la póliza de depreciación mensual (Hook 9). Idempotente por mes.
+    Se puede correr manualmente aquí o programar un cron mensual (fuera de scope)."""
+    return await service.record_monthly_depreciation(
+        db, year=year, month=month, user_id=current_user.id,
+    )

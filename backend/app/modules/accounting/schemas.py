@@ -298,3 +298,56 @@ class AccountingPolicyInDB(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Activos fijos y depreciación (Hook 9) ─────────────────────────────────────
+
+class FixedAssetIn(BaseModel):
+    name: str
+    category: Optional[str] = None    # equipo_computo | mobiliario | transporte | maquinaria | edificio | otro
+    acquisition_date: datetime
+    acquisition_cost: float
+    salvage_value: float = 0.0
+    annual_rate_pct: float             # tasa fiscal LISR art. 34
+    asset_account_id: Optional[int] = None
+    accumulated_depr_account_id: Optional[int] = None
+    expense_account_id: Optional[int] = None
+    branch_id: Optional[int] = None
+    notes: Optional[str] = None
+
+    @field_validator("acquisition_cost")
+    @classmethod
+    def _positive_cost(cls, v):
+        if v <= 0:
+            raise ValueError("El costo del activo debe ser mayor a 0")
+        return v
+
+    @field_validator("annual_rate_pct")
+    @classmethod
+    def _rate_range(cls, v):
+        if v <= 0 or v > 100:
+            raise ValueError("La tasa anual de depreciación debe estar entre 0.01% y 100%")
+        return v
+
+
+class FixedAssetInDB(BaseModel):
+    id: int
+    name: str
+    category: Optional[str] = None
+    acquisition_date: datetime
+    acquisition_cost: float
+    salvage_value: float
+    annual_rate_pct: float
+    useful_life_months: int
+    asset_account_id: Optional[int] = None
+    accumulated_depr_account_id: Optional[int] = None
+    expense_account_id: Optional[int] = None
+    is_active: bool
+    disposed_at: Optional[datetime] = None
+    accumulated_depreciation: float
+    branch_id: Optional[int] = None
+    notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

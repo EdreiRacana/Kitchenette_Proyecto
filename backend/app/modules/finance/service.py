@@ -25,6 +25,34 @@ async def create_transaction(
     await db.commit()
     await db.refresh(db_tx)
     await _log_audit(db, user_id, "CREATE_TRANSACTION", f"{tx_in.type} {tx_in.amount} ({tx_in.category or 's/cat'})", {"id": db_tx.id})
+
+    # ── Hook 7 contable: gasto o ingreso manual de Finanzas ──────────────
+    # Solo se registra si la transacción es "de caja" y NO referencia una
+    # operación que ya tiene su propia póliza (venta, cobro, OC). Evita duplicar.
+    try:
+        ref = (tx_in.reference or "").strip().lower()
+        is_operational_dup = ref.startswith(("order:", "po:")) or "reversal" in ref
+        if not is_operational_dup:
+            from app.modules.accounting import service as acc
+            if tx_in.type == "expense":
+                await acc.record_expense_transaction(
+                    db, transaction_id=db_tx.id, amount=tx_in.amount,
+                    category=tx_in.category, description=tx_in.description or "",
+                    branch_id=branch_id, user_id=user_id,
+                )
+            elif tx_in.type == "income":
+                await acc.record_income_transaction(
+                    db, transaction_id=db_tx.id, amount=tx_in.amount,
+                    category=tx_in.category, description=tx_in.description or "",
+                    branch_id=branch_id, user_id=user_id,
+                )
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "hook contable transacción falló", extra={"tx_id": db_tx.id, "error": str(e)}, exc_info=True,
+        )
+
     return db_tx
 
 

@@ -281,6 +281,9 @@ class PurchaseOrderCreate(BaseModel):
     # Método de prorrateo: "by_value" (default, por costo × cantidad) o
     # "by_quantity" (por cantidad de unidades).
     landed_cost_allocation: str = "by_value"
+    # Multi-currency (Hook 8 dif. cambiaria).
+    currency: str = "MXN"       # MXN | USD | EUR
+    fx_rate: float = 1.0        # TC del día — solo se usa si currency != MXN
 
     @field_validator("items")
     @classmethod
@@ -358,6 +361,9 @@ class PurchaseOrderInDB(BaseModel):
     extra_costs: List[PurchaseOrderExtraCost] = []
     extra_costs_total: float = 0.0
     landed_cost_allocation: str = "by_value"
+    # Multi-currency (Hook 8)
+    currency: str = "MXN"
+    fx_rate: float = 1.0
 
     @field_validator("extra_costs", mode="before")
     @classmethod
