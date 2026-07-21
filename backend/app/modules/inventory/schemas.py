@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import datetime
 
@@ -292,10 +292,23 @@ class PurchaseOrderInDB(BaseModel):
     total_amount: float = 0.0
     paid_amount: float = 0.0
     balance: float = 0.0
-    # Landed cost — extras + total prorrateado
+    # Landed cost — extras + total prorrateado.
+    # OCs viejas (pre-landed-cost) traen extra_costs = NULL en la DB porque
+    # la columna se agregó con la migración sin default. El validator lo
+    # normaliza a [] para que Pydantic no truene serializando la respuesta.
     extra_costs: List[PurchaseOrderExtraCost] = []
     extra_costs_total: float = 0.0
     landed_cost_allocation: str = "by_value"
+
+    @field_validator("extra_costs", mode="before")
+    @classmethod
+    def _empty_if_null(cls, v):
+        return v or []
+
+    @field_validator("landed_cost_allocation", mode="before")
+    @classmethod
+    def _default_if_null(cls, v):
+        return v or "by_value"
     due_date: Optional[datetime] = None
     created_at: datetime
     received_at: Optional[datetime] = None
