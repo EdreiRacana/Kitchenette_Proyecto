@@ -10,6 +10,7 @@ import { money, dateTime, paymentLabel, statusColors, statusMeta } from "./theme
 import type { Order } from "./types";
 import { Badge, Button, IconButton } from "./ui";
 import configService from "../config/service";
+import { resolveMediaUrl } from "../../services/api";
 import { openWhatsApp } from "../../utils/whatsapp";
 
 function whatsappTicketMessage(order: Order): string {
@@ -27,8 +28,14 @@ async function printTicket(order: Order) {
   let company: { legal_name?: string; logo_url?: string } = {};
   try { company = await configService.getCompanyProfile(); } catch { /* sin perfil configurado */ }
   const businessName = company.legal_name || "Kitchenette";
-  const logoHtml = company.logo_url
-    ? `<img src="${company.logo_url}" alt="logo" style="max-height:48px;max-width:160px;object-fit:contain;margin-bottom:6px" />`
+  // El logo viene del backend con URL relativa (ej: '/static/company/logo.webp').
+  // La ventana que abrimos con window.open('') hereda el origen del frontend
+  // (sthenova-frontend.onrender.com), NO el del backend, así que un src="/static/…"
+  // pega 404 y el navegador muestra el placeholder de imagen rota. resolveMediaUrl
+  // antepone BACKEND_ORIGIN a las rutas relativas y deja intactas las absolutas.
+  const resolvedLogo = resolveMediaUrl(company.logo_url);
+  const logoHtml = resolvedLogo
+    ? `<img src="${resolvedLogo}" alt="logo" style="max-height:48px;max-width:160px;object-fit:contain;margin-bottom:6px" />`
     : "";
   const rows = order.items.map((it) =>
     `<tr><td>${it.product_name ?? ""}${it.sku ? ` <span class="sku">${it.sku}</span>` : ""}</td>
