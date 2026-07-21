@@ -395,7 +395,29 @@ export const inventoryService = {
         (await api.post<StockTransfer>(`/inventory/transfers/${id}/cancel`, null, { params: { reason } })).data,
     scanLookup: async (code: string) =>
         (await api.get<ScanResult>(`/inventory/scan/${encodeURIComponent(code)}`)).data,
+
+    // Alertas de sobreinventario
+    getOverstockAlerts: async (params?: { lookback_days?: number; days_threshold?: number }) =>
+        (await api.get<OverstockAlert[]>('/inventory/overstock-alerts', { params })).data,
 };
+
+export interface OverstockAlert {
+    variant_id: number;
+    sku: string;
+    product_name: string;
+    warehouse_id: number;
+    warehouse_name: string;
+    available: number;
+    units_sold_window: number;
+    lookback_days: number;
+    daily_velocity: number;
+    days_of_stock: number;
+    severity: 'info' | 'warning' | 'critical';
+    excess_units: number;
+    excess_value: number;
+    unit_cost: number;
+    recommendation: string;
+}
 
 // ── Tipos de Traspasos ──────────────────────────────────────────────────────
 export type StockTransferStatus =

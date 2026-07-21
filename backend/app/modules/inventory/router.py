@@ -475,3 +475,16 @@ async def scan_lookup(code: str, db: DB, current_user: CurrentUser):
     if not v:
         raise HTTPException(status_code=404, detail=f"Producto no encontrado con código '{code}'")
     return v
+
+
+@router.get("/overstock-alerts")
+async def overstock_alerts(db: DB, current_user: CurrentUser,
+                            lookback_days: int = 60, days_threshold: int = 90):
+    """Alertas de sobreinventario. Variantes con más días de stock que el umbral,
+    ordenadas por severidad. Solo incluye variantes con ventas en la ventana
+    (no se puede estimar demanda de productos nuevos o descontinuados)."""
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_overstock_alerts(
+        db, warehouse_ids=ids, lookback_days=lookback_days, days_threshold=days_threshold,
+    )

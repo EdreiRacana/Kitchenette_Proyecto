@@ -1588,3 +1588,142 @@ async def find_variant_by_code(db: AsyncSession, code: str) -> Optional[dict]:
         "product_name": v.product.name if v.product else None,
         "price": v.price,
     }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ALERTAS DE SOBREINVENTARIO
+#
+# Detecta variantes que tienen MÁS stock del necesario a la velocidad actual
+# de ventas. El indicador estándar en retail es "Días de inventario":
+#   días = stock_disponible / velocidad_diaria_de_venta
+#
+# Se calcula por variante × almacén. La velocidad se estima con las ventas
+# del propio almacén en los últimos N días (default 60). Ignora variantes
+# sin ventas en el período (no se puede estimar demanda de un producto
+# nuevo o descontinuado — no es sobreinventario, es "por analizar").
+#
+# Umbrales estándar retail:
+#   < 15 días  → bajo (comprar/traspasar)
+#   15-90 días → sano
+#   90-180 días → exceso (promocionar)
+#   > 180 días → crítico (liquidar)
+# ═════════════════════════════════════════════════════════════════════════════
+
+from datetime import timedelta as _timedelta
+
+
+async def get_overstock_alerts(
+    db: AsyncSession,
+    *, warehouse_ids: Optional[List[int]] = None,
+    lookback_days: int = 60,
+    days_threshold: int = 90,
+) -> List[dict]:
+    """Devuelve variantes con sobreinventario, por almacén, ordenadas por
+    severidad (más días primero).
+
+    Args:
+      warehouse_ids: filtro; si es None, todos los almacenes visibles.
+      lookback_days: ventana de venta para calcular la velocidad (default 60).
+      days_threshold: umbral mínimo de días de inventario para incluir
+                       en la lista (default 90 = solo exceso y crítico).
+    """
+    from app.modules.sales.models import Order, OrderItem
+    from sqlalchemy import func as _f
+
+    since = datetime.now(timezone.utc) - _timedelta(days=lookback_days)
+
+    # Ventas por variante × almacén en la ventana (unidades)
+    sales_stmt = (
+        select(
+            OrderItem.variant_id.label("vid"),
+            Order.warehouse_id.label("wid"),
+            _f.coalesce(_f.sum(OrderItem.quantity), 0).label("units_sold"),
+        )
+        .join(Order, OrderItem.order_id == Order.id)
+        .where(
+            Order.kind == "order",
+            Order.status.notin_(["cancelled", "draft"]),
+            Order.created_at >= since,
+            OrderItem.variant_id.isnot(None),
+            Order.warehouse_id.isnot(None),
+        )
+        .group_by(OrderItem.variant_id, Order.warehouse_id)
+    )
+    if warehouse_ids is not None:
+        sales_stmt = sales_stmt.where(Order.warehouse_id.in_(warehouse_ids))
+    sales_rows = (await db.execute(sales_stmt)).all()
+    # Mapa (variant_id, warehouse_id) → unidades vendidas en la ventana
+    sold_map: dict[tuple[int, int], int] = {(r.vid, r.wid): int(r.units_sold or 0) for r in sales_rows}
+
+    if not sold_map:
+        return []
+
+    # Stock disponible actual por variante × almacén de los que tienen ventas
+    variant_ids = {vid for (vid, _) in sold_map.keys()}
+    wh_ids_used = {wid for (_, wid) in sold_map.keys()}
+    stock_stmt = (
+        select(StockLevel).where(
+            StockLevel.variant_id.in_(variant_ids),
+            StockLevel.warehouse_id.in_(wh_ids_used),
+        ).options(
+            selectinload(StockLevel.variant).selectinload(ProductVariant.product),
+            selectinload(StockLevel.warehouse),
+        )
+    )
+    stock_rows = (await db.execute(stock_stmt)).scalars().all()
+
+    alerts = []
+    for lvl in stock_rows:
+        key = (lvl.variant_id, lvl.warehouse_id)
+        sold_units = sold_map.get(key, 0)
+        if sold_units <= 0:
+            continue
+        available = max(0, (lvl.quantity or 0) - (lvl.reserved_quantity or 0))
+        if available <= 0:
+            continue
+        daily_velocity = sold_units / lookback_days
+        if daily_velocity <= 0:
+            continue
+        days_of_stock = available / daily_velocity
+        if days_of_stock < days_threshold:
+            continue
+
+        v = lvl.variant
+        # Severidad y recomendación
+        if days_of_stock >= 180:
+            severity = "critical"
+            recommendation = "Liquidar o promoción agresiva"
+        elif days_of_stock >= 90:
+            severity = "warning"
+            recommendation = "Promocionar o traspasar a otro almacén"
+        else:
+            severity = "info"
+            recommendation = "Monitorear"
+
+        # Exceso ideal — asumiendo target de 60 días de stock, cuánto sobra
+        target_units = int(daily_velocity * 60)
+        excess_units = max(0, available - target_units)
+        unit_cost = float(v.cost_price or 0.0) if v else 0.0
+        excess_value = round(excess_units * unit_cost, 2)
+
+        alerts.append({
+            "variant_id": v.id,
+            "sku": v.sku if v else "",
+            "product_name": (v.product.name if v and v.product else "") if v else "",
+            "warehouse_id": lvl.warehouse_id,
+            "warehouse_name": lvl.warehouse.name if lvl.warehouse else "",
+            "available": available,
+            "units_sold_window": sold_units,
+            "lookback_days": lookback_days,
+            "daily_velocity": round(daily_velocity, 2),
+            "days_of_stock": round(days_of_stock, 1),
+            "severity": severity,
+            "excess_units": excess_units,
+            "excess_value": excess_value,
+            "unit_cost": unit_cost,
+            "recommendation": recommendation,
+        })
+
+    # Ordenar por severidad y días
+    alerts.sort(key=lambda a: (-a["days_of_stock"], -a["excess_value"]))
+    return alerts
