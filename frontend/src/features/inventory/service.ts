@@ -144,6 +144,9 @@ export interface PurchaseOrder {
     total_amount?: number;
     paid_amount?: number;
     balance?: number;
+    // Multi-currency (Hook 8 diferencia cambiaria)
+    currency?: 'MXN' | 'USD' | 'EUR';
+    fx_rate?: number;
 }
 
 export interface RecipeItem { input_variant_id: number; quantity: number; }

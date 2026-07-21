@@ -1439,6 +1439,8 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
               items: data.items.map((it: any) => ({ variant_id: Number(it.variant_id), quantity: Number(it.quantity), unit_cost: Number(it.unit_cost) })),
               extra_costs: (data.extra_costs || []).map((c: any) => ({ description: c.description, amount: Number(c.amount) || 0 })),
               landed_cost_allocation: data.landed_cost_allocation || "by_value",
+              currency: data.currency || "MXN",
+              fx_rate: Number(data.fx_rate) || 1,
             };
             if (editingPO) {
               await inventoryService.updatePurchaseOrder(editingPO.id, payload);
@@ -2092,6 +2094,8 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, edit
       : []
   );
   const [allocation, setAllocation] = useState<"by_value" | "by_quantity">(editing?.landed_cost_allocation || "by_value");
+  const [currency, setCurrency] = useState<"MXN" | "USD" | "EUR">((editing?.currency as any) || "MXN");
+  const [fxRate, setFxRate] = useState<string>(editing?.fx_rate ? String(editing.fx_rate) : "1");
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const allVariants = products.flatMap((p: Product) => p.variants.map((v: Variant) => ({ ...v, product_name: p.name })));
@@ -2163,6 +2167,8 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, edit
         supplier_id: supplierId, warehouse_id: warehouseId, due_date: dueDate || undefined, notes, items,
         extra_costs: extraCosts.filter(c => c.description && Number(c.amount) > 0).map(c => ({ description: c.description, amount: Number(c.amount) })),
         landed_cost_allocation: allocation,
+        currency,
+        fx_rate: currency === "MXN" ? 1 : (Number(fxRate) || 1),
       });
     }
     catch (err: any) { setError(err?.response?.data?.detail || (lang === "es" ? "Error al crear la orden de compra" : "Error creating purchase order")); }
@@ -2196,6 +2202,33 @@ function PurchaseOrderFormModal({ t, lang, suppliers, warehouses, products, edit
             <div><label style={label}>{lang === "es" ? "Fecha de vencimiento (pago)" : "Due date (payment)"}</label>
               <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inp} />
             </div>
+          </div>
+
+          {/* ── Moneda + tipo de cambio (Hook 8) ─────────────────────────── */}
+          <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: currency === "MXN" ? "1fr" : "1fr 1fr", gap: 12, alignItems: "end" }}>
+              <div>
+                <label style={label}>{lang === "es" ? "Moneda de la factura" : "Currency"}</label>
+                <select value={currency} onChange={e => setCurrency(e.target.value as any)} style={{ ...inp, cursor: "pointer" }}>
+                  <option value="MXN">MXN — Peso mexicano</option>
+                  <option value="USD">USD — Dólar americano</option>
+                  <option value="EUR">EUR — Euro</option>
+                </select>
+              </div>
+              {currency !== "MXN" && (
+                <div>
+                  <label style={label}>{lang === "es" ? "Tipo de cambio (MXN por 1 " + currency + ")" : "FX rate"}</label>
+                  <input type="number" min="0.0001" step="0.0001" value={fxRate} onChange={e => setFxRate(e.target.value)} placeholder="Ej. 17.50" style={inp} />
+                </div>
+              )}
+            </div>
+            {currency !== "MXN" && (
+              <div style={{ fontSize: 11, color: t.textLo, marginTop: 8, fontStyle: "italic", lineHeight: 1.5 }}>
+                {lang === "es"
+                  ? "Los importes se guardan en MXN al TC del día. Al pagar, si el TC del día del pago difiere, el sistema genera automáticamente la póliza de diferencia cambiaria (NIF B-15)."
+                  : "Amounts stored in MXN at today's rate. Payment date FX difference posts automatically."}
+              </div>
+            )}
           </div>
 
           <div>

@@ -5,12 +5,13 @@ import { createPortal } from "react-dom";
 import {
   BookOpen, Layers, FileText, Plus, X, Check, Trash2, RefreshCw, Search,
   ChevronRight, AlertTriangle, Ban, Info, BarChart3, Scale, TrendingUp,
-  SlidersHorizontal, Zap, Landmark, Download, Lock, Unlock, Calendar,
+  SlidersHorizontal, Zap, Landmark, Download, Lock, Unlock, Calendar, Wrench,
+  Truck,
 } from "lucide-react";
 import {
   accountingService, type Account, type JournalEntry, type LedgerReport,
   type TrialBalance, type BalanceSheet, type IncomeStatement, type AccountMapItem,
-  type PeriodClose,
+  type PeriodClose, type FixedAsset,
 } from "./service";
 
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -24,7 +25,7 @@ const TYPE_COLOR: Record<string, string> = {
   ingreso: "#34D399", costo: "#F472B6", gasto: "#F87171", orden: "#94A3B8",
 };
 
-type Tab = "accounts" | "entries" | "ledger" | "reports" | "close" | "sat" | "config";
+type Tab = "accounts" | "entries" | "ledger" | "reports" | "assets" | "close" | "sat" | "config";
 
 export default function AccountingModule({ t, s }: { t: any; s: any }) {
   const lang = s?.nav ? "es" : "en";
@@ -69,7 +70,8 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
     { id: "entries", label: lang === "es" ? "Pólizas" : "Journal entries", icon: FileText },
     { id: "ledger", label: lang === "es" ? "Mayor / auxiliar" : "Ledger", icon: BookOpen },
     { id: "reports", label: lang === "es" ? "Estados financieros" : "Financial statements", icon: BarChart3 },
-    { id: "close", label: lang === "es" ? "Cierre mensual" : "Month close", icon: Lock },
+    { id: "assets", label: lang === "es" ? "Activos fijos" : "Fixed assets", icon: Truck },
+    { id: "close", label: lang === "es" ? "Cierre" : "Close", icon: Lock },
     { id: "sat", label: lang === "es" ? "Contabilidad Electrónica (SAT)" : "SAT e-accounting", icon: Landmark },
     { id: "config", label: lang === "es" ? "Configuración" : "Settings", icon: SlidersHorizontal },
   ] as const;
@@ -228,7 +230,12 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
         <ReportsView t={t} lang={lang} />
       )}
 
-      {/* ── TAB: Cierre mensual ── */}
+      {/* ── TAB: Activos fijos (Hook 9 depreciación mensual) ── */}
+      {tab === "assets" && accounts.length > 0 && (
+        <FixedAssetsView t={t} lang={lang} accounts={accounts} />
+      )}
+
+      {/* ── TAB: Cierre mensual + anual ── */}
       {tab === "close" && accounts.length > 0 && (
         <PeriodCloseView t={t} lang={lang} onChanged={load} />
       )}
@@ -1072,6 +1079,409 @@ function SatView({ t, lang }: { t: any; lang: string }) {
 }
 
 
+// ── Tarjeta: Cierre anual del ejercicio (Hook 10) ─────────────────────
+function YearCloseCard({ t, lang }: { t: any; lang: string }) {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const doClose = async () => {
+    if (!confirm(lang === "es"
+      ? `¿Cerrar el ejercicio fiscal ${year}?\n\nSe generará una póliza que traslada todos los saldos de ingresos, costos y gastos contra la cuenta 3103 'Resultado del ejercicio'. Las cuentas de resultado quedarán en cero para iniciar el siguiente ejercicio. Solo el superusuario puede ejecutar esta acción, y no se puede deshacer sin cancelar la póliza generada.`
+      : `Close fiscal year ${year}?`)) return;
+    setBusy(true); setError(null); setResult(null);
+    try {
+      const res = await accountingService.closeYear(year);
+      setResult(res);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "No se pudo cerrar el ejercicio");
+    } finally { setBusy(false); }
+  };
+
+  const inp: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none" };
+
+  return (
+    <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <div style={{ background: t.warn + "22", color: t.warn, borderRadius: 10, padding: 9 }}><Calendar size={18} /></div>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi }}>{lang === "es" ? "Cierre anual del ejercicio" : "Fiscal year close"}</div>
+          <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 2 }}>
+            {lang === "es"
+              ? "Traspasa ingresos/costos/gastos del año contra la cuenta 3103 (Resultado del ejercicio). Idempotente — si el año ya está cerrado, no se genera póliza duplicada."
+              : "Transfers income/costs/expenses of the year against account 3103 (Year result). Idempotent."}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 10, alignItems: "end" }}>
+        <div>
+          <label style={{ display: "block", fontSize: 11, color: t.textLo, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.4 }}>Ejercicio</label>
+          <select value={year} onChange={e => setYear(Number(e.target.value))} style={{ ...inp, width: 120, cursor: "pointer" }}>
+            {[now.getFullYear() - 2, now.getFullYear() - 1, now.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+        <div />
+        <button disabled={busy} onClick={doClose}
+          style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.warn}, ${t.bad || "#DC2626"})`, color: "#fff", cursor: busy ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+          <Lock size={14} /> {busy ? "Cerrando…" : (lang === "es" ? `Cerrar ejercicio ${year}` : `Close year ${year}`)}
+        </button>
+      </div>
+      {result && (
+        <div style={{ marginTop: 14, padding: 14, background: t.good + "12", border: `1px solid ${t.good}44`, borderRadius: 10, fontSize: 12.5 }}>
+          <div style={{ fontWeight: 700, color: t.good, marginBottom: 6 }}>
+            ✓ Ejercicio {result.year} cerrado
+          </div>
+          <div style={{ color: t.textMid, display: "flex", gap: 20, flexWrap: "wrap" }}>
+            <span>Ingresos: <b style={{ color: t.textHi }}>{mxn(result.total_ingresos)}</b></span>
+            <span>Costos + Gastos: <b style={{ color: t.textHi }}>{mxn(result.total_costos_gastos)}</b></span>
+            <span>Utilidad neta: <b style={{ color: result.utilidad_neta >= 0 ? t.good : t.bad }}>{mxn(result.utilidad_neta)}</b></span>
+            <span>{result.cuentas_cerradas} cuentas cerradas</span>
+          </div>
+        </div>
+      )}
+      {error && (
+        <div style={{ marginTop: 10, fontSize: 12, color: t.bad, display: "flex", alignItems: "center", gap: 6 }}>
+          <AlertTriangle size={12} /> {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Vista: Activos fijos (Hook 9 depreciación) ────────────────────────
+const ASSET_CATEGORIES = [
+  { value: "equipo_computo",     label: "Equipo de cómputo",         rate: 30 },
+  { value: "mobiliario",         label: "Mobiliario y equipo oficina", rate: 10 },
+  { value: "transporte",         label: "Equipo de transporte",       rate: 25 },
+  { value: "maquinaria",         label: "Maquinaria industrial",      rate: 10 },
+  { value: "edificio",           label: "Edificios",                  rate: 5 },
+  { value: "otro",               label: "Otro",                       rate: 10 },
+];
+
+function FixedAssetsView({ t, lang, accounts }: { t: any; lang: string; accounts: Account[] }) {
+  const [assets, setAssets] = useState<FixedAsset[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [runResult, setRunResult] = useState<any>(null);
+  const [runBusy, setRunBusy] = useState(false);
+  const now = new Date();
+  const [depYear, setDepYear] = useState(now.getFullYear());
+  const [depMonth, setDepMonth] = useState(now.getMonth() + 1);
+
+  const load = async () => {
+    setLoading(true); setError(null);
+    try { setAssets(await accountingService.listFixedAssets(false)); }
+    catch (e: any) { setError(e?.response?.data?.detail || "No se pudieron cargar los activos"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const totalCost = assets.filter(a => a.is_active).reduce((s, a) => s + (a.acquisition_cost || 0), 0);
+  const totalDepr = assets.reduce((s, a) => s + (a.accumulated_depreciation || 0), 0);
+  const netValue = totalCost - totalDepr;
+
+  const dispose = async (a: FixedAsset) => {
+    if (!a.id) return;
+    if (!confirm(`¿Dar de baja el activo "${a.name}"?\nDejará de depreciarse desde el mes siguiente.`)) return;
+    try { await accountingService.disposeFixedAsset(a.id); await load(); }
+    catch (e: any) { alert(e?.response?.data?.detail || "Error al dar de baja"); }
+  };
+
+  const runDepreciation = async () => {
+    if (!confirm(`¿Correr depreciación del período ${depYear}-${String(depMonth).padStart(2, "0")}?\n\nSe generará una póliza consolidada por todos los activos activos. Idempotente: si el mes ya fue depreciado, no genera duplicado.`)) return;
+    setRunBusy(true); setRunResult(null); setError(null);
+    try {
+      const res = await accountingService.runDepreciation(depYear, depMonth);
+      setRunResult(res);
+      await load();
+    } catch (e: any) { setError(e?.response?.data?.detail || "Error al correr depreciación"); }
+    finally { setRunBusy(false); }
+  };
+
+  const inp: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none" };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Activos activos</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: t.textHi, marginTop: 4 }}>{assets.filter(a => a.is_active).length}</div>
+        </div>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Valor original</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: t.textHi, marginTop: 4 }}>{mxn(totalCost)}</div>
+        </div>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Depreciación acumulada</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: t.warn, marginTop: 4 }}>{mxn(totalDepr)}</div>
+        </div>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Valor neto</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: t.good, marginTop: 4 }}>{mxn(netValue)}</div>
+        </div>
+      </div>
+
+      {/* Trigger de depreciación mensual */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <div style={{ background: t.warn + "22", color: t.warn, borderRadius: 10, padding: 9 }}><Zap size={18} /></div>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi }}>Correr depreciación mensual</div>
+            <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 2 }}>
+              Genera una póliza consolidada con la depreciación línea recta (LISR art. 34) para el período seleccionado.
+              Idempotente por mes.
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "auto auto 1fr auto", gap: 10, alignItems: "end" }}>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: t.textLo, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.4 }}>Año</label>
+            <select value={depYear} onChange={e => setDepYear(Number(e.target.value))} style={{ ...inp, width: 100, cursor: "pointer" }}>
+              {[now.getFullYear() - 1, now.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: t.textLo, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.4 }}>Mes</label>
+            <select value={depMonth} onChange={e => setDepMonth(Number(e.target.value))} style={{ ...inp, width: 100, cursor: "pointer" }}>
+              {["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"].map((m, i) => <option key={i} value={i + 1}>{i + 1} · {m}</option>)}
+            </select>
+          </div>
+          <div />
+          <button disabled={runBusy || assets.filter(a => a.is_active).length === 0} onClick={runDepreciation}
+            style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.warn}, ${t.nova})`, color: "#fff", cursor: (runBusy || assets.filter(a => a.is_active).length === 0) ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+            <Zap size={14} /> {runBusy ? "…" : "Depreciar mes"}
+          </button>
+        </div>
+        {runResult && (
+          <div style={{ marginTop: 12, padding: 12, background: (runResult.skipped ? t.warn : t.good) + "12", border: `1px solid ${(runResult.skipped ? t.warn : t.good)}44`, borderRadius: 8, fontSize: 12.5 }}>
+            {runResult.skipped
+              ? <span style={{ color: t.warn }}>⚠ {runResult.reason}</span>
+              : <span style={{ color: t.good }}>✓ Depreciados <b>{runResult.assets_depreciated?.length ?? 0}</b> activos por un total de <b>{mxn(runResult.total)}</b></span>}
+          </div>
+        )}
+      </div>
+
+      {/* Header + botón nuevo */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi }}>Catálogo de activos fijos</div>
+        <button onClick={() => setShowForm(true)}
+          style={{ padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy || "#1e40af"})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+          <Plus size={14} /> Nuevo activo
+        </button>
+      </div>
+
+      {/* Lista */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden" }}>
+        {loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: t.textLo, fontSize: 13 }}>Cargando…</div>
+        ) : assets.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: t.textLo, fontSize: 13 }}>
+            No hay activos capturados. Da de alta uno para empezar a depreciar automáticamente.
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: t.panel2 }}>
+                <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Nombre</th>
+                <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Categoría</th>
+                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Fecha alta</th>
+                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Costo</th>
+                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Tasa</th>
+                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Depr. acum.</th>
+                <th style={{ textAlign: "right", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Valor neto</th>
+                <th style={{ textAlign: "center", padding: "12px 14px", fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Estado</th>
+                <th style={{ padding: "12px 14px" }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {assets.map((a, i) => {
+                const net = (a.acquisition_cost || 0) - (a.accumulated_depreciation || 0);
+                const catLabel = ASSET_CATEGORIES.find(c => c.value === a.category)?.label || a.category || "—";
+                return (
+                  <tr key={a.id} style={{ background: i % 2 === 0 ? t.panel : t.panel2, opacity: a.is_active ? 1 : 0.55 }}>
+                    <td style={{ padding: "11px 14px", color: t.textHi, fontWeight: 600 }}>{a.name}</td>
+                    <td style={{ padding: "11px 14px", color: t.textMid, fontSize: 12 }}>{catLabel}</td>
+                    <td style={{ padding: "11px 14px", color: t.textMid, textAlign: "right" }}>{new Date(a.acquisition_date).toLocaleDateString("es-MX")}</td>
+                    <td style={{ padding: "11px 14px", color: t.textHi, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(a.acquisition_cost)}</td>
+                    <td style={{ padding: "11px 14px", color: t.textMid, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{a.annual_rate_pct}%</td>
+                    <td style={{ padding: "11px 14px", color: t.warn, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{mxn(a.accumulated_depreciation || 0)}</td>
+                    <td style={{ padding: "11px 14px", color: t.good, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{mxn(net)}</td>
+                    <td style={{ padding: "11px 14px", textAlign: "center" }}>
+                      {a.is_active
+                        ? <span style={{ color: t.good, background: t.good + "22", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>Activo</span>
+                        : <span style={{ color: t.textLo, background: t.panel3, padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>Baja</span>}
+                    </td>
+                    <td style={{ padding: "11px 14px", textAlign: "right" }}>
+                      {a.is_active && (
+                        <button onClick={() => dispose(a)} title="Dar de baja"
+                          style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${t.bad}55`, background: "transparent", color: t.bad, cursor: "pointer", fontSize: 11 }}>
+                          Dar de baja
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {error && (
+        <div style={{ padding: "12px 14px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+          <AlertTriangle size={15} /> {error}
+        </div>
+      )}
+
+      {showForm && <FixedAssetForm t={t} accounts={accounts} onClose={() => setShowForm(false)} onSaved={() => { setShowForm(false); load(); }} />}
+    </div>
+  );
+}
+
+function FixedAssetForm({ t, accounts, onClose, onSaved }: any) {
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState(ASSET_CATEGORIES[0].value);
+  const [acquisitionDate, setAcquisitionDate] = useState(new Date().toISOString().slice(0, 10));
+  const [cost, setCost] = useState("");
+  const [salvage, setSalvage] = useState("0");
+  const [rate, setRate] = useState(String(ASSET_CATEGORIES[0].rate));
+  const [assetAcc, setAssetAcc] = useState<number | null>(null);
+  const [accumAcc, setAccumAcc] = useState<number | null>(null);
+  const [expenseAcc, setExpenseAcc] = useState<number | null>(null);
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Sugerir cuentas por default según categoría (buscar en el catálogo)
+    const acc1201 = accounts.find((a: Account) => a.code === "1201");
+    const acc1202 = accounts.find((a: Account) => a.code === "1202");
+    const acc1203 = accounts.find((a: Account) => a.code === "1203");
+    const acc1204 = accounts.find((a: Account) => a.code === "1204");
+    const acc6101 = accounts.find((a: Account) => a.code === "6101");
+    if (category === "equipo_computo") setAssetAcc(acc1202?.id || null);
+    else if (category === "transporte") setAssetAcc(acc1203?.id || null);
+    else setAssetAcc(acc1201?.id || null);
+    setAccumAcc(acc1204?.id || null);
+    setExpenseAcc(acc6101?.id || null);
+    setRate(String(ASSET_CATEGORIES.find(c => c.value === category)?.rate || 10));
+  }, [category, accounts]);
+
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await accountingService.createFixedAsset({
+        name, category,
+        acquisition_date: new Date(acquisitionDate + "T00:00:00Z").toISOString(),
+        acquisition_cost: Number(cost) || 0,
+        salvage_value: Number(salvage) || 0,
+        annual_rate_pct: Number(rate) || 0,
+        asset_account_id: assetAcc, accumulated_depr_account_id: accumAcc,
+        expense_account_id: expenseAcc,
+        notes: notes || undefined,
+      });
+      onSaved();
+    } catch (e: any) { setErr(e?.response?.data?.detail || "No se pudo guardar"); }
+    finally { setBusy(false); }
+  };
+
+  const inp: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" };
+  const label: React.CSSProperties = { fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" };
+  const valid = name && Number(cost) > 0 && Number(rate) > 0;
+  const postable = accounts.filter((a: Account) => a.is_postable);
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 20px", overflowY: "auto" }}>
+      <div style={{ width: "100%", maxWidth: 620, background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "18px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 8, padding: 8 }}><Truck size={18} /></div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>Nuevo activo fijo</h2>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+        </div>
+        <div style={{ padding: 24, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label style={label}>Nombre / descripción *</label>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Ej. Laptop Dell XPS 15" style={inp} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={label}>Categoría</label>
+              <select value={category} onChange={e => setCategory(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                {ASSET_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label} ({c.rate}%)</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={label}>Fecha de adquisición *</label>
+              <input type="date" value={acquisitionDate} onChange={e => setAcquisitionDate(e.target.value)} style={inp} />
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={label}>Costo original *</label>
+              <input type="number" min="0.01" step="0.01" value={cost} onChange={e => setCost(e.target.value)} placeholder="0.00" style={inp} />
+            </div>
+            <div>
+              <label style={label}>Valor residual</label>
+              <input type="number" min="0" step="0.01" value={salvage} onChange={e => setSalvage(e.target.value)} placeholder="0.00" style={inp} />
+            </div>
+            <div>
+              <label style={label}>Tasa anual %</label>
+              <input type="number" min="0.1" max="100" step="0.1" value={rate} onChange={e => setRate(e.target.value)} style={inp} />
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: t.textLo, fontStyle: "italic" }}>
+            Tasas LISR art. 34: computo 30% · transporte 25% · mobiliario 10% · maquinaria 10% · edificios 5%
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={label}>Cuenta del activo</label>
+              <select value={assetAcc || ""} onChange={e => setAssetAcc(e.target.value ? Number(e.target.value) : null)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="">— Automática —</option>
+                {postable.map((a: Account) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={label}>Cuenta depr. acumulada</label>
+              <select value={accumAcc || ""} onChange={e => setAccumAcc(e.target.value ? Number(e.target.value) : null)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="">— Automática —</option>
+                {postable.map((a: Account) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={label}>Cuenta de gasto</label>
+              <select value={expenseAcc || ""} onChange={e => setExpenseAcc(e.target.value ? Number(e.target.value) : null)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="">— Automática —</option>
+                {postable.map((a: Account) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label style={label}>Notas</label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Serial, ubicación, responsable…" style={{ ...inp, resize: "vertical" }} />
+          </div>
+          {err && <div style={{ fontSize: 12.5, color: t.bad }}>{err}</div>}
+        </div>
+        <div style={{ padding: "14px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+          <button onClick={save} disabled={!valid || busy}
+            style={{ padding: "9px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy || "#1e40af"})`, color: "#fff", cursor: (!valid || busy) ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 600, opacity: !valid ? 0.5 : 1 }}>
+            {busy ? "…" : "Guardar activo"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+
 // ── Vista: Cierre mensual ─────────────────────────────────────────────
 function PeriodCloseView({ t, lang, onChanged }: { t: any; lang: string; onChanged?: () => void }) {
   const [closes, setCloses] = useState<PeriodClose[]>([]);
@@ -1188,6 +1598,9 @@ function PeriodCloseView({ t, lang, onChanged }: { t: any; lang: string; onChang
           </div>
         )}
       </div>
+
+      {/* ── Cierre anual del ejercicio (Hook 10) ─────────────────────────── */}
+      <YearCloseCard t={t} lang={lang} />
 
       {error && (
         <div style={{ padding: "12px 14px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
