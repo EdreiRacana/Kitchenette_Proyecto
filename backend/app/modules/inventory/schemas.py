@@ -476,3 +476,100 @@ class BulkImportResult(BaseModel):
     created: int
     updated: int
     errors: List[BulkImportRowError] = []
+
+
+# ── Traspasos entre almacenes (Stock Transfer Orders) ────────────────────
+
+class StockTransferItemCreate(BaseModel):
+    variant_id: int
+    quantity_requested: int
+
+    @field_validator("quantity_requested")
+    @classmethod
+    def _positive(cls, v):
+        if v <= 0:
+            raise ValueError("La cantidad solicitada debe ser mayor a 0")
+        return v
+
+
+class StockTransferCreate(BaseModel):
+    source_warehouse_id: int
+    destination_warehouse_id: int
+    notes: Optional[str] = None
+    expected_delivery_date: Optional[datetime] = None
+    items: List[StockTransferItemCreate]
+
+    @field_validator("items")
+    @classmethod
+    def _at_least_one(cls, v):
+        if not v:
+            raise ValueError("El traspaso debe tener al menos una partida")
+        return v
+
+    @field_validator("destination_warehouse_id")
+    @classmethod
+    def _different_warehouses(cls, v, info):
+        source = info.data.get("source_warehouse_id")
+        if source is not None and v == source:
+            raise ValueError("El almacén origen y destino no pueden ser el mismo")
+        return v
+
+
+class StockTransferItemInDB(BaseModel):
+    id: int
+    variant_id: int
+    quantity_requested: int
+    quantity_shipped: int
+    quantity_received: int
+    unit_cost_snapshot: float
+    discrepancy_reason: Optional[str] = None
+    # Snapshots de nombre y SKU para que la UI no tenga que hacer join adicional
+    product_name: Optional[str] = None
+    sku: Optional[str] = None
+    barcode: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class StockTransferInDB(BaseModel):
+    id: int
+    folio: Optional[str] = None
+    source_warehouse_id: int
+    destination_warehouse_id: int
+    source_warehouse_name: Optional[str] = None
+    destination_warehouse_name: Optional[str] = None
+    status: str
+    notes: Optional[str] = None
+    expected_delivery_date: Optional[datetime] = None
+    created_at: datetime
+    approved_at: Optional[datetime] = None
+    shipped_at: Optional[datetime] = None
+    received_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
+    cancelled_reason: Optional[str] = None
+    items: List[StockTransferItemInDB] = []
+
+    class Config:
+        from_attributes = True
+
+
+class StockTransferShipItem(BaseModel):
+    """Al enviar: cuánto realmente sale del origen por partida."""
+    item_id: int
+    quantity_shipped: int
+
+
+class StockTransferShipPayload(BaseModel):
+    items: List[StockTransferShipItem]
+
+
+class StockTransferReceiveItem(BaseModel):
+    """Al recibir: cuánto realmente llegó al destino por partida."""
+    item_id: int
+    quantity_received: int
+    discrepancy_reason: Optional[str] = None
+
+
+class StockTransferReceivePayload(BaseModel):
+    items: List[StockTransferReceiveItem]

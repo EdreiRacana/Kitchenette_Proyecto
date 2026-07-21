@@ -375,7 +375,79 @@ export const inventoryService = {
         (await api.get<KardexResult>(`/inventory/kardex/${variantId}`, { params })).data,
     getValuation: async (variantId: number, warehouseId?: number) =>
         (await api.get<ValuationResult>(`/inventory/valuation/${variantId}`, { params: warehouseId ? { warehouse_id: warehouseId } : {} })).data,
+
+    // Traspasos entre almacenes (Stock Transfer Orders)
+    listTransfers: async (params?: { warehouse_id?: number; status?: string; limit?: number }) =>
+        (await api.get<StockTransfer[]>('/inventory/transfers', { params })).data,
+    getTransfer: async (id: number) =>
+        (await api.get<StockTransfer>(`/inventory/transfers/${id}`)).data,
+    createTransfer: async (data: StockTransferCreatePayload) =>
+        (await api.post<StockTransfer>('/inventory/transfers', data)).data,
+    approveTransfer: async (id: number) =>
+        (await api.post<StockTransfer>(`/inventory/transfers/${id}/approve`)).data,
+    startPreparationTransfer: async (id: number) =>
+        (await api.post<StockTransfer>(`/inventory/transfers/${id}/start-preparation`)).data,
+    shipTransfer: async (id: number, items: { item_id: number; quantity_shipped: number }[]) =>
+        (await api.post<StockTransfer>(`/inventory/transfers/${id}/ship`, { items })).data,
+    receiveTransfer: async (id: number, items: { item_id: number; quantity_received: number; discrepancy_reason?: string }[]) =>
+        (await api.post<StockTransfer>(`/inventory/transfers/${id}/receive`, { items })).data,
+    cancelTransfer: async (id: number, reason: string) =>
+        (await api.post<StockTransfer>(`/inventory/transfers/${id}/cancel`, null, { params: { reason } })).data,
+    scanLookup: async (code: string) =>
+        (await api.get<ScanResult>(`/inventory/scan/${encodeURIComponent(code)}`)).data,
 };
+
+// ── Tipos de Traspasos ──────────────────────────────────────────────────────
+export type StockTransferStatus =
+    'draft' | 'approved' | 'in_preparation' | 'shipped' | 'received' | 'cancelled';
+
+export interface StockTransferItem {
+    id: number;
+    variant_id: number;
+    quantity_requested: number;
+    quantity_shipped: number;
+    quantity_received: number;
+    unit_cost_snapshot: number;
+    discrepancy_reason?: string | null;
+    product_name?: string | null;
+    sku?: string | null;
+    barcode?: string | null;
+}
+
+export interface StockTransfer {
+    id: number;
+    folio?: string;
+    source_warehouse_id: number;
+    destination_warehouse_id: number;
+    source_warehouse_name?: string;
+    destination_warehouse_name?: string;
+    status: StockTransferStatus;
+    notes?: string;
+    expected_delivery_date?: string;
+    created_at: string;
+    approved_at?: string;
+    shipped_at?: string;
+    received_at?: string;
+    cancelled_at?: string;
+    cancelled_reason?: string;
+    items: StockTransferItem[];
+}
+
+export interface StockTransferCreatePayload {
+    source_warehouse_id: number;
+    destination_warehouse_id: number;
+    notes?: string;
+    expected_delivery_date?: string;
+    items: { variant_id: number; quantity_requested: number }[];
+}
+
+export interface ScanResult {
+    variant_id: number;
+    sku: string;
+    barcode?: string;
+    product_name?: string;
+    price: number;
+}
 
 export interface KardexMovement {
     id: number;
