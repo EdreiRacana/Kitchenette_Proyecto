@@ -308,6 +308,11 @@ _INVENTORY_STATEMENTS = [
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS extra_costs JSONB",
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS landed_cost_allocation VARCHAR DEFAULT 'by_value'",
     "UPDATE purchase_orders SET landed_cost_allocation = 'by_value' WHERE landed_cost_allocation IS NULL",
+    # Rellena OCs históricas: sin este UPDATE, extra_costs queda NULL en las
+    # filas viejas y la respuesta de /inventory/purchase-orders truena en
+    # Pydantic (List esperada, None recibido). El validator del schema es la
+    # segunda barrera; este UPDATE normaliza el dato en la fuente.
+    "UPDATE purchase_orders SET extra_costs = '[]'::jsonb WHERE extra_costs IS NULL",
     # Snapshot del costo integrado por partida (con extras prorrateados). Se
     # llena al recibir la OC; se preserva `unit_cost` (factura) para trazabilidad.
     "ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS landed_unit_cost DOUBLE PRECISION",
