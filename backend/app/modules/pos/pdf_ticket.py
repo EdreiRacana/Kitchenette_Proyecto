@@ -61,11 +61,25 @@ def build_thermal_ticket(
     El alto crece según el número de partidas."""
     # Ancho: 58mm o 80mm → páginas verticales muy angostas
     page_w = width_mm * mm
-    line_h = 10  # pt por línea aprox
-    header_lines = 8
-    footer_lines = 6
-    body_lines = max(3, len(items) + len(payments) + 3)
-    page_h = (header_lines + body_lines + footer_lines) * line_h + 40
+    # Alturas aproximadas por sección — mejor pecar de largos que cortar el
+    # ticket. Un ticket térmico se recorta solo al arrancar el papel, así que
+    # sobra fondo blanco no molesta, pero un corte a mitad del "Tarjeta: $..."
+    # sí (justo lo que se veía en el ticket del cliente).
+    line_h = 12
+    # Cabecera: logo + razón social + (legal) + RFC + hasta 2 líneas de dir. +
+    # tel. + separador + folio + fecha + caja + cliente + separador. En el peor
+    # caso son ~14 renglones. Antes se estimaban 8, que solo cabían cuando el
+    # ticket no traía dirección ni cliente.
+    header_lines = 14
+    # Pie: separador + "¡Gracias!" + hasta 3 líneas de document_footer + colchón.
+    footer_lines = 10
+    # Cada partida ocupa 2 renglones reales (nombre + "cant × precio"), más los
+    # totales completos (subtotal + descuento + IVA + envío + TOTAL) y hasta 1
+    # renglón por método de pago + cambio. El +7 cubre esos totales/cambio.
+    body_lines = 2 * max(1, len(items)) + max(1, len(payments)) + 7
+    # +60 pt de colchón final para que el "TOTAL" bold (11pt) y la última línea
+    # de método de pago nunca queden por debajo del corte del papel.
+    page_h = (header_lines + body_lines + footer_lines) * line_h + 60
 
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=(page_w, page_h))
