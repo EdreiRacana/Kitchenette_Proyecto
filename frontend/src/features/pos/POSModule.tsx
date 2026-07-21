@@ -8,13 +8,16 @@ import {
   Store, ShoppingCart, DollarSign, Plus, Minus, Trash2, Search,
   Lock, Unlock, LogIn, LogOut, Printer, RefreshCw, Package, Download,
   Banknote, CreditCard, ArrowLeftRight, Check, X, AlertTriangle,
-  Receipt, User, Clock, ChevronRight, History, Scale,
+  Receipt, User, Clock, ChevronRight, History, Scale, Zap, Sparkles,
+  Grid3x3, Barcode,
 } from "lucide-react";
 import {
   posApi, DENOMINATIONS,
   type POSTerminal, type POSSession, type POSProduct, type POSSaleItem, type SessionSale,
   type PreviousSessionReport, type POSTransactionRow, type SessionListResponse,
 } from "./api";
+import configService from "../config/service";
+import { resolveMediaUrl } from "../../services/api";
 
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -213,8 +216,23 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const [historyRefresh, setHistoryRefresh] = useState(0);
   const [showPrev, setShowPrev] = useState(false);
   const [scanFlash, setScanFlash] = useState<string | null>(null); // feedback breve al escanear
+  const [company, setCompany] = useState<{ commercial_name?: string; legal_name?: string; logo_url?: string } | null>(null);
+  const [now, setNow] = useState(new Date());
   const searchRef = useRef<HTMLInputElement>(null);
   const anyModalOpen = showPay || showClose || !!showCash || !!lastSale || showHistory || showPrev;
+
+  // Branding: logo y nombre comercial del cliente (para el header premium).
+  useEffect(() => {
+    configService.getCompanyProfile()
+      .then(c => setCompany({ commercial_name: c.commercial_name, legal_name: c.legal_name, logo_url: c.logo_url }))
+      .catch(() => setCompany(null));
+  }, []);
+  // Reloj vivo — pequeño toque profesional que ubica al operador y evita
+  // discusiones "¿a qué hora fue?" con el cliente.
+  useEffect(() => {
+    const iv = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(iv);
+  }, []);
 
   // Autofocus permanente: cuando no hay modal abierto, el input SIEMPRE debe
   // tener el focus. Un escáner de código de barras funciona "escribiendo" en
@@ -305,142 +323,261 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const subtotal = cart.reduce((a, it) => a + it.line_total, 0);
   const total = subtotal;
 
+  // Estilos reutilizables
+  const brandName = company?.commercial_name || company?.legal_name || "Punto de Venta";
+  const logoSrc = resolveMediaUrl(company?.logo_url);
+  const totalItems = cart.reduce((a, it) => a + it.quantity, 0);
+  const iconBtn: React.CSSProperties = {
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+    padding: "8px 12px", borderRadius: 10, border: `1px solid ${t.border}`,
+    background: t.panel2, color: t.textMid, fontSize: 12, cursor: "pointer",
+    fontWeight: 500, whiteSpace: "nowrap", transition: "background .15s",
+  };
+  const scanState = scanFlash === "__notfound__" || scanFlash === "__error__" ? "error"
+    : scanFlash ? "ok" : "idle";
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", height: "calc(100vh - 90px)", gap: 12, padding: 12 }}>
-      {/* Panel izquierdo: búsqueda + resultados */}
-      <div style={{ background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div style={{ padding: "10px 14px", borderBottom: `1px solid ${t.border}`, background: t.panel2, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Store size={16} color={t.nova} />
-            <div>
-              <div style={{ fontSize: 12.5, color: t.textHi, fontWeight: 700 }}>{session.terminal_name}</div>
-              <div style={{ fontSize: 10.5, color: t.textLo }}>Cajero: {session.cashier_name}</div>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={() => setShowHistory(true)}
-              title="Ver historial de ventas del turno (reimprimir tickets)"
-              style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.nova}55`, background: t.nova + "18", color: t.nova, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}>
-              <Receipt size={12} /> Ventas del turno
-            </button>
-            <button onClick={() => setShowPrev(true)}
-              title="Revisar el reporte del último turno cerrado en esta caja"
-              style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
-              <History size={12} /> Turno anterior
-            </button>
-            <button onClick={() => setShowArqueos(true)}
-              title="Arqueos y conciliación de turnos (pendientes por depositar)"
-              style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
-              <Scale size={12} /> Arqueos
-            </button>
-            <button onClick={() => setShowCash("cash_in")}
-              style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
-              <Plus size={12} /> Fondo
-            </button>
-            <button onClick={() => setShowCash("cash_out")}
-              style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
-              <Minus size={12} /> Retiro
-            </button>
-            <button onClick={() => setShowClose(true)}
-              style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", fontSize: 12, cursor: "pointer", fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
-              <Lock size={12} /> Cerrar turno
-            </button>
-          </div>
-        </div>
-
-        <div style={{ padding: 12 }}>
-          <div style={{ position: "relative" }}>
-            <Search size={16} color={t.textLo} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
-            <input ref={searchRef} value={query} onChange={e => setQuery(e.target.value)}
-              onKeyDown={onSearchKeyDown}
-              placeholder="Escanea código de barras, teclea SKU o nombre…"
-              autoFocus autoComplete="off" spellCheck={false}
-              style={{ width: "100%", padding: "12px 14px 12px 38px", borderRadius: 10, border: `1px solid ${scanFlash === "__notfound__" ? t.bad : scanFlash === "__error__" ? t.bad : scanFlash ? t.good : t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14, outline: "none", transition: "border-color .2s" }} />
-            {scanFlash && (
-              <div style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: (scanFlash === "__notfound__" || scanFlash === "__error__") ? t.bad : t.good, background: ((scanFlash === "__notfound__" || scanFlash === "__error__") ? t.bad : t.good) + "22", padding: "3px 10px", borderRadius: 20, pointerEvents: "none" }}>
-                {scanFlash === "__notfound__" ? <><AlertTriangle size={12} /> No encontrado</>
-                  : scanFlash === "__error__" ? <><AlertTriangle size={12} /> Error</>
-                  : <><Check size={12} /> {scanFlash.length > 20 ? scanFlash.slice(0, 20) + "…" : scanFlash}</>}
-              </div>
-            )}
-          </div>
-          <div style={{ marginTop: 6, fontSize: 10.5, color: t.textLo, display: "flex", alignItems: "center", gap: 8 }}>
-            <span>💡 Enter para agregar</span>
-            <span>·</span>
-            <span>Escáner listo</span>
-          </div>
-        </div>
-
-        <div style={{ flex: 1, overflowY: "auto", padding: "0 12px 12px" }}>
-          {results.length === 0 && !searching && (
-            <div style={{ padding: "60px 20px", textAlign: "center", color: t.textLo }}>
-              <Package size={36} style={{ opacity: 0.35, marginBottom: 10 }} />
-              <div style={{ fontSize: 13 }}>Escanea o busca un producto para empezar</div>
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 90px)", padding: 12, gap: 12 }}>
+      {/* ══════════ HEADER PREMIUM ══════════ */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: `linear-gradient(135deg, ${t.panel} 0%, ${t.panel2} 100%)`, border: `1px solid ${t.border}`, borderRadius: 14, padding: "10px 18px", gap: 14, flexWrap: "wrap", boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.15)"}` }}>
+        {/* Izquierda: Marca */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
+          {logoSrc ? (
+            <img src={logoSrc} alt="" style={{ height: 40, maxWidth: 100, objectFit: "contain" }} />
+          ) : (
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: `linear-gradient(135deg, ${t.nova}, ${t.navy || t.nova})`, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 18 }}>
+              {brandName.slice(0, 2).toUpperCase()}
             </div>
           )}
-          {searching && <div style={{ padding: 20, color: t.textLo, fontSize: 12 }}>Buscando…</div>}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8 }}>
-            {results.map(p => (
-              <button key={p.variant_id} onClick={() => addToCart(p)}
-                style={{ textAlign: "left", padding: 12, borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer" }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, lineHeight: 1.3 }}>{p.product_name}</div>
-                {p.sku && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 3, fontFamily: "monospace" }}>{p.sku}</div>}
-                <div style={{ fontSize: 15, fontWeight: 800, color: t.good, marginTop: 8 }}>{mxn(p.unit_price)}</div>
-              </button>
-            ))}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi, letterSpacing: -0.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{brandName}</div>
+            <div style={{ fontSize: 11, color: t.textLo, display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <Store size={11} /> {session.terminal_name}
+              </span>
+              <span style={{ opacity: 0.5 }}>·</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <User size={11} /> {session.cashier_name}
+              </span>
+            </div>
           </div>
+        </div>
+
+        {/* Centro: Reloj + fecha */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "4px 16px", borderLeft: `1px solid ${t.border}`, borderRight: `1px solid ${t.border}` }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums", letterSpacing: 0.5 }}>
+            {now.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
+          </div>
+          <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "capitalize" }}>
+            {now.toLocaleDateString("es-MX", { weekday: "long", day: "2-digit", month: "short" })}
+          </div>
+        </div>
+
+        {/* Derecha: Acciones rápidas */}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button onClick={() => setShowHistory(true)} title="Historial de ventas del turno"
+            style={{ ...iconBtn, background: t.nova + "16", border: `1px solid ${t.nova}44`, color: t.nova, fontWeight: 600 }}>
+            <Receipt size={14} /> Ventas
+            {historyRefresh > 0 && <span style={{ background: t.nova, color: "#fff", borderRadius: 999, padding: "1px 7px", fontSize: 10, fontWeight: 800 }}>{historyRefresh}</span>}
+          </button>
+          <button onClick={() => setShowPrev(true)} title="Turno anterior" style={iconBtn}>
+            <History size={14} /> Anterior
+          </button>
+          <button onClick={() => setShowArqueos(true)} title="Arqueos y conciliación" style={iconBtn}>
+            <Scale size={14} /> Arqueos
+          </button>
+          <button onClick={() => setShowCash("cash_in")} title="Ingresar fondo de caja" style={iconBtn}>
+            <Plus size={14} /> Fondo
+          </button>
+          <button onClick={() => setShowCash("cash_out")} title="Retiro de caja" style={iconBtn}>
+            <Minus size={14} /> Retiro
+          </button>
+          <button onClick={() => setShowClose(true)}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", fontSize: 12.5, cursor: "pointer", fontWeight: 700, boxShadow: `0 2px 8px ${t.warn}55` }}>
+            <Lock size={14} /> Cerrar turno
+          </button>
         </div>
       </div>
 
-      {/* Panel derecho: carrito + totales */}
-      <div style={{ background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${t.border}`, background: t.panel2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <ShoppingCart size={18} color={t.nova} />
-            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi }}>Carrito ({cart.length})</div>
-          </div>
-          {cart.length > 0 && (
-            <button onClick={() => setCart([])} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
-              <Trash2 size={12} /> Vaciar
-            </button>
-          )}
-        </div>
-
-        <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-          {cart.length === 0 && (
-            <div style={{ padding: 40, textAlign: "center", color: t.textLo, fontSize: 13 }}>Carrito vacío</div>
-          )}
-          {cart.map((it, i) => (
-            <div key={i} style={{ padding: "10px 12px", borderBottom: `1px solid ${t.border}55`, display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.product_name}</div>
-                <div style={{ fontSize: 11, color: t.textLo, marginTop: 2 }}>{mxn(it.unit_price)} × {it.quantity}</div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                <button onClick={() => changeQty(i, -1)} style={{ width: 24, height: 24, borderRadius: 5, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, cursor: "pointer" }}><Minus size={12} /></button>
-                <div style={{ minWidth: 24, textAlign: "center", fontSize: 13, fontWeight: 700, color: t.textHi }}>{it.quantity}</div>
-                <button onClick={() => changeQty(i, 1)} style={{ width: 24, height: 24, borderRadius: 5, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, cursor: "pointer" }}><Plus size={12} /></button>
-                <button onClick={() => removeLine(i)} style={{ width: 24, height: 24, borderRadius: 5, border: "none", background: "transparent", color: t.bad, cursor: "pointer", marginLeft: 4 }}><Trash2 size={12} /></button>
-              </div>
-              <div style={{ minWidth: 80, textAlign: "right", fontSize: 13, fontWeight: 700, color: t.textHi }}>{mxn(it.line_total)}</div>
+      {/* ══════════ CUERPO: catálogo (izq) + carrito (der) ══════════ */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, flex: 1, minHeight: 0 }}>
+        {/* ─── Panel izquierdo: búsqueda + resultados ─── */}
+        <div style={{ background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.10)"}` }}>
+          {/* Buscador gigante con feedback de escáner */}
+          <div style={{ padding: 16, borderBottom: `1px solid ${t.border}` }}>
+            <div style={{ position: "relative" }}>
+              <Barcode size={20} color={scanState === "error" ? t.bad : scanState === "ok" ? t.good : t.nova}
+                style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)" }} />
+              <input ref={searchRef} value={query} onChange={e => setQuery(e.target.value)}
+                onKeyDown={onSearchKeyDown}
+                placeholder="Escanear código o buscar producto…"
+                autoFocus autoComplete="off" spellCheck={false}
+                style={{
+                  width: "100%", padding: "18px 18px 18px 52px", borderRadius: 12,
+                  border: `2px solid ${scanState === "error" ? t.bad : scanState === "ok" ? t.good : t.nova + "55"}`,
+                  background: t.inputBg, color: t.textHi, fontSize: 17, fontWeight: 500, outline: "none",
+                  transition: "border-color .2s, box-shadow .2s",
+                  boxShadow: scanState !== "idle" ? `0 0 0 4px ${(scanState === "error" ? t.bad : t.good)}22` : "none",
+                  boxSizing: "border-box",
+                }} />
+              {scanFlash && (
+                <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: scanState === "error" ? t.bad : t.good, background: (scanState === "error" ? t.bad : t.good) + "22", padding: "5px 12px", borderRadius: 999, pointerEvents: "none" }}>
+                  {scanFlash === "__notfound__" ? <><AlertTriangle size={14} /> No encontrado</>
+                    : scanFlash === "__error__" ? <><AlertTriangle size={14} /> Error</>
+                    : <><Check size={14} /> {scanFlash.length > 22 ? scanFlash.slice(0, 22) + "…" : scanFlash}</>}
+                </div>
+              )}
             </div>
-          ))}
+            <div style={{ marginTop: 8, fontSize: 11, color: t.textLo, display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <Zap size={11} color={t.nova} /> Escáner listo
+              </span>
+              <span style={{ opacity: 0.4 }}>·</span>
+              <span>Enter para agregar</span>
+              <span style={{ opacity: 0.4 }}>·</span>
+              <span>F2 para descuento (próximo)</span>
+            </div>
+          </div>
+
+          {/* Resultados / vacío */}
+          <div style={{ flex: 1, overflowY: "auto", padding: results.length ? 12 : 0 }}>
+            {results.length === 0 && !searching && (
+              <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, color: t.textLo, gap: 12 }}>
+                <div style={{ width: 80, height: 80, borderRadius: 20, background: t.nova + "10", display: "flex", alignItems: "center", justifyContent: "center", border: `2px dashed ${t.nova}44` }}>
+                  <Barcode size={40} color={t.nova} style={{ opacity: 0.6 }} />
+                </div>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: t.textMid, marginBottom: 4 }}>Listo para vender</div>
+                  <div style={{ fontSize: 12.5 }}>Escanea el código de barras o busca por nombre / SKU</div>
+                </div>
+              </div>
+            )}
+            {searching && (
+              <div style={{ padding: 30, textAlign: "center", color: t.textLo, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                <RefreshCw size={14} className="spin" /> Buscando…
+              </div>
+            )}
+            {results.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 10 }}>
+                {results.map(p => (
+                  <button key={p.variant_id} onClick={() => addToCart(p)}
+                    style={{ textAlign: "left", padding: 14, borderRadius: 12, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", transition: "transform .1s, border-color .15s, box-shadow .15s", display: "flex", flexDirection: "column", gap: 6 }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = t.nova; (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 12px ${t.nova}22`; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = t.border; (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, lineHeight: 1.3, minHeight: 34 }}>{p.product_name}</div>
+                    {p.sku && <div style={{ fontSize: 10.5, color: t.textLo, fontFamily: "monospace", letterSpacing: 0.5 }}>{p.sku}</div>}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                      <div style={{ fontSize: 17, fontWeight: 800, color: t.good, letterSpacing: -0.3 }}>{mxn(p.unit_price)}</div>
+                      <div style={{ width: 28, height: 28, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <Plus size={16} strokeWidth={3} />
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
-        <div style={{ padding: 16, borderTop: `1px solid ${t.border}`, background: t.panel2 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: t.textMid, marginBottom: 4 }}>
-            <span>Subtotal</span><span>{mxn(subtotal)}</span>
+        {/* ─── Panel derecho: ticket + total + cobrar ─── */}
+        <div style={{ background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.10)"}` }}>
+          {/* Header del ticket */}
+          <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2} 0%, ${t.panel} 100%)`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 10, padding: 8 }}>
+                <ShoppingCart size={18} />
+              </div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi }}>Ticket en curso</div>
+                <div style={{ fontSize: 11, color: t.textLo, marginTop: 1 }}>
+                  {totalItems > 0 ? `${totalItems} artículo${totalItems === 1 ? "" : "s"} · ${cart.length} línea${cart.length === 1 ? "" : "s"}` : "Vacío"}
+                </div>
+              </div>
+            </div>
+            {cart.length > 0 && (
+              <button onClick={() => { if (confirm("¿Vaciar el ticket?")) setCart([]); }}
+                title="Vaciar ticket"
+                style={{ background: t.bad + "16", border: `1px solid ${t.bad}44`, color: t.bad, cursor: "pointer", fontSize: 11.5, display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, fontWeight: 600 }}>
+                <Trash2 size={12} /> Vaciar
+              </button>
+            )}
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 20, fontWeight: 800, color: t.textHi, marginTop: 6 }}>
-            <span>TOTAL</span><span>{mxn(total)}</span>
+
+          {/* Lista de items */}
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {cart.length === 0 ? (
+              <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, color: t.textLo, gap: 10 }}>
+                <ShoppingCart size={48} style={{ opacity: 0.25 }} />
+                <div style={{ fontSize: 13, fontWeight: 500 }}>Agrega productos para empezar</div>
+              </div>
+            ) : cart.map((it, i) => (
+              <div key={i} style={{ padding: "14px 16px", borderBottom: `1px solid ${t.border}44`, display: "flex", alignItems: "center", gap: 10, transition: "background .15s" }}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = t.panel2 + "88"}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.product_name}</div>
+                  <div style={{ fontSize: 11, color: t.textLo, marginTop: 2, fontFamily: "monospace" }}>{mxn(it.unit_price)}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, background: t.panel2, borderRadius: 8, padding: 3 }}>
+                  <button onClick={() => changeQty(i, -1)} title="Menos" style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "transparent", color: t.textMid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={14} /></button>
+                  <div style={{ minWidth: 26, textAlign: "center", fontSize: 14, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{it.quantity}</div>
+                  <button onClick={() => changeQty(i, 1)} title="Más" style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: t.nova + "22", color: t.nova, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={14} /></button>
+                </div>
+                <div style={{ minWidth: 90, textAlign: "right", fontSize: 14, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(it.line_total)}</div>
+                <button onClick={() => removeLine(i)} title="Quitar" style={{ width: 26, height: 26, borderRadius: 6, border: "none", background: "transparent", color: t.textLo, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "color .15s, background .15s" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = t.bad; (e.currentTarget as HTMLElement).style.background = t.bad + "22"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = t.textLo; (e.currentTarget as HTMLElement).style.background = "transparent"; }}>
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
           </div>
-          <button disabled={cart.length === 0} onClick={() => setShowPay(true)}
-            style={{ marginTop: 14, width: "100%", padding: 16, borderRadius: 10, border: "none",
-              background: cart.length === 0 ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`,
-              color: "#fff", fontSize: 15, fontWeight: 800, cursor: cart.length === 0 ? "not-allowed" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <DollarSign size={18} /> Cobrar {mxn(total)}
-          </button>
+
+          {/* Totales + Cobrar */}
+          <div style={{ padding: 18, borderTop: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2} 0%, ${t.panel} 100%)` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: t.textMid, marginBottom: 8 }}>
+              <span>Subtotal</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{mxn(subtotal)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "10px 0", borderTop: `1px solid ${t.border}` }}>
+              <span style={{ fontSize: 14, color: t.textMid, fontWeight: 600, letterSpacing: 0.5 }}>TOTAL</span>
+              <span style={{ fontSize: 32, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums", letterSpacing: -1 }}>{mxn(total)}</span>
+            </div>
+            <button disabled={cart.length === 0} onClick={() => setShowPay(true)}
+              style={{
+                marginTop: 8, width: "100%", padding: "18px 20px", borderRadius: 12, border: "none",
+                background: cart.length === 0 ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`,
+                color: cart.length === 0 ? t.textLo : "#fff",
+                fontSize: 16, fontWeight: 800, cursor: cart.length === 0 ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                boxShadow: cart.length === 0 ? "none" : `0 6px 16px ${t.good}55`,
+                letterSpacing: 0.3, transition: "transform .1s, box-shadow .15s",
+              }}
+              onMouseEnter={e => { if (cart.length > 0) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "none"; }}>
+              <DollarSign size={20} /> COBRAR {mxn(total)}
+            </button>
+            {cart.length > 0 && (
+              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                <button onClick={() => setShowPay(true)} title="Efectivo rápido"
+                  style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                  <Banknote size={13} /> Efectivo
+                </button>
+                <button onClick={() => setShowPay(true)} title="Tarjeta"
+                  style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                  <CreditCard size={13} /> Tarjeta
+                </button>
+                <button onClick={() => setShowPay(true)} title="Transferencia"
+                  style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                  <ArrowLeftRight size={13} /> Transferencia
+                </button>
+                <button onClick={() => setShowPay(true)} title="Pago mixto"
+                  style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                  <Sparkles size={13} /> Mixto
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
