@@ -44,6 +44,19 @@ export interface Customer {
   is_active: boolean;
   notes: string | null;
   created_at: string;
+
+  // Programa de fidelización
+  date_of_birth?: string | null;
+  sex?: "F" | "M" | "X" | null;
+  accepts_marketing?: boolean;
+  privacy_accepted_at?: string | null;
+  tier_id?: number | null;
+  loyalty_code?: string | null;
+  loyalty_since?: string | null;
+  loyalty_expires_at?: string | null;
+  total_spent_lifetime?: number;
+  total_orders_lifetime?: number;
+  last_order_at?: string | null;
   updated_at: string | null;
 
   // ── Perfil comercial universal ──
@@ -93,6 +106,8 @@ export interface CustomerFilters {
   client_type?: string;
   price_list?: string;
   is_active?: boolean;
+  tier_id?: number;
+  birthday_month?: number;
   sort_by?: string;
   sort_dir?: "asc" | "desc";
   skip?: number;

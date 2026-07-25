@@ -126,4 +126,47 @@ export const loyaltyApi = {
     (await api.post('/loyalty/jobs/recompute-all-tiers')).data,
   jobBirthdayEmails: async () =>
     (await api.post('/loyalty/jobs/birthday-emails')).data,
+
+  // Override manual de tier
+  setTier: async (customerId: number, tierId: number | null, manual = true) =>
+    (await api.put<LoyaltyCustomerLite>(`/loyalty/customers/${customerId}/tier`,
+      { tier_id: tierId, manual })).data,
+
+  // Enviar tarjeta por correo
+  emailLoyaltyCard: async (customerId: number, message?: string) =>
+    (await api.post(`/loyalty/customers/${customerId}/loyalty-card/email`,
+      { message: message || null })).data,
+
+  // Campañas y segmentación
+  previewSegment: async (filters: SegmentFilters) =>
+    (await api.post<{ count: number; sample: { id: number; name: string; email: string | null; tier_id: number | null }[] }>(
+      '/loyalty/segments/preview', filters)).data,
+  sendCampaign: async (payload: CampaignPayload) =>
+    (await api.post<{ targeted: number; sent: number; failed: number; skipped_no_email: number }>(
+      '/loyalty/campaigns/send', payload)).data,
+
+  // Stats
+  stats: async () =>
+    (await api.get<ProgramStats>('/loyalty/stats')).data,
 };
+
+export interface SegmentFilters {
+  tier_ids?: number[] | null;
+  only_opt_in?: boolean;
+  birthday_month?: number | null;
+  min_last_order_days_ago?: number | null;
+}
+export interface CampaignPayload {
+  subject: string;
+  body_html: string;
+  discount_code?: string | null;
+  segment: SegmentFilters;
+}
+export interface ProgramStats {
+  total_active_customers: number;
+  enrolled_in_program: number;
+  opt_in_marketing: number;
+  with_birthday: number;
+  birthdays_next_30_days: number;
+  by_tier: { tier_id: number; name: string; color_hex: string | null; count: number }[];
+}

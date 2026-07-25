@@ -550,6 +550,7 @@ _LOYALTY_STATEMENTS = [
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_order_at        TIMESTAMP WITH TIME ZONE",
     "CREATE UNIQUE INDEX IF NOT EXISTS ix_customers_loyalty_code ON customers (loyalty_code) WHERE loyalty_code IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS ix_customers_tier_id ON customers (tier_id)",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS manual_tier BOOLEAN NOT NULL DEFAULT FALSE",
 ]
 
 

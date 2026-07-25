@@ -3,7 +3,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { Plus, Trash2, Building2, FileText, CreditCard, Users, Phone, MapPin, Upload, Paperclip } from "lucide-react";
+import { Plus, Trash2, Building2, FileText, CreditCard, Users, Phone, MapPin, Upload, Paperclip, Award } from "lucide-react";
+import { loyaltyApi, type LoyaltyTier } from "./loyaltyApi";
 import type { Tokens, Translator } from "../sales/theme";
 import { Modal, Field, TextInput, NumberInput, Select, Button } from "../sales/ui";
 import type { Customer, CustomerDraft, CustomerDocument } from "./types";
@@ -54,6 +55,9 @@ function emptyDraft(): CustomerDraft {
     withholding_scheme: "none", withholding_isr_pct: 0, withholding_iva_pct: 0,
     commercial_discount_pct: 0, marketplace_platform: "", seller_id_external: "",
     consignment_settlement_days: 30,
+    date_of_birth: null, sex: null, accepts_marketing: false, privacy_accepted_at: null,
+    tier_id: null, loyalty_code: null, loyalty_since: null, loyalty_expires_at: null,
+    total_spent_lifetime: 0, total_orders_lifetime: 0, last_order_at: null,
   };
 }
 
@@ -255,6 +259,8 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
           <TextInput tk={tk} value={d.account_number || ""} onChange={(v) => set("account_number", v)} placeholder="CLABE / cuenta" />
         </Field>
       </Section>
+
+      <LoyaltySection tk={tk} d={d} set={set} editing={editing} onLocalSet={setD} />
 
       <Section tk={tk} icon={<Users size={16} />} title={tr("cust_sec_assign", "Asignaciones")}>
         <Field tk={tk} label={tr("cust_sales_agent", "Ventas")} hint={tr("cust_agent_hint", "Personal del sistema o agente externo (escríbelo)")}>
@@ -473,5 +479,130 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
         </div>
       )}
     </Modal>
+  );
+}
+
+
+// ── Sección Programa de Fidelidad ────────────────────────────────────────
+// Se separa en un componente propio porque necesita cargar los tiers y
+// mantener el flag `manual_tier` en sync con el override del usuario.
+function LoyaltySection({ tk, d, set, editing, onLocalSet }: {
+  tk: Tokens;
+  d: CustomerDraft;
+  set: <K extends keyof CustomerDraft>(k: K, v: CustomerDraft[K]) => void;
+  editing: Customer | null;
+  onLocalSet: (updater: (prev: CustomerDraft) => CustomerDraft) => void;
+}) {
+  const [tiers, setTiers] = useState<LoyaltyTier[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => {
+    loyaltyApi.listTiers(false).then(setTiers).catch(() => setTiers([]));
+  }, []);
+
+  const birthdayValue = d.date_of_birth ? String(d.date_of_birth).slice(0, 10) : "";
+  const currentTier = tiers.find(t => t.id === d.tier_id) || null;
+  const isManual = !!(editing as any)?.manual_tier;
+
+  const applyOverride = async (tierId: number | null) => {
+    if (!editing) { alert("Guarda el cliente antes de asignar tier manualmente"); return; }
+    setBusy(true); setMsg(null);
+    try {
+      const res = await loyaltyApi.setTier(editing.id, tierId, tierId !== null);
+      onLocalSet(prev => ({ ...prev, tier_id: res.tier?.id ?? null, loyalty_code: res.loyalty_code ?? null }));
+      setMsg(tierId ? "Tier fijado manualmente" : "Tier vuelto a modo automático");
+    } catch (e: any) {
+      setMsg(e?.response?.data?.detail || "No se pudo aplicar el override");
+    } finally { setBusy(false); }
+  };
+  const recomputeAuto = async () => {
+    if (!editing) return;
+    setBusy(true); setMsg(null);
+    try {
+      await loyaltyApi.recomputeTier(editing.id);
+      const fresh = await loyaltyApi.lookup(String(editing.id));
+      onLocalSet(prev => ({ ...prev, tier_id: fresh.tier?.id ?? null, loyalty_code: fresh.loyalty_code ?? null }));
+      setMsg("Tier recalculado desde el historial");
+    } catch (e: any) {
+      setMsg(e?.response?.data?.detail || "No se pudo recalcular");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Section tk={tk} icon={<Award size={16} />} title="Programa de fidelidad">
+      <Field tk={tk} label="Fecha de nacimiento" hint="Para felicitación y campañas por edad">
+        <input type="date" value={birthdayValue}
+          onChange={e => set("date_of_birth", e.target.value ? new Date(e.target.value + "T00:00:00").toISOString() : null)}
+          style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.inputBg, color: tk.textHi, fontSize: 14, outline: "none", width: "100%", boxSizing: "border-box" }} />
+      </Field>
+      <Field tk={tk} label="Sexo">
+        <Select tk={tk} value={d.sex || ""} onChange={v => set("sex", (v as any) || null)}
+          options={[{ value: "", label: "Prefiere no decir" }, { value: "F", label: "Femenino" }, { value: "M", label: "Masculino" }, { value: "X", label: "Otro" }]} />
+      </Field>
+      <Field tk={tk} label="Acepta comunicaciones (opt-in)" hint="Requerido para enviarle correos de campañas">
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!d.accepts_marketing}
+            onChange={e => set("accepts_marketing", e.target.checked)} />
+          <span style={{ color: tk.textHi, fontSize: 13 }}>Sí, quiere recibir promociones</span>
+        </label>
+      </Field>
+      <Field tk={tk} label="Aviso de privacidad" hint="Fecha en que aceptó">
+        <div style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.panel2, color: d.privacy_accepted_at ? tk.good : tk.textLo, fontSize: 13 }}>
+          {d.privacy_accepted_at ? new Date(d.privacy_accepted_at).toLocaleString("es-MX") : "Aún no lo firma"}
+        </div>
+      </Field>
+
+      <Field tk={tk} label="Tier actual" hint={isManual ? "Fijado manualmente" : "Asignado automáticamente"}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <div style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.panel2, fontSize: 13, flex: 1, minWidth: 100 }}>
+            {currentTier ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: currentTier.color_hex || tk.accent, display: "inline-block" }} />
+                {currentTier.name} · {currentTier.discount_pct}%
+              </span>
+            ) : <span style={{ color: tk.textLo }}>Sin tier</span>}
+          </div>
+          {isManual && <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 999, background: tk.warn + "22", color: tk.warn, fontWeight: 700 }}>MANUAL</span>}
+        </div>
+      </Field>
+      <Field tk={tk} label="Asignar tier manualmente" hint="Sobrescribe el cálculo automático">
+        <div style={{ display: "flex", gap: 6 }}>
+          <select value={d.tier_id ?? ""} onChange={e => applyOverride(e.target.value ? Number(e.target.value) : null)}
+            disabled={busy || !editing}
+            style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.inputBg, color: tk.textHi, fontSize: 13, flex: 1, cursor: "pointer" }}>
+            <option value="">— Ninguno (automático)</option>
+            {tiers.map(t => <option key={t.id} value={t.id}>{t.name} · {t.discount_pct}%</option>)}
+          </select>
+          <button type="button" onClick={recomputeAuto} disabled={busy || !editing}
+            title="Recalcular tier con base en el historial de compras"
+            style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.panel2, color: tk.textMid, cursor: busy ? "wait" : "pointer", fontSize: 12, whiteSpace: "nowrap" }}>
+            Auto
+          </button>
+        </div>
+      </Field>
+
+      <Field tk={tk} label="Código de tarjeta">
+        <div style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.panel2, color: tk.textHi, fontFamily: "monospace", fontSize: 13 }}>
+          {d.loyalty_code || <span style={{ color: tk.textLo, fontFamily: "inherit" }}>Se emite al asignar tier</span>}
+        </div>
+      </Field>
+      <Field tk={tk} label="Vigencia">
+        <div style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.panel2, color: tk.textHi, fontSize: 13 }}>
+          {d.loyalty_expires_at ? new Date(d.loyalty_expires_at).toLocaleDateString("es-MX") : "—"}
+        </div>
+      </Field>
+      <Field tk={tk} label="Gasto acumulado (vitalicio o ventana)">
+        <div style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.panel2, color: tk.textHi, fontSize: 13 }}>
+          ${(d.total_spent_lifetime || 0).toLocaleString("es-MX", { maximumFractionDigits: 2 })}
+          <span style={{ color: tk.textLo, fontSize: 11.5, marginLeft: 6 }}>· {d.total_orders_lifetime || 0} compras</span>
+        </div>
+      </Field>
+
+      {msg && (
+        <div style={{ gridColumn: "1 / -1", fontSize: 12.5, color: msg.includes("no") || msg.includes("No") ? tk.bad : tk.good, padding: "4px 0" }}>
+          {msg}
+        </div>
+      )}
+    </Section>
   );
 }

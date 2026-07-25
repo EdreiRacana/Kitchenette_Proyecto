@@ -3,9 +3,10 @@
 // independently so neither blocks the other.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Search, Plus, Users, BadgeCheck, CreditCard, Wallet, ChevronRight, ArrowUp, ArrowDown, Info,
-  Star, Award, Save, Trash2, X, RefreshCw,
+  Star, Award, Save, Trash2, X, RefreshCw, MessageCircle, Mail,
 } from "lucide-react";
 import { loyaltyApi, type LoyaltyTier, type LoyaltyProgramConfig } from "./loyaltyApi";
 import { resolveTheme, makeTr, money } from "../sales/theme";
@@ -47,6 +48,10 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
   const [sucursal, setSucursal] = useState("");
   const [clientType, setClientType] = useState("");
   const [priceList, setPriceList] = useState("");
+  const [tierFilter, setTierFilter] = useState("");
+  const [birthdayMonth, setBirthdayMonth] = useState("");
+  const [tierOpts, setTierOpts] = useState<LoyaltyTier[]>([]);
+  useEffect(() => { loyaltyApi.listTiers(false).then(setTierOpts).catch(() => setTierOpts([])); }, []);
   const [sortBy, setSortBy] = useState("created_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(0);
@@ -59,8 +64,10 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
   const filters = useMemo<CustomerFilters>(() => ({
     q: q || undefined, sucursal: sucursal || undefined, client_type: clientType || undefined,
     price_list: priceList || undefined, sort_by: sortBy, sort_dir: sortDir,
+    tier_id: tierFilter ? Number(tierFilter) : undefined,
+    birthday_month: birthdayMonth ? Number(birthdayMonth) : undefined,
     skip: page * PAGE, limit: PAGE,
-  }), [q, sucursal, clientType, priceList, sortBy, sortDir, page]);
+  }), [q, sucursal, clientType, priceList, tierFilter, birthdayMonth, sortBy, sortDir, page]);
 
   const loadList = useCallback(async () => {
     setListLoading(true);
@@ -82,7 +89,7 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
 
   useEffect(() => { loadList(); }, [loadList]);
   useEffect(() => { loadStats(); }, [loadStats]);
-  useEffect(() => { setPage(0); }, [q, sucursal, clientType, priceList]);
+  useEffect(() => { setPage(0); }, [q, sucursal, clientType, priceList, tierFilter, birthdayMonth]);
 
   const openNew = () => { setEditing(null); setFormOpen(true); };
   const openEdit = async (c: Customer) => {
@@ -206,6 +213,17 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
           <option value="">{tr("cust_f_pricelist", "Lista")}</option>
           {PRICE_LISTS.map((v) => <option key={v} value={v}>{v}</option>)}
         </select>
+        <select value={tierFilter} onChange={(e) => setTierFilter(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
+          <option value="">Tier</option>
+          {tierOpts.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        <select value={birthdayMonth} onChange={(e) => setBirthdayMonth(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
+          <option value="">Cumpleaños</option>
+          {["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"].map((m, i) => (
+            <option key={m} value={i + 1}>{m}</option>
+          ))}
+        </select>
         <Button tk={tk} variant="primary" icon={<Plus size={16} />} onClick={openNew}>{tr("cust_new", "Nuevo cliente")}</Button>
       </div>
 
@@ -220,6 +238,7 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
               <th style={thBase}>{tr("cust_col_sucursal", "Sucursal")}</th>
               <th style={thBase}>{tr("cust_col_type", "Tipo")}</th>
               <th style={thBase}>{tr("cust_col_pricelist", "Lista")}</th>
+              <th style={thBase}>Tier / LP</th>
               <SortHead col="credit_amount" label={tr("cust_col_credit", "Crédito")} />
               <th style={thBase}>{tr("cust_col_status", "Estado")}</th>
               <th style={{ borderBottom: `1px solid ${tk.border}` }}></th>
@@ -233,7 +252,7 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
                   </tr>
                 ))
               ) : items.length === 0 ? (
-                <tr><td colSpan={9}><EmptyState tk={tk} title={tr("cust_empty", "Sin clientes")} hint={tr("cust_empty_hint", "Ajusta los filtros o registra un nuevo cliente.")} /></td></tr>
+                <tr><td colSpan={10}><EmptyState tk={tk} title={tr("cust_empty", "Sin clientes")} hint={tr("cust_empty_hint", "Ajusta los filtros o registra un nuevo cliente.")} /></td></tr>
               ) : (
                 items.map((c, i) => (
                   <tr key={c.id} onClick={() => setViewing(c)} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2, cursor: "pointer" }}
@@ -250,6 +269,20 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
                       <Badge tk={tk} bg={typeColor(tk, c.client_type) + "22"} color={typeColor(tk, c.client_type)} border={typeColor(tk, c.client_type) + "55"}>{c.client_type ?? "—"}</Badge>
                     </td>
                     <td style={{ padding: "12px 16px", fontSize: 12, color: tk.textMid }}>{c.price_list ?? "—"}</td>
+                    <td style={{ padding: "12px 16px", fontSize: 12 }}>
+                      {(() => {
+                        const t = tierOpts.find(x => x.id === c.tier_id);
+                        if (!t) return <span style={{ color: tk.textLo }}>—</span>;
+                        return (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span style={{ padding: "2px 8px", borderRadius: 999, background: (t.color_hex || tk.accent) + "22", color: t.color_hex || tk.accent, fontWeight: 700, fontSize: 11, display: "inline-block", width: "fit-content" }}>
+                              {t.name} · {t.discount_pct.toFixed(0)}%
+                            </span>
+                            {c.loyalty_code && <span style={{ fontFamily: "monospace", fontSize: 10, color: tk.textLo }}>{c.loyalty_code}</span>}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textHi }}>
                       {(c.credit_amount ?? 0) > 0 ? <span>{money(c.credit_amount)} <span style={{ color: tk.textLo, fontSize: 12 }}>· {c.credit_days ?? 0}d</span></span> : <span style={{ color: tk.textLo }}>—</span>}
                     </td>
@@ -297,16 +330,22 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
 function LoyaltyProgramView({ tk }: { tk: Tokens }) {
   const [cfg, setCfg] = useState<LoyaltyProgramConfig | null>(null);
   const [tiers, setTiers] = useState<LoyaltyTier[]>([]);
+  const [stats, setStats] = useState<import("./loyaltyApi").ProgramStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingCfg, setSavingCfg] = useState(false);
   const [busyJob, setBusyJob] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [campaignOpen, setCampaignOpen] = useState(false);
 
   const load = async () => {
     setLoading(true); setErr(null);
     try {
-      const [c, ts] = await Promise.all([loyaltyApi.getProgram(), loyaltyApi.listTiers()]);
-      setCfg(c); setTiers(ts);
+      const [c, ts, st] = await Promise.all([
+        loyaltyApi.getProgram(),
+        loyaltyApi.listTiers(),
+        loyaltyApi.stats().catch(() => null),
+      ]);
+      setCfg(c); setTiers(ts); setStats(st);
     } catch (e) { setErr(extractErr(e)); }
     finally { setLoading(false); }
   };
@@ -362,6 +401,25 @@ function LoyaltyProgramView({ tk }: { tk: Tokens }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      {/* Estadísticas del programa */}
+      {stats && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+          <StatCard tk={tk} label="Inscritos al programa" value={stats.enrolled_in_program} sub={`de ${stats.total_active_customers} activos`} color={tk.accent} />
+          <StatCard tk={tk} label="Opt-in marketing" value={stats.opt_in_marketing} sub="pueden recibir campañas" color={tk.good} />
+          <StatCard tk={tk} label="Con cumpleaños" value={stats.with_birthday} sub={`${stats.birthdays_next_30_days} en próx. 30 días`} color={tk.warn} />
+          <StatCard tk={tk} label="Distribución por tier" value={stats.by_tier.reduce((a, b) => a + b.count, 0)}
+            sub={stats.by_tier.map(b => `${b.name}: ${b.count}`).join(" · ") || "—"} color={tk.accent} />
+        </div>
+      )}
+
+      {/* Botón campañas */}
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button onClick={() => setCampaignOpen(true)}
+          style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${tk.accent}, ${tk.navy || tk.accent})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+          <MessageCircle size={14} /> Nueva campaña
+        </button>
+      </div>
+
       {/* Estado global del programa */}
       <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: 20 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
@@ -542,9 +600,185 @@ function LoyaltyProgramView({ tk }: { tk: Tokens }) {
           </table>
         </div>
       </div>
+
+      {campaignOpen && (
+        <CampaignModal tk={tk} tiers={tiers} onClose={() => setCampaignOpen(false)} />
+      )}
     </div>
   );
 }
+
+
+function StatCard({ tk, label, value, sub, color }: {
+  tk: Tokens; label: string; value: number | string; sub?: string; color: string;
+}) {
+  return (
+    <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "14px 16px" }}>
+      <div style={{ fontSize: 11, color: tk.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
+      <div style={{ fontSize: 26, fontWeight: 800, color, marginTop: 4 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: tk.textLo, marginTop: 4 }}>{sub}</div>}
+    </div>
+  );
+}
+
+
+function CampaignModal({ tk, tiers, onClose }: {
+  tk: Tokens; tiers: LoyaltyTier[]; onClose: () => void;
+}) {
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("¡Hola {name}!\n\nTe compartimos un código exclusivo para tu próxima compra: {code}\n\nGracias por ser parte de {program}.");
+  const [code, setCode] = useState("");
+  const [selectedTiers, setSelectedTiers] = useState<number[]>([]);
+  const [onlyOptIn, setOnlyOptIn] = useState(true);
+  const [birthdayMonth, setBirthdayMonth] = useState<number | "">("");
+  const [inactiveDays, setInactiveDays] = useState<number | "">("");
+  const [preview, setPreview] = useState<{ count: number; sample: { id: number; name: string; email: string | null }[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const inp: React.CSSProperties = { padding: "9px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.inputBg, color: tk.textHi, fontSize: 13, outline: "none", width: "100%", boxSizing: "border-box" };
+  const label: React.CSSProperties = { fontSize: 11, color: tk.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" };
+
+  const segment = () => ({
+    tier_ids: selectedTiers.length ? selectedTiers : null,
+    only_opt_in: onlyOptIn,
+    birthday_month: birthdayMonth || null,
+    min_last_order_days_ago: inactiveDays || null,
+  });
+
+  const doPreview = async () => {
+    setBusy(true); setMsg(null);
+    try { setPreview(await loyaltyApi.previewSegment(segment())); }
+    catch (e) { setMsg(extractErr(e)); }
+    finally { setBusy(false); }
+  };
+  const doSend = async () => {
+    if (!subject.trim() || !body.trim()) { setMsg("Asunto y cuerpo obligatorios"); return; }
+    if (!preview || preview.count === 0) { setMsg("Primero previsualiza el segmento"); return; }
+    if (!window.confirm(`Enviar a ${preview.count} clientes. ¿Continuar?`)) return;
+    setBusy(true); setMsg(null);
+    try {
+      const html = body.split("\n").map(l => `<p>${l}</p>`).join("");
+      const res = await loyaltyApi.sendCampaign({
+        subject, body_html: html, discount_code: code || null, segment: segment(),
+      });
+      alert(`Campaña enviada.\nObjetivo: ${res.targeted}\nEnviados: ${res.sent}\nFallidos: ${res.failed}\nSin email: ${res.skipped_no_email}`);
+      onClose();
+    } catch (e) { setMsg(extractErr(e)); }
+    finally { setBusy(false); }
+  };
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 14, width: "min(720px, 100%)", maxHeight: "92vh", overflow: "auto" }}>
+        <div style={{ padding: "16px 20px", borderBottom: `1px solid ${tk.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <MessageCircle size={18} color={tk.accent} />
+            <div style={{ fontSize: 16, fontWeight: 700, color: tk.textHi }}>Nueva campaña por correo</div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: tk.textLo }}><X size={20} /></button>
+        </div>
+
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: tk.textHi }}>Segmento</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={label}>Tiers a incluir (vacío = todos)</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {tiers.map(t => {
+                  const sel = selectedTiers.includes(t.id);
+                  return (
+                    <button key={t.id} type="button"
+                      onClick={() => setSelectedTiers(prev => sel ? prev.filter(x => x !== t.id) : [...prev, t.id])}
+                      style={{
+                        padding: "6px 12px", borderRadius: 999,
+                        border: `1px solid ${sel ? (t.color_hex || tk.accent) : tk.border}`,
+                        background: sel ? (t.color_hex || tk.accent) + "22" : "transparent",
+                        color: sel ? (t.color_hex || tk.accent) : tk.textMid,
+                        fontSize: 12, fontWeight: 600, cursor: "pointer",
+                      }}>{t.name}</button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <label style={label}>Cumpleaños en mes</label>
+              <select value={birthdayMonth} onChange={e => setBirthdayMonth(e.target.value ? Number(e.target.value) : "")} style={{ ...inp, cursor: "pointer" }}>
+                <option value="">Cualquier mes</option>
+                {["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"].map((m, i) => (
+                  <option key={m} value={i + 1}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={label}>Inactivos hace al menos (días)</label>
+              <input type="number" value={inactiveDays} onChange={e => setInactiveDays(e.target.value ? Number(e.target.value) : "")} placeholder="Ej. 60 = no compran hace 60 días" style={inp} />
+            </div>
+            <div>
+              <label style={label}>Marketing opt-in</label>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 8, border: `1px solid ${tk.border}`, cursor: "pointer" }}>
+                <input type="checkbox" checked={onlyOptIn} onChange={e => setOnlyOptIn(e.target.checked)} />
+                <span style={{ color: tk.textHi, fontSize: 13 }}>Solo clientes con opt-in</span>
+              </label>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={doPreview} disabled={busy}
+              style={{ padding: "9px 16px", borderRadius: 10, border: `1px solid ${tk.border}`, background: tk.panel2, color: tk.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              Previsualizar segmento
+            </button>
+            {preview && (
+              <div style={{ fontSize: 13, color: tk.textHi }}>
+                <b style={{ color: tk.accent }}>{preview.count}</b> clientes serán contactados
+                {preview.sample.length > 0 && (
+                  <span style={{ marginLeft: 8, color: tk.textLo, fontSize: 12 }}>
+                    (ej: {preview.sample.slice(0, 3).map(s => s.name).join(", ")}…)
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div style={{ fontSize: 13, fontWeight: 700, color: tk.textHi, marginTop: 8 }}>Contenido del correo</div>
+          <div>
+            <label style={label}>Asunto</label>
+            <input value={subject} onChange={e => setSubject(e.target.value)} style={inp} />
+          </div>
+          <div>
+            <label style={label}>Código de descuento (opcional)</label>
+            <input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="Ej. VERANO25" style={{ ...inp, fontFamily: "monospace" }} />
+          </div>
+          <div>
+            <label style={label}>Cuerpo (puedes usar {"{name}"}, {"{code}"}, {"{program}"})</label>
+            <textarea value={body} onChange={e => setBody(e.target.value)} rows={7} style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} />
+            <div style={{ fontSize: 11, color: tk.textLo, marginTop: 4 }}>
+              El aviso de privacidad y el link de baja se agregan automáticamente al final.
+            </div>
+          </div>
+
+          {msg && (
+            <div style={{ padding: "10px 14px", background: tk.bad + "18", border: `1px solid ${tk.bad}55`, color: tk.bad, borderRadius: 10, fontSize: 13 }}>
+              {msg}
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: "14px 20px", borderTop: `1px solid ${tk.border}`, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${tk.border}`, background: "transparent", color: tk.textMid, cursor: "pointer", fontSize: 13 }}>
+            Cancelar
+          </button>
+          <button onClick={doSend} disabled={busy || !preview}
+            style={{ padding: "10px 22px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${tk.good}, #059669)`, color: "#fff", cursor: (busy || !preview) ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 800, display: "flex", alignItems: "center", gap: 6 }}>
+            <Mail size={14} /> {busy ? "Enviando…" : `Enviar a ${preview?.count || 0}`}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 
 function Skel({ tk, w, h, r = 8, style }: { tk: Tokens; w: number | string; h: number | string; r?: number; style?: React.CSSProperties }) {
   return <div style={{ width: w, height: h, borderRadius: r, background: `linear-gradient(90deg, ${tk.panel2} 25%, ${tk.panel3} 37%, ${tk.panel2} 63%)`, backgroundSize: "400% 100%", animation: "kt-shimmer 1.4s ease infinite", ...style }} />;

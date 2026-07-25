@@ -124,6 +124,19 @@ class CustomerBase(BaseModel):
     is_active: Optional[bool] = True
     notes: Optional[str] = None
 
+    # ── Programa de fidelización (CRM) ─────────────────────────
+    date_of_birth: Optional[datetime] = None
+    sex: Optional[str] = None                 # F | M | X | None
+    accepts_marketing: Optional[bool] = False
+    privacy_accepted_at: Optional[datetime] = None
+    tier_id: Optional[int] = None
+    loyalty_code: Optional[str] = None
+    loyalty_since: Optional[datetime] = None
+    loyalty_expires_at: Optional[datetime] = None
+    total_spent_lifetime: Optional[float] = 0.0
+    total_orders_lifetime: Optional[int] = 0
+    last_order_at: Optional[datetime] = None
+
     @field_validator("rfc")
     @classmethod
     def _check_rfc(cls, v: Optional[str]) -> Optional[str]:
