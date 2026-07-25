@@ -160,6 +160,7 @@ class Customer(Base):
     loyalty_code = Column(String, unique=True, index=True, nullable=True)  # código único para tarjeta
     loyalty_since = Column(DateTime(timezone=True), nullable=True)         # fecha de alta al programa
     loyalty_expires_at = Column(DateTime(timezone=True), nullable=True)    # vigencia de la tarjeta
+    manual_tier = Column(Boolean, default=False, nullable=False)           # True = tier fijado a mano; recompute lo respeta
 
     # Métricas cacheadas (se recomputan al cerrar cada venta o por job nightly)
     total_spent_lifetime = Column(Float, default=0.0, nullable=False)

@@ -90,3 +90,26 @@ class QuickRegisterPayload(BaseModel):
     rfc: Optional[str] = None
     accepts_marketing: bool = False
     privacy_accepted: bool = False
+
+
+class SetTierPayload(BaseModel):
+    tier_id: Optional[int] = None   # None + manual=False → vuelve a modo automático
+    manual: bool = True
+
+
+class EmailCardPayload(BaseModel):
+    message: Optional[str] = None   # texto adicional para el correo
+
+
+class SegmentFilters(BaseModel):
+    tier_ids: Optional[List[int]] = None
+    only_opt_in: bool = True
+    birthday_month: Optional[int] = Field(None, ge=1, le=12)
+    min_last_order_days_ago: Optional[int] = Field(None, ge=0)
+
+
+class CampaignPayload(BaseModel):
+    subject: str = Field(..., min_length=1)
+    body_html: str = Field(..., min_length=1)
+    discount_code: Optional[str] = None
+    segment: SegmentFilters = Field(default_factory=SegmentFilters)

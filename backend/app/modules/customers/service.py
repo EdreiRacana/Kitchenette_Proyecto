@@ -126,9 +126,12 @@ async def search_customers(
     client_type: Optional[str] = None,
     price_list: Optional[str] = None,
     is_active: Optional[bool] = None,
+    tier_id: Optional[int] = None,
+    birthday_month: Optional[int] = None,
     sort_by: str = "created_at",
     sort_dir: str = "desc",
 ) -> Tuple[List[models.Customer], int]:
+    from sqlalchemy import extract
     base = select(models.Customer)
     count_q = select(func.count(models.Customer.id))
 
@@ -142,6 +145,8 @@ async def search_customers(
             models.Customer.rfc.ilike(like),
             models.Customer.client_number.ilike(like),
             models.Customer.email.ilike(like),
+            models.Customer.loyalty_code.ilike(like),
+            models.Customer.phone.ilike(like),
         ))
     if sucursal:
         conds.append(models.Customer.sucursal == sucursal)
@@ -151,6 +156,11 @@ async def search_customers(
         conds.append(models.Customer.price_list == price_list)
     if is_active is not None:
         conds.append(models.Customer.is_active == is_active)
+    if tier_id is not None:
+        conds.append(models.Customer.tier_id == tier_id)
+    if birthday_month is not None and 1 <= birthday_month <= 12:
+        conds.append(models.Customer.date_of_birth.isnot(None))
+        conds.append(extract("month", models.Customer.date_of_birth) == birthday_month)
 
     for c in conds:
         base = base.where(c)

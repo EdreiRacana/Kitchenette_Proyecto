@@ -10,7 +10,7 @@ import {
   X, TrendingUp, RotateCcw, Receipt, Truck, Percent, Landmark,
   ArrowUpRight, ArrowDownRight, ShoppingBag, Package, CreditCard,
   FileText, Wallet, Store, Globe, Building2, Star, Users, Info,
-  Paperclip, Upload, Trash2, MessageCircle, Award, Download,
+  Paperclip, Upload, Trash2, MessageCircle, Award, Download, Mail,
 } from "lucide-react";
 import { loyaltyApi } from "./loyaltyApi";
 import type { Tokens } from "../sales/theme";
@@ -137,6 +137,18 @@ export default function Customer360({
       .catch(() => setLoyaltyLite(null));
   }, [customer.id]);
 
+  const emailLoyaltyCard = async () => {
+    if (!customer.email) { alert("Este cliente no tiene email registrado"); return; }
+    const msg = window.prompt("Mensaje opcional para incluir en el correo (Enter para omitir):", "");
+    if (msg === null) return;
+    setLoyaltyBusy(true);
+    try {
+      const res = await loyaltyApi.emailLoyaltyCard(customer.id, msg || undefined);
+      alert(res.ok ? `Tarjeta enviada a ${res.sent_to}` : "No se pudo enviar");
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "No se pudo enviar la tarjeta");
+    } finally { setLoyaltyBusy(false); }
+  };
   const downloadLoyaltyCard = async () => {
     setLoyaltyBusy(true);
     try {
@@ -637,13 +649,20 @@ export default function Customer360({
             title={loyaltyLite?.loyalty_code
               ? `Descargar tarjeta ${loyaltyLite.loyalty_code}`
               : "Generar y descargar tarjeta de fidelidad"}
-            style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${tk.accent}66`, background: tk.accent + "18", color: tk.accent, cursor: loyaltyBusy ? "wait" : "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
-            <Download size={14} /> {loyaltyBusy ? "Generando…" : "Tarjeta PDF"}
+            style={{ padding: "9px 14px", borderRadius: 10, border: `1px solid ${tk.accent}66`, background: tk.accent + "18", color: tk.accent, cursor: loyaltyBusy ? "wait" : "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+            <Download size={14} /> {loyaltyBusy ? "…" : "Tarjeta PDF"}
             {loyaltyLite?.tier && (
               <span style={{ padding: "1px 8px", borderRadius: 999, background: (loyaltyLite.tier.color_hex || tk.accent) + "33", color: loyaltyLite.tier.color_hex || tk.accent, fontSize: 10.5, fontWeight: 800 }}>
                 {loyaltyLite.tier.name}
               </span>
             )}
+          </button>
+          <button
+            onClick={emailLoyaltyCard}
+            disabled={loyaltyBusy || !customer.email}
+            title={customer.email ? `Enviar tarjeta a ${customer.email}` : "El cliente no tiene email registrado"}
+            style={{ padding: "9px 14px", borderRadius: 10, border: `1px solid ${tk.good}66`, background: customer.email ? tk.good + "18" : tk.panel3, color: customer.email ? tk.good : tk.textLo, cursor: (loyaltyBusy || !customer.email) ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+            <Mail size={14} /> Enviar por correo
           </button>
           <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${tk.border}`, background: "transparent", color: tk.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Cerrar</button>
           {onEdit && (

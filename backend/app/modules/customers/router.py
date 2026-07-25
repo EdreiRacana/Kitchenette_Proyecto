@@ -34,12 +34,16 @@ async def search_customers(
     client_type: Optional[str] = None,
     price_list: Optional[str] = None,
     is_active: Optional[bool] = None,
+    tier_id: Optional[int] = None,
+    birthday_month: Optional[int] = Query(None, ge=1, le=12),
     sort_by: str = Query("created_at"),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
 ):
     items, total = await service.search_customers(
         db, skip=skip, limit=limit, q=q, sucursal=sucursal, client_type=client_type,
-        price_list=price_list, is_active=is_active, sort_by=sort_by, sort_dir=sort_dir,
+        price_list=price_list, is_active=is_active,
+        tier_id=tier_id, birthday_month=birthday_month,
+        sort_by=sort_by, sort_dir=sort_dir,
     )
     return schemas.PaginatedCustomers(items=items, total=total, skip=skip, limit=limit)
 

@@ -16,6 +16,8 @@ la búsqueda igual funciona pero no se aplica descuento ni se recalcula tier.
 from datetime import datetime, timezone, timedelta, date
 from io import BytesIO
 from typing import List, Optional
+import hmac
+import hashlib
 import secrets
 import string
 
@@ -325,6 +327,9 @@ async def recompute_customer_tier(db: AsyncSession, customer_id: int) -> Optiona
 
     tiers = await list_tiers(db, only_active=True)
     chosen = _pick_tier(tiers, spent, orders, avg_ticket)
+    # Respetar override manual — si el operador fijó el tier a mano, no lo movemos.
+    if c.manual_tier:
+        chosen = c.tier if c.tier_id else None
     if chosen is not None:
         c.tier_id = chosen.id
         # Extender vigencia de la tarjeta si aplica
@@ -540,3 +545,236 @@ async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company:
     c_pdf.showPage()
     c_pdf.save()
     return buf.getvalue()
+
+
+# ── Opt-out por HMAC (LFPDPPP) ─────────────────────────────────────────────
+
+def _optout_secret() -> bytes:
+    """Usa SECRET_KEY del app (o un fallback derivado del app_name)."""
+    try:
+        from app.core.config import settings
+        s = getattr(settings, "SECRET_KEY", None) or getattr(settings, "PROJECT_NAME", "sthenova")
+    except Exception:
+        s = "sthenova"
+    return str(s).encode("utf-8")
+
+
+def build_optout_token(customer_id: int) -> str:
+    """Firma HMAC(customer_id) → token seguro para el enlace en correos."""
+    payload = str(customer_id).encode("utf-8")
+    sig = hmac.new(_optout_secret(), payload, hashlib.sha256).hexdigest()[:16]
+    return f"{customer_id}.{sig}"
+
+
+def verify_optout_token(token: str) -> Optional[int]:
+    try:
+        cid_str, sig = (token or "").split(".", 1)
+        expected = build_optout_token(int(cid_str)).split(".", 1)[1]
+        return int(cid_str) if hmac.compare_digest(sig, expected) else None
+    except Exception:
+        return None
+
+
+async def opt_out_customer(db: AsyncSession, token: str) -> Optional[Customer]:
+    cid = verify_optout_token(token)
+    if not cid:
+        return None
+    c = await db.get(Customer, cid)
+    if not c:
+        return None
+    c.accepts_marketing = False
+    await db.commit()
+    await db.refresh(c)
+    return c
+
+
+# ── Override manual de tier ────────────────────────────────────────────────
+
+async def set_customer_tier(db: AsyncSession, customer_id: int,
+                             tier_id: Optional[int], manual: bool = True) -> Optional[Customer]:
+    """Asigna (o quita) el tier de un cliente. manual=True marca el override
+    para que recompute_customer_tier lo respete.
+    Pasar tier_id=None + manual=False → vuelve al modo automático."""
+    c = await db.get(Customer, customer_id)
+    if not c:
+        return None
+    if tier_id is not None:
+        tier = await db.get(CustomerTier, tier_id)
+        if not tier:
+            raise ValueError("Tier no existe")
+        c.tier_id = tier_id
+        c.manual_tier = manual
+        cfg = await get_program_config(db)
+        if cfg.is_enabled:
+            if not c.loyalty_code:
+                c.loyalty_code = _generate_loyalty_code(c.id)
+            if not c.loyalty_since:
+                c.loyalty_since = datetime.now(timezone.utc)
+            if cfg.card_validity_days:
+                c.loyalty_expires_at = datetime.now(timezone.utc) + timedelta(days=cfg.card_validity_days)
+    else:
+        # Quitar override → recompute recalcula
+        c.manual_tier = False
+        c.tier_id = None
+    await db.commit()
+    await db.refresh(c)
+    return c
+
+
+# ── Enviar tarjeta por correo ──────────────────────────────────────────────
+
+async def email_loyalty_card(db: AsyncSession, customer_id: int, company: dict,
+                              extra_message: Optional[str] = None) -> dict:
+    """Genera la tarjeta PDF y la envía como adjunto al correo del cliente.
+    Requiere que el cliente tenga email y loyalty_code emitido."""
+    c = await db.get(Customer, customer_id)
+    if not c:
+        return {"ok": False, "reason": "not_found"}
+    if not c.email:
+        return {"ok": False, "reason": "no_email"}
+    if not c.loyalty_code:
+        # Intentar emitirla ahora
+        await recompute_customer_tier(db, customer_id)
+        c = await db.get(Customer, customer_id)
+        if not c.loyalty_code:
+            return {"ok": False, "reason": "no_card"}
+
+    pdf = await generate_loyalty_card_pdf(db, customer_id, company)
+    if not pdf:
+        return {"ok": False, "reason": "pdf_error"}
+
+    cfg = await get_program_config(db)
+    subject = f"Tu tarjeta {cfg.program_name}"
+    optout_token = build_optout_token(customer_id)
+    body_html = (
+        f"<p>¡Hola {(c.name or '').split()[0] or 'amig@'}!</p>"
+        f"<p>Adjuntamos tu tarjeta <b>{cfg.program_name}</b> — muéstrala en tienda para "
+        f"aplicar tu descuento y beneficios exclusivos.</p>"
+        + (f"<p>{extra_message}</p>" if extra_message else "")
+        + f"<hr style='border:none;border-top:1px solid #ccc;margin:20px 0'>"
+        + f"<p style='font-size:11px;color:#888'>Si ya no quieres recibir nuestros correos, "
+        + f"puedes darte de baja en cualquier momento contactándonos o usando el enlace de opt-out: "
+        + f"<code>{optout_token}</code>. Aviso de privacidad: "
+        + f"{cfg.privacy_policy_url or 'contacta a la empresa'}.</p>"
+    )
+    from app.core.email import send_email
+    ok = await send_email(
+        db, to=c.email, subject=subject, body_html=body_html,
+        attachments=[(f"tarjeta_{c.client_number or c.id}.pdf", pdf, "pdf")],
+    )
+    return {"ok": bool(ok), "sent_to": c.email if ok else None}
+
+
+# ── Campañas / segmentación ────────────────────────────────────────────────
+
+async def query_segment(db: AsyncSession, *, tier_ids: Optional[List[int]] = None,
+                          only_opt_in: bool = True, birthday_month: Optional[int] = None,
+                          min_last_order_days_ago: Optional[int] = None,
+                          limit: int = 5000) -> List[Customer]:
+    """Filtra clientes por criterios. Se usa para vista previa y para envío
+    de campañas. Por defecto exige opt-in (LFPDPPP)."""
+    stmt = select(Customer).where(Customer.is_active.is_(True))
+    if only_opt_in:
+        stmt = stmt.where(Customer.accepts_marketing.is_(True))
+    if tier_ids:
+        stmt = stmt.where(Customer.tier_id.in_(tier_ids))
+    if birthday_month is not None and 1 <= birthday_month <= 12:
+        stmt = stmt.where(
+            Customer.date_of_birth.isnot(None),
+            extract("month", Customer.date_of_birth) == birthday_month,
+        )
+    if min_last_order_days_ago is not None and min_last_order_days_ago > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=min_last_order_days_ago)
+        stmt = stmt.where(
+            or_(Customer.last_order_at.is_(None), Customer.last_order_at <= cutoff)
+        )
+    stmt = stmt.limit(limit)
+    return (await db.execute(stmt)).scalars().all()
+
+
+async def send_campaign(db: AsyncSession, *, segment_filters: dict,
+                         subject: str, body_html: str,
+                         discount_code: Optional[str] = None) -> dict:
+    """Envía un correo a todos los clientes que caen en el segmento.
+    body_html soporta placeholders {name}, {code}, {program} y auto-agrega
+    aviso + opt-out link al final."""
+    if not subject or not body_html:
+        raise ValueError("Asunto y cuerpo son obligatorios")
+    people = await query_segment(db, **segment_filters)
+    cfg = await get_program_config(db)
+    from app.core.email import send_email
+    sent, failed, skipped = 0, 0, 0
+    for c in people:
+        if not c.email:
+            skipped += 1
+            continue
+        first = ((c.name or "").split() or ["amig@"])[0]
+        rendered = body_html.format(
+            name=first,
+            code=discount_code or "",
+            program=cfg.program_name,
+        )
+        optout_token = build_optout_token(c.id)
+        html = (rendered
+                + f"<hr style='border:none;border-top:1px solid #ccc;margin:20px 0'>"
+                + f"<p style='font-size:11px;color:#888'>Recibes este correo porque estás "
+                + f"suscrito a {cfg.program_name}. Para dejar de recibirlos, contáctanos con "
+                + f"tu código de baja: <b>{optout_token}</b>."
+                + (f" <a href='{cfg.privacy_policy_url}'>Aviso de privacidad</a>." if cfg.privacy_policy_url else "")
+                + f"</p>")
+        try:
+            ok = await send_email(db, to=c.email, subject=subject, body_html=html)
+            sent += 1 if ok else 0
+            failed += 0 if ok else 1
+        except Exception:
+            failed += 1
+    return {"targeted": len(people), "sent": sent, "failed": failed, "skipped_no_email": skipped}
+
+
+# ── Estadísticas del programa ──────────────────────────────────────────────
+
+async def get_program_stats(db: AsyncSession) -> dict:
+    tiers = await list_tiers(db, only_active=False)
+    by_tier = []
+    for t in tiers:
+        cnt = (await db.execute(select(func.count(Customer.id)).where(Customer.tier_id == t.id))).scalar() or 0
+        by_tier.append({"tier_id": t.id, "name": t.name, "color_hex": t.color_hex, "count": int(cnt)})
+    total = (await db.execute(select(func.count(Customer.id)).where(Customer.is_active.is_(True)))).scalar() or 0
+    enrolled = (await db.execute(select(func.count(Customer.id)).where(Customer.loyalty_code.isnot(None)))).scalar() or 0
+    opt_in = (await db.execute(select(func.count(Customer.id)).where(
+        Customer.accepts_marketing.is_(True), Customer.is_active.is_(True)))).scalar() or 0
+    with_bday = (await db.execute(select(func.count(Customer.id)).where(
+        Customer.date_of_birth.isnot(None), Customer.is_active.is_(True)))).scalar() or 0
+
+    # Cumpleaños próximos 30 días
+    today = date.today()
+    from datetime import timedelta as _td
+    horizon = today + _td(days=30)
+    if today.month == horizon.month:
+        birthday_next_30 = (await db.execute(select(func.count(Customer.id)).where(
+            Customer.date_of_birth.isnot(None),
+            extract("month", Customer.date_of_birth) == today.month,
+            extract("day", Customer.date_of_birth) >= today.day,
+            extract("day", Customer.date_of_birth) <= horizon.day,
+        ))).scalar() or 0
+    else:
+        this_m = (await db.execute(select(func.count(Customer.id)).where(
+            Customer.date_of_birth.isnot(None),
+            extract("month", Customer.date_of_birth) == today.month,
+            extract("day", Customer.date_of_birth) >= today.day,
+        ))).scalar() or 0
+        next_m = (await db.execute(select(func.count(Customer.id)).where(
+            Customer.date_of_birth.isnot(None),
+            extract("month", Customer.date_of_birth) == horizon.month,
+            extract("day", Customer.date_of_birth) <= horizon.day,
+        ))).scalar() or 0
+        birthday_next_30 = int(this_m) + int(next_m)
+
+    return {
+        "total_active_customers": int(total),
+        "enrolled_in_program": int(enrolled),
+        "opt_in_marketing": int(opt_in),
+        "with_birthday": int(with_bday),
+        "birthdays_next_30_days": int(birthday_next_30),
+        "by_tier": by_tier,
+    }

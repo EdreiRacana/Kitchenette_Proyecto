@@ -106,6 +106,8 @@ export interface CustomerFilters {
   client_type?: string;
   price_list?: string;
   is_active?: boolean;
+  tier_id?: number;
+  birthday_month?: number;
   sort_by?: string;
   sort_dir?: "asc" | "desc";
   skip?: number;

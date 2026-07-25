@@ -165,3 +165,89 @@ async def job_recompute_all(db: DB, current_user: CurrentUser):
 @router.post("/jobs/birthday-emails")
 async def job_birthday(db: DB, current_user: CurrentUser):
     return await loyalty_service.send_birthday_emails(db)
+
+
+# ── Override manual de tier ────────────────────────────────────────────────
+
+@router.put("/customers/{customer_id}/tier")
+async def set_tier(customer_id: int, data: loyalty_schemas.SetTierPayload,
+                    db: DB, current_user: CurrentUser):
+    try:
+        c = await loyalty_service.set_customer_tier(db, customer_id, data.tier_id, manual=data.manual)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not c:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    fresh = await loyalty_service.lookup_customer(db, str(customer_id))
+    return fresh or {"ok": True, "tier_id": c.tier_id, "manual_tier": c.manual_tier}
+
+
+# ── Enviar tarjeta por correo ──────────────────────────────────────────────
+
+@router.post("/customers/{customer_id}/loyalty-card/email")
+async def email_card(customer_id: int, data: loyalty_schemas.EmailCardPayload,
+                      db: DB, current_user: CurrentUser):
+    from app.modules.sales.universal_service import _get_company_dict
+    company = await _get_company_dict(db)
+    result = await loyalty_service.email_loyalty_card(db, customer_id, company, extra_message=data.message)
+    if not result.get("ok"):
+        reason = result.get("reason", "error")
+        detail = {
+            "not_found": "Cliente no encontrado",
+            "no_email": "El cliente no tiene correo registrado",
+            "no_card": "Este cliente aún no tiene tarjeta emitida (verifica que el programa esté activo y que cumpla algún tier)",
+            "pdf_error": "No se pudo generar el PDF de la tarjeta",
+        }.get(reason, "No se pudo enviar el correo")
+        raise HTTPException(status_code=400, detail=detail)
+    return result
+
+
+# ── Campañas y estadísticas ────────────────────────────────────────────────
+
+@router.post("/segments/preview")
+async def segment_preview(filters: loyalty_schemas.SegmentFilters, db: DB, current_user: CurrentUser):
+    """Devuelve el listado (compacto) que caería en el segmento — sin enviar nada.
+    Sirve para que la UI muestre 'X clientes serán contactados' antes de disparar."""
+    people = await loyalty_service.query_segment(db, **filters.model_dump())
+    return {
+        "count": len(people),
+        "sample": [
+            {"id": c.id, "name": c.name, "email": c.email, "tier_id": c.tier_id}
+            for c in people[:20]
+        ],
+    }
+
+
+@router.post("/campaigns/send")
+async def campaign_send(data: loyalty_schemas.CampaignPayload, db: DB, current_user: CurrentUser):
+    try:
+        return await loyalty_service.send_campaign(
+            db,
+            segment_filters=data.segment.model_dump(),
+            subject=data.subject,
+            body_html=data.body_html,
+            discount_code=data.discount_code,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/stats")
+async def stats(db: DB, current_user: CurrentUser):
+    return await loyalty_service.get_program_stats(db)
+
+
+# ── Opt-out público (sin auth) ─────────────────────────────────────────────
+
+from fastapi import Query
+
+
+@router.get("/unsubscribe")
+async def unsubscribe(db: DB, token: str = Query(...)):
+    """Endpoint sin auth — accesible por link en correo. Verifica el HMAC.
+    Nota: se expone bajo /loyalty pero el guard general del módulo bloquea
+    escrituras; este es GET así que pasa el guard."""
+    c = await loyalty_service.opt_out_customer(db, token)
+    if not c:
+        raise HTTPException(status_code=400, detail="Token inválido o cliente no encontrado")
+    return {"ok": True, "message": f"{c.name}, te hemos dado de baja de nuestras comunicaciones."}
