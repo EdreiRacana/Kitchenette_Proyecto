@@ -1,0 +1,542 @@
+"""
+Programa de fidelización — servicio.
+
+Responsable de:
+  * CRUD de tiers y configuración del programa (singleton id=1)
+  * Búsqueda rápida de cliente por código de tarjeta / teléfono / email / nombre
+  * Historial y recomendaciones (por categoría/subcategoría)
+  * Recalcular tier automáticamente al cerrar una venta
+  * Generación de tarjeta PDF con branding de la empresa
+  * Job de envío de correos de cumpleaños
+
+Todos los flujos son defensivos: si el programa está apagado (is_enabled=False),
+la búsqueda igual funciona pero no se aplica descuento ni se recalcula tier.
+"""
+
+from datetime import datetime, timezone, timedelta, date
+from io import BytesIO
+from typing import List, Optional
+import secrets
+import string
+
+from sqlalchemy import func, or_, and_, extract
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
+
+from app.modules.customers.models import Customer, CustomerTier, LoyaltyProgramConfig
+from app.modules.sales.models import Order, OrderItem
+from app.modules.inventory.models import ProductVariant, Product
+
+
+# ── Configuración singleton ────────────────────────────────────────────────
+
+async def get_program_config(db: AsyncSession) -> LoyaltyProgramConfig:
+    cfg = await db.get(LoyaltyProgramConfig, 1)
+    if cfg is None:
+        cfg = LoyaltyProgramConfig(id=1)
+        db.add(cfg)
+        await db.commit()
+        await db.refresh(cfg)
+    return cfg
+
+
+async def update_program_config(db: AsyncSession, data: dict) -> LoyaltyProgramConfig:
+    cfg = await get_program_config(db)
+    for field, value in data.items():
+        if value is not None and hasattr(cfg, field):
+            setattr(cfg, field, value)
+    await db.commit()
+    await db.refresh(cfg)
+    return cfg
+
+
+# ── Tiers ──────────────────────────────────────────────────────────────────
+
+async def list_tiers(db: AsyncSession, *, only_active: bool = False) -> List[CustomerTier]:
+    stmt = select(CustomerTier).order_by(CustomerTier.rank.asc())
+    if only_active:
+        stmt = stmt.where(CustomerTier.is_active.is_(True))
+    return (await db.execute(stmt)).scalars().all()
+
+
+async def create_tier(db: AsyncSession, data: dict) -> CustomerTier:
+    t = CustomerTier(
+        name=data["name"],
+        color_hex=data.get("color_hex"),
+        rank=int(data.get("rank") or 0),
+        discount_pct=float(data.get("discount_pct") or 0.0),
+        min_spend=float(data.get("min_spend") or 0.0),
+        min_orders=int(data.get("min_orders") or 0),
+        min_avg_ticket=float(data.get("min_avg_ticket") or 0.0),
+        perks=data.get("perks"),
+        is_active=bool(data.get("is_active", True)),
+    )
+    db.add(t)
+    await db.commit()
+    await db.refresh(t)
+    return t
+
+
+async def update_tier(db: AsyncSession, tier_id: int, data: dict) -> Optional[CustomerTier]:
+    t = await db.get(CustomerTier, tier_id)
+    if not t:
+        return None
+    for field in ("name", "color_hex", "rank", "discount_pct", "min_spend",
+                  "min_orders", "min_avg_ticket", "perks", "is_active"):
+        if field in data and data[field] is not None:
+            setattr(t, field, data[field])
+    await db.commit()
+    await db.refresh(t)
+    return t
+
+
+async def delete_tier(db: AsyncSession, tier_id: int) -> bool:
+    t = await db.get(CustomerTier, tier_id)
+    if not t:
+        return False
+    # Desligar customers de este tier para no romper FK
+    await db.execute(
+        Customer.__table__.update().where(Customer.tier_id == tier_id).values(tier_id=None)
+    )
+    await db.delete(t)
+    await db.commit()
+    return True
+
+
+# ── Lookup rápido para el POS ──────────────────────────────────────────────
+
+def _serialize_customer_lite(c: Customer, tier: Optional[CustomerTier]) -> dict:
+    return {
+        "id": c.id,
+        "client_number": c.client_number,
+        "loyalty_code": c.loyalty_code,
+        "name": c.name,
+        "email": c.email,
+        "phone": c.phone,
+        "date_of_birth": c.date_of_birth.isoformat() if c.date_of_birth else None,
+        "accepts_marketing": c.accepts_marketing,
+        "total_spent_lifetime": c.total_spent_lifetime or 0.0,
+        "total_orders_lifetime": c.total_orders_lifetime or 0,
+        "last_order_at": c.last_order_at.isoformat() if c.last_order_at else None,
+        "tier": {
+            "id": tier.id, "name": tier.name, "color_hex": tier.color_hex,
+            "discount_pct": tier.discount_pct, "perks": tier.perks,
+        } if tier else None,
+        "loyalty_expires_at": c.loyalty_expires_at.isoformat() if c.loyalty_expires_at else None,
+    }
+
+
+async def lookup_customer(db: AsyncSession, query: str) -> Optional[dict]:
+    """Búsqueda flexible para el POS: código de tarjeta > teléfono > email >
+    número de cliente > nombre. Retorna el primer match."""
+    q = (query or "").strip()
+    if not q:
+        return None
+
+    stmt = select(Customer).options(selectinload(Customer.tier)).where(
+        or_(
+            Customer.loyalty_code == q,
+            Customer.phone == q,
+            Customer.email == q.lower(),
+            Customer.client_number == q,
+            Customer.name.ilike(f"%{q}%"),
+        )
+    ).limit(1)
+    c = (await db.execute(stmt)).scalars().first()
+    if not c:
+        return None
+    return _serialize_customer_lite(c, c.tier)
+
+
+# ── Historial y recomendaciones ────────────────────────────────────────────
+
+async def get_customer_history(db: AsyncSession, customer_id: int, limit: int = 20) -> List[dict]:
+    """Últimas N compras del cliente con detalle mínimo (folio, fecha, total, items)."""
+    stmt = (
+        select(Order).where(Order.customer_id == customer_id, Order.kind == "order")
+        .order_by(Order.created_at.desc()).limit(limit)
+        .options(selectinload(Order.items))
+    )
+    orders = (await db.execute(stmt)).scalars().all()
+    out = []
+    for o in orders:
+        out.append({
+            "id": o.id, "folio": o.folio,
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+            "total_amount": o.total_amount or 0.0,
+            "status": o.status,
+            "items": [
+                {
+                    "variant_id": it.variant_id,
+                    "product_name": it.product_name,
+                    "sku": it.sku,
+                    "quantity": it.quantity,
+                    "unit_price": it.unit_price,
+                }
+                for it in (o.items or [])
+            ],
+        })
+    return out
+
+
+async def get_customer_recommendations(db: AsyncSession, customer_id: int, limit: int = 5) -> List[dict]:
+    """Recomienda variantes basadas en las CATEGORÍAS que el cliente ya compró.
+    Algoritmo (simple pero efectivo, patrón usado por Amazon en su MVP):
+      1. Categorías donde el cliente concentra sus compras (top N)
+      2. Productos más vendidos globalmente en esas categorías
+      3. Excluye lo que ya compró en los últimos 90 días
+    """
+    # 1) Categorías del cliente (con peso por cantidad comprada)
+    cat_stmt = (
+        select(Product.category, func.sum(OrderItem.quantity).label("qty"))
+        .join(ProductVariant, ProductVariant.id == OrderItem.variant_id)
+        .join(Product, Product.id == ProductVariant.product_id)
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(
+            Order.customer_id == customer_id,
+            Order.kind == "order",
+            Order.status.notin_(["cancelled", "draft"]),
+            Product.category.isnot(None),
+        )
+        .group_by(Product.category)
+        .order_by(func.sum(OrderItem.quantity).desc())
+        .limit(3)
+    )
+    top_cats = [r[0] for r in (await db.execute(cat_stmt)).all() if r[0]]
+    if not top_cats:
+        return []
+
+    # 2) Variantes ya compradas en 90d (para excluirlas)
+    since = datetime.now(timezone.utc) - timedelta(days=90)
+    bought_stmt = (
+        select(OrderItem.variant_id)
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(Order.customer_id == customer_id, Order.created_at >= since)
+    )
+    already = {r[0] for r in (await db.execute(bought_stmt)).all() if r[0]}
+
+    # 3) Top variantes globales en esas categorías (últimos 180 días)
+    since_wide = datetime.now(timezone.utc) - timedelta(days=180)
+    rec_stmt = (
+        select(
+            ProductVariant.id.label("vid"),
+            Product.name.label("product_name"),
+            ProductVariant.sku,
+            ProductVariant.price,
+            Product.category,
+            func.sum(OrderItem.quantity).label("global_qty"),
+        )
+        .join(Product, Product.id == ProductVariant.product_id)
+        .join(OrderItem, OrderItem.variant_id == ProductVariant.id)
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(
+            Product.category.in_(top_cats),
+            Order.kind == "order",
+            Order.status.notin_(["cancelled", "draft"]),
+            Order.created_at >= since_wide,
+            ProductVariant.is_active.is_(True),
+        )
+        .group_by(ProductVariant.id, Product.name, ProductVariant.sku, ProductVariant.price, Product.category)
+        .order_by(func.sum(OrderItem.quantity).desc())
+        .limit(limit * 3)  # margen para poder filtrar los ya-comprados
+    )
+    rows = (await db.execute(rec_stmt)).all()
+    out = []
+    for r in rows:
+        if r.vid in already:
+            continue
+        out.append({
+            "variant_id": r.vid,
+            "product_name": r.product_name,
+            "sku": r.sku,
+            "price": r.price,
+            "category": r.category,
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+# ── Recalcular tier ────────────────────────────────────────────────────────
+
+def _pick_tier(tiers: List[CustomerTier], spent: float, orders: int, avg_ticket: float) -> Optional[CustomerTier]:
+    """Elige el tier más alto (mayor rank) para el que el cliente cumple TODOS
+    los umbrales configurados. Umbrales en 0 se consideran no-aplican."""
+    eligible = []
+    for t in tiers:
+        if not t.is_active:
+            continue
+        if t.min_spend > 0 and spent < t.min_spend:
+            continue
+        if t.min_orders > 0 and orders < t.min_orders:
+            continue
+        if t.min_avg_ticket > 0 and avg_ticket < t.min_avg_ticket:
+            continue
+        # Si el tier no tiene umbrales, solo aplica por asignación manual
+        if t.min_spend <= 0 and t.min_orders <= 0 and t.min_avg_ticket <= 0:
+            continue
+        eligible.append(t)
+    if not eligible:
+        return None
+    return max(eligible, key=lambda x: x.rank)
+
+
+async def recompute_customer_tier(db: AsyncSession, customer_id: int) -> Optional[Customer]:
+    """Recalcula tier de UN cliente. Actualiza totals cacheados usando la
+    ventana configurada en el programa (o vitalicio si es None)."""
+    c = await db.get(Customer, customer_id)
+    if not c:
+        return None
+    cfg = await get_program_config(db)
+    if not cfg.is_enabled:
+        return c
+
+    # Ventana
+    if cfg.tier_lookback_months and cfg.tier_lookback_months > 0:
+        since = datetime.now(timezone.utc) - timedelta(days=cfg.tier_lookback_months * 30)
+    else:
+        since = None
+
+    q = (
+        select(
+            func.coalesce(func.sum(Order.total_amount), 0.0).label("spent"),
+            func.count(Order.id).label("orders"),
+            func.max(Order.created_at).label("last_at"),
+        )
+        .where(
+            Order.customer_id == customer_id,
+            Order.kind == "order",
+            Order.status.notin_(["cancelled", "draft"]),
+        )
+    )
+    if since is not None:
+        q = q.where(Order.created_at >= since)
+    row = (await db.execute(q)).one()
+    spent = float(row.spent or 0.0)
+    orders = int(row.orders or 0)
+    avg_ticket = (spent / orders) if orders > 0 else 0.0
+
+    # Update totals cacheados (siempre reflejan la ventana usada para tier)
+    c.total_spent_lifetime = spent
+    c.total_orders_lifetime = orders
+    if row.last_at:
+        c.last_order_at = row.last_at
+
+    tiers = await list_tiers(db, only_active=True)
+    chosen = _pick_tier(tiers, spent, orders, avg_ticket)
+    if chosen is not None:
+        c.tier_id = chosen.id
+        # Extender vigencia de la tarjeta si aplica
+        if cfg.card_validity_days:
+            c.loyalty_expires_at = datetime.now(timezone.utc) + timedelta(days=cfg.card_validity_days)
+        if not c.loyalty_since:
+            c.loyalty_since = datetime.now(timezone.utc)
+        if not c.loyalty_code:
+            c.loyalty_code = _generate_loyalty_code(c.id)
+
+    await db.commit()
+    await db.refresh(c)
+    return c
+
+
+def _generate_loyalty_code(customer_id: int) -> str:
+    """Genera un código humanamente legible tipo LP-A3B7-XXXXX."""
+    alphabet = string.ascii_uppercase + string.digits
+    tail = "".join(secrets.choice(alphabet) for _ in range(5))
+    return f"LP-{customer_id:04d}-{tail}"
+
+
+async def recompute_all_tiers(db: AsyncSession) -> dict:
+    """Job masivo — típicamente corrido nightly. Recalcula tier de todos los
+    clientes con al menos una compra."""
+    ids = (await db.execute(
+        select(Customer.id).where(Customer.total_orders_lifetime > 0)
+        .union(select(Order.customer_id).where(Order.customer_id.isnot(None)).distinct())
+    )).scalars().all()
+    updated = 0
+    for cid in set(ids):
+        if cid:
+            await recompute_customer_tier(db, cid)
+            updated += 1
+    return {"updated": updated}
+
+
+# ── Job de cumpleaños ──────────────────────────────────────────────────────
+
+async def find_todays_birthdays(db: AsyncSession) -> List[Customer]:
+    """Clientes con cumpleaños hoy que aceptan marketing y tienen email."""
+    today = date.today()
+    stmt = select(Customer).where(
+        Customer.date_of_birth.isnot(None),
+        Customer.accepts_marketing.is_(True),
+        Customer.email.isnot(None),
+        Customer.is_active.is_(True),
+        extract("month", Customer.date_of_birth) == today.month,
+        extract("day", Customer.date_of_birth) == today.day,
+    )
+    return (await db.execute(stmt)).scalars().all()
+
+
+async def send_birthday_emails(db: AsyncSession) -> dict:
+    """Encuentra cumpleañeros y envía el correo. Retorna resumen para dashboard."""
+    cfg = await get_program_config(db)
+    if not cfg.is_enabled or not cfg.birthday_email_enabled:
+        return {"skipped": True, "reason": "birthday_disabled"}
+    people = await find_todays_birthdays(db)
+    if not people:
+        return {"sent": 0}
+
+    # Reutiliza el sender genérico de la app (mismo transporte que el resto).
+    from app.core.email import send_email
+    sent, failed = 0, 0
+    subject = cfg.birthday_email_subject or "¡Feliz cumpleaños!"
+    tpl = cfg.birthday_email_body or (
+        "¡Hola {name}! Te deseamos un feliz cumpleaños. "
+        "Muestra tu tarjeta {program} en tienda para tu descuento especial."
+    )
+    for c in people:
+        first = ((c.name or "").split() or ["amig@"])[0]
+        body_txt = tpl.format(name=first, program=cfg.program_name or "de fidelidad")
+        body_html = f"<p>{body_txt}</p>"
+        try:
+            ok = await send_email(db, to=c.email, subject=subject, body_html=body_html)
+            if ok:
+                sent += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+    return {"sent": sent, "failed": failed, "total": len(people)}
+
+
+# ── Tarjeta PDF ────────────────────────────────────────────────────────────
+
+async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company: dict) -> Optional[bytes]:
+    """Genera un PDF de tarjeta de fidelidad — estilo tarjeta de crédito
+    (85 × 55 mm relativas, escaladas a A6 con márgenes), con logo, gradiente
+    y QR del loyalty_code."""
+    c = await db.execute(
+        select(Customer).options(selectinload(Customer.tier)).where(Customer.id == customer_id)
+    )
+    customer = c.scalars().first()
+    if not customer or not customer.loyalty_code:
+        return None
+
+    cfg = await get_program_config(db)
+    tier = customer.tier
+
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A6
+    from reportlab.lib.units import mm
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    buf = BytesIO()
+    page_w, page_h = A6  # 105 x 148 mm
+    c_pdf = canvas.Canvas(buf, pagesize=A6)
+
+    # Fondo con color base del programa
+    bg = cfg.card_bg_color or "#0F172A"
+    text_color = cfg.card_text_color or "#FFFFFF"
+    accent = (tier.color_hex if tier and tier.color_hex else (cfg.card_accent_color or "#33B2F5"))
+
+    c_pdf.setFillColor(bg)
+    c_pdf.rect(0, 0, page_w, page_h, fill=1, stroke=0)
+
+    # Banda diagonal decorativa color del tier
+    c_pdf.setFillColor(accent)
+    p = c_pdf.beginPath()
+    p.moveTo(0, page_h)
+    p.lineTo(page_w * 0.55, page_h)
+    p.lineTo(0, page_h * 0.55)
+    p.close()
+    c_pdf.drawPath(p, fill=1, stroke=0)
+
+    # Título del programa
+    c_pdf.setFillColor(text_color)
+    c_pdf.setFont("Helvetica-Bold", 14)
+    c_pdf.drawString(10 * mm, page_h - 20 * mm, cfg.program_name or "Programa de Fidelidad")
+    if cfg.tagline:
+        c_pdf.setFont("Helvetica", 8)
+        c_pdf.drawString(10 * mm, page_h - 25 * mm, cfg.tagline)
+
+    # Logo (esquina superior derecha)
+    logo_bytes = company.get("logo_bytes")
+    if logo_bytes:
+        try:
+            img = ImageReader(BytesIO(logo_bytes))
+            logo_h = 14 * mm
+            logo_w = 22 * mm
+            c_pdf.drawImage(img, page_w - logo_w - 8 * mm, page_h - logo_h - 6 * mm,
+                            width=logo_w, height=logo_h,
+                            preserveAspectRatio=True, mask="auto")
+        except Exception:
+            pass
+
+    # Nombre del titular
+    y = page_h - 55 * mm
+    c_pdf.setFont("Helvetica", 8)
+    c_pdf.setFillColor(text_color)
+    c_pdf.drawString(10 * mm, y, "TITULAR")
+    c_pdf.setFont("Helvetica-Bold", 13)
+    c_pdf.drawString(10 * mm, y - 6 * mm, (customer.name or "").upper()[:32])
+
+    # Tier
+    y -= 20 * mm
+    c_pdf.setFont("Helvetica", 8)
+    c_pdf.drawString(10 * mm, y, "NIVEL")
+    c_pdf.setFont("Helvetica-Bold", 12)
+    c_pdf.setFillColor(accent)
+    c_pdf.drawString(10 * mm, y - 6 * mm, (tier.name if tier else "—").upper())
+    if tier:
+        c_pdf.setFillColor(text_color)
+        c_pdf.setFont("Helvetica", 9)
+        c_pdf.drawString(35 * mm, y - 6 * mm, f"Descuento {tier.discount_pct:.0f}%")
+
+    # Código
+    y -= 18 * mm
+    c_pdf.setFont("Helvetica", 8)
+    c_pdf.setFillColor(text_color)
+    c_pdf.drawString(10 * mm, y, "CÓDIGO")
+    c_pdf.setFont("Courier-Bold", 12)
+    c_pdf.drawString(10 * mm, y - 6 * mm, customer.loyalty_code)
+
+    # Vigencia
+    if customer.loyalty_expires_at:
+        y -= 14 * mm
+        c_pdf.setFont("Helvetica", 8)
+        c_pdf.drawString(10 * mm, y, "VIGENCIA")
+        c_pdf.setFont("Helvetica-Bold", 10)
+        c_pdf.drawString(10 * mm, y - 5 * mm,
+                         customer.loyalty_expires_at.strftime("%d / %m / %Y"))
+
+    # QR con el código (esquina inferior derecha) — usa qrcode si está
+    try:
+        import qrcode
+        qr = qrcode.QRCode(version=1, box_size=3, border=1)
+        qr.add_data(customer.loyalty_code)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color=text_color, back_color=bg)
+        img_buf = BytesIO()
+        img.save(img_buf, format="PNG")
+        img_buf.seek(0)
+        qr_img = ImageReader(img_buf)
+        qr_size = 26 * mm
+        c_pdf.drawImage(qr_img, page_w - qr_size - 8 * mm, 8 * mm,
+                        width=qr_size, height=qr_size, mask="auto")
+    except Exception:
+        # Si qrcode no está instalado, dibujar solo el código en grande
+        c_pdf.setFont("Courier-Bold", 10)
+        c_pdf.drawRightString(page_w - 8 * mm, 12 * mm, customer.loyalty_code)
+
+    # Pie con la empresa
+    c_pdf.setFont("Helvetica", 7)
+    c_pdf.setFillColor(text_color)
+    c_pdf.drawString(10 * mm, 6 * mm,
+                     (company.get("commercial_name") or company.get("legal_name") or "")[:40])
+
+    c_pdf.showPage()
+    c_pdf.save()
+    return buf.getvalue()

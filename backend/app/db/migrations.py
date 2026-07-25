@@ -488,6 +488,71 @@ _BRANCH_STATEMENTS = [
 ]
 
 
+_LOYALTY_STATEMENTS = [
+    # Programa de fidelización — CRM al servicio del negocio. Cada empresa
+    # configura sus propios tiers, umbrales y porcentajes. Los defaults
+    # están DESACTIVADOS (is_enabled=false) para que nada aplique hasta
+    # que la empresa entre a Configuración y lo prenda.
+    """CREATE TABLE IF NOT EXISTS customer_tiers (
+        id             SERIAL PRIMARY KEY,
+        name           VARCHAR NOT NULL,
+        color_hex      VARCHAR,
+        rank           INTEGER NOT NULL DEFAULT 0,
+        discount_pct   DOUBLE PRECISION NOT NULL DEFAULT 0,
+        min_spend      DOUBLE PRECISION NOT NULL DEFAULT 0,
+        min_orders     INTEGER NOT NULL DEFAULT 0,
+        min_avg_ticket DOUBLE PRECISION NOT NULL DEFAULT 0,
+        perks          TEXT,
+        is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at     TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_customer_tiers_active ON customer_tiers (is_active, rank)",
+    """CREATE TABLE IF NOT EXISTS loyalty_program_config (
+        id                       SERIAL PRIMARY KEY,
+        is_enabled               BOOLEAN NOT NULL DEFAULT FALSE,
+        program_name             VARCHAR NOT NULL DEFAULT 'Programa de Fidelidad',
+        tagline                  VARCHAR,
+        tier_lookback_months     INTEGER DEFAULT 12,
+        card_validity_days       INTEGER NOT NULL DEFAULT 365,
+        recalc_on_each_sale      BOOLEAN NOT NULL DEFAULT TRUE,
+        card_bg_color            VARCHAR NOT NULL DEFAULT '#0F172A',
+        card_text_color          VARCHAR NOT NULL DEFAULT '#FFFFFF',
+        card_accent_color        VARCHAR NOT NULL DEFAULT '#33B2F5',
+        privacy_policy_url       VARCHAR,
+        privacy_policy_text      TEXT,
+        birthday_email_enabled   BOOLEAN NOT NULL DEFAULT FALSE,
+        birthday_email_subject   VARCHAR NOT NULL DEFAULT '¡Feliz cumpleaños!',
+        birthday_email_body      TEXT,
+        updated_at               TIMESTAMP WITH TIME ZONE
+    )""",
+    # Semilla del singleton (id=1) si aún no existe
+    "INSERT INTO loyalty_program_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING",
+    # Semilla de tiers default (desactivados hasta que la empresa los ajuste)
+    """INSERT INTO customer_tiers (name, color_hex, rank, discount_pct, min_spend, min_orders, perks, is_active)
+       SELECT * FROM (VALUES
+         ('Bronce',   '#CD7F32', 1,  3.0,   5000.0,  3, 'Descuento de bienvenida', FALSE),
+         ('Plata',    '#C0C0C0', 2,  5.0,  20000.0, 10, 'Envío gratis en pedidos grandes', FALSE),
+         ('Oro',      '#D4AF37', 3,  8.0,  50000.0, 20, 'Regalo de cumpleaños', FALSE),
+         ('Diamante', '#B9F2FF', 4, 12.0, 100000.0, 40, 'Atención VIP y eventos exclusivos', FALSE)
+       ) AS v(name, color_hex, rank, discount_pct, min_spend, min_orders, perks, is_active)
+       WHERE NOT EXISTS (SELECT 1 FROM customer_tiers)""",
+    # Extender customers con los campos de fidelización
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS date_of_birth        TIMESTAMP WITH TIME ZONE",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS sex                  VARCHAR",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS accepts_marketing    BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS privacy_accepted_at  TIMESTAMP WITH TIME ZONE",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS tier_id              INTEGER REFERENCES customer_tiers(id)",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS loyalty_code         VARCHAR",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS loyalty_since        TIMESTAMP WITH TIME ZONE",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS loyalty_expires_at   TIMESTAMP WITH TIME ZONE",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS total_spent_lifetime  DOUBLE PRECISION NOT NULL DEFAULT 0",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS total_orders_lifetime INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_order_at        TIMESTAMP WITH TIME ZONE",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_customers_loyalty_code ON customers (loyalty_code) WHERE loyalty_code IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS ix_customers_tier_id ON customers (tier_id)",
+]
+
+
 _PROMOTIONS_STATEMENTS = [
     # Planificador de promociones (reemplaza el Excel manual de traspasos previos
     # a una campaña). Un PromotionPlan agrupa varias variantes que van en promo,
@@ -642,6 +707,7 @@ def _apply(sync_conn: Connection) -> None:
         ("branches",   _BRANCH_STATEMENTS),
         ("retail",     _RETAIL_STATEMENTS),
         ("promotions", _PROMOTIONS_STATEMENTS),
+        ("loyalty",    _LOYALTY_STATEMENTS),
     ]
 
     for label, statements in all_statements:

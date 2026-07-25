@@ -7,6 +7,7 @@ api_router = APIRouter()
 from app.modules.auth.router import router as auth_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.customers.router import router as customers_router
+from app.modules.customers.loyalty_router import router as loyalty_router
 from app.modules.sales.router import router as sales_router
 from app.modules.sales.returns_router import router as returns_router
 from app.modules.finance.router import router as finance_router
@@ -30,6 +31,7 @@ from app.api.v1.endpoints.system import router as system_router
 api_router.include_router(auth_router,      prefix="/auth",       tags=["auth"])
 api_router.include_router(inventory_router, prefix="/inventory",  tags=["inventory"], dependencies=[Depends(module_write_guard("inventory"))])
 api_router.include_router(customers_router, prefix="/customers",  tags=["customers"], dependencies=[Depends(module_write_guard("customers"))])
+api_router.include_router(loyalty_router,   prefix="/loyalty",    tags=["loyalty"], dependencies=[Depends(module_write_guard("customers"))])
 # Devoluciones: ANTES de /sales para que /sales/returns no choque con /sales/{order_id}
 api_router.include_router(returns_router,    prefix="/sales/returns", tags=["sales"], dependencies=[Depends(module_write_guard("sales"))])
 api_router.include_router(sales_router,     prefix="/sales",      tags=["sales"], dependencies=[Depends(module_write_guard("sales"))])

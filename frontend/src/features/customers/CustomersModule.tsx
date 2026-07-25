@@ -5,7 +5,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Search, Plus, Users, BadgeCheck, CreditCard, Wallet, ChevronRight, ArrowUp, ArrowDown, Info,
+  Star, Award, Save, Trash2, X, RefreshCw,
 } from "lucide-react";
+import { loyaltyApi, type LoyaltyTier, type LoyaltyProgramConfig } from "./loyaltyApi";
 import { resolveTheme, makeTr, money } from "../sales/theme";
 import type { Tokens } from "../sales/theme";
 import { Badge, Button, EmptyState, Spinkeyframes } from "../sales/ui";
@@ -52,6 +54,7 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
   const [viewing, setViewing] = useState<Customer | null>(null);
+  const [view, setView] = useState<"list" | "loyalty">("list");
 
   const filters = useMemo<CustomerFilters>(() => ({
     q: q || undefined, sucursal: sucursal || undefined, client_type: clientType || undefined,
@@ -141,6 +144,34 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
           <Info size={16} /> {tr("cust_error", "No se pudo conectar con el servidor de clientes.")} {error}
         </div>
       )}
+
+      {/* Tab switcher */}
+      <div style={{ display: "flex", gap: 4, borderBottom: `1px solid ${tk.border}` }}>
+        {([
+          { id: "list", label: "Clientes", icon: Users },
+          { id: "loyalty", label: "Programa de fidelidad", icon: Award },
+        ] as const).map(tab => {
+          const active = view === tab.id;
+          const Icon = tab.icon;
+          return (
+            <button key={tab.id} onClick={() => setView(tab.id)}
+              style={{
+                padding: "10px 18px", borderRadius: "10px 10px 0 0", border: "none",
+                cursor: "pointer", fontWeight: active ? 700 : 500, fontSize: 13,
+                background: active ? tk.panel : "transparent",
+                color: active ? tk.accent : tk.textLo,
+                borderBottom: active ? `2px solid ${tk.accent}` : "2px solid transparent",
+                display: "flex", alignItems: "center", gap: 6,
+              }}>
+              <Icon size={14} /> {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {view === "loyalty" ? (
+        <LoyaltyProgramView tk={tk} />
+      ) : (<>
 
       {/* KPIs */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
@@ -257,6 +288,260 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
       )}
 
       <CustomerForm tk={tk} tr={tr} open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} onSubmit={handleSubmit} editing={editing} saving={saving} />
+      </>)}
+    </div>
+  );
+}
+
+
+function LoyaltyProgramView({ tk }: { tk: Tokens }) {
+  const [cfg, setCfg] = useState<LoyaltyProgramConfig | null>(null);
+  const [tiers, setTiers] = useState<LoyaltyTier[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingCfg, setSavingCfg] = useState(false);
+  const [busyJob, setBusyJob] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true); setErr(null);
+    try {
+      const [c, ts] = await Promise.all([loyaltyApi.getProgram(), loyaltyApi.listTiers()]);
+      setCfg(c); setTiers(ts);
+    } catch (e) { setErr(extractErr(e)); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const saveCfg = async () => {
+    if (!cfg) return;
+    setSavingCfg(true);
+    try { setCfg(await loyaltyApi.updateProgram(cfg)); }
+    catch (e) { alert(extractErr(e)); }
+    finally { setSavingCfg(false); }
+  };
+
+  const runJob = async (job: "birthday" | "recompute") => {
+    setBusyJob(job);
+    try {
+      const res = job === "birthday" ? await loyaltyApi.jobBirthdayEmails()
+                                     : await loyaltyApi.jobRecomputeAllTiers();
+      alert("Listo: " + JSON.stringify(res));
+    } catch (e) { alert(extractErr(e)); }
+    finally { setBusyJob(null); }
+  };
+
+  const addTier = async () => {
+    try {
+      const t = await loyaltyApi.createTier({
+        name: "Nuevo tier", color_hex: "#94A3B8", rank: (tiers.length + 1),
+        discount_pct: 0, min_spend: 0, min_orders: 0, min_avg_ticket: 0,
+        perks: "", is_active: true,
+      });
+      setTiers(prev => [...prev, t]);
+    } catch (e) { alert(extractErr(e)); }
+  };
+  const updateTierField = (id: number, field: keyof LoyaltyTier, value: unknown) => {
+    setTiers(prev => prev.map(t => t.id === id ? { ...t, [field]: value } : t));
+  };
+  const saveTier = async (t: LoyaltyTier) => {
+    try { await loyaltyApi.updateTier(t.id, t); }
+    catch (e) { alert(extractErr(e)); }
+  };
+  const removeTier = async (id: number) => {
+    if (!confirm("¿Eliminar este tier? Los clientes ligados a él quedarán sin nivel.")) return;
+    try { await loyaltyApi.deleteTier(id); setTiers(prev => prev.filter(t => t.id !== id)); }
+    catch (e) { alert(extractErr(e)); }
+  };
+
+  const inp: React.CSSProperties = { padding: "8px 11px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.inputBg, color: tk.textHi, fontSize: 13, outline: "none", boxSizing: "border-box" };
+  const label: React.CSSProperties = { fontSize: 11, color: tk.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, display: "block" };
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: tk.textLo }}>Cargando…</div>;
+  if (err) return <div style={{ padding: 20, color: tk.bad, background: tk.bad + "18", borderRadius: 10 }}>{err}</div>;
+  if (!cfg) return null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      {/* Estado global del programa */}
+      <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: tk.textHi, display: "flex", alignItems: "center", gap: 8 }}>
+              <Award size={18} color={tk.accent} /> Configuración general
+            </div>
+            <div style={{ fontSize: 12, color: tk.textLo, marginTop: 4 }}>
+              Cuando el programa está apagado los clientes no reciben descuentos automáticos, tarjetas ni correos.
+            </div>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+            <input type="checkbox" checked={cfg.is_enabled} onChange={e => setCfg({ ...cfg, is_enabled: e.target.checked })} />
+            <span style={{ fontSize: 14, fontWeight: 700, color: cfg.is_enabled ? tk.good : tk.textLo }}>
+              {cfg.is_enabled ? "Programa activo" : "Programa apagado"}
+            </span>
+          </label>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+          <div>
+            <label style={label}>Nombre del programa</label>
+            <input value={cfg.program_name} onChange={e => setCfg({ ...cfg, program_name: e.target.value })} style={inp} />
+          </div>
+          <div>
+            <label style={label}>Tagline (opcional)</label>
+            <input value={cfg.tagline || ""} onChange={e => setCfg({ ...cfg, tagline: e.target.value })} placeholder="Ej. Recompensa tu preferencia" style={inp} />
+          </div>
+          <div>
+            <label style={label}>Ventana para tier (meses)</label>
+            <input type="number" min={1} max={120} value={cfg.tier_lookback_months || 12} onChange={e => setCfg({ ...cfg, tier_lookback_months: Number(e.target.value) })} style={inp} />
+          </div>
+          <div>
+            <label style={label}>Vigencia de la tarjeta (días)</label>
+            <input type="number" min={30} max={3650} value={cfg.card_validity_days} onChange={e => setCfg({ ...cfg, card_validity_days: Number(e.target.value) })} style={inp} />
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginTop: 14 }}>
+          {(["card_bg_color", "card_text_color", "card_accent_color"] as const).map(k => (
+            <div key={k}>
+              <label style={label}>{k === "card_bg_color" ? "Color fondo tarjeta" : k === "card_text_color" ? "Color texto" : "Color acento"}</label>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input type="color" value={cfg[k]} onChange={e => setCfg({ ...cfg, [k]: e.target.value })}
+                  style={{ width: 44, height: 34, border: "none", padding: 0, background: "transparent", cursor: "pointer" }} />
+                <input value={cfg[k]} onChange={e => setCfg({ ...cfg, [k]: e.target.value })} style={{ ...inp, fontFamily: "monospace" }} />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${tk.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: tk.textHi, marginBottom: 8 }}>Aviso de privacidad</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={label}>URL del aviso (recomendado)</label>
+              <input value={cfg.privacy_policy_url || ""} onChange={e => setCfg({ ...cfg, privacy_policy_url: e.target.value })}
+                placeholder="https://tudominio.com/aviso-privacidad" style={inp} />
+            </div>
+            <div>
+              <label style={label}>Texto corto in-line</label>
+              <input value={cfg.privacy_policy_text || ""} onChange={e => setCfg({ ...cfg, privacy_policy_text: e.target.value })}
+                placeholder="Tus datos se usan solo para..." style={inp} />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${tk.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: tk.textHi, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+            Correos automáticos
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 400, fontSize: 12, color: tk.textMid, marginLeft: "auto" }}>
+              <input type="checkbox" checked={cfg.birthday_email_enabled}
+                onChange={e => setCfg({ ...cfg, birthday_email_enabled: e.target.checked })} />
+              Enviar cumpleaños
+            </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 12 }}>
+            <div>
+              <label style={label}>Asunto</label>
+              <input value={cfg.birthday_email_subject} onChange={e => setCfg({ ...cfg, birthday_email_subject: e.target.value })} style={inp} />
+            </div>
+            <div>
+              <label style={label}>Cuerpo (usa {"{name}"} y {"{program}"})</label>
+              <textarea value={cfg.birthday_email_body || ""} onChange={e => setCfg({ ...cfg, birthday_email_body: e.target.value })}
+                rows={2} style={{ ...inp, resize: "vertical" }} />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end", flexWrap: "wrap" }}>
+          <button disabled={busyJob !== null} onClick={() => runJob("recompute")}
+            style={{ padding: "9px 14px", borderRadius: 10, border: `1px solid ${tk.border}`, background: tk.panel2, color: tk.textMid, cursor: "pointer", fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+            <RefreshCw size={13} /> Recalcular todos los tiers
+          </button>
+          <button disabled={busyJob !== null} onClick={() => runJob("birthday")}
+            style={{ padding: "9px 14px", borderRadius: 10, border: `1px solid ${tk.border}`, background: tk.panel2, color: tk.textMid, cursor: "pointer", fontSize: 12.5 }}>
+            Correr correos de cumpleaños
+          </button>
+          <button disabled={savingCfg} onClick={saveCfg}
+            style={{ padding: "9px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${tk.accent}, ${tk.navy || tk.accent})`, color: "#fff", cursor: savingCfg ? "wait" : "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+            <Save size={14} /> {savingCfg ? "Guardando…" : "Guardar configuración"}
+          </button>
+        </div>
+      </div>
+
+      {/* Tiers */}
+      <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: tk.textHi, display: "flex", alignItems: "center", gap: 8 }}>
+              <Star size={16} color={tk.accent} /> Niveles / Tiers
+            </div>
+            <div style={{ fontSize: 12, color: tk.textLo, marginTop: 3 }}>
+              Cada tier se asigna automáticamente al cliente que cumple TODOS los umbrales configurados en la ventana definida arriba.
+            </div>
+          </div>
+          <button onClick={addTier} style={{ padding: "9px 14px", borderRadius: 10, border: `1px solid ${tk.accent}55`, background: tk.accent + "18", color: tk.accent, cursor: "pointer", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+            <Plus size={14} /> Nuevo tier
+          </button>
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 780 }}>
+            <thead>
+              <tr style={{ background: tk.panel2 }}>
+                {["Rank", "Color", "Nombre", "Descuento %", "Gasto mín.", "Compras mín.", "Ticket prom. mín.", "Beneficios", "Activo", ""].map((h, i) => (
+                  <th key={i} style={{ padding: "10px 8px", textAlign: "left", fontSize: 11, color: tk.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {tiers.map((t, i) => (
+                <tr key={t.id} style={{ background: i % 2 === 0 ? tk.panel : tk.panel2 }}>
+                  <td style={{ padding: "8px 8px" }}>
+                    <input type="number" value={t.rank} onChange={e => updateTierField(t.id, "rank", Number(e.target.value))} style={{ ...inp, width: 50, padding: "6px 8px" }} />
+                  </td>
+                  <td style={{ padding: "8px 8px" }}>
+                    <input type="color" value={t.color_hex || "#94A3B8"} onChange={e => updateTierField(t.id, "color_hex", e.target.value)}
+                      style={{ width: 40, height: 30, border: "none", padding: 0, cursor: "pointer" }} />
+                  </td>
+                  <td style={{ padding: "8px 8px" }}>
+                    <input value={t.name} onChange={e => updateTierField(t.id, "name", e.target.value)} style={{ ...inp, width: 130 }} />
+                  </td>
+                  <td style={{ padding: "8px 8px" }}>
+                    <input type="number" step="0.5" value={t.discount_pct} onChange={e => updateTierField(t.id, "discount_pct", Number(e.target.value))} style={{ ...inp, width: 80 }} />
+                  </td>
+                  <td style={{ padding: "8px 8px" }}>
+                    <input type="number" value={t.min_spend} onChange={e => updateTierField(t.id, "min_spend", Number(e.target.value))} style={{ ...inp, width: 100 }} />
+                  </td>
+                  <td style={{ padding: "8px 8px" }}>
+                    <input type="number" value={t.min_orders} onChange={e => updateTierField(t.id, "min_orders", Number(e.target.value))} style={{ ...inp, width: 70 }} />
+                  </td>
+                  <td style={{ padding: "8px 8px" }}>
+                    <input type="number" value={t.min_avg_ticket} onChange={e => updateTierField(t.id, "min_avg_ticket", Number(e.target.value))} style={{ ...inp, width: 90 }} />
+                  </td>
+                  <td style={{ padding: "8px 8px" }}>
+                    <input value={t.perks || ""} onChange={e => updateTierField(t.id, "perks", e.target.value)} placeholder="Ej. Envío gratis" style={{ ...inp, width: 180 }} />
+                  </td>
+                  <td style={{ padding: "8px 8px", textAlign: "center" }}>
+                    <input type="checkbox" checked={t.is_active} onChange={e => updateTierField(t.id, "is_active", e.target.checked)} />
+                  </td>
+                  <td style={{ padding: "8px 8px", whiteSpace: "nowrap" }}>
+                    <button title="Guardar tier" onClick={() => saveTier(t)}
+                      style={{ border: "none", background: tk.good + "22", color: tk.good, cursor: "pointer", padding: "6px 8px", borderRadius: 6, marginRight: 4 }}>
+                      <Save size={13} />
+                    </button>
+                    <button title="Eliminar" onClick={() => removeTier(t.id)}
+                      style={{ border: "none", background: tk.bad + "22", color: tk.bad, cursor: "pointer", padding: "6px 8px", borderRadius: 6 }}>
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {tiers.length === 0 && (
+                <tr><td colSpan={10} style={{ padding: 30, textAlign: "center", color: tk.textLo }}>Aún no hay tiers configurados</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

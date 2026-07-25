@@ -529,6 +529,16 @@ async def register_sale(db: AsyncSession, session_id: int,
     await _log(db, user_id or s.cashier_id, "POS_SALE",
                 f"Venta POS {folio} ${total:,.2f}",
                 {"session_id": s.id, "order_id": order.id, "folio": folio})
+    # Recalcular tier del cliente si el programa está activo y así configurado.
+    # No debe romper la venta si falla — la operación de negocio siempre gana.
+    if customer_id:
+        try:
+            from app.modules.customers import loyalty_service
+            cfg = await loyalty_service.get_program_config(db)
+            if cfg.is_enabled and cfg.recalc_on_each_sale:
+                await loyalty_service.recompute_customer_tier(db, customer_id)
+        except Exception as e:
+            print(f"[loyalty] recompute_tier failed for customer {customer_id}: {e}")
     return {
         "order_id": order.id, "folio": folio,
         "subtotal": round(subtotal, 2),
