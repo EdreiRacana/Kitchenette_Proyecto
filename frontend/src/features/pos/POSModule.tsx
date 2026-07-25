@@ -475,7 +475,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
 
           {/* Resultados / vacío */}
           <div style={{ flex: 1, overflowY: "auto", padding: results.length ? 12 : 0 }}>
-            {results.length === 0 && !searching && (
+            {results.length === 0 && !searching && !customer && (
               <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, color: t.textLo, gap: 12 }}>
                 <div style={{ width: 80, height: 80, borderRadius: 20, background: t.nova + "10", display: "flex", alignItems: "center", justifyContent: "center", border: `2px dashed ${t.nova}44` }}>
                   <Barcode size={40} color={t.nova} style={{ opacity: 0.6 }} />
@@ -484,6 +484,78 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                   <div style={{ fontSize: 14, fontWeight: 700, color: t.textMid, marginBottom: 4 }}>Listo para vender</div>
                   <div style={{ fontSize: 12.5 }}>Escanea el código de barras o busca por nombre / SKU</div>
                 </div>
+              </div>
+            )}
+            {results.length === 0 && !searching && customer && (
+              <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 18 }}>
+                {/* Sugerencias */}
+                {customerRecs.length > 0 && (
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <Sparkles size={15} color={t.nova} />
+                      <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>Sugerencias para {(customer.name || "").split(" ")[0]}</div>
+                      <span style={{ fontSize: 11, color: t.textLo, background: t.nova + "18", padding: "2px 8px", borderRadius: 999 }}>
+                        Basado en su historial
+                      </span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
+                      {customerRecs.map(r => (
+                        <button key={r.variant_id}
+                          onClick={() => addToCart({
+                            variant_id: r.variant_id, product_name: r.product_name,
+                            sku: r.sku, unit_price: r.price, barcode: null,
+                          } as any)}
+                          style={{ textAlign: "left", padding: 12, borderRadius: 12, border: `1px solid ${t.nova}44`, background: t.nova + "0a", cursor: "pointer", display: "flex", flexDirection: "column", gap: 6, transition: "all .12s" }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = t.nova; (e.currentTarget as HTMLElement).style.background = t.nova + "1a"; }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = t.nova + "44"; (e.currentTarget as HTMLElement).style.background = t.nova + "0a"; }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textHi, lineHeight: 1.3, minHeight: 30 }}>{r.product_name}</div>
+                          {r.category && <div style={{ fontSize: 10.5, color: t.textLo }}>{r.category}</div>}
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                            <div style={{ fontSize: 15, fontWeight: 800, color: t.good }}>{mxn(r.price)}</div>
+                            <div style={{ width: 26, height: 26, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              <Plus size={14} strokeWidth={3} />
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Últimas compras */}
+                {customerHistory.length > 0 && (
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <History size={15} color={t.textMid} />
+                      <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>Últimas compras</div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {customerHistory.slice(0, 5).map(h => (
+                        <div key={h.id} style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 4 }}>
+                            <span style={{ color: t.textLo, fontFamily: "monospace" }}>{h.folio || `#${h.id}`}</span>
+                            <span style={{ color: t.textMid }}>{h.created_at ? new Date(h.created_at).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "2-digit" }) : ""}</span>
+                            <span style={{ fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(h.total_amount)}</span>
+                          </div>
+                          <div style={{ fontSize: 11.5, color: t.textLo, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                            {h.items.slice(0, 3).map((it, i) => (
+                              <span key={i}>{it.quantity}× {(it.product_name || "").slice(0, 22)}{i < Math.min(2, h.items.length - 1) ? " ·" : ""}</span>
+                            ))}
+                            {h.items.length > 3 && <span>+{h.items.length - 3} más</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Estado sin recomendaciones ni historial */}
+                {customerRecs.length === 0 && customerHistory.length === 0 && (
+                  <div style={{ padding: 30, textAlign: "center", color: t.textLo, background: t.panel2, borderRadius: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Aún no hay historial para {customer.name}</div>
+                    <div style={{ fontSize: 12 }}>Sus próximas compras generarán recomendaciones.</div>
+                  </div>
+                )}
               </div>
             )}
             {searching && (
