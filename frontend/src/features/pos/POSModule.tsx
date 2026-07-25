@@ -18,6 +18,11 @@ import {
 } from "./api";
 import configService from "../config/service";
 import { resolveMediaUrl } from "../../services/api";
+import {
+  loyaltyApi,
+  type LoyaltyCustomerLite, type LoyaltyHistoryItem, type LoyaltyRecommendation,
+  type LoyaltyProgramConfig, type QuickRegisterPayload,
+} from "../customers/loyaltyApi";
 
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -218,12 +223,26 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const [scanFlash, setScanFlash] = useState<string | null>(null); // feedback breve al escanear
   const [company, setCompany] = useState<{ commercial_name?: string; legal_name?: string; logo_url?: string } | null>(null);
   const [now, setNow] = useState(new Date());
-  // Modo tablet autoservicio — la caja voltea la pantalla al cliente para que
-  // capture sus datos (factura, contacto) mientras el cajero sigue escaneando.
+  // Modo "Registro cliente": la caja voltea la pantalla al cliente para
+  // registrarse o para identificarse (loyalty code / teléfono / email). Si el
+  // cliente ya existe, se aplica su descuento por tier al ticket.
   const [tabletMode, setTabletMode] = useState(false);
-  const [customerData, setCustomerData] = useState<{
-    name?: string; email?: string; phone?: string; rfc?: string; wants_invoice?: boolean;
-  } | null>(null);
+  const [customer, setCustomer] = useState<LoyaltyCustomerLite | null>(null);
+  const [customerHistory, setCustomerHistory] = useState<LoyaltyHistoryItem[]>([]);
+  const [customerRecs, setCustomerRecs] = useState<LoyaltyRecommendation[]>([]);
+  const [loyaltyCfg, setLoyaltyCfg] = useState<LoyaltyProgramConfig | null>(null);
+
+  // Cargar config del programa una vez para saber si está activo (afecta UI)
+  useEffect(() => {
+    loyaltyApi.getProgram().then(setLoyaltyCfg).catch(() => setLoyaltyCfg(null));
+  }, []);
+
+  // Al identificar cliente: cargar historial + recomendaciones
+  useEffect(() => {
+    if (!customer) { setCustomerHistory([]); setCustomerRecs([]); return; }
+    loyaltyApi.history(customer.id, 5).then(setCustomerHistory).catch(() => setCustomerHistory([]));
+    loyaltyApi.recommendations(customer.id, 5).then(setCustomerRecs).catch(() => setCustomerRecs([]));
+  }, [customer?.id]);
   const searchRef = useRef<HTMLInputElement>(null);
   const anyModalOpen = showPay || showClose || !!showCash || !!lastSale || showHistory || showPrev || tabletMode;
 
@@ -327,7 +346,10 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const removeLine = (idx: number) => setCart(prev => prev.filter((_, i) => i !== idx));
 
   const subtotal = cart.reduce((a, it) => a + it.line_total, 0);
-  const total = subtotal;
+  // Descuento por tier del cliente identificado (solo si programa está activo)
+  const tierDiscountPct = (loyaltyCfg?.is_enabled && customer?.tier?.discount_pct) || 0;
+  const tierDiscount = Math.round(subtotal * (tierDiscountPct / 100) * 100) / 100;
+  const total = Math.max(0, subtotal - tierDiscount);
 
   // Estilos reutilizables
   const brandName = company?.commercial_name || company?.legal_name || "Punto de Venta";
@@ -399,10 +421,10 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
             <Minus size={14} /> Retiro
           </button>
           <button onClick={() => setTabletMode(true)}
-            title="Modo tablet — el cliente captura sus datos (contacto / factura)"
+            title="Registro cliente — el cliente se identifica o captura sus datos"
             style={{ ...iconBtn, background: "#A78BFA22", border: "1px solid #A78BFA66", color: "#A78BFA", fontWeight: 600 }}>
-            <Tablet size={14} /> Autoservicio
-            {customerData && <span style={{ background: "#A78BFA", color: "#fff", borderRadius: 999, padding: "1px 7px", fontSize: 10, fontWeight: 800 }}>✓</span>}
+            <Tablet size={14} /> Registro cliente
+            {customer && <span style={{ background: "#A78BFA", color: "#fff", borderRadius: 999, padding: "1px 7px", fontSize: 10, fontWeight: 800 }}>✓</span>}
           </button>
           <button onClick={() => setShowClose(true)}
             style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", fontSize: 12.5, cursor: "pointer", fontWeight: 700, boxShadow: `0 2px 8px ${t.warn}55` }}>
@@ -504,12 +526,25 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                 <div style={{ fontSize: 11, color: t.textLo, marginTop: 1 }}>
                   {totalItems > 0 ? `${totalItems} artículo${totalItems === 1 ? "" : "s"} · ${cart.length} línea${cart.length === 1 ? "" : "s"}` : "Vacío"}
                 </div>
-                {customerData && (
-                  <div style={{ fontSize: 11, color: "#A78BFA", marginTop: 3, display: "flex", alignItems: "center", gap: 4 }}>
-                    <User size={11} /> {customerData.name || "Cliente"}
-                    {customerData.wants_invoice && customerData.rfc ? ` · RFC ${customerData.rfc}` : ""}
-                    <button onClick={() => setCustomerData(null)} title="Quitar datos del cliente"
-                      style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 0, marginLeft: 4 }}>
+                {customer && (
+                  <div style={{ fontSize: 11, marginTop: 3, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span style={{ color: "#A78BFA", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                      <User size={11} /> {customer.name}
+                    </span>
+                    {customer.tier && (
+                      <span style={{
+                        padding: "1px 8px", borderRadius: 999, fontWeight: 700,
+                        background: (customer.tier.color_hex || "#A78BFA") + "33",
+                        color: customer.tier.color_hex || "#A78BFA",
+                      }}>
+                        {customer.tier.name} · −{customer.tier.discount_pct.toFixed(0)}%
+                      </span>
+                    )}
+                    {customer.loyalty_code && (
+                      <span style={{ fontFamily: "monospace", color: t.textLo, fontSize: 10 }}>{customer.loyalty_code}</span>
+                    )}
+                    <button onClick={() => setCustomer(null)} title="Quitar cliente"
+                      style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 0 }}>
                       <X size={11} />
                     </button>
                   </div>
@@ -561,6 +596,12 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
               <span>Subtotal</span>
               <span style={{ fontVariantNumeric: "tabular-nums" }}>{mxn(subtotal)}</span>
             </div>
+            {tierDiscount > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: customer?.tier?.color_hex || "#A78BFA", marginBottom: 8, fontWeight: 700 }}>
+                <span>Descuento {customer?.tier?.name} ({tierDiscountPct.toFixed(0)}%)</span>
+                <span style={{ fontVariantNumeric: "tabular-nums" }}>−{mxn(tierDiscount)}</span>
+              </div>
+            )}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "10px 0", borderTop: `1px solid ${t.border}` }}>
               <span style={{ fontSize: 14, color: t.textMid, fontWeight: 600, letterSpacing: 0.5 }}>TOTAL</span>
               <span style={{ fontSize: 32, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums", letterSpacing: -1 }}>{mxn(total)}</span>
@@ -604,14 +645,14 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
       </div>
 
       {showPay && <PayModal t={t} session={session} total={total} cart={cart}
-        customerData={customerData}
-        onDone={(sale) => { setCart([]); setShowPay(false); setLastSale(sale); setHistoryRefresh(v => v + 1); setCustomerData(null); }}
+        customer={customer} tierDiscount={tierDiscount} tierDiscountPct={tierDiscountPct}
+        onDone={(sale) => { setCart([]); setShowPay(false); setLastSale(sale); setHistoryRefresh(v => v + 1); setCustomer(null); }}
         onCancel={() => setShowPay(false)} />}
       {tabletMode && (
-        <TabletSelfServiceMode t={t} cart={cart} total={total} brandName={brandName} logoSrc={logoSrc}
-          initialData={customerData}
+        <CustomerRegistrationMode t={t} cart={cart} total={total} brandName={brandName} logoSrc={logoSrc}
+          loyaltyCfg={loyaltyCfg}
           onExit={() => setTabletMode(false)}
-          onReady={(data) => { setCustomerData(data); setTabletMode(false); }} />
+          onIdentified={(c) => { setCustomer(c); setTabletMode(false); }} />
       )}
       {showHistory && <SalesHistoryDrawer t={t} session={session} refreshKey={historyRefresh}
         onClose={() => setShowHistory(false)} />}
@@ -746,7 +787,7 @@ function SaleSuccessModal({ t, sale, onClose }: { t: any; sale: any; onClose: ()
 // ── Modales ─────────────────────────────────────────────────────────
 type PayMode = "cash" | "card" | "transfer" | "mixed";
 
-function PayModal({ t, session, total, cart, customerData, onDone, onCancel }: any) {
+function PayModal({ t, session, total, cart, customer, tierDiscount, tierDiscountPct, onDone, onCancel }: any) {
   // Modo por default: efectivo (95% de las ventas de un POS son en efectivo).
   // El cajero elige el método con un click en el botón grande. Si el pago es
   // mixto, presiona "Mixto" y aparecen los tres inputs editables.
@@ -790,20 +831,19 @@ function PayModal({ t, session, total, cart, customerData, onDone, onCancel }: a
         // En modo cash o mixto, registrar el efectivo real (para calcular cambio).
         payments.cash = Math.round(cash * 100) / 100;
       }
-      // Si el cliente capturó datos vía tablet autoservicio, los adjuntamos
-      // como nota estructurada de la venta (para trazabilidad y factura).
+      // Si hay cliente identificado, se envía customer_id y se anota el tier
+      // aplicado. Además, si es un cliente nuevo capturado en el modo Registro
+      // Cliente, sus datos ya están persistidos vía /loyalty/quick-register.
       let notes: string | undefined = undefined;
-      if (customerData) {
-        const bits: string[] = [];
-        if (customerData.name) bits.push(`Cliente: ${customerData.name}`);
-        if (customerData.email) bits.push(`Email: ${customerData.email}`);
-        if (customerData.phone) bits.push(`Tel: ${customerData.phone}`);
-        if (customerData.rfc) bits.push(`RFC: ${customerData.rfc}`);
-        if (customerData.wants_invoice) bits.push("Solicita factura");
-        if (bits.length) notes = bits.join(" · ");
+      const bits: string[] = [];
+      if (customer?.tier && tierDiscountPct > 0) {
+        bits.push(`Tier ${customer.tier.name} · descuento ${tierDiscountPct.toFixed(1)}%`);
       }
+      if (bits.length) notes = bits.join(" · ");
+      const discountAmountArg = tierDiscount && tierDiscount > 0 ? Number(tierDiscount) : undefined;
       const res = await posApi.registerSale({
-        session_id: session.id, customer_id: undefined,
+        session_id: session.id,
+        customer_id: customer?.id,
         items: cart.map((it: any) => ({
           variant_id: it.variant_id, product_name: it.product_name, sku: it.sku,
           quantity: it.quantity, unit_price: it.unit_price,
@@ -811,6 +851,7 @@ function PayModal({ t, session, total, cart, customerData, onDone, onCancel }: a
           is_service: it.is_service || false,
         })),
         payments, tax_rate: 16, notes,
+        discount_amount: discountAmountArg,
       });
       onDone(res);
     } catch (e: any) { alert(e?.response?.data?.detail || "Error al cobrar"); }
@@ -2195,31 +2236,50 @@ function RecountModal({ t, sessionId, initialDenominations, expectedCash, onClos
 }
 
 
+
 // ═══════════════════════════════════════════════════════════════════════════
-// MODO TABLET AUTOSERVICIO
-// Fullscreen kiosk-style overlay: la caja voltea la tablet al cliente. El
-// cliente ve el ticket en tiempo real (mirror del carrito) y captura sus
-// datos de contacto / factura. Al presionar "Listo" los datos regresan al
-// cajero y quedan adjuntos a la venta.
-//
-// UX pensada para tablet táctil con pulgares: inputs grandes, botones anchos,
-// tipografía legible a 60cm. Salida del cajero por 5 toques en el logo.
+// MODO REGISTRO CLIENTE
+// Overlay fullscreen kiosk-style. Dos rutas:
+//   1) IDENTIFICAR — cliente ya existe: teclea código de tarjeta / tel / email.
+//      Al encontrarlo, se aplica su descuento por tier y se muestra "bienvenido".
+//   2) REGISTRAR — cliente nuevo: form profesional (nombre, email, tel,
+//      cumpleaños, sexo, cómo se enteró, RFC opcional, opt-in marketing,
+//      aviso de privacidad LFPDPPP). Al confirmar → POST /loyalty/quick-register.
+// Ambas rutas devuelven un LoyaltyCustomerLite completo al cajero, listo para
+// aplicar descuento por tier al ticket en curso.
+// Salida del cajero: 5 toques en el logo dentro de 3 segundos.
 // ═══════════════════════════════════════════════════════════════════════════
 
-function TabletSelfServiceMode({ t, cart, total, brandName, logoSrc, initialData, onExit, onReady }: {
+function CustomerRegistrationMode({ t, cart, total, brandName, logoSrc, loyaltyCfg, onExit, onIdentified }: {
   t: any; cart: CartItem[]; total: number; brandName: string; logoSrc: string | null;
-  initialData: { name?: string; email?: string; phone?: string; rfc?: string; wants_invoice?: boolean } | null;
+  loyaltyCfg: LoyaltyProgramConfig | null;
   onExit: () => void;
-  onReady: (data: { name?: string; email?: string; phone?: string; rfc?: string; wants_invoice?: boolean }) => void;
+  onIdentified: (c: LoyaltyCustomerLite) => void;
 }) {
-  const [name, setName] = useState(initialData?.name || "");
-  const [email, setEmail] = useState(initialData?.email || "");
-  const [phone, setPhone] = useState(initialData?.phone || "");
-  const [wantsInvoice, setWantsInvoice] = useState(!!initialData?.wants_invoice);
-  const [rfc, setRfc] = useState(initialData?.rfc || "");
-  const [thanks, setThanks] = useState(false);
+  const [mode, setMode] = useState<"choose" | "identify" | "register">("choose");
+  const [thanks, setThanks] = useState<LoyaltyCustomerLite | null>(null);
 
-  // Salida discreta para el cajero: 5 toques en el logo dentro de 3 segundos.
+  // Search (identify)
+  const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchErr, setSearchErr] = useState<string | null>(null);
+
+  // Register form
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [birth, setBirth] = useState("");
+  const [sex, setSex] = useState("");
+  const [howHeard, setHowHeard] = useState("");
+  const [cp, setCp] = useState("");
+  const [wantsInvoice, setWantsInvoice] = useState(false);
+  const [rfc, setRfc] = useState("");
+  const [acceptsMarketing, setAcceptsMarketing] = useState(true);
+  const [privacyOk, setPrivacyOk] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [regErr, setRegErr] = useState<string | null>(null);
+
+  // Salida discreta cajero
   const clicksRef = useRef<number[]>([]);
   const onLogoClick = () => {
     const nowTs = Date.now();
@@ -2227,188 +2287,315 @@ function TabletSelfServiceMode({ t, cart, total, brandName, logoSrc, initialData
     if (clicksRef.current.length >= 5) { clicksRef.current = []; onExit(); }
   };
 
-  const submit = () => {
-    const clean = {
-      name: name.trim() || undefined,
-      email: email.trim() || undefined,
-      phone: phone.trim() || undefined,
-      rfc: wantsInvoice ? (rfc.trim().toUpperCase() || undefined) : undefined,
-      wants_invoice: wantsInvoice,
-    };
-    setThanks(true);
-    setTimeout(() => onReady(clean), 900);
+  const doIdentify = async () => {
+    const q = query.trim();
+    if (!q) return;
+    setSearching(true); setSearchErr(null);
+    try {
+      const c = await loyaltyApi.lookup(q);
+      setThanks(c);
+      setTimeout(() => onIdentified(c), 1400);
+    } catch {
+      setSearchErr("No encontramos ese cliente. Verifica el dato o regístrate.");
+    } finally { setSearching(false); }
   };
 
-  const skip = () => onReady({});
+  const doRegister = async () => {
+    setRegErr(null);
+    if (!name.trim()) { setRegErr("Por favor escribe tu nombre"); return; }
+    if (!privacyOk) { setRegErr("Debes aceptar el aviso de privacidad para continuar"); return; }
+    if (wantsInvoice && !rfc.trim()) { setRegErr("Escribe tu RFC para poder facturarte"); return; }
+    setSaving(true);
+    try {
+      const payload: QuickRegisterPayload = {
+        name: name.trim(),
+        email: email.trim() || undefined,
+        phone: phone.trim() || undefined,
+        date_of_birth: birth ? new Date(birth + "T00:00:00").toISOString() : null,
+        sex: sex || undefined,
+        codigo_postal: cp.trim() || undefined,
+        how_heard: howHeard.trim() || undefined,
+        rfc: wantsInvoice && rfc ? rfc.toUpperCase() : undefined,
+        accepts_marketing: acceptsMarketing,
+        privacy_accepted: privacyOk,
+      };
+      const c = await loyaltyApi.quickRegister(payload);
+      setThanks(c);
+      setTimeout(() => onIdentified(c), 1400);
+    } catch (e: any) {
+      setRegErr(e?.response?.data?.detail || "No se pudo guardar el registro");
+    } finally { setSaving(false); }
+  };
 
   const bigInp: React.CSSProperties = {
     width: "100%", padding: "16px 18px", borderRadius: 12,
     border: `2px solid ${t.border}`, background: t.inputBg, color: t.textHi,
     fontSize: 18, outline: "none", boxSizing: "border-box",
-    transition: "border-color .15s",
   };
-  const labelStyle: React.CSSProperties = {
-    fontSize: 13, color: t.textMid, fontWeight: 600, marginBottom: 8, display: "block",
-  };
+  const label: React.CSSProperties = { fontSize: 13, color: t.textMid, fontWeight: 600, marginBottom: 6, display: "block" };
 
-  return createPortal(
+  const Header = () => (
     <div style={{
-      position: "fixed", inset: 0, zIndex: 9999,
-      background: `linear-gradient(135deg, ${t.panel} 0%, ${t.panel2} 100%)`,
-      display: "flex", flexDirection: "column", overflow: "auto",
+      padding: "20px 32px", borderBottom: `1px solid ${t.border}`,
+      display: "flex", alignItems: "center", justifyContent: "space-between", background: t.panel,
     }}>
-      <div style={{
-        padding: "20px 32px",
-        borderBottom: `1px solid ${t.border}`,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        background: t.panel,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, cursor: "pointer" }} onClick={onLogoClick}>
-          {logoSrc ? (
-            <img src={logoSrc} alt="" style={{ height: 48, maxWidth: 140, objectFit: "contain", userSelect: "none" }} />
-          ) : (
-            <div style={{ width: 48, height: 48, borderRadius: 12, background: `linear-gradient(135deg, ${t.nova}, ${t.navy || t.nova})`, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 20 }}>
-              {brandName.slice(0, 2).toUpperCase()}
-            </div>
-          )}
-          <div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: t.textHi }}>{brandName}</div>
-            <div style={{ fontSize: 12, color: t.textLo }}>Bienvenido — captura tus datos si quieres factura o promociones</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, cursor: "pointer" }} onClick={onLogoClick}>
+        {logoSrc ? (
+          <img src={logoSrc} alt="" style={{ height: 48, maxWidth: 140, objectFit: "contain", userSelect: "none" }} />
+        ) : (
+          <div style={{ width: 48, height: 48, borderRadius: 12, background: `linear-gradient(135deg, ${t.nova}, ${t.navy || t.nova})`, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 20 }}>
+            {brandName.slice(0, 2).toUpperCase()}
           </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 14px", borderRadius: 999, background: "#A78BFA22", color: "#A78BFA", fontSize: 13, fontWeight: 700 }}>
-          <Tablet size={16} /> Modo cliente
+        )}
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: t.textHi }}>{brandName}</div>
+          {loyaltyCfg?.is_enabled && <div style={{ fontSize: 12, color: t.textLo }}>{loyaltyCfg.tagline || loyaltyCfg.program_name}</div>}
         </div>
       </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 14px", borderRadius: 999, background: "#A78BFA22", color: "#A78BFA", fontSize: 13, fontWeight: 700 }}>
+        <Tablet size={16} /> Registro cliente
+      </div>
+    </div>
+  );
 
-      {thanks ? (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, padding: 40 }}>
+  // ── Pantalla de bienvenida al cliente identificado/registrado ──
+  if (thanks) {
+    return createPortal(
+      <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: `linear-gradient(135deg, ${t.panel} 0%, ${t.panel2} 100%)`, display: "flex", flexDirection: "column" }}>
+        <Header />
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22, padding: 40 }}>
           <div style={{ width: 120, height: 120, borderRadius: "50%", background: t.good + "22", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Check size={72} color={t.good} strokeWidth={3} />
           </div>
-          <div style={{ fontSize: 32, fontWeight: 800, color: t.textHi }}>¡Listo!</div>
-          <div style={{ fontSize: 17, color: t.textMid }}>Entrega la tablet al cajero para completar tu compra</div>
-        </div>
-      ) : (
-        <div style={{
-          flex: 1, display: "grid",
-          gridTemplateColumns: "minmax(0, 5fr) minmax(0, 4fr)",
-          gap: 24, padding: 24, maxWidth: 1200, margin: "0 auto", width: "100%",
-        }}>
-          <div style={{ background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, padding: 24, display: "flex", flexDirection: "column" }}>
-            <div style={{ fontSize: 14, color: t.textLo, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 4 }}>
-              Tu compra
-            </div>
-            <div style={{ fontSize: 15, color: t.textMid, marginBottom: 20 }}>
-              {cart.length === 0
-                ? "Aún no hay artículos en tu ticket."
-                : `${cart.reduce((s, it) => s + it.quantity, 0)} artículo${cart.reduce((s, it) => s + it.quantity, 0) === 1 ? "" : "s"} · ${cart.length} línea${cart.length === 1 ? "" : "s"}`}
-            </div>
-            <div style={{ flex: 1, overflowY: "auto", maxHeight: 380, paddingRight: 4 }}>
-              {cart.length === 0 ? (
-                <div style={{ padding: 40, textAlign: "center", color: t.textLo, fontSize: 15 }}>
-                  Los productos que escanee el cajero aparecerán aquí en tiempo real.
-                </div>
-              ) : cart.map((it, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", borderBottom: `1px solid ${t.border}55` }}>
-                  <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
-                    <div style={{ fontSize: 16, color: t.textHi, fontWeight: 500 }}>{it.product_name}</div>
-                    <div style={{ fontSize: 13, color: t.textLo, marginTop: 2 }}>{it.quantity} × {mxn(it.unit_price)}</div>
-                  </div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(it.line_total)}</div>
-                </div>
-              ))}
-            </div>
-            <div style={{ marginTop: 16, paddingTop: 16, borderTop: `2px solid ${t.border}`, display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <div style={{ fontSize: 15, color: t.textMid, fontWeight: 700, letterSpacing: 0.5 }}>TOTAL</div>
-              <div style={{ fontSize: 42, fontWeight: 900, color: t.textHi, fontVariantNumeric: "tabular-nums", letterSpacing: -1.5 }}>{mxn(total)}</div>
-            </div>
-          </div>
-
-          <div style={{ background: t.panel, borderRadius: 16, border: `1px solid ${t.border}`, padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
-            <div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi, marginBottom: 4 }}>Tus datos</div>
-              <div style={{ fontSize: 13.5, color: t.textLo }}>Opcional — solo si quieres factura o quedar en nuestra base para promociones.</div>
-            </div>
-
-            <div>
-              <label style={labelStyle}>Nombre</label>
-              <input value={name} onChange={e => setName(e.target.value)} placeholder="Cómo te llamas"
-                autoFocus autoComplete="off"
-                onFocus={e => (e.currentTarget.style.borderColor = "#A78BFA")}
-                onBlur={e => (e.currentTarget.style.borderColor = t.border)}
-                style={bigInp} />
-            </div>
-            <div>
-              <label style={labelStyle}>Correo electrónico</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="tucorreo@ejemplo.com"
-                autoComplete="off"
-                onFocus={e => (e.currentTarget.style.borderColor = "#A78BFA")}
-                onBlur={e => (e.currentTarget.style.borderColor = t.border)}
-                style={bigInp} />
-            </div>
-            <div>
-              <label style={labelStyle}>Teléfono</label>
-              <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="10 dígitos"
-                inputMode="numeric" autoComplete="off"
-                onFocus={e => (e.currentTarget.style.borderColor = "#A78BFA")}
-                onBlur={e => (e.currentTarget.style.borderColor = t.border)}
-                style={bigInp} />
-            </div>
-
-            <button onClick={() => setWantsInvoice(v => !v)}
-              style={{
-                display: "flex", alignItems: "center", gap: 12,
-                padding: "14px 18px", borderRadius: 12,
-                border: `2px solid ${wantsInvoice ? "#A78BFA" : t.border}`,
-                background: wantsInvoice ? "#A78BFA22" : "transparent",
-                color: wantsInvoice ? "#A78BFA" : t.textMid,
-                cursor: "pointer", fontSize: 15, fontWeight: 700, textAlign: "left",
-              }}>
-              <div style={{ width: 24, height: 24, borderRadius: 6, border: `2px solid ${wantsInvoice ? "#A78BFA" : t.border}`, background: wantsInvoice ? "#A78BFA" : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {wantsInvoice && <Check size={16} color="#fff" strokeWidth={3} />}
-              </div>
-              Quiero factura CFDI
-            </button>
-
-            {wantsInvoice && (
-              <div>
-                <label style={labelStyle}>RFC</label>
-                <input value={rfc} onChange={e => setRfc(e.target.value.toUpperCase())} placeholder="XAXX010101000"
-                  maxLength={13} autoComplete="off"
-                  onFocus={e => (e.currentTarget.style.borderColor = "#A78BFA")}
-                  onBlur={e => (e.currentTarget.style.borderColor = t.border)}
-                  style={{ ...bigInp, fontFamily: "monospace", letterSpacing: 1 }} />
-                <div style={{ fontSize: 12, color: t.textLo, marginTop: 6 }}>El cajero te pedirá el resto de datos fiscales al facturar.</div>
-              </div>
-            )}
-
-            <div style={{ flex: 1 }} />
-
-            <button onClick={submit}
-              disabled={cart.length === 0}
-              style={{
-                width: "100%", padding: "20px", borderRadius: 14, border: "none",
-                background: cart.length === 0 ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`,
-                color: cart.length === 0 ? t.textLo : "#fff",
-                fontSize: 20, fontWeight: 800, cursor: cart.length === 0 ? "not-allowed" : "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
-                boxShadow: cart.length === 0 ? "none" : `0 6px 20px ${t.good}66`,
-                letterSpacing: 0.3,
-              }}>
-              <ShieldCheck size={22} /> Listo, pasar al cajero
-            </button>
-            <button onClick={skip} style={{
-              width: "100%", padding: "12px", borderRadius: 12,
-              border: `1px solid ${t.border}`, background: "transparent",
-              color: t.textLo, fontSize: 14, cursor: "pointer",
+          <div style={{ fontSize: 32, fontWeight: 800, color: t.textHi }}>¡Hola {(thanks.name || "").split(" ")[0]}!</div>
+          {thanks.tier ? (
+            <div style={{
+              padding: "10px 22px", borderRadius: 999, fontSize: 18, fontWeight: 800,
+              background: (thanks.tier.color_hex || t.nova) + "33",
+              color: thanks.tier.color_hex || t.nova,
             }}>
-              No, gracias — solo cobrar
+              Nivel {thanks.tier.name} · Descuento {thanks.tier.discount_pct.toFixed(0)}%
+            </div>
+          ) : (
+            <div style={{ fontSize: 16, color: t.textMid }}>Bienvenido al programa</div>
+          )}
+          <div style={{ fontSize: 15, color: t.textLo }}>Entrega la tablet al cajero para completar tu compra</div>
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
+  // ── Pantalla de elección inicial ──
+  if (mode === "choose") {
+    return createPortal(
+      <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: `linear-gradient(135deg, ${t.panel} 0%, ${t.panel2} 100%)`, display: "flex", flexDirection: "column" }}>
+        <Header />
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 30, padding: 40 }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: t.textHi, textAlign: "center", maxWidth: 640 }}>
+            ¿Ya eres parte de nuestro programa de fidelidad?
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, maxWidth: 800, width: "100%" }}>
+            <button onClick={() => setMode("identify")} style={{
+              padding: "36px 24px", borderRadius: 20, border: `2px solid ${t.nova}66`,
+              background: t.nova + "12", color: t.textHi, cursor: "pointer", textAlign: "left",
+              display: "flex", flexDirection: "column", gap: 10,
+            }}>
+              <User size={40} color={t.nova} />
+              <div style={{ fontSize: 22, fontWeight: 800 }}>Ya estoy registrado</div>
+              <div style={{ fontSize: 14, color: t.textMid }}>Uso mi tarjeta, teléfono o email para identificarme y recibir mi descuento.</div>
+            </button>
+            <button onClick={() => setMode("register")} style={{
+              padding: "36px 24px", borderRadius: 20, border: `2px solid ${t.good}66`,
+              background: t.good + "12", color: t.textHi, cursor: "pointer", textAlign: "left",
+              display: "flex", flexDirection: "column", gap: 10,
+            }}>
+              <Plus size={40} color={t.good} />
+              <div style={{ fontSize: 22, fontWeight: 800 }}>Registrarme por primera vez</div>
+              <div style={{ fontSize: 14, color: t.textMid }}>Me toma menos de un minuto y empiezo a recibir beneficios.</div>
+            </button>
+          </div>
+          <button onClick={() => onIdentified(null as unknown as LoyaltyCustomerLite)} style={{
+            marginTop: 6, padding: "10px 22px", borderRadius: 999, border: `1px solid ${t.border}`,
+            background: "transparent", color: t.textLo, cursor: "pointer", fontSize: 14,
+          }}>
+            Solo cobrar, no me registro
+          </button>
+        </div>
+        <div style={{ padding: "8px 24px", textAlign: "center", fontSize: 11, color: t.textLo, opacity: 0.6, borderTop: `1px solid ${t.border}` }}>
+          Cajero: para salir de este modo, toca el logo 5 veces
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
+  // ── Pantalla de identificación ──
+  if (mode === "identify") {
+    return createPortal(
+      <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: `linear-gradient(135deg, ${t.panel} 0%, ${t.panel2} 100%)`, display: "flex", flexDirection: "column", overflow: "auto" }}>
+        <Header />
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, gap: 20 }}>
+          <div style={{ fontSize: 24, fontWeight: 700, color: t.textHi, textAlign: "center" }}>Identifícate</div>
+          <div style={{ fontSize: 14, color: t.textMid, textAlign: "center", maxWidth: 520 }}>
+            Escribe el código de tu tarjeta, tu teléfono o tu correo. Aplicaremos automáticamente tu descuento.
+          </div>
+          <div style={{ maxWidth: 520, width: "100%" }}>
+            <input value={query} onChange={e => setQuery(e.target.value)}
+              placeholder="LP-XXXX-XXXXX  ·  10 dígitos  ·  correo@ejemplo.com"
+              onKeyDown={e => { if (e.key === "Enter") doIdentify(); }}
+              autoFocus autoComplete="off"
+              style={{ ...bigInp, fontSize: 20, textAlign: "center", letterSpacing: 0.5 }} />
+          </div>
+          {searchErr && (
+            <div style={{ padding: "10px 16px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 14 }}>
+              {searchErr}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+            <button onClick={() => setMode("choose")} style={{ padding: "12px 22px", borderRadius: 12, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 14 }}>
+              Atrás
+            </button>
+            <button disabled={searching || !query.trim()} onClick={doIdentify} style={{
+              padding: "14px 28px", borderRadius: 12, border: "none",
+              background: !query.trim() ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`,
+              color: !query.trim() ? t.textLo : "#fff",
+              cursor: !query.trim() ? "not-allowed" : "pointer", fontSize: 16, fontWeight: 800,
+            }}>
+              {searching ? "Buscando…" : "Continuar"}
             </button>
           </div>
         </div>
-      )}
+        <div style={{ padding: "8px 24px", textAlign: "center", fontSize: 11, color: t.textLo, opacity: 0.6, borderTop: `1px solid ${t.border}` }}>
+          Cajero: para salir de este modo, toca el logo 5 veces
+        </div>
+      </div>,
+      document.body,
+    );
+  }
 
+  // ── Formulario de registro ──
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: `linear-gradient(135deg, ${t.panel} 0%, ${t.panel2} 100%)`, display: "flex", flexDirection: "column", overflow: "auto" }}>
+      <Header />
+      <div style={{ flex: 1, maxWidth: 780, width: "100%", margin: "0 auto", padding: "22px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: t.textHi }}>Tus datos</div>
+          <div style={{ fontSize: 14, color: t.textLo, marginTop: 4 }}>
+            Nos toma menos de un minuto — con esto podemos enviarte tu tarjeta digital, avisarte de promociones y felicitarte en tu cumpleaños.
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div>
+            <label style={label}>Nombre completo *</label>
+            <input value={name} onChange={e => setName(e.target.value)} autoFocus style={bigInp} />
+          </div>
+          <div>
+            <label style={label}>Cómo prefieres que te llamemos</label>
+            <input value={howHeard} onChange={e => setHowHeard(e.target.value)}
+              placeholder="Ej. Recomendación, Redes, TV, Pasé por aquí…"
+              style={bigInp} />
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div>
+            <label style={label}>Correo electrónico</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="tucorreo@ejemplo.com" style={bigInp} />
+          </div>
+          <div>
+            <label style={label}>Teléfono</label>
+            <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="10 dígitos" inputMode="numeric" style={bigInp} />
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          <div>
+            <label style={label}>Fecha de nacimiento</label>
+            <input type="date" value={birth} onChange={e => setBirth(e.target.value)} style={bigInp} />
+          </div>
+          <div>
+            <label style={label}>Sexo</label>
+            <select value={sex} onChange={e => setSex(e.target.value)} style={{ ...bigInp, cursor: "pointer" }}>
+              <option value="">Prefiero no decir</option>
+              <option value="F">Femenino</option>
+              <option value="M">Masculino</option>
+              <option value="X">Otro</option>
+            </select>
+          </div>
+          <div>
+            <label style={label}>Código postal</label>
+            <input value={cp} onChange={e => setCp(e.target.value)} maxLength={5} inputMode="numeric" style={bigInp} />
+          </div>
+        </div>
+
+        <button onClick={() => setWantsInvoice(v => !v)} style={{
+          display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", borderRadius: 12,
+          border: `2px solid ${wantsInvoice ? "#A78BFA" : t.border}`,
+          background: wantsInvoice ? "#A78BFA22" : "transparent",
+          color: wantsInvoice ? "#A78BFA" : t.textMid,
+          cursor: "pointer", fontSize: 15, fontWeight: 700, textAlign: "left",
+        }}>
+          <div style={{ width: 24, height: 24, borderRadius: 6, border: `2px solid ${wantsInvoice ? "#A78BFA" : t.border}`, background: wantsInvoice ? "#A78BFA" : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {wantsInvoice && <Check size={16} color="#fff" strokeWidth={3} />}
+          </div>
+          Quiero factura CFDI
+        </button>
+
+        {wantsInvoice && (
+          <div>
+            <label style={label}>RFC</label>
+            <input value={rfc} onChange={e => setRfc(e.target.value.toUpperCase())} placeholder="XAXX010101000" maxLength={13}
+              style={{ ...bigInp, fontFamily: "monospace", letterSpacing: 1 }} />
+            <div style={{ fontSize: 12, color: t.textLo, marginTop: 6 }}>El cajero te pedirá el resto de datos fiscales al facturar.</div>
+          </div>
+        )}
+
+        <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", padding: "10px 0" }}>
+          <input type="checkbox" checked={acceptsMarketing} onChange={e => setAcceptsMarketing(e.target.checked)} style={{ marginTop: 4 }} />
+          <span style={{ fontSize: 14, color: t.textMid }}>
+            Quiero recibir promociones, avisos y una felicitación en mi cumpleaños por correo.
+          </span>
+        </label>
+
+        <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer",
+          padding: 14, borderRadius: 12,
+          border: `2px solid ${privacyOk ? t.good : t.warn}`,
+          background: (privacyOk ? t.good : t.warn) + "10" }}>
+          <input type="checkbox" checked={privacyOk} onChange={e => setPrivacyOk(e.target.checked)} style={{ marginTop: 4 }} />
+          <span style={{ fontSize: 13.5, color: t.textMid }}>
+            <b style={{ color: t.textHi }}>Aviso de privacidad</b><br />
+            {loyaltyCfg?.privacy_policy_text ||
+              `Autorizo a ${brandName} tratar mis datos personales con las finalidades del programa de fidelidad (identificación en tienda, envío de promociones y felicitación de cumpleaños). Puedo revocar mi consentimiento en cualquier momento contactando a la empresa.`}
+            {loyaltyCfg?.privacy_policy_url && (
+              <> {" "}<a href={loyaltyCfg.privacy_policy_url} target="_blank" rel="noreferrer" style={{ color: t.nova, textDecoration: "underline" }}>Leer aviso completo</a>.</>
+            )}
+          </span>
+        </label>
+
+        {regErr && (
+          <div style={{ padding: "10px 14px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 13 }}>
+            <AlertTriangle size={14} style={{ verticalAlign: "middle", marginRight: 6 }} /> {regErr}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+          <button onClick={() => setMode("choose")}
+            style={{ padding: "14px 20px", borderRadius: 12, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 14 }}>
+            Atrás
+          </button>
+          <button disabled={saving} onClick={doRegister} style={{
+            flex: 1, padding: "18px", borderRadius: 14, border: "none",
+            background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff",
+            cursor: saving ? "wait" : "pointer", fontSize: 18, fontWeight: 800,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+            boxShadow: `0 6px 20px ${t.good}55`,
+          }}>
+            <ShieldCheck size={20} /> {saving ? "Guardando…" : "Registrarme y pasar al cajero"}
+          </button>
+        </div>
+      </div>
       <div style={{ padding: "8px 24px", textAlign: "center", fontSize: 11, color: t.textLo, opacity: 0.6, borderTop: `1px solid ${t.border}` }}>
         Cajero: para salir de este modo, toca el logo 5 veces
       </div>

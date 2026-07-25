@@ -147,6 +147,25 @@ class Customer(Base):
     # Configuración específica consignación
     consignment_settlement_days = Column(Integer, default=30, nullable=True)  # frecuencia de liquidación
 
+    # ── Programa de fidelización (CRM) ─────────────────────────────────────
+    # Datos demográficos capturados en el POS (registro cliente). Todos
+    # opcionales para no aburrir; cada empresa decide qué obliga en su UI.
+    date_of_birth = Column(DateTime(timezone=True), nullable=True)  # para felicitación cumpleaños
+    sex = Column(String, nullable=True)                             # F | M | X (prefiere no decir)
+    accepts_marketing = Column(Boolean, default=False, nullable=False)   # opt-in comunicaciones
+    privacy_accepted_at = Column(DateTime(timezone=True), nullable=True) # LFPDPPP timestamp
+
+    # Tarjeta / tier
+    tier_id = Column(Integer, ForeignKey("customer_tiers.id"), nullable=True, index=True)
+    loyalty_code = Column(String, unique=True, index=True, nullable=True)  # código único para tarjeta
+    loyalty_since = Column(DateTime(timezone=True), nullable=True)         # fecha de alta al programa
+    loyalty_expires_at = Column(DateTime(timezone=True), nullable=True)    # vigencia de la tarjeta
+
+    # Métricas cacheadas (se recomputan al cerrar cada venta o por job nightly)
+    total_spent_lifetime = Column(Float, default=0.0, nullable=False)
+    total_orders_lifetime = Column(Integer, default=0, nullable=False)
+    last_order_at = Column(DateTime(timezone=True), nullable=True)
+
     is_active = Column(Boolean, default=True)
     notes = Column(Text, nullable=True)
 
@@ -159,6 +178,7 @@ class Customer(Base):
     category_commissions = relationship(
         "CustomerCategoryCommission", back_populates="customer", cascade="all, delete-orphan"
     )
+    tier = relationship("CustomerTier", foreign_keys=[tier_id])
 
 
 class CustomerCategoryCommission(Base):
@@ -247,3 +267,68 @@ class SalesReportImport(Base):
     errors_detail = Column(Text, nullable=True)  # JSON con las filas problema
     uploaded_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Programa de fidelización — tiers y configuración ─────────────────────
+
+class CustomerTier(Base):
+    """Un nivel del programa (Bronce, Plata, Oro, Diamante — o los que la
+    empresa quiera). Configurable por empresa: nombre, color de la tarjeta,
+    % de descuento aplicado automáticamente al identificar al cliente en el
+    POS y umbrales que determinan si al cliente le corresponde este nivel.
+    El campo `rank` ordena los tiers (0=más bajo, N=más alto)."""
+    __tablename__ = "customer_tiers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)                    # "Oro", "Diamante", etc.
+    color_hex = Column(String, nullable=True)                # "#D4AF37" (para tarjeta)
+    rank = Column(Integer, default=0, nullable=False)        # orden ascendente
+    discount_pct = Column(Float, default=0.0, nullable=False)  # % descuento aplicado en POS
+
+    # Umbrales para asignación automática — cada empresa decide qué usa. Si
+    # multiples umbrales están set, se requieren TODOS (AND). Si están todos
+    # en cero, el tier solo se asigna manualmente.
+    min_spend = Column(Float, default=0.0, nullable=False)      # gasto acumulado en ventana
+    min_orders = Column(Integer, default=0, nullable=False)     # número de compras en ventana
+    min_avg_ticket = Column(Float, default=0.0, nullable=False) # ticket promedio en ventana
+
+    perks = Column(Text, nullable=True)     # texto libre para imprimir en la tarjeta
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LoyaltyProgramConfig(Base):
+    """Singleton (siempre 1 fila, id=1). Configuración global del programa de
+    fidelización — vigencia de la tarjeta, ventana de análisis para tiers,
+    plantilla de la tarjeta, política de privacidad, etc."""
+    __tablename__ = "loyalty_program_config"
+
+    id = Column(Integer, primary_key=True, index=True)
+    is_enabled = Column(Boolean, default=False, nullable=False)  # apagado hasta que la empresa lo active
+    program_name = Column(String, default="Programa de Fidelidad", nullable=False)
+    tagline = Column(String, nullable=True)                        # slogan corto en la tarjeta
+
+    # Ventana para calcular tier (meses hacia atrás). None = de por vida (usa totals cacheados).
+    tier_lookback_months = Column(Integer, default=12, nullable=True)
+    # Días de vigencia por default de la tarjeta al emitirla / renovarla
+    card_validity_days = Column(Integer, default=365, nullable=False)
+    # Recalcular tier automáticamente al cerrar cada venta (True) o solo por job nightly (False)
+    recalc_on_each_sale = Column(Boolean, default=True, nullable=False)
+
+    # Personalización de la tarjeta PDF
+    card_bg_color = Column(String, default="#0F172A", nullable=False)   # slate-900
+    card_text_color = Column(String, default="#FFFFFF", nullable=False)
+    card_accent_color = Column(String, default="#33B2F5", nullable=False)
+
+    # Política de privacidad (LFPDPPP). Enlace donde el cliente puede leerla.
+    privacy_policy_url = Column(String, nullable=True)
+    privacy_policy_text = Column(Text, nullable=True)  # inline si no hay URL
+
+    # Motor de emails: cadena SMTP (asume que la empresa ya usa el mismo SMTP
+    # que enviar OCs por email); días antes/después del cumpleaños para enviar.
+    birthday_email_enabled = Column(Boolean, default=False, nullable=False)
+    birthday_email_subject = Column(String, default="¡Feliz cumpleaños!", nullable=False)
+    birthday_email_body = Column(Text, nullable=True)
+
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
