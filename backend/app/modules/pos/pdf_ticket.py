@@ -67,10 +67,9 @@ def build_thermal_ticket(
     # sí (justo lo que se veía en el ticket del cliente).
     line_h = 12
     # Cabecera: logo + razón social + (legal) + RFC + hasta 2 líneas de dir. +
-    # tel. + separador + folio + fecha + caja + cliente + separador. En el peor
-    # caso son ~14 renglones. Antes se estimaban 8, que solo cabían cuando el
-    # ticket no traía dirección ni cliente.
-    header_lines = 14
+    # tel. + separador + folio + fecha + caja + cajero + cliente + separador.
+    # En el peor caso son ~15 renglones (con caja y cajero ya en dos líneas).
+    header_lines = 15
     # Pie: separador + "¡Gracias!" + hasta 3 líneas de document_footer + colchón.
     footer_lines = 10
     # Cada partida ocupa 2 renglones reales (nombre + "cant × precio"), más los
@@ -142,8 +141,16 @@ def build_thermal_ticket(
     line(f"Folio: {order.get('folio') or order.get('id')}", size=8, bold=True)
     line(f"Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M')}", size=7)
     if session:
-        line(f"Caja: {session.get('terminal_name', '')} · Cajero: {session.get('cashier_name', '')}",
-             size=7)
+        # Caja y cajero en renglones separados para que el nombre completo
+        # no se corte del papel (58/80 mm dan muy poco ancho). Mostramos el
+        # nombre completo si cabe (<= 30 chars); si no, sólo nombre + primer
+        # apellido — patrón estándar en tickets térmicos profesionales.
+        line(f"Caja: {_truncate(session.get('terminal_name', ''), 30)}", size=7)
+        raw = (session.get("cashier_name") or "").strip()
+        if raw:
+            parts = raw.split()
+            short = " ".join(parts[:2]) if len(raw) > 30 and len(parts) >= 2 else raw
+            line(f"Cajero: {_truncate(short, 30)}", size=7)
     if order.get("customer_name"):
         line(f"Cliente: {_truncate(order['customer_name'], 38)}", size=7)
 

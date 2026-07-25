@@ -401,6 +401,85 @@ export const inventoryService = {
         (await api.get<OverstockAlert[]>('/inventory/overstock-alerts', { params })).data,
 };
 
+// ── Planificador de promociones ────────────────────────────────────────────
+
+export type PromotionStatus = 'planned' | 'active' | 'finished' | 'cancelled';
+
+export interface PromotionItem {
+    id: number;
+    variant_id: number;
+    sku?: string | null;
+    product_name?: string | null;
+    promo_price?: number | null;
+    discount_pct?: number | null;
+}
+export interface PromotionStore {
+    id: number;
+    warehouse_id: number;
+    warehouse_name?: string | null;
+}
+export interface PromotionSuggestion {
+    id: number;
+    variant_id: number;
+    source_warehouse_id?: number | null;
+    destination_warehouse_id: number;
+    baseline_daily_velocity: number;
+    expected_units_during_promo: number;
+    current_stock: number;
+    quantity_suggested: number;
+    shortage_flag?: 'partial' | 'no_source' | null;
+    note?: string | null;
+    transfer_id?: number | null;
+    computed_at?: string;
+}
+export interface Promotion {
+    id: number;
+    folio?: string;
+    name: string;
+    description?: string;
+    start_date: string;
+    end_date: string;
+    expected_uplift_pct: number;
+    baseline_lookback_days: number;
+    lead_time_days: number;
+    status: PromotionStatus;
+    notes?: string;
+    created_at?: string;
+    items: PromotionItem[];
+    stores: PromotionStore[];
+    suggestions: PromotionSuggestion[];
+    created_transfers?: any[];
+}
+export interface PromotionCreatePayload {
+    name: string;
+    description?: string;
+    start_date: string;
+    end_date: string;
+    expected_uplift_pct: number;
+    baseline_lookback_days: number;
+    lead_time_days: number;
+    notes?: string;
+    items: { variant_id: number; promo_price?: number | null; discount_pct?: number | null }[];
+    warehouse_ids: number[];
+}
+
+export const promotionsService = {
+    list: async (params?: { status?: string; limit?: number }) =>
+        (await api.get<Promotion[]>('/promotions', { params })).data,
+    get: async (id: number) =>
+        (await api.get<Promotion>(`/promotions/${id}`)).data,
+    create: async (payload: PromotionCreatePayload) =>
+        (await api.post<Promotion>('/promotions', payload)).data,
+    update: async (id: number, payload: Partial<PromotionCreatePayload> & { status?: string }) =>
+        (await api.put<Promotion>(`/promotions/${id}`, payload)).data,
+    cancel: async (id: number) =>
+        (await api.post<Promotion>(`/promotions/${id}/cancel`)).data,
+    compute: async (id: number) =>
+        (await api.post<Promotion>(`/promotions/${id}/suggestions/compute`)).data,
+    materialize: async (id: number, suggestion_ids?: number[]) =>
+        (await api.post<Promotion>(`/promotions/${id}/suggestions/materialize`, { suggestion_ids })).data,
+};
+
 export interface OverstockAlert {
     variant_id: number;
     sku: string;

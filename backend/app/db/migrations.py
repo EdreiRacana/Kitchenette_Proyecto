@@ -488,6 +488,64 @@ _BRANCH_STATEMENTS = [
 ]
 
 
+_PROMOTIONS_STATEMENTS = [
+    # Planificador de promociones (reemplaza el Excel manual de traspasos previos
+    # a una campaña). Un PromotionPlan agrupa varias variantes que van en promo,
+    # aplicadas a varios almacenes destino (tiendas), con un uplift esperado.
+    # El motor de sugerencias corre bajo demanda y genera PromotionSuggestion.
+    """CREATE TABLE IF NOT EXISTS promotion_plans (
+        id                      SERIAL PRIMARY KEY,
+        folio                   VARCHAR UNIQUE,
+        name                    VARCHAR NOT NULL,
+        description             TEXT,
+        start_date              TIMESTAMP WITH TIME ZONE NOT NULL,
+        end_date                TIMESTAMP WITH TIME ZONE NOT NULL,
+        expected_uplift_pct     DOUBLE PRECISION NOT NULL DEFAULT 50.0,
+        baseline_lookback_days  INTEGER NOT NULL DEFAULT 30,
+        lead_time_days          INTEGER NOT NULL DEFAULT 5,
+        status                  VARCHAR NOT NULL DEFAULT 'planned',
+        notes                   TEXT,
+        created_at              TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        created_by_id           INTEGER REFERENCES users(id),
+        updated_at              TIMESTAMP WITH TIME ZONE
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_promotion_plans_folio  ON promotion_plans (folio)",
+    "CREATE INDEX IF NOT EXISTS ix_promotion_plans_status ON promotion_plans (status, start_date DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_promotion_plans_dates  ON promotion_plans (start_date, end_date)",
+    """CREATE TABLE IF NOT EXISTS promotion_plan_items (
+        id           SERIAL PRIMARY KEY,
+        promotion_id INTEGER NOT NULL REFERENCES promotion_plans(id) ON DELETE CASCADE,
+        variant_id   INTEGER NOT NULL REFERENCES product_variants(id),
+        promo_price  DOUBLE PRECISION,
+        discount_pct DOUBLE PRECISION
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_promotion_items_promo ON promotion_plan_items (promotion_id)",
+    """CREATE TABLE IF NOT EXISTS promotion_target_stores (
+        id           SERIAL PRIMARY KEY,
+        promotion_id INTEGER NOT NULL REFERENCES promotion_plans(id) ON DELETE CASCADE,
+        warehouse_id INTEGER NOT NULL REFERENCES warehouses(id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_promotion_stores_promo ON promotion_target_stores (promotion_id)",
+    """CREATE TABLE IF NOT EXISTS promotion_suggestions (
+        id                          SERIAL PRIMARY KEY,
+        promotion_id                INTEGER NOT NULL REFERENCES promotion_plans(id) ON DELETE CASCADE,
+        variant_id                  INTEGER NOT NULL REFERENCES product_variants(id),
+        source_warehouse_id         INTEGER REFERENCES warehouses(id),
+        destination_warehouse_id    INTEGER NOT NULL REFERENCES warehouses(id),
+        baseline_daily_velocity     DOUBLE PRECISION NOT NULL DEFAULT 0,
+        expected_units_during_promo DOUBLE PRECISION NOT NULL DEFAULT 0,
+        current_stock               INTEGER NOT NULL DEFAULT 0,
+        quantity_suggested          INTEGER NOT NULL DEFAULT 0,
+        shortage_flag               VARCHAR,
+        note                        TEXT,
+        transfer_id                 INTEGER REFERENCES stock_transfers(id),
+        computed_at                 TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_promo_suggestions_promo ON promotion_suggestions (promotion_id)",
+    "CREATE INDEX IF NOT EXISTS ix_promo_suggestions_transfer ON promotion_suggestions (transfer_id)",
+]
+
+
 _RETAIL_STATEMENTS = [
     # Config de alertas por cadena (agregada tras la Fase 3)
     "ALTER TABLE retail_channels ADD COLUMN IF NOT EXISTS no_movement_days     INTEGER DEFAULT 21 NOT NULL",
@@ -583,6 +641,7 @@ def _apply(sync_conn: Connection) -> None:
         ("auth",       _AUTH_STATEMENTS),
         ("branches",   _BRANCH_STATEMENTS),
         ("retail",     _RETAIL_STATEMENTS),
+        ("promotions", _PROMOTIONS_STATEMENTS),
     ]
 
     for label, statements in all_statements:
