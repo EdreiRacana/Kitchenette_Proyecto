@@ -10,8 +10,9 @@ import {
   X, TrendingUp, RotateCcw, Receipt, Truck, Percent, Landmark,
   ArrowUpRight, ArrowDownRight, ShoppingBag, Package, CreditCard,
   FileText, Wallet, Store, Globe, Building2, Star, Users, Info,
-  Paperclip, Upload, Trash2, MessageCircle,
+  Paperclip, Upload, Trash2, MessageCircle, Award, Download,
 } from "lucide-react";
+import { loyaltyApi } from "./loyaltyApi";
 import type { Tokens } from "../sales/theme";
 import { money } from "../sales/theme";
 import { Badge, Select, Button } from "../sales/ui";
@@ -127,6 +128,40 @@ export default function Customer360({
 }) {
   const [tab, setTab] = useState<"resumen" | "pnl" | "transacciones" | "devoluciones" | "documentos">("resumen");
   const [settlementOpen, setSettlementOpen] = useState(false);
+  const [loyaltyBusy, setLoyaltyBusy] = useState(false);
+  const [loyaltyLite, setLoyaltyLite] = useState<{ tier?: { name: string; color_hex?: string | null; discount_pct: number } | null; loyalty_code?: string | null } | null>(null);
+  useEffect(() => {
+    // Cargar tier + loyalty_code si el cliente ya está en el programa.
+    loyaltyApi.lookup(String(customer.id))
+      .then(c => setLoyaltyLite({ tier: c.tier, loyalty_code: c.loyalty_code }))
+      .catch(() => setLoyaltyLite(null));
+  }, [customer.id]);
+
+  const downloadLoyaltyCard = async () => {
+    setLoyaltyBusy(true);
+    try {
+      // Si no tiene código aún, recomputar tier (asigna código si el programa activo)
+      if (!loyaltyLite?.loyalty_code) {
+        await loyaltyApi.recomputeTier(customer.id);
+        const fresh = await loyaltyApi.lookup(String(customer.id));
+        setLoyaltyLite({ tier: fresh.tier, loyalty_code: fresh.loyalty_code });
+        if (!fresh.loyalty_code) {
+          alert("Este cliente aún no cumple los umbrales de ningún tier o el programa está apagado. Actívalo en Clientes → Programa de fidelidad.");
+          return;
+        }
+      }
+      const blob = await loyaltyApi.downloadLoyaltyCard(customer.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `tarjeta_${customer.client_number || customer.id}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "No se pudo generar la tarjeta");
+    } finally {
+      setLoyaltyBusy(false);
+    }
+  };
   const mktInputRef = useRef<HTMLInputElement>(null);
   const [mktUploading, setMktUploading] = useState(false);
   const handleMarketplaceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -596,6 +631,20 @@ export default function Customer360({
               </button>
             </>
           )}
+          <button
+            onClick={downloadLoyaltyCard}
+            disabled={loyaltyBusy}
+            title={loyaltyLite?.loyalty_code
+              ? `Descargar tarjeta ${loyaltyLite.loyalty_code}`
+              : "Generar y descargar tarjeta de fidelidad"}
+            style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${tk.accent}66`, background: tk.accent + "18", color: tk.accent, cursor: loyaltyBusy ? "wait" : "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+            <Download size={14} /> {loyaltyBusy ? "Generando…" : "Tarjeta PDF"}
+            {loyaltyLite?.tier && (
+              <span style={{ padding: "1px 8px", borderRadius: 999, background: (loyaltyLite.tier.color_hex || tk.accent) + "33", color: loyaltyLite.tier.color_hex || tk.accent, fontSize: 10.5, fontWeight: 800 }}>
+                {loyaltyLite.tier.name}
+              </span>
+            )}
+          </button>
           <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 10, border: `1px solid ${tk.border}`, background: "transparent", color: tk.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Cerrar</button>
           {onEdit && (
             <button onClick={() => onEdit(customer)} style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: tk.accent, color: "#06122B", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>Editar cliente</button>
