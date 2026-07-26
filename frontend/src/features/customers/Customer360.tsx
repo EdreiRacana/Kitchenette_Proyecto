@@ -173,7 +173,15 @@ export default function Customer360({
     }
     fresh = await loyaltyApi.lookup(String(customer.id));
     setLoyaltyLite({ tier: fresh?.tier, loyalty_code: fresh?.loyalty_code });
-    return !!fresh?.loyalty_code;
+    if (!fresh?.loyalty_code) {
+      alert(
+        "El tier se asignó pero el sistema no emitió código de tarjeta. " +
+        "Es posible que el deploy más reciente aún no esté arriba. " +
+        "Recarga la página con Ctrl+Shift+R y vuelve a intentar."
+      );
+      return false;
+    }
+    return true;
   };
 
   const emailLoyaltyCard = async () => {

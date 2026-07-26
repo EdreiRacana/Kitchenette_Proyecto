@@ -601,7 +601,13 @@ async def set_customer_tier(db: AsyncSession, customer_id: int,
                              tier_id: Optional[int], manual: bool = True) -> Optional[Customer]:
     """Asigna (o quita) el tier de un cliente. manual=True marca el override
     para que recompute_customer_tier lo respete.
-    Pasar tier_id=None + manual=False → vuelve al modo automático."""
+    Pasar tier_id=None + manual=False → vuelve al modo automático.
+
+    Nota importante: si es una asignación manual (`manual=True`), SIEMPRE
+    emite código y vigencia — la intención del operador de fijar tier a mano
+    es exactamente esa: emitir tarjeta. Si el programa singleton está apagado,
+    también lo prendemos automáticamente para que la tarjeta sea funcional
+    (el operador espera que funcione, no que aparezca en modo latente)."""
     c = await db.get(Customer, customer_id)
     if not c:
         return None
@@ -612,13 +618,18 @@ async def set_customer_tier(db: AsyncSession, customer_id: int,
         c.tier_id = tier_id
         c.manual_tier = manual
         cfg = await get_program_config(db)
-        if cfg.is_enabled:
+        # Si el operador fuerza tier a mano, prender el programa si estaba
+        # apagado — de lo contrario la tarjeta queda emitida pero sin efecto.
+        if manual and not cfg.is_enabled:
+            cfg.is_enabled = True
+        # Emitir código de tarjeta siempre (asignación manual o programa activo)
+        if manual or cfg.is_enabled:
             if not c.loyalty_code:
                 c.loyalty_code = _generate_loyalty_code(c.id)
             if not c.loyalty_since:
                 c.loyalty_since = datetime.now(timezone.utc)
-            if cfg.card_validity_days:
-                c.loyalty_expires_at = datetime.now(timezone.utc) + timedelta(days=cfg.card_validity_days)
+            days = cfg.card_validity_days or 365
+            c.loyalty_expires_at = datetime.now(timezone.utc) + timedelta(days=days)
     else:
         # Quitar override → recompute recalcula
         c.manual_tier = False
