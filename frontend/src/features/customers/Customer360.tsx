@@ -137,12 +137,53 @@ export default function Customer360({
       .catch(() => setLoyaltyLite(null));
   }, [customer.id]);
 
+  // Si el cliente aún no tiene tarjeta emitida, intenta primero auto y si
+  // eso no le corresponde ningún tier, le pregunta al usuario cuál asignar.
+  // Devuelve true si al final quedó con loyalty_code, false si canceló.
+  const ensureCardEmitted = async (): Promise<boolean> => {
+    if (loyaltyLite?.loyalty_code) return true;
+    // 1) intentar auto
+    try { await loyaltyApi.recomputeTier(customer.id); } catch { /* seguimos */ }
+    let fresh = await loyaltyApi.lookup(String(customer.id));
+    if (fresh?.loyalty_code) {
+      setLoyaltyLite({ tier: fresh.tier, loyalty_code: fresh.loyalty_code });
+      return true;
+    }
+    // 2) auto no aplicó → pedir tier al operador
+    const tiers = await loyaltyApi.listTiers(true).catch(() => [] as any[]);
+    if (tiers.length === 0) {
+      alert("No hay tiers activos. Actívalos en Clientes → Programa de fidelidad.");
+      return false;
+    }
+    const opts = tiers.map((t: any, i: number) => `${i + 1}) ${t.name} (${t.discount_pct}%)`).join("\n");
+    const pick = window.prompt(
+      `Este cliente aún no cumple ningún tier automáticamente.\nElige uno para emitirle su tarjeta:\n\n${opts}\n\nEscribe el número:`,
+      "1"
+    );
+    if (!pick) return false;
+    const idx = parseInt(pick, 10) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= tiers.length) {
+      alert("Opción inválida"); return false;
+    }
+    try {
+      await loyaltyApi.setTier(customer.id, tiers[idx].id, true);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "No se pudo asignar el tier");
+      return false;
+    }
+    fresh = await loyaltyApi.lookup(String(customer.id));
+    setLoyaltyLite({ tier: fresh?.tier, loyalty_code: fresh?.loyalty_code });
+    return !!fresh?.loyalty_code;
+  };
+
   const emailLoyaltyCard = async () => {
     if (!customer.email) { alert("Este cliente no tiene email registrado"); return; }
-    const msg = window.prompt("Mensaje opcional para incluir en el correo (Enter para omitir):", "");
-    if (msg === null) return;
     setLoyaltyBusy(true);
     try {
+      const ready = await ensureCardEmitted();
+      if (!ready) return;
+      const msg = window.prompt("Mensaje opcional para incluir en el correo (Enter para omitir):", "");
+      if (msg === null) return;
       const res = await loyaltyApi.emailLoyaltyCard(customer.id, msg || undefined);
       alert(res.ok ? `Tarjeta enviada a ${res.sent_to}` : "No se pudo enviar");
     } catch (e: any) {
@@ -152,16 +193,8 @@ export default function Customer360({
   const downloadLoyaltyCard = async () => {
     setLoyaltyBusy(true);
     try {
-      // Si no tiene código aún, recomputar tier (asigna código si el programa activo)
-      if (!loyaltyLite?.loyalty_code) {
-        await loyaltyApi.recomputeTier(customer.id);
-        const fresh = await loyaltyApi.lookup(String(customer.id));
-        setLoyaltyLite({ tier: fresh.tier, loyalty_code: fresh.loyalty_code });
-        if (!fresh.loyalty_code) {
-          alert("Este cliente aún no cumple los umbrales de ningún tier o el programa está apagado. Actívalo en Clientes → Programa de fidelidad.");
-          return;
-        }
-      }
+      const ready = await ensureCardEmitted();
+      if (!ready) return;
       const blob = await loyaltyApi.downloadLoyaltyCard(customer.id);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
