@@ -449,12 +449,12 @@ async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company:
     page_w, page_h = A6  # 105 x 148 mm — vertical
     c_pdf = canvas.Canvas(buf, pagesize=A6)
 
-    # Paleta sobria premium: negro cálido tipo Amex Black card (matte) +
-    # dorado suave. El navy azul sonaba "corriente" — cambiamos a un stone
-    # cálido (#1C1917 - Tailwind stone-900) que pairs mucho mejor con oro.
-    bg = cfg.card_bg_color or "#17161A"
-    text_color = cfg.card_text_color or "#FFFFFF"
-    text_muted = "#8A8580"
+    # Paleta sobria con fondo blanco tipo tarjeta Apple Card.
+    # Los defaults ahora son blanco/negro/dorado — cualquier color que la
+    # empresa ponga en cfg.card_bg_color sigue funcionando (respeta override).
+    bg = cfg.card_bg_color or "#FFFFFF"
+    text_color = cfg.card_text_color if cfg.card_text_color and cfg.card_text_color != "#FFFFFF" else "#1A1A1A"
+    text_muted = "#6B7280"
     gold = (tier.color_hex if tier and tier.color_hex else (cfg.card_accent_color or "#B08D57"))
 
     # ═══════════════════════════════════════════════════════════════
@@ -476,16 +476,14 @@ async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company:
     pad = 10 * mm  # margen interno consistente
 
     # ── Zona superior: logo pequeño + programa ────────────────────────
-    # SIEMPRE fondo blanco en el círculo del logo (para que el logo real
-    # de la empresa, o las iniciales, contrasten bien).
+    # En fondo blanco el círculo del logo es transparente con borde dorado
+    # (o el logo real de la empresa se pinta directo sobre el fondo blanco).
     logo_bytes = company.get("logo_bytes")
     logo_r = 6 * mm
     logo_cx = pad + logo_r
     logo_cy = page_h - pad - logo_r
-    c_pdf.setFillColor(white)
-    c_pdf.circle(logo_cx, logo_cy, logo_r, fill=1, stroke=0)
     c_pdf.setStrokeColor(HexColor(gold))
-    c_pdf.setLineWidth(0.4)
+    c_pdf.setLineWidth(0.5)
     c_pdf.circle(logo_cx, logo_cy, logo_r, fill=0, stroke=1)
     if logo_bytes:
         try:
@@ -499,10 +497,10 @@ async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company:
         except Exception:
             pass
     else:
-        # Sin logo: monograma con las iniciales sobre el fondo blanco
+        # Sin logo: monograma con las iniciales en dorado
         name0 = (company.get("commercial_name") or company.get("legal_name") or "").strip()
         initials = "".join(w[0] for w in name0.split()[:2]).upper() or "*"
-        c_pdf.setFillColor(HexColor(bg))
+        c_pdf.setFillColor(HexColor(gold))
         c_pdf.setFont("Times-Bold", 11)
         c_pdf.drawCentredString(logo_cx, logo_cy - 3.5, initials)
 
