@@ -449,13 +449,13 @@ async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company:
     page_w, page_h = A6  # 105 x 148 mm — vertical
     c_pdf = canvas.Canvas(buf, pagesize=A6)
 
-    # Paleta sobria: navy sólido + único acento dorado. NO gradientes,
-    # NO decoraciones. Todo el peso del diseño lo lleva la tipografía y el
-    # espacio en blanco — inspiración: Amex Platinum, tarjetas de museo.
-    bg = cfg.card_bg_color or "#0A1929"
+    # Paleta sobria premium: negro cálido tipo Amex Black card (matte) +
+    # dorado suave. El navy azul sonaba "corriente" — cambiamos a un stone
+    # cálido (#1C1917 - Tailwind stone-900) que pairs mucho mejor con oro.
+    bg = cfg.card_bg_color or "#17161A"
     text_color = cfg.card_text_color or "#FFFFFF"
-    text_muted = "#8B9AAE"
-    gold = (tier.color_hex if tier and tier.color_hex else (cfg.card_accent_color or "#C9A961"))
+    text_muted = "#8A8580"
+    gold = (tier.color_hex if tier and tier.color_hex else (cfg.card_accent_color or "#B08D57"))
 
     # ═══════════════════════════════════════════════════════════════
     # DISEÑO SOBRIO — inspiración Amex Platinum / tarjetas de museo.
@@ -476,16 +476,21 @@ async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company:
     pad = 10 * mm  # margen interno consistente
 
     # ── Zona superior: logo pequeño + programa ────────────────────────
+    # SIEMPRE fondo blanco en el círculo del logo (para que el logo real
+    # de la empresa, o las iniciales, contrasten bien).
     logo_bytes = company.get("logo_bytes")
     logo_r = 6 * mm
     logo_cx = pad + logo_r
     logo_cy = page_h - pad - logo_r
+    c_pdf.setFillColor(white)
+    c_pdf.circle(logo_cx, logo_cy, logo_r, fill=1, stroke=0)
+    c_pdf.setStrokeColor(HexColor(gold))
+    c_pdf.setLineWidth(0.4)
+    c_pdf.circle(logo_cx, logo_cy, logo_r, fill=0, stroke=1)
     if logo_bytes:
         try:
             img = ImageReader(BytesIO(logo_bytes))
-            side = logo_r * 2
-            c_pdf.setFillColor(white)
-            c_pdf.circle(logo_cx, logo_cy, logo_r, fill=1, stroke=0)
+            side = logo_r * 1.5
             c_pdf.drawImage(
                 img, logo_cx - side / 2, logo_cy - side / 2,
                 width=side, height=side,
@@ -494,15 +499,12 @@ async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company:
         except Exception:
             pass
     else:
-        # Sin logo: monograma sobrio con las iniciales de la empresa
-        c_pdf.setStrokeColor(HexColor(gold))
-        c_pdf.setLineWidth(0.5)
-        c_pdf.circle(logo_cx, logo_cy, logo_r, fill=0, stroke=1)
+        # Sin logo: monograma con las iniciales sobre el fondo blanco
         name0 = (company.get("commercial_name") or company.get("legal_name") or "").strip()
         initials = "".join(w[0] for w in name0.split()[:2]).upper() or "*"
-        c_pdf.setFillColor(HexColor(gold))
-        c_pdf.setFont("Times-Roman", 10)
-        c_pdf.drawCentredString(logo_cx, logo_cy - 3, initials)
+        c_pdf.setFillColor(HexColor(bg))
+        c_pdf.setFont("Times-Bold", 11)
+        c_pdf.drawCentredString(logo_cx, logo_cy - 3.5, initials)
 
     # Nombre de la empresa a la derecha del logo (small caps)
     company_name = (company.get("commercial_name") or company.get("legal_name") or "").upper()
@@ -533,27 +535,19 @@ async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company:
     c_pdf.setFont("Times-Roman", name_size)
     c_pdf.drawString(pad, accent_y - 12 * mm, name_txt.upper())
 
-    # ── Tier + descuento en una sola línea sobria ────────────────────
+    # ── Tier + año de miembro (SIN repetir el descuento) ─────────────
+    # El descuento se muestra UNA sola vez, como hero abajo. Aquí solo
+    # aparece el nombre del nivel y la fecha de alta.
     tier_line_y = accent_y - 22 * mm
     if tier:
         c_pdf.setFillColor(HexColor(gold))
-        c_pdf.setFont("Helvetica-Bold", 9)
-        left_txt = tier.name.upper()
-        c_pdf.drawString(pad, tier_line_y, left_txt)
-        # Guión separador
-        left_w = stringWidth(left_txt, "Helvetica-Bold", 9)
-        c_pdf.setFillColor(HexColor(text_muted))
-        c_pdf.drawString(pad + left_w + 2 * mm, tier_line_y, "·")
-        # Descuento
-        c_pdf.setFillColor(HexColor(text_color))
-        c_pdf.setFont("Helvetica", 9)
-        c_pdf.drawString(pad + left_w + 5 * mm, tier_line_y,
-                          f"{int(tier.discount_pct)}% de descuento en cada compra")
+        c_pdf.setFont("Helvetica-Bold", 10)
+        c_pdf.drawString(pad, tier_line_y, tier.name.upper())
 
     if customer.loyalty_since:
         c_pdf.setFillColor(HexColor(text_muted))
-        c_pdf.setFont("Times-Italic", 8.5)
-        c_pdf.drawString(pad, tier_line_y - 5.5 * mm,
+        c_pdf.setFont("Times-Italic", 9)
+        c_pdf.drawString(pad, tier_line_y - 6 * mm,
                           f"Miembro desde {customer.loyalty_since.year}")
 
     # ── Descuento gigante como elemento visual principal ─────────────
