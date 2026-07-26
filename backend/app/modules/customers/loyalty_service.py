@@ -438,7 +438,6 @@ async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company:
     cfg = await get_program_config(db)
     tier = customer.tier
 
-    from math import cos, radians, sin
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import A6
     from reportlab.lib.units import mm
@@ -450,337 +449,169 @@ async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company:
     page_w, page_h = A6  # 105 x 148 mm — vertical
     c_pdf = canvas.Canvas(buf, pagesize=A6)
 
-    # Paleta premium: navy profundo + dorado. Aunque cfg permita otros
-    # colores, aquí forzamos una paleta cálida (accent dorado por default
-    # si el operador no lo cambió) para asemejar la estética de tarjeta VIP.
-    bg = cfg.card_bg_color or "#0B1739"
-    bg_dark = "#050B21"
+    # Paleta sobria: navy sólido + único acento dorado. NO gradientes,
+    # NO decoraciones. Todo el peso del diseño lo lleva la tipografía y el
+    # espacio en blanco — inspiración: Amex Platinum, tarjetas de museo.
+    bg = cfg.card_bg_color or "#0A1929"
     text_color = cfg.card_text_color or "#FFFFFF"
-    text_muted = "#B9C4D9"
-    gold = (tier.color_hex if tier and tier.color_hex else (cfg.card_accent_color or "#D4AF37"))
-    gold_light = "#F0D77A"
+    text_muted = "#8B9AAE"
+    gold = (tier.color_hex if tier and tier.color_hex else (cfg.card_accent_color or "#C9A961"))
 
-    # ── Fondo con degradado vertical simulado (bandas horizontales) ────
-    # Efecto "vignette" de tarjeta metálica: más oscuro arriba y abajo.
-    steps = 40
-    for i in range(steps):
-        t = i / (steps - 1)
-        # Curva suave: max claridad al 45% de altura
-        dist = abs(t - 0.45) * 2
-        shade = max(0.0, min(1.0, dist))
-        # Interpolar entre bg (claro) y bg_dark
-        c1 = HexColor(bg)
-        c2 = HexColor(bg_dark)
-        r = c1.red * (1 - shade) + c2.red * shade
-        g = c1.green * (1 - shade) + c2.green * shade
-        b = c1.blue * (1 - shade) + c2.blue * shade
-        c_pdf.setFillColorRGB(r, g, b)
-        band_y = page_h * i / steps
-        c_pdf.rect(0, band_y, page_w, page_h / steps + 0.5, fill=1, stroke=0)
+    # ═══════════════════════════════════════════════════════════════
+    # DISEÑO SOBRIO — inspiración Amex Platinum / tarjetas de museo.
+    # Cero adornos: solo tipografía, espacio en blanco, y UN acento dorado.
+    # Todo el peso visual lo lleva la jerarquía del texto.
+    # ═══════════════════════════════════════════════════════════════
 
-    # ── Marco interior fino dorado (borde de tarjeta premium) ─────────
-    inset = 3 * mm
+    # Fondo sólido navy
+    c_pdf.setFillColor(HexColor(bg))
+    c_pdf.rect(0, 0, page_w, page_h, fill=1, stroke=0)
+
+    # Marco interior extremadamente fino (opcional, muy sutil)
+    inset = 4 * mm
     c_pdf.setStrokeColor(HexColor(gold))
-    c_pdf.setLineWidth(0.5)
+    c_pdf.setLineWidth(0.3)
     c_pdf.rect(inset, inset, page_w - 2 * inset, page_h - 2 * inset, fill=0, stroke=1)
 
-    # ── Cinta / bookmark esquina superior derecha con el logo ─────────
-    ribbon_w = 22 * mm
-    ribbon_h = 32 * mm
-    rx = page_w - ribbon_w - 6 * mm
-    ry_top = page_h - 4 * mm
-    # Sombra sutil de la cinta
-    c_pdf.setFillColorRGB(0, 0, 0, alpha=0.3)
-    p = c_pdf.beginPath()
-    p.moveTo(rx + 0.8 * mm, ry_top + 0.8 * mm)
-    p.lineTo(rx + ribbon_w + 0.8 * mm, ry_top + 0.8 * mm)
-    p.lineTo(rx + ribbon_w + 0.8 * mm, ry_top - ribbon_h + 0.8 * mm)
-    p.lineTo(rx + ribbon_w / 2 + 0.8 * mm, ry_top - ribbon_h + 5 * mm)
-    p.lineTo(rx + 0.8 * mm, ry_top - ribbon_h + 0.8 * mm)
-    p.close()
-    c_pdf.drawPath(p, fill=1, stroke=0)
-    # Cinta dorada
-    c_pdf.setFillColor(HexColor(gold))
-    p = c_pdf.beginPath()
-    p.moveTo(rx, ry_top)
-    p.lineTo(rx + ribbon_w, ry_top)
-    p.lineTo(rx + ribbon_w, ry_top - ribbon_h)
-    p.lineTo(rx + ribbon_w / 2, ry_top - ribbon_h + 5 * mm)
-    p.lineTo(rx, ry_top - ribbon_h)
-    p.close()
-    c_pdf.drawPath(p, fill=1, stroke=0)
-    # Reflejo interno más claro
-    c_pdf.setFillColor(HexColor(gold_light))
-    c_pdf.rect(rx + 1 * mm, ry_top - 3 * mm, ribbon_w - 2 * mm, 1.2 * mm,
-               fill=1, stroke=0)
+    pad = 10 * mm  # margen interno consistente
 
-    # Círculo blanco con el logo dentro de la cinta
-    logo_r = 7 * mm
-    logo_cx = rx + ribbon_w / 2
-    logo_cy = ry_top - 11 * mm
-    c_pdf.setFillColor(white)
-    c_pdf.circle(logo_cx, logo_cy, logo_r, fill=1, stroke=0)
-    c_pdf.setStrokeColor(HexColor(gold))
-    c_pdf.setLineWidth(0.5)
-    c_pdf.circle(logo_cx, logo_cy, logo_r, fill=0, stroke=1)
+    # ── Zona superior: logo pequeño + programa ────────────────────────
     logo_bytes = company.get("logo_bytes")
+    logo_r = 6 * mm
+    logo_cx = pad + logo_r
+    logo_cy = page_h - pad - logo_r
     if logo_bytes:
         try:
-            side = logo_r * 1.5
+            img = ImageReader(BytesIO(logo_bytes))
+            side = logo_r * 2
+            c_pdf.setFillColor(white)
+            c_pdf.circle(logo_cx, logo_cy, logo_r, fill=1, stroke=0)
             c_pdf.drawImage(
-                ImageReader(BytesIO(logo_bytes)),
-                logo_cx - side / 2, logo_cy - side / 2,
+                img, logo_cx - side / 2, logo_cy - side / 2,
                 width=side, height=side,
                 preserveAspectRatio=True, mask="auto",
             )
         except Exception:
             pass
     else:
+        # Sin logo: monograma sobrio con las iniciales de la empresa
+        c_pdf.setStrokeColor(HexColor(gold))
+        c_pdf.setLineWidth(0.5)
+        c_pdf.circle(logo_cx, logo_cy, logo_r, fill=0, stroke=1)
         name0 = (company.get("commercial_name") or company.get("legal_name") or "").strip()
         initials = "".join(w[0] for w in name0.split()[:2]).upper() or "*"
-        c_pdf.setFillColor(HexColor(bg))
-        c_pdf.setFont("Helvetica-Bold", 11)
-        c_pdf.drawCentredString(logo_cx, logo_cy - 3.5, initials)
+        c_pdf.setFillColor(HexColor(gold))
+        c_pdf.setFont("Times-Roman", 10)
+        c_pdf.drawCentredString(logo_cx, logo_cy - 3, initials)
 
-    # ── Corona dorada centrada arriba ─────────────────────────────────
-    crown_cx = (page_w - ribbon_w - 6 * mm) / 2 + 4 * mm
-    crown_cy = page_h - 14 * mm
-    c_pdf.setFillColor(HexColor(gold))
-    # Base horizontal de la corona
-    c_pdf.rect(crown_cx - 7 * mm, crown_cy - 1 * mm, 14 * mm, 1.2 * mm,
-               fill=1, stroke=0)
-    # Tres picos triangulares
-    p = c_pdf.beginPath()
-    for peak_x, peak_h in [(crown_cx - 6 * mm, 3 * mm),
-                             (crown_cx, 5 * mm),
-                             (crown_cx + 6 * mm, 3 * mm)]:
-        p.moveTo(peak_x - 1.5 * mm, crown_cy)
-        p.lineTo(peak_x, crown_cy + peak_h)
-        p.lineTo(peak_x + 1.5 * mm, crown_cy)
-        p.close()
-    c_pdf.drawPath(p, fill=1, stroke=0)
-    # Estrellas de los picos (círculos pequeños)
-    for peak_x, peak_h in [(crown_cx - 6 * mm, 3 * mm),
-                             (crown_cx, 5 * mm),
-                             (crown_cx + 6 * mm, 3 * mm)]:
-        c_pdf.circle(peak_x, crown_cy + peak_h + 0.5 * mm, 0.7 * mm,
-                     fill=1, stroke=0)
-
-    # ── Título dividido en dos líneas: "PROGRAMA DE" / "FIDELIDAD" ─
-    prog_full = (cfg.program_name or "Programa de Fidelidad").strip()
-    parts = prog_full.upper().rsplit(" ", 1)
-    if len(parts) == 2 and len(parts[0]) >= 3 and len(parts[1]) >= 3:
-        line1, line2 = parts
-    else:
-        line1, line2 = "", prog_full.upper()
-
-    center_x = page_w / 2
-    y_title = page_h - 26 * mm
-
-    if line1:
-        c_pdf.setFillColor(HexColor(text_color))
-        c_pdf.setFont("Times-Roman", 13)
-        c_pdf.drawCentredString(center_x, y_title, line1)
-        y_title -= 10 * mm
-
-    # Línea 2 gigante — el nombre real del programa
-    line2_size = 26
-    while stringWidth(line2, "Times-Bold", line2_size) > page_w - 12 * mm and line2_size > 14:
-        line2_size -= 1
-    c_pdf.setFillColor(HexColor(gold))
-    c_pdf.setFont("Times-Bold", line2_size)
-    c_pdf.drawCentredString(center_x, y_title, line2)
-    y_title -= 6 * mm
-
-    # Tagline con separadores decorativos
-    if cfg.tagline:
-        tag = cfg.tagline.upper()
-        c_pdf.setFillColor(HexColor(text_muted))
-        c_pdf.setFont("Helvetica", 8)
-        tag_w = stringWidth(tag, "Helvetica", 8)
-        c_pdf.drawCentredString(center_x, y_title, tag)
-        # Líneas laterales con diamante centrado
-        line_w = 15 * mm
-        c_pdf.setStrokeColor(HexColor(gold))
-        c_pdf.setLineWidth(0.4)
-        c_pdf.line(center_x - tag_w / 2 - 3 * mm - line_w, y_title + 1.5,
-                   center_x - tag_w / 2 - 3 * mm, y_title + 1.5)
-        c_pdf.line(center_x + tag_w / 2 + 3 * mm, y_title + 1.5,
-                   center_x + tag_w / 2 + 3 * mm + line_w, y_title + 1.5)
-
-    # Diamante decorativo debajo del tagline
-    y_title -= 4 * mm
-    c_pdf.setFillColor(HexColor(gold))
-    p = c_pdf.beginPath()
-    p.moveTo(center_x, y_title + 1.2 * mm)
-    p.lineTo(center_x + 1.2 * mm, y_title)
-    p.lineTo(center_x, y_title - 1.2 * mm)
-    p.lineTo(center_x - 1.2 * mm, y_title)
-    p.close()
-    c_pdf.drawPath(p, fill=1, stroke=0)
-
-    # ── TITULAR con líneas decorativas a los lados ─────────────────
-    # Layout vertical planificado: título 0-42mm desde arriba, TITULAR
-    # 45-63mm, badge 65-92mm, banner 100mm, perks 110mm, footer 118-145mm.
-    y = page_h - 52 * mm
-    c_pdf.setFillColor(HexColor(text_muted))
-    c_pdf.setFont("Helvetica", 8)
-    label = "TITULAR"
-    label_w = stringWidth(label, "Helvetica", 8)
-    c_pdf.drawCentredString(center_x, y, label)
-    c_pdf.setStrokeColor(HexColor(gold))
-    c_pdf.setLineWidth(0.3)
-    c_pdf.line(center_x - label_w / 2 - 3 * mm - 10 * mm, y + 1.5,
-               center_x - label_w / 2 - 3 * mm, y + 1.5)
-    c_pdf.line(center_x + label_w / 2 + 3 * mm, y + 1.5,
-               center_x + label_w / 2 + 3 * mm + 10 * mm, y + 1.5)
-
-    # Nombre grande
-    name_txt = (customer.name or "").upper()
-    name_size = 15
-    while stringWidth(name_txt, "Helvetica-Bold", name_size) > page_w - 16 * mm and name_size > 10:
-        name_size -= 0.5
+    # Nombre de la empresa a la derecha del logo (small caps)
+    company_name = (company.get("commercial_name") or company.get("legal_name") or "").upper()
+    text_x = pad + 2 * logo_r + 4 * mm
     c_pdf.setFillColor(HexColor(text_color))
-    c_pdf.setFont("Helvetica-Bold", name_size)
-    c_pdf.drawCentredString(center_x, y - 7 * mm, name_txt)
-
-    # Cliente desde YEAR con líneas decorativas
-    if customer.loyalty_since:
-        cd = f"CLIENTE DESDE {customer.loyalty_since.year}"
-        c_pdf.setFillColor(HexColor(text_muted))
-        c_pdf.setFont("Helvetica", 7.5)
-        cd_w = stringWidth(cd, "Helvetica", 7.5)
-        c_pdf.drawCentredString(center_x, y - 13 * mm, cd)
-        c_pdf.setStrokeColor(HexColor(gold))
-        c_pdf.setLineWidth(0.3)
-        c_pdf.line(center_x - cd_w / 2 - 2 * mm - 6 * mm, y - 12.5 * mm,
-                   center_x - cd_w / 2 - 2 * mm, y - 12.5 * mm)
-        c_pdf.line(center_x + cd_w / 2 + 2 * mm, y - 12.5 * mm,
-                   center_x + cd_w / 2 + 2 * mm + 6 * mm, y - 12.5 * mm)
-
-    # ── Badge central con rayos radiales acotados + anillo dorado ─
-    badge_cy = page_h - 84 * mm
-    badge_r = 13 * mm
-    if tier and tier.discount_pct > 0:
-        # Rayos MUY cortos (solo 4mm) — evitan cruzar por encima del banner
-        # y del nombre del titular. Sirven como ornamento discreto.
-        ray_inner = badge_r + 1.5 * mm
-        ray_outer = badge_r + 4.5 * mm
-        c_pdf.setStrokeColor(HexColor(gold))
-        c_pdf.setLineWidth(0.25)
-        for angle_deg in range(0, 360, 15):
-            a = radians(angle_deg)
-            x1 = center_x + cos(a) * ray_inner
-            y1 = badge_cy + sin(a) * ray_inner
-            x2 = center_x + cos(a) * ray_outer
-            y2 = badge_cy + sin(a) * ray_outer
-            c_pdf.line(x1, y1, x2, y2)
-
-        # Anillo exterior dorado
-        c_pdf.setFillColor(HexColor(gold))
-        c_pdf.circle(center_x, badge_cy, badge_r, fill=1, stroke=0)
-        c_pdf.setFillColor(HexColor(gold_light))
-        c_pdf.circle(center_x, badge_cy, badge_r - 0.8 * mm, fill=1, stroke=0)
-        c_pdf.setFillColor(HexColor(gold))
-        c_pdf.circle(center_x, badge_cy, badge_r - 1.6 * mm, fill=1, stroke=0)
-        c_pdf.setFillColor(HexColor(bg_dark))
-        c_pdf.circle(center_x, badge_cy, badge_r - 3 * mm, fill=1, stroke=0)
-
-        pct_txt = f"{int(tier.discount_pct)}%"
-        c_pdf.setFillColor(HexColor(gold))
-        c_pdf.setFont("Times-Bold", 20)
-        c_pdf.drawCentredString(center_x, badge_cy - 1, pct_txt)
-        c_pdf.setFont("Helvetica-Bold", 6.5)
-        c_pdf.setFillColor(HexColor(gold_light))
-        c_pdf.drawCentredString(center_x, badge_cy - 6 * mm, "DESCUENTO")
-
-    # ── Banner ribbon con nombre del tier ─────────────────────────
-    banner_y = page_h - 106 * mm
-    banner_h = 8 * mm
-    banner_w = 62 * mm
-    bx = center_x - banner_w / 2
-
-    # Colas triangulares laterales (más oscuras para profundidad)
-    c_pdf.setFillColor(HexColor(bg_dark))
-    p = c_pdf.beginPath()
-    p.moveTo(bx, banner_y + banner_h / 2)
-    p.lineTo(bx - 4 * mm, banner_y + banner_h / 2 - 2 * mm)
-    p.lineTo(bx - 4 * mm, banner_y - banner_h / 2 - 2 * mm)
-    p.lineTo(bx, banner_y - banner_h / 2)
-    p.close()
-    c_pdf.drawPath(p, fill=1, stroke=0)
-    p = c_pdf.beginPath()
-    p.moveTo(bx + banner_w, banner_y + banner_h / 2)
-    p.lineTo(bx + banner_w + 4 * mm, banner_y + banner_h / 2 - 2 * mm)
-    p.lineTo(bx + banner_w + 4 * mm, banner_y - banner_h / 2 - 2 * mm)
-    p.lineTo(bx + banner_w, banner_y - banner_h / 2)
-    p.close()
-    c_pdf.drawPath(p, fill=1, stroke=0)
-
-    # Cinta principal con degradado sutil (dos capas)
-    c_pdf.setFillColor(HexColor(gold))
-    c_pdf.rect(bx, banner_y - banner_h / 2, banner_w, banner_h,
-               fill=1, stroke=0)
-    # Reflejo horizontal claro
-    c_pdf.setFillColor(HexColor(gold_light))
-    c_pdf.rect(bx, banner_y + banner_h / 2 - 1.5 * mm, banner_w, 0.8 * mm,
-               fill=1, stroke=0)
-    # Borde inferior más oscuro
-    c_pdf.setFillColorRGB(0, 0, 0, alpha=0.15)
-    c_pdf.rect(bx, banner_y - banner_h / 2, banner_w, 1.2 * mm,
-               fill=1, stroke=0)
-
-    # Texto del tier en la cinta
-    tier_name = (tier.name if tier else "SIN NIVEL").upper()
-    tier_size = 14
-    while stringWidth(tier_name, "Times-Bold", tier_size) > banner_w - 8 * mm and tier_size > 9:
-        tier_size -= 0.5
-    c_pdf.setFillColor(HexColor(bg_dark))
-    c_pdf.setFont("Times-Bold", tier_size)
-    c_pdf.drawCentredString(center_x, banner_y - 1.5, tier_name)
-
-    # ── Beneficios (perks) con separador — arriba del footer ─────
-    perks_y = banner_y - 7 * mm
-    if tier and (tier.perks or "").strip():
-        perks = (tier.perks or "").strip().upper()
-        if len(perks) > 50:
-            perks = perks[:47] + "..."
-        # Auto-fit
-        p_size = 8
-        while stringWidth(perks, "Helvetica", p_size) > page_w - 18 * mm and p_size > 6:
-            p_size -= 0.5
-        c_pdf.setFillColor(HexColor(gold_light))
-        c_pdf.setFont("Helvetica-Oblique", p_size)
-        c_pdf.drawCentredString(center_x, perks_y, perks)
-
-    # ── Bloque inferior: código + vigencia (izq) | QR (der) ───────
-    footer_h = 26 * mm  # altura reservada
-    footer_top = 7 * mm + footer_h  # coord y del top del footer = 33mm
-    left_w = 55 * mm
-    c_pdf.setStrokeColor(HexColor(gold))
-    c_pdf.setLineWidth(0.4)
-    c_pdf.roundRect(8 * mm, 7 * mm, left_w, footer_h, 2 * mm,
-                    fill=0, stroke=1)
-    # Alias para no romper el resto del código que usa footer_y
-    footer_y = footer_top
-
+    c_pdf.setFont("Helvetica-Bold", 8)
+    c_pdf.drawString(text_x, logo_cy + 2 * mm, company_name[:32])
+    # Programa (small caps, muy delgado) — separado 4mm abajo para no chocar
     c_pdf.setFillColor(HexColor(text_muted))
     c_pdf.setFont("Helvetica", 6.5)
-    c_pdf.drawString(12 * mm, footer_y - 2.5 * mm, "CÓDIGO")
+    prog_txt = (cfg.program_name or "Programa de Fidelidad").upper()
+    c_pdf.drawString(text_x, logo_cy - 3 * mm, prog_txt[:36])
+
+    # ── Único acento decorativo: línea horizontal fina dorada ────────
+    accent_y = page_h - 30 * mm
+    c_pdf.setStrokeColor(HexColor(gold))
+    c_pdf.setLineWidth(0.6)
+    c_pdf.line(pad, accent_y, pad + 20 * mm, accent_y)
+
+    # ── Nombre del titular en tipografía grande serif ────────────────
+    name_txt = customer.name or ""
+    # Auto-fit
+    max_name_w = page_w - 2 * pad
+    name_size = 22
+    while stringWidth(name_txt.upper(), "Times-Roman", name_size) > max_name_w and name_size > 12:
+        name_size -= 0.5
     c_pdf.setFillColor(HexColor(text_color))
-    c_pdf.setFont("Courier-Bold", 11)
-    c_pdf.drawString(12 * mm, footer_y - 7 * mm, customer.loyalty_code)
+    c_pdf.setFont("Times-Roman", name_size)
+    c_pdf.drawString(pad, accent_y - 12 * mm, name_txt.upper())
+
+    # ── Tier + descuento en una sola línea sobria ────────────────────
+    tier_line_y = accent_y - 22 * mm
+    if tier:
+        c_pdf.setFillColor(HexColor(gold))
+        c_pdf.setFont("Helvetica-Bold", 9)
+        left_txt = tier.name.upper()
+        c_pdf.drawString(pad, tier_line_y, left_txt)
+        # Guión separador
+        left_w = stringWidth(left_txt, "Helvetica-Bold", 9)
+        c_pdf.setFillColor(HexColor(text_muted))
+        c_pdf.drawString(pad + left_w + 2 * mm, tier_line_y, "·")
+        # Descuento
+        c_pdf.setFillColor(HexColor(text_color))
+        c_pdf.setFont("Helvetica", 9)
+        c_pdf.drawString(pad + left_w + 5 * mm, tier_line_y,
+                          f"{int(tier.discount_pct)}% de descuento en cada compra")
+
+    if customer.loyalty_since:
+        c_pdf.setFillColor(HexColor(text_muted))
+        c_pdf.setFont("Times-Italic", 8.5)
+        c_pdf.drawString(pad, tier_line_y - 5.5 * mm,
+                          f"Miembro desde {customer.loyalty_since.year}")
+
+    # ── Descuento gigante como elemento visual principal ─────────────
+    # Alineado a la derecha. Es el "hero" del diseño.
+    if tier and tier.discount_pct > 0:
+        pct_txt = f"{int(tier.discount_pct)}"
+        num_size = 56
+        c_pdf.setFont("Times-Bold", num_size)
+        pct_w = stringWidth(pct_txt, "Times-Bold", num_size)
+        # % ancho para reservarlo a la derecha
+        pct_char_size = 24
+        pct_char_w = stringWidth("%", "Times-Bold", pct_char_size)
+        num_y = page_h * 0.35   # baseline del número grande
+        num_x = page_w - pad - pct_w - pct_char_w - 2 * mm
+
+        c_pdf.setFillColor(HexColor(gold))
+        c_pdf.drawString(num_x, num_y, pct_txt)
+        # "%" alineado con la parte superior del número (altura de mayúscula
+        # aprox = fontSize * 0.7 pt ≈ num_size * 0.247 mm)
+        pct_top_offset = num_size * 0.72 * 0.353  # cap height en mm
+        c_pdf.setFont("Times-Bold", pct_char_size)
+        c_pdf.drawString(num_x + pct_w + 1 * mm,
+                          num_y + pct_top_offset - pct_char_size * 0.72 * 0.353,
+                          "%")
+        # "OFF" pequeño en la línea base del número, a la derecha
+        c_pdf.setFillColor(HexColor(text_muted))
+        c_pdf.setFont("Helvetica-Bold", 8)
+        c_pdf.drawString(num_x + pct_w + 1 * mm, num_y, "OFF")
+
+    # ── Perks (una sola línea sobria, itálica pequeña) ───────────────
+    if tier and (tier.perks or "").strip():
+        perks = (tier.perks or "").strip()
+        if len(perks) > 55:
+            perks = perks[:52] + "..."
+        c_pdf.setFillColor(HexColor(text_muted))
+        c_pdf.setFont("Times-Italic", 8)
+        c_pdf.drawString(pad, 60 * mm, perks)
+
+    # ── Bloque inferior: código + vigencia (izq) | QR (der) ──────────
+    # Sin borde alrededor. Solo texto limpio.
+    footer_baseline = 22 * mm
+    c_pdf.setFillColor(HexColor(text_muted))
+    c_pdf.setFont("Helvetica", 6.5)
+    c_pdf.drawString(pad, footer_baseline + 12 * mm, "CÓDIGO")
+    c_pdf.setFillColor(HexColor(text_color))
+    c_pdf.setFont("Courier", 11)
+    c_pdf.drawString(pad, footer_baseline + 7 * mm, customer.loyalty_code)
 
     if customer.loyalty_expires_at:
         c_pdf.setFillColor(HexColor(text_muted))
         c_pdf.setFont("Helvetica", 6.5)
-        c_pdf.drawString(12 * mm, footer_y - 12 * mm, "VIGENCIA")
+        c_pdf.drawString(pad, footer_baseline, "VIGENTE HASTA")
         c_pdf.setFillColor(HexColor(text_color))
-        c_pdf.setFont("Helvetica-Bold", 10)
-        c_pdf.drawString(12 * mm, footer_y - 16.5 * mm,
-                         customer.loyalty_expires_at.strftime("%d / %m / %Y"))
+        c_pdf.setFont("Helvetica", 9)
+        c_pdf.drawString(pad, footer_baseline - 5 * mm,
+                          customer.loyalty_expires_at.strftime("%d.%m.%Y"))
 
-    # QR con marco dorado redondeado
+    # QR: sin marco decorativo, solo fondo blanco necesario para escaneo
     try:
         import qrcode
         qr = qrcode.QRCode(version=1, box_size=3, border=1)
@@ -790,31 +621,17 @@ async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company:
         img_buf = BytesIO()
         qr_img_pil.save(img_buf, format="PNG")
         img_buf.seek(0)
-        qr_size = 21 * mm
-        qr_x = page_w - qr_size - 8 * mm
-        qr_y = 9 * mm
-        # Marco dorado con relleno blanco
-        c_pdf.setFillColor(HexColor(gold))
-        c_pdf.roundRect(qr_x - 1.5 * mm, qr_y - 1.5 * mm,
-                        qr_size + 3 * mm, qr_size + 3 * mm,
-                        2 * mm, fill=1, stroke=0)
+        qr_size = 22 * mm
+        qr_x = page_w - qr_size - pad
+        qr_y = footer_baseline - 6 * mm
         c_pdf.setFillColor(white)
-        c_pdf.roundRect(qr_x - 0.5 * mm, qr_y - 0.5 * mm,
-                        qr_size + 1 * mm, qr_size + 1 * mm,
-                        1.5 * mm, fill=1, stroke=0)
+        c_pdf.rect(qr_x - 1 * mm, qr_y - 1 * mm,
+                    qr_size + 2 * mm, qr_size + 2 * mm,
+                    fill=1, stroke=0)
         c_pdf.drawImage(ImageReader(img_buf), qr_x, qr_y,
-                        width=qr_size, height=qr_size, mask="auto")
+                          width=qr_size, height=qr_size, mask="auto")
     except Exception:
-        c_pdf.setFillColor(HexColor(text_color))
-        c_pdf.setFont("Courier-Bold", 9)
-        c_pdf.drawRightString(page_w - 8 * mm, footer_y - 10 * mm, customer.loyalty_code)
-
-    # ── Firma emocional al pie (por debajo del marco interior) ────
-    c_pdf.setFillColor(HexColor(gold_light))
-    c_pdf.setFont("Times-Italic", 8)
-    signature = "Gracias por confiar en nosotros"
-    sig_w = stringWidth(signature, "Times-Italic", 8)
-    c_pdf.drawString((page_w - sig_w) / 2, 2 * mm, signature + " ♥")
+        pass
 
     c_pdf.showPage()
     c_pdf.save()
