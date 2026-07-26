@@ -130,20 +130,27 @@ def _serialize_customer_lite(c: Customer, tier: Optional[CustomerTier]) -> dict:
 
 
 async def lookup_customer(db: AsyncSession, query: str) -> Optional[dict]:
-    """Búsqueda flexible para el POS: código de tarjeta > teléfono > email >
-    número de cliente > nombre. Retorna el primer match."""
+    """Búsqueda flexible: id > código de tarjeta > teléfono > email >
+    número de cliente > nombre. Retorna el primer match.
+    Si `query` es numérico también matchea contra `Customer.id` para que la
+    vista 360 pueda cargar los datos de fidelidad usando el id del cliente."""
     q = (query or "").strip()
     if not q:
         return None
 
+    conditions = [
+        Customer.loyalty_code == q,
+        Customer.phone == q,
+        Customer.email == q.lower(),
+        Customer.client_number == q,
+        Customer.name.ilike(f"%{q}%"),
+    ]
+    if q.isdigit():
+        # Precedencia: id exacto > cualquier match textual
+        conditions.insert(0, Customer.id == int(q))
+
     stmt = select(Customer).options(selectinload(Customer.tier)).where(
-        or_(
-            Customer.loyalty_code == q,
-            Customer.phone == q,
-            Customer.email == q.lower(),
-            Customer.client_number == q,
-            Customer.name.ilike(f"%{q}%"),
-        )
+        or_(*conditions)
     ).limit(1)
     c = (await db.execute(stmt)).scalars().first()
     if not c:
