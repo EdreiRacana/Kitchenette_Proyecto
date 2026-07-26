@@ -441,113 +441,195 @@ async def generate_loyalty_card_pdf(db: AsyncSession, customer_id: int, company:
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import A6
     from reportlab.lib.units import mm
+    from reportlab.lib.colors import HexColor, white
     from reportlab.lib.utils import ImageReader
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
 
     buf = BytesIO()
-    page_w, page_h = A6  # 105 x 148 mm
+    page_w, page_h = A6  # 105 x 148 mm — vertical
     c_pdf = canvas.Canvas(buf, pagesize=A6)
 
-    # Fondo con color base del programa
     bg = cfg.card_bg_color or "#0F172A"
     text_color = cfg.card_text_color or "#FFFFFF"
-    accent = (tier.color_hex if tier and tier.color_hex else (cfg.card_accent_color or "#33B2F5"))
+    text_muted = "#94A3B8"
+    accent = (tier.color_hex if tier and tier.color_hex else (cfg.card_accent_color or "#D4AF37"))
 
-    c_pdf.setFillColor(bg)
+    # ── Fondo con "gradient" simulado con franjas ──────────────────
+    # ReportLab no tiene linearGradient nativo cómodo; simulamos con dos capas
+    # (fondo base + banda inferior más oscura para efecto tarjeta metálica).
+    c_pdf.setFillColor(HexColor(bg))
     c_pdf.rect(0, 0, page_w, page_h, fill=1, stroke=0)
+    # Sombra sutil abajo
+    c_pdf.setFillColorRGB(0, 0, 0, alpha=0.25)
+    c_pdf.rect(0, 0, page_w, page_h * 0.28, fill=1, stroke=0)
 
-    # Banda diagonal decorativa color del tier
-    c_pdf.setFillColor(accent)
+    # ── Banda diagonal decorativa color del tier (arriba izquierda) ─
+    c_pdf.setFillColor(HexColor(accent))
     p = c_pdf.beginPath()
     p.moveTo(0, page_h)
-    p.lineTo(page_w * 0.55, page_h)
-    p.lineTo(0, page_h * 0.55)
+    p.lineTo(page_w * 0.48, page_h)
+    p.lineTo(0, page_h * 0.62)
     p.close()
     c_pdf.drawPath(p, fill=1, stroke=0)
 
-    # Título del programa
-    c_pdf.setFillColor(text_color)
-    c_pdf.setFont("Helvetica-Bold", 14)
-    c_pdf.drawString(10 * mm, page_h - 20 * mm, cfg.program_name or "Programa de Fidelidad")
-    if cfg.tagline:
-        c_pdf.setFont("Helvetica", 8)
-        c_pdf.drawString(10 * mm, page_h - 25 * mm, cfg.tagline)
-
-    # Logo (esquina superior derecha)
+    # ── Logo dentro de círculo blanco (funciona con cualquier logo) ─
     logo_bytes = company.get("logo_bytes")
+    logo_r = 11 * mm
+    logo_cx = page_w - logo_r - 8 * mm
+    logo_cy = page_h - logo_r - 8 * mm
+    # Círculo blanco de fondo
+    c_pdf.setFillColor(white)
+    c_pdf.circle(logo_cx, logo_cy, logo_r, fill=1, stroke=0)
     if logo_bytes:
         try:
             img = ImageReader(BytesIO(logo_bytes))
-            logo_h = 14 * mm
-            logo_w = 22 * mm
-            c_pdf.drawImage(img, page_w - logo_w - 8 * mm, page_h - logo_h - 6 * mm,
-                            width=logo_w, height=logo_h,
-                            preserveAspectRatio=True, mask="auto")
+            side = logo_r * 1.55  # cabe cómodamente dentro del círculo
+            c_pdf.drawImage(
+                img, logo_cx - side / 2, logo_cy - side / 2,
+                width=side, height=side,
+                preserveAspectRatio=True, mask="auto",
+            )
         except Exception:
             pass
+    else:
+        # Sin logo → iniciales del negocio
+        name0 = (company.get("commercial_name") or company.get("legal_name") or "").strip()
+        initials = "".join(w[0] for w in name0.split()[:2]).upper() or "•"
+        c_pdf.setFillColor(HexColor(bg))
+        c_pdf.setFont("Helvetica-Bold", 14)
+        c_pdf.drawCentredString(logo_cx, logo_cy - 4, initials)
 
-    # Nombre del titular
-    y = page_h - 55 * mm
-    c_pdf.setFont("Helvetica", 8)
-    c_pdf.setFillColor(text_color)
+    # ── Título del programa (elegante, tipografía serif) ────────────
+    c_pdf.setFillColor(HexColor(text_color))
+    c_pdf.setFont("Times-Bold", 16)
+    c_pdf.drawString(10 * mm, page_h - 18 * mm,
+                     (cfg.program_name or "Programa de Fidelidad").upper())
+    c_pdf.setStrokeColor(HexColor(accent))
+    c_pdf.setLineWidth(0.6)
+    c_pdf.line(10 * mm, page_h - 20 * mm, 45 * mm, page_h - 20 * mm)
+    if cfg.tagline:
+        c_pdf.setFillColor(HexColor(text_color))
+        c_pdf.setFont("Times-Italic", 8.5)
+        c_pdf.drawString(10 * mm, page_h - 25 * mm, cfg.tagline)
+
+    # ── Titular ─────────────────────────────────────────────────────
+    y = page_h - 50 * mm
+    c_pdf.setFillColor(HexColor(text_muted))
+    c_pdf.setFont("Helvetica", 7)
     c_pdf.drawString(10 * mm, y, "TITULAR")
+    c_pdf.setFillColor(HexColor(text_color))
     c_pdf.setFont("Helvetica-Bold", 13)
-    c_pdf.drawString(10 * mm, y - 6 * mm, (customer.name or "").upper()[:32])
+    c_pdf.drawString(10 * mm, y - 6 * mm, (customer.name or "").upper()[:34])
+    if customer.loyalty_since:
+        c_pdf.setFillColor(HexColor(text_muted))
+        c_pdf.setFont("Times-Italic", 7.5)
+        c_pdf.drawString(10 * mm, y - 11 * mm,
+                         f"Cliente desde {customer.loyalty_since.year}")
 
-    # Tier
-    y -= 20 * mm
-    c_pdf.setFont("Helvetica", 8)
+    # ── Nivel + badge circular con % descuento (destacado) ─────────
+    y -= 22 * mm
+    c_pdf.setFillColor(HexColor(text_muted))
+    c_pdf.setFont("Helvetica", 7)
     c_pdf.drawString(10 * mm, y, "NIVEL")
-    c_pdf.setFont("Helvetica-Bold", 12)
-    c_pdf.setFillColor(accent)
-    c_pdf.drawString(10 * mm, y - 6 * mm, (tier.name if tier else "—").upper())
-    if tier:
-        c_pdf.setFillColor(text_color)
-        c_pdf.setFont("Helvetica", 9)
-        c_pdf.drawString(35 * mm, y - 6 * mm, f"Descuento {tier.discount_pct:.0f}%")
 
-    # Código
-    y -= 18 * mm
-    c_pdf.setFont("Helvetica", 8)
-    c_pdf.setFillColor(text_color)
+    tier_name = (tier.name if tier else "").upper()[:22]
+    c_pdf.setFillColor(HexColor(accent))
+    c_pdf.setFont("Times-Bold", 14)
+    c_pdf.drawString(10 * mm, y - 7 * mm, tier_name or "—")
+
+    if tier and tier.discount_pct > 0:
+        # Badge circular con "XX% OFF"
+        badge_r = 13 * mm
+        badge_cx = page_w - badge_r - 10 * mm
+        badge_cy = y - 5 * mm
+        c_pdf.setFillColor(HexColor(accent))
+        c_pdf.circle(badge_cx, badge_cy, badge_r, fill=1, stroke=0)
+        # Borde interior blanco fino
+        c_pdf.setStrokeColor(HexColor(text_color))
+        c_pdf.setLineWidth(0.4)
+        c_pdf.circle(badge_cx, badge_cy, badge_r - 1.2 * mm, fill=0, stroke=1)
+        # Texto del descuento
+        c_pdf.setFillColor(HexColor(bg))
+        c_pdf.setFont("Helvetica-Bold", 15)
+        c_pdf.drawCentredString(badge_cx, badge_cy + 0.5, f"{int(tier.discount_pct)}%")
+        c_pdf.setFont("Helvetica-Bold", 7)
+        c_pdf.drawCentredString(badge_cx, badge_cy - 5.5, "DESCUENTO")
+
+    # Beneficios del tier (mensaje emocional/valor)
+    if tier and (tier.perks or "").strip():
+        c_pdf.setFillColor(HexColor(text_color))
+        c_pdf.setFont("Times-Italic", 8)
+        # Word-wrap simple a 40 caracteres
+        perks = (tier.perks or "").strip()
+        if len(perks) > 42:
+            perks = perks[:39] + "..."
+        c_pdf.drawString(10 * mm, y - 13 * mm, perks)
+
+    # ── Separador ──────────────────────────────────────────────────
+    y -= 22 * mm
+    c_pdf.setStrokeColor(HexColor(accent))
+    c_pdf.setLineWidth(0.3)
+    c_pdf.line(10 * mm, y, page_w - 10 * mm, y)
+
+    # ── Código y vigencia ──────────────────────────────────────────
+    y -= 6 * mm
+    c_pdf.setFillColor(HexColor(text_muted))
+    c_pdf.setFont("Helvetica", 7)
     c_pdf.drawString(10 * mm, y, "CÓDIGO")
-    c_pdf.setFont("Courier-Bold", 12)
-    c_pdf.drawString(10 * mm, y - 6 * mm, customer.loyalty_code)
+    c_pdf.setFillColor(HexColor(text_color))
+    c_pdf.setFont("Courier-Bold", 11)
+    c_pdf.drawString(10 * mm, y - 5.5 * mm, customer.loyalty_code)
 
-    # Vigencia
     if customer.loyalty_expires_at:
-        y -= 14 * mm
-        c_pdf.setFont("Helvetica", 8)
-        c_pdf.drawString(10 * mm, y, "VIGENCIA")
+        c_pdf.setFillColor(HexColor(text_muted))
+        c_pdf.setFont("Helvetica", 7)
+        c_pdf.drawString(page_w / 2 + 2 * mm, y, "VIGENCIA")
+        c_pdf.setFillColor(HexColor(text_color))
         c_pdf.setFont("Helvetica-Bold", 10)
-        c_pdf.drawString(10 * mm, y - 5 * mm,
+        c_pdf.drawString(page_w / 2 + 2 * mm, y - 5.5 * mm,
                          customer.loyalty_expires_at.strftime("%d / %m / %Y"))
 
-    # QR con el código (esquina inferior derecha) — usa qrcode si está
+    # ── QR (esquina inferior derecha) ──────────────────────────────
     try:
         import qrcode
         qr = qrcode.QRCode(version=1, box_size=3, border=1)
         qr.add_data(customer.loyalty_code)
         qr.make(fit=True)
-        img = qr.make_image(fill_color=text_color, back_color=bg)
+        # QR con fondo blanco para máximo contraste y legibilidad
+        qr_img_pil = qr.make_image(fill_color="#000000", back_color="#FFFFFF")
         img_buf = BytesIO()
-        img.save(img_buf, format="PNG")
+        qr_img_pil.save(img_buf, format="PNG")
         img_buf.seek(0)
-        qr_img = ImageReader(img_buf)
-        qr_size = 26 * mm
-        c_pdf.drawImage(qr_img, page_w - qr_size - 8 * mm, 8 * mm,
-                        width=qr_size, height=qr_size, mask="auto")
+        qr_size = 24 * mm
+        # Marco blanco alrededor del QR
+        c_pdf.setFillColor(white)
+        c_pdf.roundRect(
+            page_w - qr_size - 9 * mm, 8 * mm,
+            qr_size + 2 * mm, qr_size + 2 * mm,
+            2 * mm, fill=1, stroke=0,
+        )
+        c_pdf.drawImage(
+            ImageReader(img_buf),
+            page_w - qr_size - 8 * mm, 9 * mm,
+            width=qr_size, height=qr_size, mask="auto",
+        )
     except Exception:
-        # Si qrcode no está instalado, dibujar solo el código en grande
-        c_pdf.setFont("Courier-Bold", 10)
+        c_pdf.setFillColor(HexColor(text_color))
+        c_pdf.setFont("Courier-Bold", 9)
         c_pdf.drawRightString(page_w - 8 * mm, 12 * mm, customer.loyalty_code)
 
-    # Pie con la empresa
-    c_pdf.setFont("Helvetica", 7)
-    c_pdf.setFillColor(text_color)
-    c_pdf.drawString(10 * mm, 6 * mm,
-                     (company.get("commercial_name") or company.get("legal_name") or "")[:40])
+    # ── Pie: firma emocional + empresa ─────────────────────────────
+    c_pdf.setFillColor(HexColor(accent))
+    c_pdf.setFont("Times-Italic", 8)
+    c_pdf.drawString(10 * mm, 18 * mm, "Gracias por confiar en nosotros")
+
+    c_pdf.setFillColor(HexColor(text_color))
+    c_pdf.setFont("Helvetica-Bold", 7.5)
+    c_pdf.drawString(10 * mm, 12 * mm,
+                     (company.get("commercial_name") or company.get("legal_name") or "")[:36])
+    if company.get("tax_id"):
+        c_pdf.setFillColor(HexColor(text_muted))
+        c_pdf.setFont("Helvetica", 6.5)
+        c_pdf.drawString(10 * mm, 8 * mm, f"RFC: {company['tax_id']}")
 
     c_pdf.showPage()
     c_pdf.save()
