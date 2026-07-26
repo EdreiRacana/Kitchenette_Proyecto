@@ -1,8 +1,8 @@
 // Professional customer form — sectioned modal.
 // Reuses the Sales module's themed UI primitives and theme adapter.
 
-import { useEffect, useMemo, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import { Component, useEffect, useMemo, useState } from "react";
+import type { CSSProperties, ErrorInfo, ReactNode } from "react";
 import { Plus, Trash2, Building2, FileText, CreditCard, Users, Phone, MapPin, Upload, Paperclip, Award } from "lucide-react";
 import { loyaltyApi, type LoyaltyTier } from "./loyaltyApi";
 import type { Tokens, Translator } from "../sales/theme";
@@ -260,7 +260,9 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
         </Field>
       </Section>
 
-      <LoyaltySection tk={tk} d={d} set={set} editing={editing} onLocalSet={setD} />
+      <LoyaltyBoundary tk={tk}>
+        <LoyaltySection tk={tk} d={d} set={set} editing={editing} onLocalSet={setD} />
+      </LoyaltyBoundary>
 
       <Section tk={tk} icon={<Users size={16} />} title={tr("cust_sec_assign", "Asignaciones")}>
         <Field tk={tk} label={tr("cust_sales_agent", "Ventas")} hint={tr("cust_agent_hint", "Personal del sistema o agente externo (escríbelo)")}>
@@ -605,4 +607,34 @@ function LoyaltySection({ tk, d, set, editing, onLocalSet }: {
       )}
     </Section>
   );
+}
+
+
+// ── Error boundary para que un crash de LoyaltySection no tumbe el form ──
+// React no captura errores en subcomponentes con try/catch, se necesita un
+// class component con componentDidCatch. Si LoyaltySection lanza al montar
+// o renderizar, mostramos un mensaje discreto y el resto del form sigue.
+class LoyaltyBoundary extends Component<
+  { tk: Tokens; children: ReactNode },
+  { hasError: boolean; msg?: string }
+> {
+  state = { hasError: false, msg: undefined as string | undefined };
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, msg: String(error?.message || error) };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[LoyaltySection crash]", error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      const tk = this.props.tk;
+      return (
+        <div style={{ marginBottom: 22, padding: 14, border: `1px dashed ${tk.warn}`, background: tk.warn + "12", borderRadius: 10, color: tk.warn, fontSize: 12.5 }}>
+          Sección "Programa de fidelidad" no disponible en este momento. El resto de los datos del cliente sí puedes editarlos.
+          {this.state.msg && <div style={{ marginTop: 6, fontSize: 11, opacity: 0.8, fontFamily: "monospace" }}>{this.state.msg}</div>}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
