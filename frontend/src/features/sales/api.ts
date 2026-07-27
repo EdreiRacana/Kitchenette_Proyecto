@@ -4,7 +4,7 @@ import api from "../../services/api";
 import type {
   Order, Paginated, SalesStats, TrendPoint, TopCustomer, TopProduct,
   SalesBySeller, SalesByChannel, OrderFilters, OrderDraft, CustomerLite, AverageReturns, CustomerForecast,
-  CustomerPnLReport, CustomerReturn, SellerLite,
+  CustomerPnLReport, CustomerReturn, SellerLite, PipelineStatsResponse,
 } from "./types";
 
 export interface VariantOption {
@@ -174,13 +174,19 @@ export const salesApi = {
     const { data } = await api.post<Order>(`/sales/${id}/cancel`, {});
     return data;
   },
-  async stats(params?: { start?: string; end?: string; status?: string; payment_method?: string; q?: string }): Promise<SalesStats> {
+  async stats(params?: { start?: string; end?: string; status?: string; payment_method?: string; q?: string;
+                         relationship_type?: string; client_type?: string; channel?: string }): Promise<SalesStats> {
     const { data } = await api.get<SalesStats>(`/sales/stats`, { params });
     return data;
   },
-  async trend(granularity = "day", days = 30, end?: string, customerId?: number | null): Promise<TrendPoint[]> {
+  async pipelineStats(params?: { start?: string; end?: string; relationship_type?: string; client_type?: string; channel?: string }): Promise<PipelineStatsResponse> {
+    const { data } = await api.get<PipelineStatsResponse>(`/sales/pipeline-stats`, { params });
+    return data;
+  },
+  async trend(granularity = "day", days = 30, end?: string, customerId?: number | null,
+              extra?: { relationship_type?: string; client_type?: string; channel?: string }): Promise<TrendPoint[]> {
     const { data } = await api.get<TrendPoint[]>(`/sales/analytics/trend`, {
-      params: { granularity, days, end, customer_id: customerId ?? undefined },
+      params: { granularity, days, end, customer_id: customerId ?? undefined, ...extra },
     });
     return data;
   },

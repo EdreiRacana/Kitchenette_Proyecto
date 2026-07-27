@@ -47,6 +47,8 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
   useEffect(() => { if (initialQuery) setQ(initialQuery); }, [initialQuery]);
   const [sucursal, setSucursal] = useState("");
   const [clientType, setClientType] = useState("");
+  const [relationshipType, setRelationshipType] = useState("");
+  const [marketplacePlatform, setMarketplacePlatform] = useState("");
   const [priceList, setPriceList] = useState("");
   const [tierFilter, setTierFilter] = useState("");
   const [birthdayMonth, setBirthdayMonth] = useState("");
@@ -63,11 +65,13 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
 
   const filters = useMemo<CustomerFilters>(() => ({
     q: q || undefined, sucursal: sucursal || undefined, client_type: clientType || undefined,
+    relationship_type: relationshipType || undefined,
+    marketplace_platform: marketplacePlatform || undefined,
     price_list: priceList || undefined, sort_by: sortBy, sort_dir: sortDir,
     tier_id: tierFilter ? Number(tierFilter) : undefined,
     birthday_month: birthdayMonth ? Number(birthdayMonth) : undefined,
     skip: page * PAGE, limit: PAGE,
-  }), [q, sucursal, clientType, priceList, tierFilter, birthdayMonth, sortBy, sortDir, page]);
+  }), [q, sucursal, clientType, relationshipType, marketplacePlatform, priceList, tierFilter, birthdayMonth, sortBy, sortDir, page]);
 
   const loadList = useCallback(async () => {
     setListLoading(true);
@@ -89,7 +93,7 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
 
   useEffect(() => { loadList(); }, [loadList]);
   useEffect(() => { loadStats(); }, [loadStats]);
-  useEffect(() => { setPage(0); }, [q, sucursal, clientType, priceList, tierFilter, birthdayMonth]);
+  useEffect(() => { setPage(0); }, [q, sucursal, clientType, relationshipType, marketplacePlatform, priceList, tierFilter, birthdayMonth]);
 
   const openNew = () => { setEditing(null); setFormOpen(true); };
   const openEdit = async (c: Customer) => {
@@ -134,6 +138,52 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
       <Skel tk={tk} w={38} h={38} r={10} /><div style={{ flex: 1 }}><Skel tk={tk} w="60%" h={10} style={{ marginBottom: 8 }} /><Skel tk={tk} w="42%" h={16} /></div>
     </div>
   );
+
+  // Panel de mezcla clickeable: cada bucket es un chip que actúa como filtro.
+  // Clic en el mismo chip lo desmarca (setState a "").
+  const MixCard = ({ tk: mk, title, buckets, active, onSelect }: {
+    tk: Tokens; title: string;
+    buckets: { label: string; count: number }[];
+    active: string; onSelect: (v: string) => void;
+  }) => {
+    const total = buckets.reduce((a, b) => a + b.count, 0);
+    if (buckets.length === 0) {
+      return (
+        <div style={{ background: mk.panel, border: `1px solid ${mk.border}`, borderRadius: 12, padding: 14 }}>
+          <div style={{ fontSize: 11, color: mk.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>{title}</div>
+          <div style={{ fontSize: 12, color: mk.textLo, opacity: 0.6 }}>Sin datos</div>
+        </div>
+      );
+    }
+    return (
+      <div style={{ background: mk.panel, border: `1px solid ${mk.border}`, borderRadius: 12, padding: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: mk.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{title}</div>
+          <div style={{ fontSize: 11, color: mk.textLo }}>{total} total</div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {buckets.slice(0, 8).map((b) => {
+            const isActive = active === b.label;
+            const pct = total ? Math.round((b.count / total) * 100) : 0;
+            return (
+              <button key={b.label} onClick={() => onSelect(b.label)} type="button"
+                style={{
+                  padding: "6px 10px", borderRadius: 999, cursor: "pointer",
+                  border: `1px solid ${isActive ? mk.accent : mk.border}`,
+                  background: isActive ? mk.accent + "22" : mk.inputBg,
+                  color: isActive ? mk.accent : mk.textMid,
+                  fontSize: 12, fontWeight: 600,
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}>
+                <span>{b.label}</span>
+                <span style={{ fontSize: 11, opacity: 0.75 }}>{b.count} · {pct}%</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   const SortHead = ({ col, label }: { col: string; label: string }) => (
     <th onClick={() => toggleSort(col)} style={{ ...thBase, cursor: "pointer", userSelect: "none" }}>
@@ -194,6 +244,24 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
         )}
       </div>
 
+      {/* Desgloses (mezcla real de la cartera). Clic → filtra la lista. */}
+      {stats && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+          <MixCard tk={tk} title="Por relación comercial" buckets={stats.by_relationship_type ?? []}
+            active={relationshipType}
+            onSelect={(v) => setRelationshipType(v === relationshipType ? "" : v)} />
+          <MixCard tk={tk} title="Por tipo (crédito/contado)" buckets={stats.by_client_type ?? []}
+            active={clientType}
+            onSelect={(v) => setClientType(v === clientType ? "" : v)} />
+          <MixCard tk={tk} title="Por origen (sucursal)" buckets={stats.by_origin ?? []}
+            active={sucursal}
+            onSelect={(v) => setSucursal(v === sucursal ? "" : v)} />
+          <MixCard tk={tk} title="Por marketplace" buckets={stats.by_marketplace_platform ?? []}
+            active={marketplacePlatform}
+            onSelect={(v) => setMarketplacePlatform(v === marketplacePlatform ? "" : v)} />
+        </div>
+      )}
+
       {/* Toolbar */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 220 }}>
@@ -208,6 +276,23 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
         <select value={clientType} onChange={(e) => setClientType(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
           <option value="">{tr("cust_f_type", "Tipo")}</option>
           {CLIENT_TYPES.map((v) => <option key={v} value={v}>{v}</option>)}
+        </select>
+        <select value={relationshipType} onChange={(e) => setRelationshipType(e.target.value)} style={{ ...inputBase, cursor: "pointer" }} title="Relación comercial">
+          <option value="">Relación</option>
+          <option value="retail">Retail / Mostrador</option>
+          <option value="wholesale">Mayorista B2B</option>
+          <option value="marketplace">Marketplace</option>
+          <option value="consignment">Consignación</option>
+          <option value="chain_physical">Cadena tienda física</option>
+        </select>
+        <select value={marketplacePlatform} onChange={(e) => setMarketplacePlatform(e.target.value)} style={{ ...inputBase, cursor: "pointer" }} title="Plataforma marketplace">
+          <option value="">Plataforma</option>
+          <option value="shopify">Shopify</option>
+          <option value="amazon">Amazon</option>
+          <option value="mercadolibre">Mercado Libre</option>
+          <option value="liverpool">Liverpool</option>
+          <option value="coppel">Coppel</option>
+          <option value="walmart">Walmart</option>
         </select>
         <select value={priceList} onChange={(e) => setPriceList(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
           <option value="">{tr("cust_f_pricelist", "Lista")}</option>

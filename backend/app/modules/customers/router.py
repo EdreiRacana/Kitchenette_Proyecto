@@ -32,6 +32,8 @@ async def search_customers(
     q: Optional[str] = None,
     sucursal: Optional[str] = None,
     client_type: Optional[str] = None,
+    relationship_type: Optional[str] = None,
+    marketplace_platform: Optional[str] = None,
     price_list: Optional[str] = None,
     is_active: Optional[bool] = None,
     tier_id: Optional[int] = None,
@@ -41,6 +43,7 @@ async def search_customers(
 ):
     items, total = await service.search_customers(
         db, skip=skip, limit=limit, q=q, sucursal=sucursal, client_type=client_type,
+        relationship_type=relationship_type, marketplace_platform=marketplace_platform,
         price_list=price_list, is_active=is_active,
         tier_id=tier_id, birthday_month=birthday_month,
         sort_by=sort_by, sort_dir=sort_dir,

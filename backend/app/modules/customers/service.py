@@ -124,6 +124,8 @@ async def search_customers(
     q: Optional[str] = None,
     sucursal: Optional[str] = None,
     client_type: Optional[str] = None,
+    relationship_type: Optional[str] = None,
+    marketplace_platform: Optional[str] = None,
     price_list: Optional[str] = None,
     is_active: Optional[bool] = None,
     tier_id: Optional[int] = None,
@@ -152,6 +154,10 @@ async def search_customers(
         conds.append(models.Customer.sucursal == sucursal)
     if client_type:
         conds.append(models.Customer.client_type == client_type)
+    if relationship_type:
+        conds.append(models.Customer.relationship_type == relationship_type)
+    if marketplace_platform:
+        conds.append(models.Customer.marketplace_platform == marketplace_platform)
     if price_list:
         conds.append(models.Customer.price_list == price_list)
     if is_active is not None:
@@ -181,6 +187,9 @@ async def search_customers(
 
 
 async def get_stats(db: AsyncSession) -> dict:
+    """KPIs de clientes: totales + desgloses por client_type, relationship_type,
+    marketplace_platform y sucursal de origen. La UI usa esto en el header
+    del CRM Clientes para saber la mezcla real de la cartera."""
     C = models.Customer
     row = (await db.execute(select(
         func.count(C.id).label("total"),
@@ -188,8 +197,31 @@ async def get_stats(db: AsyncSession) -> dict:
         func.count(case((C.client_type == "Crédito", 1))).label("credit"),
         func.coalesce(func.sum(C.credit_amount), 0.0).label("credit_exposure"),
     ))).one()
-    return dict(total=row.total or 0, active=row.active or 0,
-                credit=row.credit or 0, credit_exposure=round(row.credit_exposure or 0.0, 2))
+
+    async def _bucket(col):
+        rows = (await db.execute(select(col, func.count(C.id))
+                                 .where(C.is_active == True)  # noqa: E712
+                                 .group_by(col))).all()
+        # Normaliza nulls a "(sin definir)" para que la UI muestre el hueco
+        # sin que el usuario tenga que interpretarlo.
+        return [{"label": r[0] or "(sin definir)", "count": int(r[1] or 0)}
+                for r in rows if (r[1] or 0) > 0]
+
+    by_client_type = await _bucket(C.client_type)
+    by_relationship = await _bucket(C.relationship_type)
+    by_platform = await _bucket(C.marketplace_platform)
+    by_origin = await _bucket(C.sucursal)
+
+    return dict(
+        total=row.total or 0,
+        active=row.active or 0,
+        credit=row.credit or 0,
+        credit_exposure=round(row.credit_exposure or 0.0, 2),
+        by_client_type=by_client_type,
+        by_relationship_type=by_relationship,
+        by_marketplace_platform=by_platform,
+        by_origin=by_origin,
+    )
 
 
 # ── Documents (unchanged behavior) ──────────────────────────────────────────────

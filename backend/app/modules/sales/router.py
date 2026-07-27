@@ -25,11 +25,32 @@ CurrentUser = Annotated[User, Depends(deps.get_current_active_user)]
 
 @router.get("/stats", response_model=schemas.SalesStats)
 async def stats(db: DB, current_user: CurrentUser, start: Optional[datetime] = None, end: Optional[datetime] = None,
-                status: Optional[str] = None, payment_method: Optional[str] = None, q: Optional[str] = None):
+                status: Optional[str] = None, payment_method: Optional[str] = None, q: Optional[str] = None,
+                relationship_type: Optional[str] = None, client_type: Optional[str] = None,
+                channel: Optional[str] = None):
     from app.modules.inventory.branch_scope import visible_warehouse_ids
     ids = await visible_warehouse_ids(db, current_user)
     return await service.get_stats(db, start=start, end=end, branch_warehouse_ids=ids,
-                                   status=status, payment_method=payment_method, q=q)
+                                   status=status, payment_method=payment_method, q=q,
+                                   relationship_type=relationship_type, client_type=client_type,
+                                   channel=channel)
+
+
+@router.get("/pipeline-stats", response_model=schemas.PipelineStats)
+async def pipeline_stats(db: DB, current_user: CurrentUser,
+                         start: Optional[datetime] = None, end: Optional[datetime] = None,
+                         relationship_type: Optional[str] = None,
+                         client_type: Optional[str] = None,
+                         channel: Optional[str] = None):
+    """Universo COMPLETO por (kind, status). El Pipeline lo usa para no depender
+    de la página 1 de la Lista."""
+    from app.modules.inventory.branch_scope import visible_warehouse_ids
+    ids = await visible_warehouse_ids(db, current_user)
+    return await service.get_pipeline_stats(
+        db, branch_warehouse_ids=ids,
+        relationship_type=relationship_type, client_type=client_type,
+        channel=channel, date_from=start, date_to=end,
+    )
 
 
 async def _branch_ids(db, user):
@@ -42,9 +63,15 @@ async def trend(db: DB, current_user: CurrentUser,
                 granularity: str = Query("day", pattern="^(day|week|month)$"),
                 days: int = Query(30, ge=1, le=365),
                 end: Optional[datetime] = None,
-                customer_id: Optional[int] = None):
+                customer_id: Optional[int] = None,
+                relationship_type: Optional[str] = None,
+                client_type: Optional[str] = None,
+                channel: Optional[str] = None):
     ids = await _branch_ids(db, current_user)
-    return await service.sales_trend(db, granularity=granularity, days=days, end=end, customer_id=customer_id, branch_warehouse_ids=ids)
+    return await service.sales_trend(db, granularity=granularity, days=days, end=end,
+                                     customer_id=customer_id, branch_warehouse_ids=ids,
+                                     relationship_type=relationship_type,
+                                     client_type=client_type, channel=channel)
 
 
 @router.get("/sellers", response_model=List[schemas.SellerLite])
@@ -198,6 +225,7 @@ async def read_orders(
     q: Optional[str] = None,
     date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
     sort_by: str = Query("created_at"), sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
+    relationship_type: Optional[str] = None, client_type: Optional[str] = None,
 ):
     from app.modules.inventory.branch_scope import visible_warehouse_ids
     ids = await visible_warehouse_ids(db, current_user)
@@ -206,6 +234,7 @@ async def read_orders(
         seller_id=seller_id, payment_method=payment_method, channel=channel, q=q,
         date_from=date_from, date_to=date_to, sort_by=sort_by, sort_dir=sort_dir,
         branch_warehouse_ids=ids,
+        relationship_type=relationship_type, client_type=client_type,
     )
     return schemas.PaginatedOrders(items=items, total=total, skip=skip, limit=limit)
 
