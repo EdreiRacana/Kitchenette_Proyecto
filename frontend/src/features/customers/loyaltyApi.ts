@@ -84,6 +84,7 @@ export interface QuickRegisterPayload {
   rfc?: string;
   accepts_marketing: boolean;
   privacy_accepted: boolean;
+  pos_terminal_name?: string;
 }
 
 export const loyaltyApi = {

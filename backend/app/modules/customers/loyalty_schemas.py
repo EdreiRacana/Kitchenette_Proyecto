@@ -90,6 +90,9 @@ class QuickRegisterPayload(BaseModel):
     rfc: Optional[str] = None
     accepts_marketing: bool = False
     privacy_accepted: bool = False
+    # Origen del alta: nombre de la terminal POS donde se registró (ej. "Punto
+    # de Venta Satélite"). Se guarda en Customer.sucursal para trazabilidad.
+    pos_terminal_name: Optional[str] = None
 
 
 class SetTierPayload(BaseModel):
