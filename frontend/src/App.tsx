@@ -515,8 +515,9 @@ function Gauge({ t, value, target, max = 60 }) {
   const pt = (f: number, rad = r): [number, number] => [cx + rad * Math.cos(ang(f)), cy - rad * Math.sin(ang(f))];
   const arc = (f0: number, f1: number, rad = r) => {
     const [x0, y0] = pt(f0, rad), [x1, y1] = pt(f1, rad);
-    const large = (f1 - f0) > 0.5 ? 1 : 0;
-    return `M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${rad} ${rad} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`;
+    // Semicírculo: el arco siempre cubre ≤180°, así que large-arc-flag debe ser 0.
+    // Con 1 SVG dibujaba el arco por el lado LARGO (>180°) cuando f>0.5.
+    return `M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${rad} ${rad} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`;
   };
   const f = Math.max(0, Math.min(1, value / max));
   const tf = Math.max(0, Math.min(1, target / max));

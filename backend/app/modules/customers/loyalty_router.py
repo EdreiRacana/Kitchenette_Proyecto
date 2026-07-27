@@ -116,6 +116,10 @@ async def quick_register(data: loyalty_schemas.QuickRegisterPayload, db: DB, cur
         existing = (await db.execute(stmt)).scalars().first()
 
     now = datetime.now(timezone.utc)
+    # Origen del alta: si el POS mandó su terminal, la guardamos como sucursal
+    # (nunca la razón social — un walk-in del POS no es una razón social).
+    origin_branch = (data.pos_terminal_name or "").strip() or None
+
     if existing:
         c = existing
         # Actualizar solo campos que llegan no-vacíos y son distintos
@@ -128,6 +132,10 @@ async def quick_register(data: loyalty_schemas.QuickRegisterPayload, db: DB, cur
         if data.accepts_marketing: c.accepts_marketing = True
         if data.privacy_accepted and not c.privacy_accepted_at:
             c.privacy_accepted_at = now
+        # Solo sellamos la sucursal la primera vez — no pisamos una asignación
+        # posterior hecha manualmente en el CRM.
+        if origin_branch and not c.sucursal:
+            c.sucursal = origin_branch
     else:
         c = Customer(
             name=data.name,
@@ -142,6 +150,7 @@ async def quick_register(data: loyalty_schemas.QuickRegisterPayload, db: DB, cur
             privacy_accepted_at=now if data.privacy_accepted else None,
             client_type="Contado",
             relationship_type="retail",
+            sucursal=origin_branch,
         )
         db.add(c)
         await db.flush()

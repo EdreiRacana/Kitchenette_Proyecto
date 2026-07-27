@@ -723,6 +723,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
       {tabletMode && (
         <CustomerRegistrationMode t={t} cart={cart} total={total} brandName={brandName} logoSrc={logoSrc}
           loyaltyCfg={loyaltyCfg}
+          terminalName={session.terminal_name}
           onExit={() => setTabletMode(false)}
           onIdentified={(c) => { setCustomer(c); setTabletMode(false); }} />
       )}
@@ -2322,9 +2323,10 @@ function RecountModal({ t, sessionId, initialDenominations, expectedCash, onClos
 // Salida del cajero: 5 toques en el logo dentro de 3 segundos.
 // ═══════════════════════════════════════════════════════════════════════════
 
-function CustomerRegistrationMode({ t, cart, total, brandName, logoSrc, loyaltyCfg, onExit, onIdentified }: {
+function CustomerRegistrationMode({ t, cart, total, brandName, logoSrc, loyaltyCfg, terminalName, onExit, onIdentified }: {
   t: any; cart: CartItem[]; total: number; brandName: string; logoSrc: string | null;
   loyaltyCfg: LoyaltyProgramConfig | null;
+  terminalName?: string;
   onExit: () => void;
   onIdentified: (c: LoyaltyCustomerLite) => void;
 }) {
@@ -2390,6 +2392,7 @@ function CustomerRegistrationMode({ t, cart, total, brandName, logoSrc, loyaltyC
         rfc: wantsInvoice && rfc ? rfc.toUpperCase() : undefined,
         accepts_marketing: acceptsMarketing,
         privacy_accepted: privacyOk,
+        pos_terminal_name: terminalName || undefined,
       };
       const c = await loyaltyApi.quickRegister(payload);
       setThanks(c);
@@ -2636,12 +2639,32 @@ function CustomerRegistrationMode({ t, cart, total, brandName, logoSrc, loyaltyC
           border: `2px solid ${privacyOk ? t.good : t.warn}`,
           background: (privacyOk ? t.good : t.warn) + "10" }}>
           <input type="checkbox" checked={privacyOk} onChange={e => setPrivacyOk(e.target.checked)} style={{ marginTop: 4 }} />
-          <span style={{ fontSize: 13.5, color: t.textMid }}>
+          <span style={{ fontSize: 13.5, color: t.textMid, lineHeight: 1.55 }}>
             <b style={{ color: t.textHi }}>Aviso de privacidad</b><br />
-            {loyaltyCfg?.privacy_policy_text ||
-              `Autorizo a ${brandName} tratar mis datos personales con las finalidades del programa de fidelidad (identificación en tienda, envío de promociones y felicitación de cumpleaños). Puedo revocar mi consentimiento en cualquier momento contactando a la empresa.`}
+            {loyaltyCfg?.privacy_policy_text || (
+              <>
+                <b>{brandName}</b>, con domicilio en México, es responsable del tratamiento
+                de tus datos personales conforme a la <b>Ley Federal de Protección de Datos
+                Personales en Posesión de los Particulares (LFPDPPP)</b> y su Reglamento.
+                <br /><br />
+                <b>Datos que recabamos:</b> nombre, correo, teléfono, fecha de nacimiento,
+                sexo, código postal y, en su caso, RFC.
+                <br />
+                <b>Finalidades primarias:</b> identificarte en tienda, aplicar beneficios del
+                programa de fidelidad y, si lo solicitas, emitir tu comprobante fiscal (CFDI).
+                <br />
+                <b>Finalidades secundarias</b> (requieren tu consentimiento): envío de
+                promociones, encuestas y felicitación de cumpleaños.
+                <br /><br />
+                No transferimos tus datos a terceros sin tu consentimiento, salvo las
+                excepciones previstas en el artículo 37 de la LFPDPPP. Puedes ejercer tus
+                derechos <b>ARCO</b> (Acceso, Rectificación, Cancelación y Oposición), revocar
+                tu consentimiento o limitar el uso de tus datos contactando a {brandName}
+                {loyaltyCfg?.privacy_policy_url ? " o consultando el aviso integral." : "."}
+              </>
+            )}
             {loyaltyCfg?.privacy_policy_url && (
-              <> {" "}<a href={loyaltyCfg.privacy_policy_url} target="_blank" rel="noreferrer" style={{ color: t.nova, textDecoration: "underline" }}>Leer aviso completo</a>.</>
+              <> {" "}<a href={loyaltyCfg.privacy_policy_url} target="_blank" rel="noreferrer" style={{ color: t.nova, textDecoration: "underline" }}>Leer aviso integral</a>.</>
             )}
           </span>
         </label>
