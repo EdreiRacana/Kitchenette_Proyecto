@@ -4,7 +4,7 @@ import api from "../../services/api";
 import type {
   Order, Paginated, SalesStats, TrendPoint, TopCustomer, TopProduct,
   SalesBySeller, SalesByChannel, OrderFilters, OrderDraft, CustomerLite, AverageReturns, CustomerForecast,
-  CustomerPnLReport, CustomerReturn, SellerLite,
+  CustomerPnLReport, CustomerReturn, SellerLite, PipelineStatsResponse,
 } from "./types";
 
 export interface VariantOption {
@@ -174,13 +174,19 @@ export const salesApi = {
     const { data } = await api.post<Order>(`/sales/${id}/cancel`, {});
     return data;
   },
-  async stats(params?: { start?: string; end?: string; status?: string; payment_method?: string; q?: string }): Promise<SalesStats> {
+  async stats(params?: { start?: string; end?: string; status?: string; payment_method?: string; q?: string;
+                         relationship_type?: string; client_type?: string; channel?: string }): Promise<SalesStats> {
     const { data } = await api.get<SalesStats>(`/sales/stats`, { params });
     return data;
   },
-  async trend(granularity = "day", days = 30, end?: string, customerId?: number | null): Promise<TrendPoint[]> {
+  async pipelineStats(params?: { start?: string; end?: string; relationship_type?: string; client_type?: string; channel?: string }): Promise<PipelineStatsResponse> {
+    const { data } = await api.get<PipelineStatsResponse>(`/sales/pipeline-stats`, { params });
+    return data;
+  },
+  async trend(granularity = "day", days = 30, end?: string, customerId?: number | null,
+              extra?: { relationship_type?: string; client_type?: string; channel?: string }): Promise<TrendPoint[]> {
     const { data } = await api.get<TrendPoint[]>(`/sales/analytics/trend`, {
-      params: { granularity, days, end, customer_id: customerId ?? undefined },
+      params: { granularity, days, end, customer_id: customerId ?? undefined, ...extra },
     });
     return data;
   },
@@ -256,6 +262,28 @@ export const salesApi = {
   },
   async cancelReturn(id: number): Promise<CustomerReturn> {
     const { data } = await api.post<CustomerReturn>(`/sales/returns/${id}/cancel`);
+    return data;
+  },
+  async returnable(orderId: number): Promise<{
+    order_id: number; folio: string | null; customer_id: number | null;
+    customer_name: string | null; warehouse_id: number | null;
+    items: { variant_id: number | null; product_name: string | null; sku: string | null;
+             unit_price: number; sold_quantity: number; returned_quantity: number;
+             returnable_quantity: number }[];
+  }> {
+    const { data } = await api.get(`/sales/returns/returnable/${orderId}`);
+    return data;
+  },
+  async createReturn(payload: {
+    order_id?: number; customer_id?: number; warehouse_id?: number;
+    reason?: string;
+    settlement_type: "refund" | "store_credit" | "none";
+    notes?: string;
+    items: { variant_id?: number | null; product_name?: string | null; sku?: string | null;
+             quantity: number; unit_price: number;
+             condition?: "sellable" | "damaged" }[];
+  }): Promise<any> {
+    const { data } = await api.post(`/sales/returns`, payload);
     return data;
   },
 

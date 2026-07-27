@@ -371,6 +371,17 @@ class HeatmapCell(BaseModel):
     total: float
 
 
+class PipelineBucket(BaseModel):
+    status: str
+    kind: str          # "order" | "quote"
+    count: int
+    total_amount: float
+
+
+class PipelineStats(BaseModel):
+    buckets: List[PipelineBucket]
+
+
 class Customer360(BaseModel):
     customer: CustomerLite
     total_spent: float

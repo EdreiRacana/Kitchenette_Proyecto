@@ -193,12 +193,25 @@ export interface OrderFilters {
   seller_id?: number;
   payment_method?: string;
   channel?: string;
+  relationship_type?: string;
+  client_type?: string;
   date_from?: string;
   date_to?: string;
   sort_by?: string;
   sort_dir?: "asc" | "desc";
   skip?: number;
   limit?: number;
+}
+
+export interface PipelineBucket {
+  status: string;
+  kind: string;
+  count: number;
+  total_amount: number;
+}
+
+export interface PipelineStatsResponse {
+  buckets: PipelineBucket[];
 }
 
 export interface OrderItemDraft {

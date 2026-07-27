@@ -348,6 +348,8 @@ async def get_orders(
     sort_by: str = "created_at",
     sort_dir: str = "desc",
     branch_warehouse_ids: Optional[List[int]] = None,
+    relationship_type: Optional[str] = None,
+    client_type: Optional[str] = None,
 ) -> Tuple[List[models.Order], int]:
     from app.modules.customers import models as cust
 
@@ -379,17 +381,23 @@ async def get_orders(
     if date_to:
         conds.append(models.Order.created_at <= date_to)
 
-    needs_join = bool(q)
+    # Filtros por perfil del cliente. Requieren JOIN con customers.
+    needs_join = bool(q) or bool(relationship_type) or bool(client_type)
     if needs_join:
         base = base.outerjoin(cust.Customer, models.Order.customer_id == cust.Customer.id)
         count_q = count_q.outerjoin(cust.Customer, models.Order.customer_id == cust.Customer.id)
-        like = f"%{q}%"
-        conds.append(or_(
-            models.Order.folio.ilike(like),
-            models.Order.notes.ilike(like),
-            models.Order.status.ilike(like),
-            cust.Customer.name.ilike(like),
-        ))
+        if q:
+            like = f"%{q}%"
+            conds.append(or_(
+                models.Order.folio.ilike(like),
+                models.Order.notes.ilike(like),
+                models.Order.status.ilike(like),
+                cust.Customer.name.ilike(like),
+            ))
+        if relationship_type:
+            conds.append(cust.Customer.relationship_type == relationship_type)
+        if client_type:
+            conds.append(cust.Customer.client_type == client_type)
 
     for c in conds:
         base = base.where(c)
@@ -650,10 +658,59 @@ async def cancel_order(db: AsyncSession, order_id: int, user_id: Optional[int] =
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
+async def get_pipeline_stats(db: AsyncSession, *,
+                              branch_warehouse_ids: Optional[List[int]] = None,
+                              relationship_type: Optional[str] = None,
+                              client_type: Optional[str] = None,
+                              channel: Optional[str] = None,
+                              date_from: Optional[datetime] = None,
+                              date_to: Optional[datetime] = None) -> schemas.PipelineStats:
+    """Conteos + montos por (kind, status) sobre TODO el universo filtrado.
+
+    Independiente de la paginación de la Lista: el Pipeline usa esto para
+    mostrar TODOS los borradores/pendientes/parciales, no solo los de la
+    página 1.
+    """
+    from app.modules.customers.models import Customer
+    O = models.Order
+    conds = [O.status != "cancelled"]
+    joined = False
+    stmt = select(O.kind, O.status,
+                  func.count(O.id).label("cnt"),
+                  func.coalesce(func.sum(O.total_amount), 0.0).label("tot"))
+    if branch_warehouse_ids is not None:
+        conds.append(or_(O.warehouse_id.in_(branch_warehouse_ids), O.warehouse_id.is_(None)))
+    if channel:
+        conds.append(O.channel == channel)
+    if date_from:
+        conds.append(O.created_at >= date_from)
+    if date_to:
+        conds.append(O.created_at <= date_to)
+    if relationship_type or client_type:
+        stmt = stmt.outerjoin(Customer, O.customer_id == Customer.id)
+        joined = True
+        if relationship_type:
+            conds.append(Customer.relationship_type == relationship_type)
+        if client_type:
+            conds.append(Customer.client_type == client_type)
+    stmt = stmt.where(*conds).group_by(O.kind, O.status)
+    rows = (await db.execute(stmt)).all()
+    return schemas.PipelineStats(buckets=[
+        schemas.PipelineBucket(status=r.status or "unknown",
+                               kind=r.kind or "order",
+                               count=int(r.cnt or 0),
+                               total_amount=_r(r.tot))
+        for r in rows
+    ])
+
+
 async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Optional[datetime] = None,
                     branch_warehouse_ids: Optional[List[int]] = None,
                     status: Optional[str] = None, payment_method: Optional[str] = None,
-                    q: Optional[str] = None) -> schemas.SalesStats:
+                    q: Optional[str] = None,
+                    relationship_type: Optional[str] = None,
+                    client_type: Optional[str] = None,
+                    channel: Optional[str] = None) -> schemas.SalesStats:
     """All KPIs in a SINGLE aggregated query (no rows pulled into Python).
 
     Uses portable conditional aggregation (CASE inside COUNT/SUM) so it runs the
@@ -685,6 +742,12 @@ async def get_stats(db: AsyncSession, start: Optional[datetime] = None, end: Opt
             func.lower(func.coalesce(O.folio, "")).like(like),
             O.customer.has(func.lower(func.coalesce(Customer.name, "")).like(like)),
         ))
+    if channel:
+        date_filters.append(O.channel == channel)
+    if relationship_type:
+        date_filters.append(O.customer.has(Customer.relationship_type == relationship_type))
+    if client_type:
+        date_filters.append(O.customer.has(Customer.client_type == client_type))
 
     stmt = select(
         func.count(case((active, 1))).label("orders_count"),
@@ -714,7 +777,9 @@ def _branch_cond(O, branch_warehouse_ids):
 
 
 async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30, end: Optional[datetime] = None,
-                       customer_id: Optional[int] = None, branch_warehouse_ids: Optional[List[int]] = None) -> List[schemas.TrendPoint]:
+                       customer_id: Optional[int] = None, branch_warehouse_ids: Optional[List[int]] = None,
+                       relationship_type: Optional[str] = None, client_type: Optional[str] = None,
+                       channel: Optional[str] = None) -> List[schemas.TrendPoint]:
     """Aggregate revenue by day in SQL, bounded to the relevant date window so we
     never scan the whole history; then roll days up to week/month in Python.
 
@@ -739,6 +804,19 @@ async def sales_trend(db: AsyncSession, granularity: str = "day", days: int = 30
     if branch_warehouse_ids is not None:
         sales_conds.append(_branch_cond(O, branch_warehouse_ids))
         returns_conds.append(_branch_cond(O, branch_warehouse_ids))
+    if channel:
+        sales_conds.append(O.channel == channel)
+        returns_conds.append(O.channel == channel)
+    if relationship_type or client_type:
+        from app.modules.customers.models import Customer as _C
+        rel_expr = None
+        if relationship_type:
+            rel_expr = _C.relationship_type == relationship_type
+        if client_type:
+            ct_expr = _C.client_type == client_type
+            rel_expr = ct_expr if rel_expr is None else and_(rel_expr, ct_expr)
+        sales_conds.append(O.customer.has(rel_expr))
+        returns_conds.append(O.customer.has(rel_expr))
 
     stmt = (
         select(

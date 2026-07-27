@@ -161,17 +161,20 @@ async def lookup_customer(db: AsyncSession, query: str) -> Optional[dict]:
 # ── Historial y recomendaciones ────────────────────────────────────────────
 
 async def get_customer_history(db: AsyncSession, customer_id: int, limit: int = 20) -> List[dict]:
-    """Últimas N compras del cliente con detalle mínimo (folio, fecha, total, items)."""
+    """Últimas N interacciones del cliente: compras y devoluciones intercaladas
+    por fecha. Al cajero le sirve para verlo en el panel del POS cuando lo
+    identifica, y a Ventas/CRM para mostrar el historial completo."""
     stmt = (
         select(Order).where(Order.customer_id == customer_id, Order.kind == "order")
         .order_by(Order.created_at.desc()).limit(limit)
         .options(selectinload(Order.items))
     )
     orders = (await db.execute(stmt)).scalars().all()
-    out = []
+    out: List[dict] = []
     for o in orders:
         out.append({
             "id": o.id, "folio": o.folio,
+            "kind": "sale",
             "created_at": o.created_at.isoformat() if o.created_at else None,
             "total_amount": o.total_amount or 0.0,
             "status": o.status,
@@ -186,7 +189,39 @@ async def get_customer_history(db: AsyncSession, customer_id: int, limit: int = 
                 for it in (o.items or [])
             ],
         })
-    return out
+
+    # Devoluciones del cliente: se mezclan en la misma lista para dar contexto
+    # (el cajero necesita saber si el cliente devolvió algo, no solo qué compró).
+    from app.modules.sales.models import CustomerReturn, CustomerReturnItem
+    rstmt = (
+        select(CustomerReturn).where(CustomerReturn.customer_id == customer_id)
+        .order_by(CustomerReturn.created_at.desc()).limit(limit)
+        .options(selectinload(CustomerReturn.items))
+    )
+    rets = (await db.execute(rstmt)).scalars().all()
+    for r in rets:
+        out.append({
+            "id": r.id, "folio": r.folio,
+            "kind": "return",
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "total_amount": -(r.refund_amount or 0.0),   # negativo para diferenciar visualmente
+            "status": r.status,
+            "settlement_type": r.settlement_type,
+            "reason": r.reason,
+            "items": [
+                {
+                    "variant_id": it.variant_id,
+                    "product_name": it.product_name,
+                    "sku": it.sku,
+                    "quantity": -(it.quantity or 0),
+                    "unit_price": it.unit_price,
+                }
+                for it in (r.items or [])
+            ],
+        })
+
+    out.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+    return out[:limit]
 
 
 async def get_customer_recommendations(db: AsyncSession, customer_id: int, limit: int = 5) -> List[dict]:

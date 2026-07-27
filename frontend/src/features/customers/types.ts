@@ -104,6 +104,8 @@ export interface CustomerFilters {
   q?: string;
   sucursal?: string;
   client_type?: string;
+  relationship_type?: string;
+  marketplace_platform?: string;
   price_list?: string;
   is_active?: boolean;
   tier_id?: number;
@@ -121,11 +123,20 @@ export interface PaginatedCustomers {
   limit: number;
 }
 
+export interface CustomerStatsBucket {
+  label: string;
+  count: number;
+}
+
 export interface CustomerStats {
   total: number;
   active: number;
   credit: number;
   credit_exposure: number;
+  by_client_type?: CustomerStatsBucket[];
+  by_relationship_type?: CustomerStatsBucket[];
+  by_marketplace_platform?: CustomerStatsBucket[];
+  by_origin?: CustomerStatsBucket[];
 }
 
 export interface CustomerDocument {

@@ -53,9 +53,12 @@ export interface LoyaltyCustomerLite {
 export interface LoyaltyHistoryItem {
   id: number;
   folio?: string | null;
+  kind?: "sale" | "return";
   created_at?: string | null;
   total_amount: number;
   status: string;
+  settlement_type?: string;
+  reason?: string | null;
   items: {
     variant_id?: number | null;
     product_name?: string | null;

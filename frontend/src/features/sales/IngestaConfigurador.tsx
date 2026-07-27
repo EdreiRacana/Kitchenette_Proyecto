@@ -106,6 +106,28 @@ const GRUPOS_CAMPOS = [
       { value: "entradas_resurtido", label: "Entradas / resurtido",        hint: "Unidades recibidas en el periodo" },
     ],
   },
+  {
+    grupo: "Cliente (para carga manual / consolidada)",
+    campos: [
+      { value: "cliente_nombre",     label: "Nombre del cliente",          hint: "Cliente al que se le vendió — para carga manual sin marketplace" },
+      { value: "cliente_rfc",        label: "RFC del cliente",             hint: "Para conciliar contra el catálogo de clientes" },
+      { value: "cliente_tipo",       label: "Tipo (Contado / Crédito)",    hint: "Tipo comercial del cliente" },
+      { value: "tipo_relacion",      label: "Relación (retail / mayoreo)", hint: "retail | wholesale | marketplace | consignment | chain_physical" },
+      { value: "sucursal",           label: "Sucursal / origen",           hint: "En qué sucursal se realizó la venta" },
+    ],
+  },
+  {
+    grupo: "Impuestos y ajustes por partida",
+    campos: [
+      { value: "iva_pct",            label: "IVA %",                       hint: "Tasa de IVA de la partida (0, 8, 16)" },
+      { value: "iva_importe",        label: "IVA — importe",               hint: "Monto de IVA de la partida (en dinero)" },
+      { value: "descuento_pct",      label: "Descuento %",                 hint: "% de descuento aplicado a la partida" },
+      { value: "descuento_importe",  label: "Descuento — importe",         hint: "Monto del descuento (en dinero)" },
+      { value: "moneda",             label: "Moneda",                      hint: "MXN, USD, EUR — si no se manda, se asume MXN" },
+      { value: "tipo_cambio",        label: "Tipo de cambio",              hint: "Si la moneda no es MXN, cuánto vale 1 unidad en MXN" },
+      { value: "notas_partida",      label: "Notas / observaciones",       hint: "Texto libre a nivel partida" },
+    ],
+  },
 ];
 
 const TODOS_LOS_CAMPOS = [
@@ -213,6 +235,72 @@ export default function IngestaConfigurador({ tk, fuenteId, onGuardado, onCancel
     outline: "none", width: "100%", boxSizing: "border-box",
   };
   const label12: React.CSSProperties = { fontSize: 12, color: tk.textLo, display: "block", marginBottom: 4 };
+
+  // Genera un CSV con TODAS las columnas canónicas soportadas + una fila de
+  // ejemplo. El usuario lo descarga, llena con sus datos y lo vuelve a subir
+  // — así queda auto-mapeado sin adivinanzas. UTF-8 con BOM para que Excel
+  // lo abra sin romper acentos.
+  const downloadTemplate = () => {
+    const cols = GRUPOS_CAMPOS.flatMap(g => g.campos);
+    const headers = cols.map(c => c.label);
+    const sample = cols.map(c => {
+      switch (c.value) {
+        case "upc":                  return "7501234567890";
+        case "sku_cliente":          return "SKU-INT-001";
+        case "sku_cadena":           return "LIV-98765";
+        case "descripcion":          return "Producto ejemplo 500ml";
+        case "variante":             return "Rojo · M";
+        case "subcategoria":         return "Bebidas";
+        case "id_pedido":            return "PED-2026-0001";
+        case "estatus_pedido":       return "entregado";
+        case "canal_venta":          return "pos";
+        case "metodo_envio":         return "recoge en tienda";
+        case "fecha_venta":          return "2026-07-27";
+        case "fecha_inicio":         return "2026-07-20";
+        case "fecha_fin":            return "2026-07-26";
+        case "fecha_entrega":        return "2026-07-28";
+        case "cantidad_vendida":     return "1";
+        case "precio_unitario":      return "199.00";
+        case "venta_bruta":          return "199.00";
+        case "venta_neta":           return "170.00";
+        case "comision":             return "20.00";
+        case "costo_logistico":      return "9.00";
+        case "devoluciones_importe": return "0.00";
+        case "devoluciones_unidades":return "0";
+        case "sra":                  return "0.00";
+        case "bonificaciones":       return "0.00";
+        case "descuentos":           return "0.00";
+        case "inv_inicial":          return "10";
+        case "inv_final":            return "9";
+        case "entradas_resurtido":   return "0";
+        case "cliente_nombre":       return "Juan Pérez";
+        case "cliente_rfc":          return "PEXJ850101ABC";
+        case "cliente_tipo":         return "Contado";
+        case "tipo_relacion":        return "retail";
+        case "sucursal":             return "Punto de Venta Satélite";
+        case "iva_pct":              return "16";
+        case "iva_importe":          return "27.45";
+        case "descuento_pct":        return "0";
+        case "descuento_importe":    return "0.00";
+        case "moneda":               return "MXN";
+        case "tipo_cambio":          return "1.00";
+        case "notas_partida":        return "";
+        default:                     return "";
+      }
+    });
+    const csvRow = (arr: string[]) => arr.map(v => {
+      const s = String(v ?? "");
+      return /[,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(",");
+    const csv = "﻿" + csvRow(headers) + "\n" + csvRow(sample) + "\n";
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "plantilla_ventas_sthenova.csv";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   // Subir archivo al backend para leer encabezados reales
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -425,6 +513,21 @@ export default function IngestaConfigurador({ tk, fuenteId, onGuardado, onCancel
                 Solo sube un archivo nuevo si quieres actualizar las columnas detectadas.
               </div>
             )}
+
+            {/* Plantilla vacía descargable — cubre TODOS los campos canónicos
+                para que el usuario sepa exactamente qué columnas se soportan.
+                Genera un CSV para no depender de una lib de xlsx en el navegador
+                (Excel lo abre igual y el importer acepta CSV/XLSX). */}
+            <div style={{ marginBottom: 12, padding: "10px 12px", background: tk.panel2, borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 12, color: tk.textLo, flex: 1, minWidth: 220 }}>
+                ¿No tienes archivo aún? Descarga la plantilla con todos los campos soportados.
+              </div>
+              <button type="button" onClick={() => downloadTemplate()}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: `1px solid ${tk.border}`, background: tk.panel, color: tk.textHi, fontSize: 12.5, cursor: "pointer", fontWeight: 600 }}>
+                <FileSpreadsheet size={13} /> Descargar plantilla (.csv)
+              </button>
+            </div>
+
             <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={onFileChange} style={{ display: "none" }} />
 
             <div onClick={() => !leyendo && fileRef.current?.click()}

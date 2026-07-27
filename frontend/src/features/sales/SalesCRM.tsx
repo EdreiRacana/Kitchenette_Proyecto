@@ -7,14 +7,15 @@ import {
   Search, List, Columns, BarChart3, Plus, Download, DollarSign, Clock,
   TrendingUp, Percent, ChevronRight, ArrowUp, ArrowDown, FileText, Info,
   Upload, Zap, Settings2, CheckCircle, AlertTriangle, FileSpreadsheet, Check, Trash2, ChevronLeft, Pencil,
-  RotateCcw, Filter,
+  RotateCcw, Filter, Plug,
 } from "lucide-react";
+import { MarketplacesPanel } from "./MarketplacesPanel";
 import api, { onServerWaking } from "../../services/api";
 import { useServerRecovery } from "../../hooks/useServerRecovery";
 import IngestaConfigurador from "./IngestaConfigurador";
 import { resolveTheme, makeTr, money, dateShort, statusColors, statusMeta, paymentLabel, ORDER_PIPELINE, PAYMENT_METHODS } from "./theme";
 import type { Tokens } from "./theme";
-import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns, CustomerForecast, CustomerReturn, SellerLite } from "./types";
+import type { Order, OrderDraft, OrderFilters, SalesStats, TrendPoint, TopCustomer, TopProduct, CustomerLite, AverageReturns, CustomerForecast, CustomerReturn, SellerLite, PipelineBucket } from "./types";
 import { salesApi } from "./api";
 import type { VariantOption } from "./api";
 import { Spinner, Badge, Button, EmptyState, Spinkeyframes } from "./ui";
@@ -23,7 +24,7 @@ import { PaymentModal } from "./PaymentModal";
 import { OrderDrawer } from "./OrderDrawer";
 import { Analytics } from "./Analytics";
 
-type ViewMode = "list" | "pipeline" | "analytics" | "ingesta" | "returns";
+type ViewMode = "list" | "pipeline" | "analytics" | "ingesta" | "returns" | "marketplaces";
 const PAGE = 20;
 
 // ── Ingesta API ──────────────────────────────────────────────────────────────
@@ -561,6 +562,13 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const [statsLoading, setStatsLoading] = useState(true);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
+  // Pipeline: totales por (kind,status) SOBRE TODO el universo filtrado.
+  // No usar `orders` (que es solo la página 1 de la Lista) — antes el pipeline
+  // se veía "vacío" en borrador/pendiente/parcial cuando la p1 estaba llena
+  // de pagados. Estos buckets vienen del endpoint /sales/pipeline-stats.
+  const [pipelineBuckets, setPipelineBuckets] = useState<PipelineBucket[]>([]);
+  const [pipelineLoading, setPipelineLoading] = useState(false);
+  const [pipelineOrdersByStatus, setPipelineOrdersByStatus] = useState<Record<string, Order[]>>({});
 
   const [demo, setDemo] = useState(false); // legado: ya nunca se activa (sin datos ficticios)
   const [loadError, setLoadError] = useState(false);
@@ -589,6 +597,9 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const [kind, setKind] = useState("");
   const [status, setStatus] = useState("");
   const [payment, setPayment] = useState("");
+  const [relType, setRelType] = useState("");   // retail | wholesale | marketplace | consignment | chain_physical
+  const [cliType, setCliType] = useState("");   // Contado | Crédito | Empleado | Mostrador …
+  const [channel, setChannel] = useState("");   // POS | shopify | amazon | liverpool | mercadolibre | web …
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [sortBy, setSortBy] = useState("created_at");
@@ -604,9 +615,13 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
 
   const filters = useMemo<OrderFilters>(() => ({
     q: q || undefined, kind: (kind || undefined) as OrderFilters["kind"], status: status || undefined,
-    payment_method: payment || undefined, date_from: from || undefined, date_to: to || undefined,
+    payment_method: payment || undefined,
+    relationship_type: relType || undefined,
+    client_type: cliType || undefined,
+    channel: channel || undefined,
+    date_from: from || undefined, date_to: to || undefined,
     sort_by: sortBy, sort_dir: sortDir, skip: page * PAGE, limit: PAGE,
-  }), [q, kind, status, payment, from, to, sortBy, sortDir, page]);
+  }), [q, kind, status, payment, relType, cliType, channel, from, to, sortBy, sortDir, page]);
 
   const applyDemoFilters = useCallback((all: Order[]): Order[] => {
     let r = [...all];
@@ -683,20 +698,55 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
         start: from || undefined, end: to || undefined,
         status: status || undefined, payment_method: payment || undefined,
         q: q || undefined,
+        relationship_type: relType || undefined,
+        client_type: cliType || undefined,
+        channel: channel || undefined,
       }));
     } catch { } finally { setStatsLoading(false); }
-  }, [from, to, status, payment, q]);
+  }, [from, to, status, payment, q, relType, cliType, channel]);
+
+  const loadPipeline = useCallback(async () => {
+    setPipelineLoading(true);
+    try {
+      const p = await salesApi.pipelineStats({
+        start: from || undefined, end: to || undefined,
+        relationship_type: relType || undefined,
+        client_type: cliType || undefined,
+        channel: channel || undefined,
+      });
+      setPipelineBuckets(p.buckets);
+      // Pedimos hasta 25 tarjetas por columna para no traer miles: si hay más,
+      // la UI dice "+N más" y el usuario abre la Lista con ese filtro.
+      const cols: ("draft" | "pending" | "partial" | "paid")[] = ["draft", "pending", "partial", "paid"];
+      const packs = await Promise.all(cols.map((st) => salesApi.list({
+        status: st, kind: st === "draft" ? undefined : "order", limit: 25,
+        date_from: from || undefined, date_to: to || undefined,
+        relationship_type: relType || undefined,
+        client_type: cliType || undefined,
+        channel: channel || undefined,
+        sort_by: "created_at", sort_dir: "desc",
+      }).then((r) => ({ st, items: r.items }))));
+      const byStatus: Record<string, Order[]> = {};
+      packs.forEach((p) => { byStatus[p.st] = p.items; });
+      setPipelineOrdersByStatus(byStatus);
+    } catch { setPipelineBuckets([]); setPipelineOrdersByStatus({}); }
+    finally { setPipelineLoading(false); }
+  }, [from, to, relType, cliType, channel]);
 
   const loadAnalytics = useCallback(async () => {
     setAnalyticsLoading(true);
     try {
       const [tr1, tc, tp, ar] = await Promise.all([
-        salesApi.trend("day", 30, undefined, analyticsCustomer),
+        salesApi.trend("day", 30, undefined, analyticsCustomer, {
+          relationship_type: relType || undefined,
+          client_type: cliType || undefined,
+          channel: channel || undefined,
+        }),
         salesApi.topCustomers(5), salesApi.topProducts(5), salesApi.returnsAvg(analyticsCustomer),
       ]);
       setTrend(tr1); setTopCustomers(tc); setTopProducts(tp); setAvgReturns(ar); setAnalyticsLoaded(true);
     } catch { } finally { setAnalyticsLoading(false); }
-  }, [analyticsCustomer]);
+  }, [analyticsCustomer, relType, cliType, channel]);
 
   useEffect(() => {
     if (demo || analyticsCustomer == null) { setForecast(null); return; }
@@ -721,6 +771,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
   useEffect(() => { loadStats(); loadCatalogs(); }, [loadStats, loadCatalogs]);
+  useEffect(() => { if (view === "pipeline" && !demo) loadPipeline(); }, [view, demo, loadPipeline]);
   useEffect(() => { if (view === "analytics" && !demo && !analyticsLoaded) loadAnalytics(); }, [view, demo, analyticsLoaded, loadAnalytics]);
   useEffect(() => { if (view === "analytics" && !demo) loadAnalytics(); }, [analyticsCustomer]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (view === "analytics" && demo) refreshDemoAnalytics(demoStore.list, analyticsCustomer); }, [analyticsCustomer, view, demo]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -870,7 +921,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
       )}
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        {view !== "ingesta" && view !== "returns" && (
+        {view !== "ingesta" && view !== "returns" && view !== "marketplaces" && (
           <>
             <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
               <Search size={16} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: tk.textLo }} />
@@ -889,13 +940,40 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
               <option value="">{tr("sales_detail_payment", "Pago")}</option>
               {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
+            <select value={relType} onChange={(e) => setRelType(e.target.value)} style={{ ...inputBase, cursor: "pointer" }} title="Tipo de relación comercial del cliente">
+              <option value="">Relación</option>
+              <option value="retail">Retail / Mostrador</option>
+              <option value="wholesale">Mayorista B2B</option>
+              <option value="marketplace">Marketplace</option>
+              <option value="consignment">Consignación</option>
+              <option value="chain_physical">Cadena tienda física</option>
+            </select>
+            <select value={cliType} onChange={(e) => setCliType(e.target.value)} style={{ ...inputBase, cursor: "pointer" }} title="Tipo comercial (crédito / contado / etc.)">
+              <option value="">Tipo</option>
+              <option value="Contado">Contado</option>
+              <option value="Crédito">Crédito</option>
+              <option value="Distribuidor">Distribuidor</option>
+              <option value="Empleado">Empleado</option>
+            </select>
+            <select value={channel} onChange={(e) => setChannel(e.target.value)} style={{ ...inputBase, cursor: "pointer" }} title="Canal donde se originó la venta">
+              <option value="">Canal</option>
+              <option value="pos">Punto de venta</option>
+              <option value="web">Web propia</option>
+              <option value="shopify">Shopify</option>
+              <option value="amazon">Amazon</option>
+              <option value="mercadolibre">Mercado Libre</option>
+              <option value="liverpool">Liverpool</option>
+              <option value="coppel">Coppel</option>
+              <option value="phone">Teléfono</option>
+              <option value="whatsapp">WhatsApp</option>
+            </select>
             <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={inputBase} />
             <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={inputBase} />
           </>
         )}
 
         <div style={{ display: "flex", gap: 4 }}>
-          {([["list", List, "Lista"], ["pipeline", Columns, "Pipeline"], ["analytics", BarChart3, "Analytics"], ["returns", RotateCcw, "Devoluciones"], ["ingesta", Upload, "Carga de ventas"]] as const).map(([v, Icon, label]) => (
+          {([["list", List, "Lista"], ["pipeline", Columns, "Pipeline"], ["analytics", BarChart3, "Analytics"], ["returns", RotateCcw, "Devoluciones"], ["ingesta", Upload, "Carga de ventas"], ["marketplaces", Plug, "Marketplaces"]] as const).map(([v, Icon, label]) => (
             <button key={v} onClick={() => setView(v)} title={label}
               style={{ ...inputBase, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, background: view === v ? tk.accent : tk.inputBg, color: view === v ? "#06122B" : tk.textMid, borderColor: view === v ? tk.accent : tk.border }}>
               <Icon size={15} /><span style={{ fontSize: 12 }}>{label}</span>
@@ -903,7 +981,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
           ))}
         </div>
 
-        {view !== "ingesta" && view !== "returns" && (
+        {view !== "ingesta" && view !== "returns" && view !== "marketplaces" && (
           <>
             <div style={{ position: "relative" }}>
               <Button tk={tk} variant="ghost" icon={<Download size={16} />} disabled={exporting} onClick={() => setExportMenuOpen((o) => !o)}>
@@ -930,7 +1008,9 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
         )}
       </div>
 
-      {view === "ingesta" ? (
+      {view === "marketplaces" ? (
+        <MarketplacesPanel tk={tk} />
+      ) : view === "ingesta" ? (
         <IngestaModule tk={tk} tr={tr} onVerVentas={() => { setView("list"); refreshData(); }} />
       ) : view === "analytics" ? (
         analyticsLoading && !analyticsLoaded ? (
@@ -943,29 +1023,42 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
       ) : view === "pipeline" ? (
         <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8 }}>
           {ORDER_PIPELINE.map((col) => {
-            const colOrders = orders.filter((o) => o.kind === "order" && o.status === col);
+            // Totales por columna: para "draft" incluimos también las cotizaciones
+            // (COT-*), que operativamente son borradores. Para el resto solo pedidos.
+            const relevantBuckets = pipelineBuckets.filter((b) =>
+              b.status === col && (col === "draft" ? true : b.kind === "order"));
+            const totalCount = relevantBuckets.reduce((a, b) => a + b.count, 0);
+            const totalAmount = relevantBuckets.reduce((a, b) => a + b.total_amount, 0);
+            const colOrders = pipelineOrdersByStatus[col] || [];
+            const overflow = Math.max(0, totalCount - colOrders.length);
             const sc = statusColors(tk, col);
             return (
-              <div key={col} onDragOver={(e) => { e.preventDefault(); setDragCol(col); }} onDrop={() => { if (dragId !== null) { const o = orders.find((x) => x.id === dragId); if (o) changeStatus(o, col); } setDragId(null); setDragCol(null); }}
+              <div key={col} onDragOver={(e) => { e.preventDefault(); setDragCol(col); }} onDrop={() => { if (dragId !== null) { const o = colOrders.find((x) => x.id === dragId) || orders.find((x) => x.id === dragId); if (o) changeStatus(o, col); } setDragId(null); setDragCol(null); }}
                 style={{ flex: "0 0 220px", background: dragCol === col ? sc.bg : tk.panel, border: `2px solid ${dragCol === col ? sc.border : tk.border}`, borderRadius: 10, padding: 10, minHeight: 0, maxHeight: 460, overflowY: "auto", transition: "border .2s, background .2s" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                   <span style={{ fontWeight: 700, color: sc.text, fontSize: 13 }}>{statusMeta(col).label}</span>
-                  <Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{ordersLoading ? "…" : colOrders.length}</Badge>
+                  <Badge tk={tk} bg={sc.bg} color={sc.text} border={sc.border}>{pipelineLoading ? "…" : totalCount}</Badge>
                 </div>
-                <div style={{ fontSize: 11, color: tk.textLo, marginBottom: 8 }}>{ordersLoading ? "" : money(colOrders.reduce((a, b) => a + b.total_amount, 0))}</div>
-                {ordersLoading ? Array.from({ length: 2 }).map((_, i) => (
+                <div style={{ fontSize: 11, color: tk.textLo, marginBottom: 8 }}>{pipelineLoading ? "" : money(totalAmount)}</div>
+                {pipelineLoading ? Array.from({ length: 2 }).map((_, i) => (
                   <div key={i} style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 8, padding: "8px 10px", marginBottom: 6 }}>
                     <Skel tk={tk} w="50%" h={11} style={{ marginBottom: 5 }} /><Skel tk={tk} w="75%" h={10} style={{ marginBottom: 5 }} /><Skel tk={tk} w="40%" h={12} />
                   </div>
                 )) : colOrders.map((o) => (
                   <div key={o.id} draggable onDragStart={() => setDragId(o.id)} onClick={() => openDetail(o)}
                     style={{ background: tk.panel2, border: `1px solid ${tk.border}`, borderRadius: 8, padding: "8px 10px", marginBottom: 6, cursor: "grab", opacity: dragId === o.id ? 0.5 : 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: 12, color: tk.accent, marginBottom: 2 }}>{o.folio}</div>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: tk.accent, marginBottom: 2 }}>{o.folio}{o.kind === "quote" ? " · COT" : ""}</div>
                     <div style={{ fontSize: 11, color: tk.textHi, marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{o.customer?.name ?? tr("sales_no_customer", "Mostrador")}</div>
                     <div style={{ fontWeight: 700, fontSize: 13, color: tk.textHi }}>{money(o.total_amount)}</div>
                   </div>
                 ))}
-                {!ordersLoading && colOrders.length === 0 && <div style={{ textAlign: "center", color: tk.textLo, fontSize: 11, padding: "16px 0", opacity: 0.6 }}>—</div>}
+                {!pipelineLoading && overflow > 0 && (
+                  <button onClick={() => { setStatus(col); setView("list"); setPage(0); }}
+                    style={{ width: "100%", padding: "6px 8px", fontSize: 11, background: "transparent", border: `1px dashed ${tk.border}`, borderRadius: 8, color: tk.textLo, cursor: "pointer", marginTop: 4 }}>
+                    +{overflow} más → ver en Lista
+                  </button>
+                )}
+                {!pipelineLoading && totalCount === 0 && <div style={{ textAlign: "center", color: tk.textLo, fontSize: 11, padding: "16px 0", opacity: 0.6 }}>—</div>}
               </div>
             );
           })}
