@@ -9,13 +9,14 @@ import {
   Lock, Unlock, LogIn, LogOut, Printer, RefreshCw, Package, Download,
   Banknote, CreditCard, ArrowLeftRight, Check, X, AlertTriangle,
   Receipt, User, Clock, ChevronRight, History, Scale, Zap, Sparkles,
-  Grid3x3, Barcode, Tablet, ShieldCheck,
+  Grid3x3, Barcode, Tablet, ShieldCheck, RotateCcw, Undo2,
 } from "lucide-react";
 import {
   posApi, DENOMINATIONS,
   type POSTerminal, type POSSession, type POSProduct, type POSSaleItem, type SessionSale,
   type PreviousSessionReport, type POSTransactionRow, type SessionListResponse,
 } from "./api";
+import { salesApi } from "../sales/api";
 import configService from "../config/service";
 import { resolveMediaUrl } from "../../services/api";
 import {
@@ -1170,6 +1171,7 @@ function SalesHistoryDrawer({ t, session, refreshKey, onClose }: {
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  const [returnFor, setReturnFor] = useState<SessionSale | null>(null);
 
   const load = async () => {
     setLoading(true); setError(null);
@@ -1326,6 +1328,11 @@ function SalesHistoryDrawer({ t, session, refreshKey, onClose }: {
                       );
                     })}
                     <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+                      <button disabled={isWorking} onClick={() => setReturnFor(s)}
+                        title="Devolución / cambio"
+                        style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${t.warn}55`, background: t.warn + "18", color: t.warn, cursor: isWorking ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600 }}>
+                        <Undo2 size={11} /> Devolver
+                      </button>
                       <button disabled={isWorking} onClick={() => printTicket(s.order_id, 80)}
                         title="Reimprimir ticket 80mm"
                         style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${t.good}55`, background: t.good + "18", color: t.good, cursor: isWorking ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600 }}>
@@ -1349,7 +1356,222 @@ function SalesHistoryDrawer({ t, session, refreshKey, onClose }: {
           </div>
         </div>
       </div>
+      {returnFor && (
+        <POSReturnModal t={t} sale={returnFor}
+          onClose={() => setReturnFor(null)}
+          onDone={() => { setReturnFor(null); load(); }} />
+      )}
     </div>
+  );
+}
+
+
+// ── Devolución desde POS ────────────────────────────────────────────────────
+// Modal que abre el cajero desde el historial de ventas. Trae las partidas
+// devolvibles reales (respetando lo ya devuelto), permite marcar cantidades,
+// elegir liquidación (reembolso efectivo, nota de crédito, sin liquidación
+// para cambio) y crea la devolución en /sales/returns. El backend ya se
+// encarga de reintegrar stock, actualizar el saldo y registrar el evento
+// en el pedido — lo cual hace que aparezca en el historial del cliente y
+// en Analytics/Devoluciones del CRM sin código extra.
+function POSReturnModal({ t, sale, onClose, onDone }: {
+  t: any; sale: SessionSale; onClose: () => void; onDone: () => void;
+}) {
+  type Row = {
+    variant_id: number | null; product_name: string | null; sku: string | null;
+    unit_price: number; sold_quantity: number; returned_quantity: number;
+    returnable_quantity: number;
+    qty: number; condition: "sellable" | "damaged";
+  };
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [rows, setRows] = useState<Row[]>([]);
+  const [settlement, setSettlement] = useState<"refund" | "store_credit" | "none">("refund");
+  const [reason, setReason] = useState("");
+  const [notes, setNotes] = useState("");
+  const [customerName, setCustomerName] = useState<string | null>(null);
+  const [warehouseId, setWarehouseId] = useState<number | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true); setError(null);
+      try {
+        const r = await salesApi.returnable(sale.order_id);
+        setCustomerName(r.customer_name);
+        setWarehouseId(r.warehouse_id);
+        setRows(r.items
+          .filter(it => it.returnable_quantity > 0)
+          .map(it => ({ ...it, qty: 0, condition: "sellable" as const })));
+      } catch (e: any) {
+        setError(e?.response?.data?.detail || "No se pudo cargar el pedido");
+      } finally { setLoading(false); }
+    })();
+  }, [sale.order_id]);
+
+  const anySelected = rows.some(r => r.qty > 0);
+  const totalRefund = rows.reduce((a, r) => a + r.qty * r.unit_price, 0);
+  const settlementLabel = settlement === "refund" ? "Reembolso en efectivo"
+    : settlement === "store_credit" ? "Nota de crédito"
+    : "Cambio (sin liquidación)";
+
+  const submit = async () => {
+    if (!anySelected) { setError("Marca al menos un artículo para devolver"); return; }
+    setSaving(true); setError(null);
+    try {
+      await salesApi.createReturn({
+        order_id: sale.order_id,
+        warehouse_id: warehouseId ?? undefined,
+        reason: reason.trim() || undefined,
+        settlement_type: settlement,
+        notes: notes.trim() || undefined,
+        items: rows.filter(r => r.qty > 0).map(r => ({
+          variant_id: r.variant_id ?? undefined,
+          product_name: r.product_name ?? undefined,
+          sku: r.sku ?? undefined,
+          quantity: r.qty,
+          unit_price: r.unit_price,
+          condition: r.condition,
+        })),
+      });
+      onDone();
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "No se pudo registrar la devolución");
+    } finally { setSaving(false); }
+  };
+
+  return createPortal(
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.75)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: 720, maxWidth: "100%", maxHeight: "94vh", overflow: "auto", background: t.base, border: `1px solid ${t.border}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.5)", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${t.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: t.warn + "12" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <RotateCcw size={20} color={t.warn} />
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi }}>Devolución / cambio</div>
+              <div style={{ fontSize: 12, color: t.textLo, marginTop: 2 }}>
+                {sale.folio || `#${sale.order_id}`}{customerName ? ` · ${customerName}` : ""}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 4 }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16, flex: 1 }}>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando partidas…</div>
+          ) : rows.length === 0 ? (
+            <div style={{ padding: 30, textAlign: "center" }}>
+              <Package size={32} style={{ opacity: 0.35, marginBottom: 10 }} color={t.textLo} />
+              <div style={{ fontSize: 14, color: t.textMid, fontWeight: 600 }}>
+                No hay partidas devolvibles en este pedido
+              </div>
+              <div style={{ fontSize: 12, color: t.textLo, marginTop: 4 }}>
+                Todo el producto ya fue devuelto o el pedido no tiene detalle.
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{ background: t.panel2, borderRadius: 10, border: `1px solid ${t.border}` }}>
+                {rows.map((r, idx) => {
+                  const alreadyReturned = r.returned_quantity > 0;
+                  return (
+                    <div key={idx} style={{ padding: "12px 14px", display: "flex", gap: 12, alignItems: "center", borderBottom: idx < rows.length - 1 ? `1px solid ${t.border}` : "none" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {r.product_name || r.sku || "—"}
+                        </div>
+                        <div style={{ fontSize: 11, color: t.textLo, marginTop: 2 }}>
+                          {r.sku ? `${r.sku} · ` : ""}
+                          Vendido: {r.sold_quantity}
+                          {alreadyReturned && ` · Ya devuelto: ${r.returned_quantity}`}
+                          {" · "}Devolvible: <b style={{ color: t.warn }}>{r.returnable_quantity}</b>
+                          {" · "}{mxn(r.unit_price)} c/u
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <button onClick={() => setRows(rs => rs.map((x, i) => i === idx ? { ...x, qty: Math.max(0, x.qty - 1) } : x))}
+                          disabled={r.qty === 0}
+                          style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textHi, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <Minus size={14} />
+                        </button>
+                        <input type="number" value={r.qty} min={0} max={r.returnable_quantity}
+                          onChange={e => {
+                            const n = Math.max(0, Math.min(r.returnable_quantity, parseInt(e.target.value) || 0));
+                            setRows(rs => rs.map((x, i) => i === idx ? { ...x, qty: n } : x));
+                          }}
+                          style={{ width: 48, height: 32, textAlign: "center", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14, fontWeight: 700, outline: "none" }} />
+                        <button onClick={() => setRows(rs => rs.map((x, i) => i === idx ? { ...x, qty: Math.min(x.returnable_quantity, x.qty + 1) } : x))}
+                          disabled={r.qty >= r.returnable_quantity}
+                          style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textHi, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <Plus size={14} />
+                        </button>
+                      </div>
+                      <select value={r.condition}
+                        onChange={e => setRows(rs => rs.map((x, i) => i === idx ? { ...x, condition: e.target.value as "sellable" | "damaged" } : x))}
+                        style={{ padding: "6px 8px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 12, cursor: "pointer" }}>
+                        <option value="sellable">Nuevo · vuelve a stock</option>
+                        <option value="damaged">Dañado · no vuelve a stock</option>
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>Liquidación</label>
+                  <select value={settlement} onChange={e => setSettlement(e.target.value as any)}
+                    style={{ width: "100%", padding: "10px 12px", marginTop: 4, borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, cursor: "pointer" }}>
+                    <option value="refund">Reembolso en efectivo</option>
+                    <option value="store_credit">Nota de crédito (saldo a favor)</option>
+                    <option value="none">Cambio — sin liquidación</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>Motivo (opcional)</label>
+                  <input value={reason} onChange={e => setReason(e.target.value)}
+                    placeholder="Ej. producto defectuoso, cambio de talla"
+                    style={{ width: "100%", padding: "10px 12px", marginTop: 4, borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, boxSizing: "border-box", outline: "none" }} />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>Notas internas</label>
+                <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
+                  placeholder="Detalles para el equipo"
+                  style={{ width: "100%", padding: "10px 12px", marginTop: 4, borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, boxSizing: "border-box", outline: "none", fontFamily: "inherit", resize: "vertical" }} />
+              </div>
+
+              <div style={{ background: t.warn + "12", border: `1px solid ${t.warn}55`, borderRadius: 10, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 13, color: t.textMid }}>{settlementLabel}</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: t.warn, fontVariantNumeric: "tabular-nums" }}>{mxn(totalRefund)}</div>
+              </div>
+            </>
+          )}
+
+          {error && (
+            <div style={{ padding: "10px 14px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+              <AlertTriangle size={15} /> {error}
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: "14px 20px", borderTop: `1px solid ${t.border}`, background: t.panel, display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onClose}
+            style={{ padding: "10px 18px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 14 }}>
+            Cancelar
+          </button>
+          <button disabled={saving || loading || !anySelected} onClick={submit}
+            style={{ padding: "10px 22px", borderRadius: 10, border: "none", background: !anySelected ? t.border : `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", cursor: saving || !anySelected ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 800, display: "flex", alignItems: "center", gap: 8, opacity: !anySelected ? 0.5 : 1 }}>
+            <RotateCcw size={14} /> {saving ? "Registrando…" : "Registrar devolución"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
