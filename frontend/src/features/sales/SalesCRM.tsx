@@ -7,8 +7,9 @@ import {
   Search, List, Columns, BarChart3, Plus, Download, DollarSign, Clock,
   TrendingUp, Percent, ChevronRight, ArrowUp, ArrowDown, FileText, Info,
   Upload, Zap, Settings2, CheckCircle, AlertTriangle, FileSpreadsheet, Check, Trash2, ChevronLeft, Pencil,
-  RotateCcw, Filter,
+  RotateCcw, Filter, Plug,
 } from "lucide-react";
+import { MarketplacesPanel } from "./MarketplacesPanel";
 import api, { onServerWaking } from "../../services/api";
 import { useServerRecovery } from "../../hooks/useServerRecovery";
 import IngestaConfigurador from "./IngestaConfigurador";
@@ -23,7 +24,7 @@ import { PaymentModal } from "./PaymentModal";
 import { OrderDrawer } from "./OrderDrawer";
 import { Analytics } from "./Analytics";
 
-type ViewMode = "list" | "pipeline" | "analytics" | "ingesta" | "returns";
+type ViewMode = "list" | "pipeline" | "analytics" | "ingesta" | "returns" | "marketplaces";
 const PAGE = 20;
 
 // ── Ingesta API ──────────────────────────────────────────────────────────────
@@ -920,7 +921,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
       )}
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        {view !== "ingesta" && view !== "returns" && (
+        {view !== "ingesta" && view !== "returns" && view !== "marketplaces" && (
           <>
             <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
               <Search size={16} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: tk.textLo }} />
@@ -972,7 +973,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
         )}
 
         <div style={{ display: "flex", gap: 4 }}>
-          {([["list", List, "Lista"], ["pipeline", Columns, "Pipeline"], ["analytics", BarChart3, "Analytics"], ["returns", RotateCcw, "Devoluciones"], ["ingesta", Upload, "Carga de ventas"]] as const).map(([v, Icon, label]) => (
+          {([["list", List, "Lista"], ["pipeline", Columns, "Pipeline"], ["analytics", BarChart3, "Analytics"], ["returns", RotateCcw, "Devoluciones"], ["ingesta", Upload, "Carga de ventas"], ["marketplaces", Plug, "Marketplaces"]] as const).map(([v, Icon, label]) => (
             <button key={v} onClick={() => setView(v)} title={label}
               style={{ ...inputBase, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, background: view === v ? tk.accent : tk.inputBg, color: view === v ? "#06122B" : tk.textMid, borderColor: view === v ? tk.accent : tk.border }}>
               <Icon size={15} /><span style={{ fontSize: 12 }}>{label}</span>
@@ -980,7 +981,7 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
           ))}
         </div>
 
-        {view !== "ingesta" && view !== "returns" && (
+        {view !== "ingesta" && view !== "returns" && view !== "marketplaces" && (
           <>
             <div style={{ position: "relative" }}>
               <Button tk={tk} variant="ghost" icon={<Download size={16} />} disabled={exporting} onClick={() => setExportMenuOpen((o) => !o)}>
@@ -1007,7 +1008,9 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
         )}
       </div>
 
-      {view === "ingesta" ? (
+      {view === "marketplaces" ? (
+        <MarketplacesPanel tk={tk} />
+      ) : view === "ingesta" ? (
         <IngestaModule tk={tk} tr={tr} onVerVentas={() => { setView("list"); refreshData(); }} />
       ) : view === "analytics" ? (
         analyticsLoading && !analyticsLoaded ? (

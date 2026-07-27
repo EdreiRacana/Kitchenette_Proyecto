@@ -88,6 +88,7 @@ from app.modules.hr import models as hr_models
 from app.modules.forecast import models as forecast_models
 from app.modules.retail import models as retail_models
 from app.modules.promotions import models as promotions_models
+from app.modules.marketplaces import models as marketplaces_models
 
 
 @app.on_event("startup")
