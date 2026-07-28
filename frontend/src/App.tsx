@@ -24,6 +24,7 @@ import ConfigModule from "./features/config/ConfigModule";
 import ForecastModule from "./features/forecast/ForecastModule";
 import RetailModule from "./features/retail/RetailModule";
 import POSModule from "./features/pos/POSModule";
+import { TrianglesCanvas } from "./components/TrianglesCanvas";
 import api, { onUnauthorized } from "./services/api";
 import { useServerRecovery } from "./hooks/useServerRecovery";
 import configService from "./features/config/service";
@@ -1512,15 +1513,35 @@ function Login({ t, s, lang, onEnter }) {
   const onKey = (e) => { if (e.key === "Enter" && !loading) handleLogin(); };
 
   return (
-    <div style={{ minHeight: "100vh", background: `radial-gradient(ellipse 60% 50% at 50% 38%, #16306a 0%, #102656 35%, #0c1f49 65%, ${t.base} 100%)`, display: "grid", placeItems: "center", padding: 24, position: "relative", overflow: "hidden" }}>
-      <svg viewBox="0 0 800 800" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.5 }} preserveAspectRatio="xMidYMid meet" aria-hidden>
-        <g stroke="#23396f" strokeWidth="1" fill="none" opacity="0.6" className="login-tri"><polygon points="400,8 760,792 400,648 40,792" /><polyline points="400,8 580,648 760,792" /></g>
-      </svg>
-      <div style={{ position: "relative", width: "100%", maxWidth: 380, textAlign: "center" }}>
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}><NovaMark size={86} /></div>
-        <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: 6, color: t.textHi }}>STHENOVA®</div>
-        <div style={{ fontSize: 10, letterSpacing: 6, color: t.textLo, marginBottom: 30 }}>COMPLETE SYSTEM</div>
-        <Card t={t} style={{ padding: 26, textAlign: "left" }}>
+    <div style={{ minHeight: "100vh", background: t.base, display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 480px)", position: "relative", overflow: "hidden" }} className="sthenova-login-grid">
+      {/* Panel izquierdo: animación institucional. En móvil se colapsa a una
+          franja superior de 30vh (ver CSS al final del App). */}
+      <div style={{ position: "relative", background: `radial-gradient(ellipse 70% 60% at 45% 40%, ${t.nova}18 0%, transparent 60%), ${t.base}`, borderRight: `1px solid ${t.border}`, overflow: "hidden", minHeight: "100vh" }} className="sthenova-login-canvas">
+        <TrianglesCanvas accent={t.nova} dim={t.textLo} hi={t.textHi} />
+        {/* Wordmark superpuesto (esquina inf. izq. para no competir con el form) */}
+        <div style={{ position: "absolute", left: 32, bottom: 28, display: "flex", alignItems: "center", gap: 12, pointerEvents: "none" }}>
+          <NovaMark size={42} />
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: 5, color: t.textHi }}>STHENOVA®</div>
+            <div style={{ fontSize: 9, letterSpacing: 5, color: t.textLo, marginTop: 2 }}>COMPLETE SYSTEM</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Panel derecho: formulario */}
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: "40px 44px", minHeight: "100vh", boxSizing: "border-box", background: t.base }}>
+        <div style={{ width: "100%", maxWidth: 360, margin: "0 auto" }}>
+          {/* Logo compacto que solo se ve en mobile (cuando la animación pasa arriba) */}
+          <div className="sthenova-login-mobile-mark" style={{ display: "none", justifyContent: "center", marginBottom: 20 }}>
+            <NovaMark size={60} />
+          </div>
+          <div style={{ fontSize: 26, fontWeight: 700, color: t.textHi, letterSpacing: -0.3, marginBottom: 6 }}>
+            {lang === "en" ? "Sign in" : "Ingresar"}
+          </div>
+          <div style={{ fontSize: 13.5, color: t.textLo, marginBottom: 26 }}>
+            {lang === "en" ? "Use your STHENOVA credentials to continue." : "Usa tus credenciales de STHENOVA para continuar."}
+          </div>
+
           <label style={{ fontSize: 12, color: t.textMid, fontWeight: 600 }}>{s.login.user}</label>
           <div className="login-input-glow" style={{ display: "flex", alignItems: "center", gap: 8, background: t.inputBg, border: `1px solid ${t.nova}55`, borderRadius: 10, padding: "10px 12px", margin: "6px 0 16px" }}>
             <UserIcon size={16} color={t.textLo} />
@@ -1543,9 +1564,21 @@ function Login({ t, s, lang, onEnter }) {
               ? <><RefreshCw size={16} className="spin" /> {lang === "en" ? "Signing in…" : "Entrando…"}</>
               : s.login.enter}
           </button>
-        </Card>
-        <p style={{ marginTop: 22, fontSize: 11, color: t.textLo }}>{s.login.platform}</p>
+          <p style={{ marginTop: 22, fontSize: 11, color: t.textLo, textAlign: "center" }}>{s.login.platform}</p>
+        </div>
       </div>
+
+      {/* Colapso responsive: en pantallas < 900px el panel izquierdo pasa a
+          franja superior de 220px y el formulario baja. El wordmark grande
+          se oculta y se muestra el mark compacto encima del form. */}
+      <style>{`
+        @media (max-width: 900px) {
+          .sthenova-login-grid { grid-template-columns: 1fr !important; grid-template-rows: 220px 1fr !important; }
+          .sthenova-login-canvas { min-height: 220px !important; border-right: none !important; border-bottom: 1px solid ${t.border} !important; }
+          .sthenova-login-canvas > div:last-child { display: none !important; }
+          .sthenova-login-mobile-mark { display: flex !important; }
+        }
+      `}</style>
     </div>
   );
 }

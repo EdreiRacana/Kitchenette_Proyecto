@@ -330,7 +330,23 @@ async def get_order_detail(db: AsyncSession, order_id: int) -> Optional[models.O
         select(models.Order).where(models.Order.id == order_id)
         .options(*_LOAD, selectinload(models.Order.events))
     )
-    return res.scalars().first()
+    order = res.scalars().first()
+    if not order:
+        return None
+    # Enriquecer cada partida con lo ya devuelto para que el detalle refleje
+    # el estado real después de devoluciones (ej. "3 vendidas · 1 devuelta").
+    # from_attributes leerá returned_quantity/net_quantity del atributo Python
+    # aunque no exista como columna SQL.
+    try:
+        returned = await _returned_qty_by_key(db, order_id)
+    except Exception:
+        returned = {}
+    for it in (order.items or []):
+        k = _return_key(it.variant_id, it.sku, it.product_name)
+        rq = int(returned.get(k, 0) or 0)
+        it.returned_quantity = rq
+        it.net_quantity = max((it.quantity or 0) - rq, 0)
+    return order
 
 
 async def get_orders(

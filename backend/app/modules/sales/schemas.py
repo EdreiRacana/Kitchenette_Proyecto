@@ -30,6 +30,10 @@ class OrderItemInDB(OrderItemBase):
     order_id: int
     subtotal: float
     total: float
+    # Cantidades devueltas contra esta partida (post-venta). Se computa
+    # dinámicamente en get_order_detail; en listados vale 0.
+    returned_quantity: int = 0
+    net_quantity: int = 0        # quantity - returned_quantity
     model_config = ConfigDict(from_attributes=True)
 
 

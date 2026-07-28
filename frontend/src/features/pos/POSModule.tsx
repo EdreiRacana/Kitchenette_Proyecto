@@ -1386,39 +1386,52 @@ function ReturnFinderModal({ t, onClose, onDone }: {
   t: any; onClose: () => void; onDone: () => void;
 }) {
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [results, setResults] = useState<import("../sales/types").Order[]>([]);
   const [target, setTarget] = useState<{ order_id: number; folio: string | null } | null>(null);
 
-  const search = async () => {
-    const raw = q.trim();
-    if (!raw) return;
+  // Debounce: buscar mientras teclea (350ms). Así el cajero no espera al
+  // botón — teclea "arac" y ya ve los pedidos de "Araceli".
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQ(q.trim()), 350);
+    return () => clearTimeout(id);
+  }, [q]);
+
+  useEffect(() => {
+    if (!debouncedQ) { setResults([]); setError(null); return; }
+    let cancelled = false;
+    setSearching(true); setError(null);
+    salesApi.list({ q: debouncedQ, limit: 15, kind: "order", sort_by: "created_at", sort_dir: "desc" })
+      .then(r => { if (!cancelled) setResults(r.items); })
+      .catch(() => { if (!cancelled) setResults([]); })
+      .finally(() => { if (!cancelled) setSearching(false); });
+    return () => { cancelled = true; };
+  }, [debouncedQ]);
+
+  const pick = async (orderId: number, folio: string | null) => {
     setSearching(true); setError(null);
     try {
-      // Si es numérico puro, lo tratamos como order_id. Si no, buscamos por folio
-      // vía /sales con q=<folio> y limit=1 y tomamos el primer match.
-      let orderId: number | null = null;
-      let folio: string | null = null;
-      if (/^\d+$/.test(raw)) {
-        orderId = parseInt(raw, 10);
-        folio = null;
-      } else {
-        const page = await salesApi.list({ q: raw, limit: 5, kind: "order" });
-        const match = page.items.find(o => (o.folio || "").toLowerCase() === raw.toLowerCase())
-                   || page.items[0];
-        if (!match) throw new Error("No se encontró ningún pedido con ese folio");
-        orderId = match.id;
-        folio = match.folio;
-      }
-      // Validamos que el pedido tenga algo devolvible antes de abrir el modal.
-      const ro = await salesApi.returnable(orderId!);
+      const ro = await salesApi.returnable(orderId);
       if (!ro.items.some(it => it.returnable_quantity > 0)) {
-        throw new Error("El pedido existe pero no tiene partidas devolvibles (ya se devolvieron o no tiene detalle).");
+        setError("Este pedido ya no tiene partidas devolvibles (todo se devolvió o no tiene detalle).");
+        return;
       }
-      setTarget({ order_id: orderId!, folio: folio ?? ro.folio ?? null });
+      setTarget({ order_id: orderId, folio: folio ?? ro.folio ?? null });
     } catch (e: any) {
-      setError(e?.response?.data?.detail || e?.message || "No se pudo encontrar el pedido");
+      setError(e?.response?.data?.detail || e?.message || "No se pudo abrir el pedido");
     } finally { setSearching(false); }
+  };
+
+  // Enter con un solo resultado exacto (folio o id) → auto-pick
+  const onEnter = () => {
+    const raw = q.trim();
+    if (!raw) return;
+    if (/^\d+$/.test(raw)) { pick(parseInt(raw, 10), null); return; }
+    const exact = results.find(o => (o.folio || "").toLowerCase() === raw.toLowerCase());
+    if (exact) pick(exact.id, exact.folio);
+    else if (results.length === 1) pick(results[0].id, results[0].folio);
   };
 
   if (target) {
@@ -1428,7 +1441,7 @@ function ReturnFinderModal({ t, onClose, onDone }: {
   return createPortal(
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.75)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={e => e.stopPropagation()}
-        style={{ width: 480, maxWidth: "100%", background: t.base, border: `1px solid ${t.border}`, borderRadius: 14, display: "flex", flexDirection: "column" }}>
+        style={{ width: 620, maxWidth: "100%", maxHeight: "88vh", background: t.base, border: `1px solid ${t.border}`, borderRadius: 14, display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: t.warn + "12" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <RotateCcw size={18} color={t.warn} />
@@ -1439,23 +1452,56 @@ function ReturnFinderModal({ t, onClose, onDone }: {
           </button>
         </div>
 
-        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
           <div style={{ fontSize: 13, color: t.textMid }}>
-            Escanea o teclea el folio del ticket (POS-000123, ORD-000042, o el ID del pedido).
+            Escanea el folio del ticket <b>o</b> teclea el nombre del cliente. Los pedidos aparecen mientras escribes.
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ position: "relative" }}>
+            <Search size={16} color={t.textLo} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
             <input value={q} onChange={e => setQ(e.target.value)} autoFocus
-              onKeyDown={e => { if (e.key === "Enter") search(); }}
-              placeholder="POS-000123"
-              style={{ flex: 1, padding: "14px 16px", borderRadius: 10, border: `2px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 16, outline: "none", fontFamily: "monospace" }} />
-            <button onClick={search} disabled={searching || !q.trim()}
-              style={{ padding: "0 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", cursor: searching || !q.trim() ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, opacity: !q.trim() ? 0.5 : 1 }}>
-              <Search size={14} /> {searching ? "Buscando…" : "Buscar"}
-            </button>
+              onKeyDown={e => { if (e.key === "Enter") onEnter(); }}
+              placeholder="Nombre del cliente, folio (POS-000123) o ID del pedido"
+              style={{ width: "100%", padding: "14px 16px 14px 40px", borderRadius: 10, border: `2px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 15, outline: "none", boxSizing: "border-box" }} />
           </div>
-          <div style={{ fontSize: 11, color: t.textLo, opacity: 0.7 }}>
-            También puedes abrir "Ventas" del turno y usar el botón "Devolver" en cada renglón.
+
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, minHeight: 200 }}>
+            {searching && results.length === 0 && (
+              <div style={{ padding: 30, textAlign: "center", color: t.textLo, fontSize: 13 }}>Buscando…</div>
+            )}
+            {!searching && !q.trim() && (
+              <div style={{ padding: 30, textAlign: "center", color: t.textLo, fontSize: 13, opacity: 0.7 }}>
+                <Receipt size={28} style={{ opacity: 0.35, marginBottom: 8 }} />
+                <div>Empieza a escribir para buscar pedidos</div>
+              </div>
+            )}
+            {!searching && q.trim() && results.length === 0 && (
+              <div style={{ padding: 30, textAlign: "center", color: t.textLo, fontSize: 13 }}>
+                Sin resultados para <b>"{q}"</b>
+              </div>
+            )}
+            {results.map((o) => {
+              const dt = o.created_at ? new Date(o.created_at) : null;
+              return (
+                <button key={o.id} onClick={() => pick(o.id, o.folio)} type="button"
+                  style={{ padding: "12px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel, color: t.textHi, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, textAlign: "left" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = t.panel2)}
+                  onMouseLeave={e => (e.currentTarget.style.background = t.panel)}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: t.nova, fontFamily: "monospace" }}>{o.folio || `#${o.id}`}</div>
+                    <div style={{ fontSize: 12, color: t.textMid, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {o.customer?.name || "Mostrador"}
+                      {dt && ` · ${dt.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" })}`}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(o.total_amount)}</div>
+                    <div style={{ fontSize: 10.5, color: o.status === "paid" ? t.good : t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 2 }}>{o.status}</div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
+
           {error && (
             <div style={{ padding: "10px 14px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
               <AlertTriangle size={14} /> {error}
