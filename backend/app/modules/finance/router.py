@@ -277,8 +277,22 @@ async def pay_cxc(order_id: int, pay_in: schemas.PayDebtRequest, db: DB, current
         _require_manager(current_user)
     try:
         order = await service.pay_cxc(db, order_id, pay_in, user_id=current_user.id)
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Cualquier otra excepción (ORM, IntegrityError, MissingGreenlet, etc.)
+        # se propaga con detalle en vez del genérico "Error interno del servidor".
+        # Así el operador ve exactamente qué falló y podemos diagnosticar sin
+        # depender de los logs del servidor.
+        import logging, traceback
+        logging.getLogger(__name__).exception("pay_cxc failed for order %s amount %s",
+                                              order_id, pay_in.amount)
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo registrar el pago: {type(e).__name__}: {str(e)[:250]}"
+        )
     if not order:
         raise HTTPException(status_code=404, detail="Pedido no encontrado")
     return {"ok": True, "balance": order.balance}
@@ -298,8 +312,18 @@ async def pay_cxp(po_id: int, pay_in: schemas.PayDebtRequest, db: DB, current_us
         _require_manager(current_user)
     try:
         po = await service.pay_cxp(db, po_id, pay_in, user_id=current_user.id)
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("pay_cxp failed for po %s amount %s",
+                                              po_id, pay_in.amount)
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo registrar el pago: {type(e).__name__}: {str(e)[:250]}"
+        )
     if not po:
         raise HTTPException(status_code=404, detail="Orden de compra no encontrada")
     return {"ok": True, "balance": po.balance}
