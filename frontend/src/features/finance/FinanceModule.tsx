@@ -198,7 +198,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
     catch { alert("No se pudo eliminar la transacción."); }
   };
 
-  const handlePay = async (data: { amount: number; method?: string; reference?: string; note?: string; scheduled?: boolean; scheduled_date?: string }) => {
+  const handlePay = async (data: { amount: number; method?: string; reference?: string; note?: string; scheduled?: boolean; scheduled_date?: string; bank_account_id?: number }) => {
     if (!payTarget) return;
     if (demo) { alert(data.scheduled ? "Modo demo: pago programado simulado ✓" : "Modo demo: pago simulado ✓"); setPayTarget(null); return; }
     try {
@@ -212,6 +212,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
           reference: data.reference,
           note: data.note,
           scheduled_date: data.scheduled_date,
+          bank_account_id: data.bank_account_id,
         });
       } else if (payTarget.kind === "cxc") {
         await financeService.payCXC(payTarget.item.id, data);
@@ -895,6 +896,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
           t={t}
           item={payTarget.item}
           kind={payTarget.kind}
+          banks={banks}
           onClose={() => setPayTarget(null)}
           onSave={handlePay}
         />
@@ -1160,14 +1162,31 @@ function TransactionFormModal({ t, tx, onClose, onSave }: any) {
 }
 
 // ── Pay Debt Modal (CXC / CXP) ───────────────────────────────────────────────
-function PayDebtModal({ t, item, kind, onClose, onSave }: any) {
+function PayDebtModal({ t, item, kind, banks, onClose, onSave }: any) {
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState<"now" | "schedule">("now");
   const todayPlus1 = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-  const [form, setForm] = useState({ amount: String(item.balance), method: "transfer", reference: "", note: "", scheduled_date: todayPlus1 });
+  const [form, setForm] = useState({
+    amount: String(item.balance), method: "transfer", reference: "", note: "",
+    scheduled_date: todayPlus1,
+    // Autopick: si hay UNA sola cuenta activa, se selecciona; si hay varias
+    // deja al operador elegir explícitamente (más seguro que asumir).
+    bank_account_id: "" as number | "",
+  });
+  useEffect(() => {
+    const activos = (banks || []).filter((b: any) => b?.is_active !== false);
+    if (activos.length === 1 && form.bank_account_id === "") {
+      setForm(f => ({ ...f, bank_account_id: activos[0].id }));
+    }
+  }, [banks]); // eslint-disable-line react-hooks/exhaustive-deps
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const color = kind === "cxc" ? t.good : t.bad;
+  // La cuenta bancaria solo aplica en pagos NO en efectivo (efectivo va a caja).
+  const showBankPicker = form.method !== "cash";
+  const bankHint = kind === "cxc"
+    ? "El monto se abonará al saldo de esta cuenta bancaria."
+    : "El monto se descontará del saldo de esta cuenta bancaria.";
   const handleSave = async () => {
     const amount = parseFloat(form.amount);
     if (!amount || amount <= 0) return;
@@ -1178,6 +1197,8 @@ function PayDebtModal({ t, item, kind, onClose, onSave }: any) {
         amount, method: form.method, reference: form.reference, note: form.note,
         scheduled: mode === "schedule",
         scheduled_date: mode === "schedule" ? form.scheduled_date : undefined,
+        bank_account_id: showBankPicker && form.bank_account_id
+          ? Number(form.bank_account_id) : undefined,
       });
     }
     finally { setSaving(false); }
@@ -1216,6 +1237,30 @@ function PayDebtModal({ t, item, kind, onClose, onSave }: any) {
               <option value="other">Otro</option>
             </select>
           </div>
+          {showBankPicker && (
+            <div>
+              <label style={label}>
+                {kind === "cxc" ? "Cuenta bancaria que recibe" : "Cuenta bancaria que paga"}
+                {(banks || []).filter((b: any) => b?.is_active !== false).length > 1 && " *"}
+              </label>
+              <select value={form.bank_account_id} onChange={e => setForm(f => ({ ...f, bank_account_id: e.target.value ? Number(e.target.value) : "" }))} style={{ ...inp, cursor: "pointer" }}>
+                <option value="">— No enlazar a cuenta bancaria —</option>
+                {(banks || []).filter((b: any) => b?.is_active !== false).map((b: any) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}{b.bank ? ` · ${b.bank}` : ""} · Saldo: ${(b.balance || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </option>
+                ))}
+              </select>
+              {form.bank_account_id && (
+                <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 5 }}>{bankHint}</div>
+              )}
+              {!form.bank_account_id && (banks || []).length > 0 && (
+                <div style={{ fontSize: 11.5, color: t.warn, marginTop: 5 }}>
+                  Si no eliges cuenta, el pago se registra pero NO se actualiza el saldo bancario.
+                </div>
+              )}
+            </div>
+          )}
           <div><label style={label}>Referencia</label><input value={form.reference} onChange={e => setForm(f => ({ ...f, reference: e.target.value }))} style={inp} /></div>
           <div><label style={label}>Nota</label><input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} style={inp} /></div>
         </div>

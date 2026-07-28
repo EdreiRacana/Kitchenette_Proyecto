@@ -249,8 +249,13 @@ async def pay_cxc(db: AsyncSession, order_id: int, pay_in: schemas.PayDebtReques
         db, order_id,
         sales_schemas.PaymentCreate(amount=pay_in.amount, method=pay_in.method, reference=pay_in.reference, note=pay_in.note),
         user_id=user_id,
+        bank_account_id=pay_in.bank_account_id,
     )
-    await _log_audit(db, user_id, "PAY_CXC", f"Pago de {pay_in.amount} a cuenta por cobrar #{order_id}", {"order_id": order_id, "amount": pay_in.amount})
+    await _log_audit(db, user_id, "PAY_CXC",
+                     f"Pago de {pay_in.amount} a cuenta por cobrar #{order_id}"
+                     + (f" · cuenta bancaria #{pay_in.bank_account_id}" if pay_in.bank_account_id else ""),
+                     {"order_id": order_id, "amount": pay_in.amount,
+                      "bank_account_id": pay_in.bank_account_id})
     return result
 
 
@@ -292,10 +297,18 @@ async def pay_cxp(db: AsyncSession, po_id: int, pay_in: schemas.PayDebtRequest, 
 
     result = await inv_service.pay_purchase_order(
         db, po_id,
-        inv_schemas.SupplierPaymentCreate(amount=pay_in.amount, method=pay_in.method, reference=pay_in.reference, note=pay_in.note),
+        inv_schemas.SupplierPaymentCreate(
+            amount=pay_in.amount, method=pay_in.method,
+            reference=pay_in.reference, note=pay_in.note,
+            bank_account_id=pay_in.bank_account_id,
+        ),
         user_id=user_id,
     )
-    await _log_audit(db, user_id, "PAY_CXP", f"Pago de {pay_in.amount} a cuenta por pagar #{po_id}", {"po_id": po_id, "amount": pay_in.amount})
+    await _log_audit(db, user_id, "PAY_CXP",
+                     f"Pago de {pay_in.amount} a cuenta por pagar #{po_id}"
+                     + (f" · cuenta bancaria #{pay_in.bank_account_id}" if pay_in.bank_account_id else ""),
+                     {"po_id": po_id, "amount": pay_in.amount,
+                      "bank_account_id": pay_in.bank_account_id})
     return result
 
 
@@ -872,7 +885,10 @@ async def process_due_scheduled_payments(db: AsyncSession) -> int:
     due = res.scalars().all()
     processed = 0
     for sp in due:
-        pay_in = schemas.PayDebtRequest(amount=sp.amount, method=sp.method, reference=sp.reference, note=sp.note)
+        pay_in = schemas.PayDebtRequest(
+            amount=sp.amount, method=sp.method, reference=sp.reference, note=sp.note,
+            bank_account_id=sp.bank_account_id,
+        )
         try:
             if sp.kind == "cxc":
                 result = await pay_cxc(db, sp.target_id, pay_in, user_id=sp.created_by_id)

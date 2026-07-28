@@ -186,15 +186,31 @@ async def _apply_stock_for_items(db: AsyncSession, order: models.Order,
 
 # ── Finance integration ───────────────────────────────────────────────────────
 
-async def _record_finance_income(db: AsyncSession, order: models.Order, amount: float) -> None:
+async def _record_finance_income(db: AsyncSession, order: models.Order, amount: float,
+                                  bank_account_id: Optional[int] = None) -> None:
+    """Registra el ingreso operativo (Transaction). Si viene bank_account_id,
+    ADEMÁS acredita la cuenta bancaria y genera un BankTransaction para
+    conciliación — mismo contrato que BillPayRequest en el pago de facturas.
+    Retorna nada; el commit lo hace el flujo anfitrión."""
     if amount <= 0:
         return
     from app.modules.finance import models as fin
-    db.add(fin.Transaction(
+    tx = fin.Transaction(
         type="income", amount=_r(amount), category="sales",
         description=f"Pago pedido {order.folio or '#' + str(order.id)}",
         reference=f"order:{order.id}",
-    ))
+    )
+    db.add(tx)
+    if bank_account_id:
+        await db.flush()   # tx.id disponible para matched_transaction_id
+        acc = await db.get(fin.BankAccount, bank_account_id)
+        if acc:
+            acc.balance = _r((acc.balance or 0.0) + amount)
+            db.add(fin.BankTransaction(
+                bank_account_id=acc.id, type="deposit", amount=_r(amount),
+                description=tx.description, reference=f"order:{order.id}",
+                matched_transaction_id=tx.id, reconciled=False,
+            ))
 
 
 async def _reverse_finance_income(db: AsyncSession, order: models.Order) -> None:
@@ -583,14 +599,15 @@ async def change_status(db: AsyncSession, order_id: int, new_status: str,
 
 async def _settle_payment(db: AsyncSession, order: models.Order, amount: float, *,
                           method: Optional[str], user_id: Optional[int],
-                          reference: Optional[str] = None, note: Optional[str] = None) -> None:
+                          reference: Optional[str] = None, note: Optional[str] = None,
+                          bank_account_id: Optional[int] = None) -> None:
     """Internal: append a payment, bump paid_amount, auto-advance status, hit finance."""
     db.add(models.Payment(
         order_id=order.id, amount=_r(amount), method=method,
         reference=reference, note=note, user_id=user_id,
     ))
     order.paid_amount = _r((order.paid_amount or 0.0) + amount)
-    await _record_finance_income(db, order, amount)
+    await _record_finance_income(db, order, amount, bank_account_id=bank_account_id)
 
     prev = order.status
     if order.paid_amount + 0.001 >= order.total_amount and order.total_amount > 0:
@@ -603,7 +620,8 @@ async def _settle_payment(db: AsyncSession, order: models.Order, amount: float, 
 
 
 async def register_payment(db: AsyncSession, order_id: int, pay: schemas.PaymentCreate,
-                           user_id: Optional[int] = None) -> Optional[models.Order]:
+                           user_id: Optional[int] = None,
+                           bank_account_id: Optional[int] = None) -> Optional[models.Order]:
     order = await get_order(db, order_id)
     if not order:
         return None
@@ -614,7 +632,8 @@ async def register_payment(db: AsyncSession, order_id: int, pay: schemas.Payment
     if pay.amount > order.balance + 0.001:
         raise ValueError(f"El pago (${pay.amount:,.2f}) excede el saldo (${order.balance:,.2f})")
     await _settle_payment(db, order, pay.amount, method=pay.method or order.payment_method,
-                          user_id=user_id, reference=pay.reference, note=pay.note)
+                          user_id=user_id, reference=pay.reference, note=pay.note,
+                          bank_account_id=bank_account_id)
     await db.commit()
     return await get_order(db, order_id)
 

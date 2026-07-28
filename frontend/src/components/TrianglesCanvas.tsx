@@ -190,6 +190,8 @@ export function TrianglesCanvas({ accent, dim, hi }: {
         activePulseStart = now;
         nextPulseAt = now + PULSE_PERIOD;
       }
+      // Pulso INVERSO: la onda arranca en el borde (radio grande) y colapsa
+      // hacia el centro. Sensación de "gravedad" del logo — todo converge.
       let pulseRadius = 0;
       let pulseIntensity = 0;
       if (activePulseStart !== null) {
@@ -197,25 +199,24 @@ export function TrianglesCanvas({ accent, dim, hi }: {
         if (p >= 1) {
           activePulseStart = null;
         } else {
-          // ease-out cúbico para el radio, ease bell para la intensidad
-          pulseRadius = (1 - Math.pow(1 - p, 3)) * S * 1.05;
+          // radio decreciente: empieza en S*1.05 y colapsa a ~0
+          pulseRadius = (1 - Math.pow(p, 2)) * S * 1.05;
           pulseIntensity = Math.sin(p * Math.PI) * (1 - transicionRed);
         }
       }
 
-      // ─── A: Halo de la cúspide ──────────────────────────────────────────
-      // Emisión de luz suave desde el vértice superior del NovaMark.
-      // Se atenúa cuando se desarma la red.
-      const apexAlpha = 0.32 * (1 - transicionRed * 0.7);
-      if (apexAlpha > 0.02) {
-        const ax = cx + NOVA_SHAPE[0][0] * S;
-        const ay = cy + NOVA_SHAPE[0][1] * S;
-        const grad = ctx.createRadialGradient(ax, ay, 0, ax, ay, S * 0.55);
-        grad.addColorStop(0, toRgba(accent, apexAlpha));
-        grad.addColorStop(0.4, toRgba(accent, apexAlpha * 0.35));
+      // ─── A: Halo CENTRAL ────────────────────────────────────────────────
+      // Foco radial suave en el centro de la figura. Reemplaza al halo del
+      // ápice (que se veía como estrella de árbol de navidad). Se atenúa
+      // cuando la red se desarma para no competir con la interacción.
+      const centerAlpha = 0.34 * (1 - transicionRed * 0.7);
+      if (centerAlpha > 0.02) {
+        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, S * 0.75);
+        grad.addColorStop(0, toRgba(accent, centerAlpha));
+        grad.addColorStop(0.45, toRgba(accent, centerAlpha * 0.35));
         grad.addColorStop(1, toRgba(accent, 0));
         ctx.fillStyle = grad;
-        ctx.fillRect(cx - S * 1.2, cy - S * 1.2, S * 2.4, S * 2.4);
+        ctx.fillRect(cx - S * 1.3, cy - S * 1.3, S * 2.6, S * 2.6);
       }
 
       // 1) Wireframe tenue del contorno NovaMark de fondo — ancla visual del logo.

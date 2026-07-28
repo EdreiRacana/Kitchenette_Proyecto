@@ -62,6 +62,10 @@ class PayDebtRequest(BaseModel):
     method: Optional[str] = None
     reference: Optional[str] = None
     note: Optional[str] = None
+    # Si viene, actualiza BankAccount.balance y genera BankTransaction para
+    # conciliación. Mismo contrato que BillPayRequest — así el behavior es
+    # consistente entre CxC, CxP legacy y facturas de proveedor.
+    bank_account_id: Optional[int] = None
 
 
 # --- Bank accounts ---
@@ -218,6 +222,7 @@ class ScheduledPaymentCreate(BaseModel):
     reference: Optional[str] = None
     note: Optional[str] = None
     scheduled_date: datetime
+    bank_account_id: Optional[int] = None
 
 
 class ScheduledPaymentInDB(BaseModel):
@@ -232,6 +237,7 @@ class ScheduledPaymentInDB(BaseModel):
     scheduled_date: datetime
     status: str
     error: Optional[str] = None
+    bank_account_id: Optional[int] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

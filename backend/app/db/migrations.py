@@ -364,6 +364,7 @@ _FINANCE_STATEMENTS = [
     "ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
     "ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS reconciled BOOLEAN DEFAULT FALSE",
     "ALTER TABLE scheduled_payments ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ",
+    "ALTER TABLE scheduled_payments ADD COLUMN IF NOT EXISTS bank_account_id INTEGER",
 ]
 
 _HR_STATEMENTS = [

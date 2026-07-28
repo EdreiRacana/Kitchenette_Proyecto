@@ -870,11 +870,25 @@ async def pay_purchase_order(db: AsyncSession, po_id: int, pay_in: "schemas.Supp
     po.paid_amount = round((po.paid_amount or 0.0) + pay_in.amount, 2)
 
     from app.modules.finance import models as fin
-    db.add(fin.Transaction(
+    tx = fin.Transaction(
         type="expense", amount=round(pay_in.amount, 2), category="supplies",
         description=f"Pago a proveedor — OC {po.folio or '#' + str(po.id)}",
         reference=f"po:{po.id}",
-    ))
+    )
+    db.add(tx)
+    # Si el operador eligió una cuenta bancaria, se descuenta del saldo y se
+    # genera BankTransaction para conciliación. Mismo contrato que
+    # BillPayRequest y PayDebtRequest (CxC/CxP).
+    if getattr(pay_in, "bank_account_id", None):
+        await db.flush()
+        acc = await db.get(fin.BankAccount, pay_in.bank_account_id)
+        if acc:
+            acc.balance = round((acc.balance or 0.0) - pay_in.amount, 2)
+            db.add(fin.BankTransaction(
+                bank_account_id=acc.id, type="withdrawal", amount=round(pay_in.amount, 2),
+                description=tx.description, reference=f"po:{po.id}",
+                matched_transaction_id=tx.id, reconciled=False,
+            ))
 
     # ── Hook contable: póliza automática de pago a proveedor ──────────────
     # Cargo Proveedores / Abono Bancos + pase de IVA pendiente→pagado si aplica.
