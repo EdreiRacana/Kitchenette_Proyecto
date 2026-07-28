@@ -228,10 +228,29 @@ async def test_email_integration(
 ):
     """Envía un correo de prueba con la integración EMAIL activa y devuelve el
     resultado real (ok / error legible) para diagnosticar la configuración."""
-    from app.core.email import send_test_email
+    from app.core.email import send_test_email, _platform_provider, get_active_email_integration
+    from email.utils import parseaddr
     to = payload.to if payload else None
     ok, error = await send_test_email(db, to=to)
-    return {"ok": ok, "error": error, "to": to}
+
+    # Diagnóstico crudo para que el operador vea EXACTAMENTE qué ruta se usó.
+    # Sin esto, cuando algo falla silencioso hay que perseguir logs en Render
+    # y Brevo. Con esto, el error / ruta viene en la misma respuesta.
+    provider, api_key, mail_from = _platform_provider()
+    smtp = await get_active_email_integration(db)
+    sender_name, sender_email = parseaddr(mail_from) if mail_from else ("", "")
+    diag = {
+        "route_taken": "http_api" if provider else ("smtp_integration" if smtp else "none"),
+        "http_provider": provider,
+        "http_api_key_last4": (api_key[-4:] if api_key else None),
+        "http_mail_from_raw": mail_from,
+        "http_sender_email_parsed": sender_email,
+        "http_sender_name_parsed": sender_name,
+        "smtp_active": bool(smtp),
+        "smtp_host": (smtp.meta_data or {}).get("host") if smtp else None,
+        "smtp_from": (smtp.meta_data or {}).get("from_email") if smtp else None,
+    }
+    return {"ok": ok, "error": error, "to": to, "diagnostic": diag}
 
 @router.delete("/integrations/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_integration(

@@ -325,14 +325,27 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   };
 
   // Envía un correo de prueba con la configuración vigente (proveedor de
-  // plataforma por env, o SMTP guardado) y muestra el resultado REAL.
+  // plataforma por env, o SMTP guardado) y muestra el resultado REAL +
+  // diagnóstico completo (ruta, remitente resuelto, últimos 4 chars del API
+  // key). Sin esto, cuando algo falla silencioso hay que perseguir logs.
   const handleTestEmail = async () => {
     setEmailTesting(true); setEmailMsg("");
     try {
       const dest = emailTestTo.trim() || emailForm.from_email || undefined;
       const res = await configService.testEmail(dest);
-      if (res.ok) setEmailMsg(`Correo de prueba enviado a ${dest || "el destinatario"} ✓ Revisa la bandeja (y spam).`);
-      else setEmailMsg(`No se pudo enviar: ${res.error}`);
+      const diag = (res as any).diagnostic;
+      const diagLines = diag ? [
+        `Ruta usada: ${diag.route_taken}`,
+        diag.http_provider && `Proveedor HTTP: ${diag.http_provider}`,
+        diag.http_api_key_last4 && `API key (últimos 4): …${diag.http_api_key_last4}`,
+        diag.http_mail_from_raw && `MAIL_FROM raw: ${diag.http_mail_from_raw}`,
+        diag.http_sender_email_parsed && `Remitente resuelto: ${diag.http_sender_email_parsed}`,
+        diag.smtp_active && `SMTP fallback: activo (${diag.smtp_host}, from=${diag.smtp_from})`,
+      ].filter(Boolean).join(" · ") : "";
+      const status = res.ok
+        ? `✅ Enviado a ${dest || "el destinatario"} · revisa bandeja + spam + Brevo Log.`
+        : `❌ Falló: ${res.error || "sin detalle"}`;
+      setEmailMsg(`${status}${diagLines ? `\n\nDIAGNÓSTICO — ${diagLines}` : ""}`);
     } catch (err: any) {
       setEmailMsg(errorMessage(err, "No se pudo enviar el correo de prueba."));
     } finally {
@@ -802,7 +815,16 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                 </button>
               </div>
             </div>
-            {emailMsg && <div style={{ fontSize: 12, color: emailMsg.includes("✓") ? t.good : t.bad, marginTop: 10 }}>{emailMsg}</div>}
+            {emailMsg && (
+              <div style={{
+                fontSize: 12,
+                color: emailMsg.includes("✓") || emailMsg.startsWith("✅") ? t.good : t.bad,
+                marginTop: 10,
+                whiteSpace: "pre-wrap",
+                fontFamily: emailMsg.includes("DIAGNÓSTICO") ? "monospace" : undefined,
+                lineHeight: 1.6,
+              }}>{emailMsg}</div>
+            )}
             <div style={{ fontSize: 11, color: t.textLo, marginTop: 10 }}>El correo de STHENOVA puede enviarse por un proveedor a nivel plataforma (Resend/SendGrid) — en ese caso no necesitas llenar los campos SMTP de arriba; solo pica "Probar correo". Los recordatorios se envían al correo de contacto de la empresa (pestaña "Empresa") cuando un pago programado está por vencer o ya venció.</div>
           </div>
 
