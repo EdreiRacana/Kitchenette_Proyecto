@@ -334,6 +334,8 @@ class SupplierPaymentCreate(BaseModel):
     method: Optional[str] = None
     reference: Optional[str] = None
     note: Optional[str] = None
+    # Si viene, se descuenta del BankAccount y se genera BankTransaction.
+    bank_account_id: Optional[int] = None
 
 class SupplierPaymentInDB(SupplierPaymentCreate):
     id: int
