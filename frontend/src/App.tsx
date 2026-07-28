@@ -1514,27 +1514,24 @@ function Login({ t, s, lang, onEnter }) {
 
   return (
     <div style={{ minHeight: "100vh", background: t.base, display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 480px)", position: "relative", overflow: "hidden" }} className="sthenova-login-grid">
-      {/* Panel izquierdo: animación institucional. En móvil se colapsa a una
-          franja superior de 30vh (ver CSS al final del App). */}
-      <div style={{ position: "relative", background: `radial-gradient(ellipse 70% 60% at 45% 40%, ${t.nova}18 0%, transparent 60%), ${t.base}`, borderRight: `1px solid ${t.border}`, overflow: "hidden", minHeight: "100vh" }} className="sthenova-login-canvas">
+      {/* Panel izquierdo: animación con la silueta del NovaMark. El halo
+          radial suave mezcla los dos paneles y evita el borde duro. */}
+      <div style={{ position: "relative", background: `radial-gradient(ellipse 80% 65% at 50% 45%, ${t.nova}20 0%, ${t.nova}08 40%, transparent 75%), ${t.base}`, overflow: "hidden", minHeight: "100vh" }} className="sthenova-login-canvas">
         <TrianglesCanvas accent={t.nova} dim={t.textLo} hi={t.textHi} />
-        {/* Wordmark superpuesto (esquina inf. izq. para no competir con el form) */}
-        <div style={{ position: "absolute", left: 32, bottom: 28, display: "flex", alignItems: "center", gap: 12, pointerEvents: "none" }}>
-          <NovaMark size={42} />
-          <div>
-            <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: 5, color: t.textHi }}>STHENOVA®</div>
-            <div style={{ fontSize: 9, letterSpacing: 5, color: t.textLo, marginTop: 2 }}>COMPLETE SYSTEM</div>
-          </div>
-        </div>
       </div>
 
-      {/* Panel derecho: formulario */}
-      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: "40px 44px", minHeight: "100vh", boxSizing: "border-box", background: t.base }}>
+      {/* Panel derecho: brand header + formulario */}
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: "40px 44px", minHeight: "100vh", boxSizing: "border-box", background: t.base, position: "relative" }}>
         <div style={{ width: "100%", maxWidth: 360, margin: "0 auto" }}>
-          {/* Logo compacto que solo se ve en mobile (cuando la animación pasa arriba) */}
-          <div className="sthenova-login-mobile-mark" style={{ display: "none", justifyContent: "center", marginBottom: 20 }}>
-            <NovaMark size={60} />
+          {/* Brand header — visible siempre, no solo en móvil */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 32 }}>
+            <NovaMark size={44} />
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: 5, color: t.textHi, lineHeight: 1 }}>STHENOVA®</div>
+              <div style={{ fontSize: 9, letterSpacing: 5, color: t.textLo, marginTop: 4 }}>COMPLETE SYSTEM</div>
+            </div>
           </div>
+
           <div style={{ fontSize: 26, fontWeight: 700, color: t.textHi, letterSpacing: -0.3, marginBottom: 6 }}>
             {lang === "en" ? "Sign in" : "Ingresar"}
           </div>
@@ -1569,14 +1566,12 @@ function Login({ t, s, lang, onEnter }) {
       </div>
 
       {/* Colapso responsive: en pantallas < 900px el panel izquierdo pasa a
-          franja superior de 220px y el formulario baja. El wordmark grande
-          se oculta y se muestra el mark compacto encima del form. */}
+          franja superior de 240px y el formulario baja. El brand header del
+          panel derecho sigue visible arriba del form. */}
       <style>{`
         @media (max-width: 900px) {
-          .sthenova-login-grid { grid-template-columns: 1fr !important; grid-template-rows: 220px 1fr !important; }
-          .sthenova-login-canvas { min-height: 220px !important; border-right: none !important; border-bottom: 1px solid ${t.border} !important; }
-          .sthenova-login-canvas > div:last-child { display: none !important; }
-          .sthenova-login-mobile-mark { display: flex !important; }
+          .sthenova-login-grid { grid-template-columns: 1fr !important; grid-template-rows: 240px 1fr !important; }
+          .sthenova-login-canvas { min-height: 240px !important; }
         }
       `}</style>
     </div>
