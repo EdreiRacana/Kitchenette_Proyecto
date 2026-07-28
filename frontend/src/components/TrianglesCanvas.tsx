@@ -161,9 +161,21 @@ export function TrianglesCanvas({ accent, dim, hi }: {
     let raf = 0;
     let stopped = false;
 
+    // ─── B: Pulso ambiente ──────────────────────────────────────────────
+    // Cada ~5.5s se dispara una onda que crece del centro hacia afuera.
+    // Los nodos que cruza la onda brillan brevemente. Solo se lanza en
+    // estado idle (sin red desarmada) y no si el usuario prefiere reducir
+    // movimiento. Con easing cúbico para que se sienta orgánico.
+    const PULSE_PERIOD = 5500;
+    const PULSE_DURATION = 1400;
+    const t0 = performance.now();
+    let nextPulseAt = t0 + PULSE_PERIOD * 0.6;   // primer pulso más temprano
+    let activePulseStart: number | null = null;
+
     const animar = () => {
       if (stopped) return;
       raf = requestAnimationFrame(animar);
+      const now = performance.now();
       ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 
       const cx = centroX();
@@ -173,8 +185,40 @@ export function TrianglesCanvas({ accent, dim, hi }: {
       const objetivo = mouse.sobreCentro ? 1 : 0;
       transicionRed += (objetivo - transicionRed) * 0.06;
 
+      // Programar próximo pulso (solo si estamos idle)
+      if (!reduce && transicionRed < 0.25 && now >= nextPulseAt && activePulseStart === null) {
+        activePulseStart = now;
+        nextPulseAt = now + PULSE_PERIOD;
+      }
+      let pulseRadius = 0;
+      let pulseIntensity = 0;
+      if (activePulseStart !== null) {
+        const p = (now - activePulseStart) / PULSE_DURATION;
+        if (p >= 1) {
+          activePulseStart = null;
+        } else {
+          // ease-out cúbico para el radio, ease bell para la intensidad
+          pulseRadius = (1 - Math.pow(1 - p, 3)) * S * 1.05;
+          pulseIntensity = Math.sin(p * Math.PI) * (1 - transicionRed);
+        }
+      }
+
+      // ─── A: Halo de la cúspide ──────────────────────────────────────────
+      // Emisión de luz suave desde el vértice superior del NovaMark.
+      // Se atenúa cuando se desarma la red.
+      const apexAlpha = 0.32 * (1 - transicionRed * 0.7);
+      if (apexAlpha > 0.02) {
+        const ax = cx + NOVA_SHAPE[0][0] * S;
+        const ay = cy + NOVA_SHAPE[0][1] * S;
+        const grad = ctx.createRadialGradient(ax, ay, 0, ax, ay, S * 0.55);
+        grad.addColorStop(0, toRgba(accent, apexAlpha));
+        grad.addColorStop(0.4, toRgba(accent, apexAlpha * 0.35));
+        grad.addColorStop(1, toRgba(accent, 0));
+        ctx.fillStyle = grad;
+        ctx.fillRect(cx - S * 1.2, cy - S * 1.2, S * 2.4, S * 2.4);
+      }
+
       // 1) Wireframe tenue del contorno NovaMark de fondo — ancla visual del logo.
-      //    Se atenúa cuando la red se desarma (transicionRed → 1).
       const outlineAlpha = 0.14 * (1 - transicionRed * 0.85);
       if (outlineAlpha > 0.01) {
         ctx.beginPath();
@@ -190,7 +234,8 @@ export function TrianglesCanvas({ accent, dim, hi }: {
       }
 
       // 2) Actualizar posiciones y calcular vértices
-      const nodos: Node[] = [];
+      const nodos: (Node & { depth: number; pulseBoost: number })[] = [];
+      const depthMax = S * 0.95;   // distancia de referencia para atenuación de borde
       triangulos.forEach((t) => {
         if (!reduce) t.angulo += t.vRot;
         for (let i = 0; i < 3; i++) {
@@ -206,11 +251,24 @@ export function TrianglesCanvas({ accent, dim, hi }: {
           const xF = cx + (tx * (1 - transicionRed) + (t.rx + Math.cos(a) * S * 0.05) * transicionRed);
           const yF = cy + (ty * (1 - transicionRed) + (t.ry + Math.sin(a) * S * 0.05) * transicionRed);
           const dm = Math.hypot(xF - mouse.x, yF - mouse.y);
-          nodos.push({ x: xF, y: yF, distMouse: dm });
+          // A: profundidad — nodos cercanos al centro brillan más
+          const distC = Math.hypot(xF - cx, yF - cy);
+          // depth: 1 en centro, ~0.35 en borde (clamp)
+          const depth = Math.max(0.35, 1 - (distC / depthMax) * 0.75);
+          // B: contribución del pulso — banda delgada alrededor del radio actual
+          let pulseBoost = 0;
+          if (pulseIntensity > 0) {
+            const bandDist = Math.abs(distC - pulseRadius);
+            const bandWidth = S * 0.14;
+            if (bandDist < bandWidth) {
+              pulseBoost = (1 - bandDist / bandWidth) * pulseIntensity;
+            }
+          }
+          nodos.push({ x: xF, y: yF, distMouse: dm, depth, pulseBoost });
         }
       });
 
-      // 3) Líneas / conexiones
+      // 3) Líneas / conexiones — atenuadas por profundidad promedio del par
       const distMaxLineas = S * (transicionRed > 0.3 ? 0.28 : 0.17);
       const dCerca = S * 0.4;
       for (let i = 0; i < nodos.length; i++) {
@@ -220,6 +278,8 @@ export function TrianglesCanvas({ accent, dim, hi }: {
           if (d < distMaxLineas) {
             const md = Math.min(n1.distMouse, n2.distMouse);
             const cerca = md < dCerca;
+            const depthAvg = (n1.depth + n2.depth) / 2;
+            const pulseAvg = (n1.pulseBoost + n2.pulseBoost) / 2;
             ctx.beginPath();
             ctx.moveTo(n1.x, n1.y);
             ctx.lineTo(n2.x, n2.y);
@@ -228,25 +288,37 @@ export function TrianglesCanvas({ accent, dim, hi }: {
               ctx.strokeStyle = toRgba(accent, 0.4 + inten * 0.6);
               ctx.lineWidth = 1.6;
             } else {
-              ctx.strokeStyle = transicionRed > 0.3 ? toRgba(accent, 0.28) : toRgba(dim, 0.22);
-              ctx.lineWidth = 1;
+              const baseAlpha = transicionRed > 0.3 ? 0.28 : 0.22;
+              const color = transicionRed > 0.3 ? accent : dim;
+              // Depth atenúa; pulso ilumina temporalmente
+              const alpha = baseAlpha * depthAvg + pulseAvg * 0.45;
+              ctx.strokeStyle = toRgba(pulseAvg > 0.1 ? accent : color, Math.min(0.95, alpha));
+              ctx.lineWidth = 1 + pulseAvg * 0.6;
             }
             ctx.stroke();
           }
         }
       }
 
-      // 4) Nodos
+      // 4) Nodos — tamaño y brillo modulados por profundidad + pulso
       nodos.forEach((n) => {
         const cerca = n.distMouse < dCerca;
+        const sizeBase = cerca ? 3.4 : (2.0 + 1.2 * n.depth);
+        const size = sizeBase + n.pulseBoost * 1.6;
         ctx.beginPath();
-        ctx.arc(n.x, n.y, cerca ? 3.4 : 2.3, 0, Math.PI * 2);
+        ctx.arc(n.x, n.y, size, 0, Math.PI * 2);
         if (cerca) {
           ctx.fillStyle = accent;
           ctx.shadowColor = accent;
           ctx.shadowBlur = 8;
+        } else if (n.pulseBoost > 0.1) {
+          ctx.fillStyle = accent;
+          ctx.shadowColor = accent;
+          ctx.shadowBlur = 6 * n.pulseBoost;
         } else {
-          ctx.fillStyle = transicionRed > 0.3 ? accent : hi;
+          // hi en centro, dim en borde (mezcla por depth)
+          const useAccent = transicionRed > 0.3;
+          ctx.fillStyle = toRgba(useAccent ? accent : hi, 0.55 + 0.45 * n.depth);
           ctx.shadowBlur = 0;
         }
         ctx.fill();
