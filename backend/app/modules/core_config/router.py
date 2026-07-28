@@ -230,15 +230,34 @@ async def test_email_integration(
     resultado real (ok / error legible) para diagnosticar la configuración."""
     from app.core.email import send_test_email, _platform_provider, get_active_email_integration
     from email.utils import parseaddr
+    import httpx
     to = payload.to if payload else None
     ok, error = await send_test_email(db, to=to)
 
-    # Diagnóstico crudo para que el operador vea EXACTAMENTE qué ruta se usó.
-    # Sin esto, cuando algo falla silencioso hay que perseguir logs en Render
-    # y Brevo. Con esto, el error / ruta viene en la misma respuesta.
     provider, api_key, mail_from = _platform_provider()
     smtp = await get_active_email_integration(db)
     sender_name, sender_email = parseaddr(mail_from) if mail_from else ("", "")
+
+    # Ping a Brevo /v3/account para identificar A QUÉ CUENTA pertenece la API
+    # key. Si el email del owner no coincide con el operador o con la cuenta
+    # donde vive el dominio verificado, ahí está el error de config.
+    brevo_owner_email = None
+    brevo_company_name = None
+    brevo_account_error = None
+    if provider == "brevo" and api_key:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get("https://api.brevo.com/v3/account",
+                                     headers={"api-key": api_key, "accept": "application/json"})
+            if r.status_code == 200:
+                data = r.json()
+                brevo_owner_email = data.get("email")
+                brevo_company_name = data.get("companyName")
+            else:
+                brevo_account_error = f"HTTP {r.status_code}: {r.text[:200]}"
+        except Exception as exc:
+            brevo_account_error = f"{type(exc).__name__}: {exc}"
+
     diag = {
         "route_taken": "http_api" if provider else ("smtp_integration" if smtp else "none"),
         "http_provider": provider,
@@ -246,6 +265,9 @@ async def test_email_integration(
         "http_mail_from_raw": mail_from,
         "http_sender_email_parsed": sender_email,
         "http_sender_name_parsed": sender_name,
+        "brevo_account_owner": brevo_owner_email,
+        "brevo_account_company": brevo_company_name,
+        "brevo_account_probe_error": brevo_account_error,
         "smtp_active": bool(smtp),
         "smtp_host": (smtp.meta_data or {}).get("host") if smtp else None,
         "smtp_from": (smtp.meta_data or {}).get("from_email") if smtp else None,

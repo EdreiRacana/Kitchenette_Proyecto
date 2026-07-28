@@ -338,6 +338,8 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
         `Ruta usada: ${diag.route_taken}`,
         diag.http_provider && `Proveedor HTTP: ${diag.http_provider}`,
         diag.http_api_key_last4 && `API key (últimos 4): …${diag.http_api_key_last4}`,
+        diag.brevo_account_owner && `👉 Cuenta Brevo dueña de la key: ${diag.brevo_account_owner}${diag.brevo_account_company ? ` (${diag.brevo_account_company})` : ""}`,
+        diag.brevo_account_probe_error && `⚠️ No se pudo consultar la cuenta Brevo: ${diag.brevo_account_probe_error}`,
         diag.http_mail_from_raw && `MAIL_FROM raw: ${diag.http_mail_from_raw}`,
         diag.http_sender_email_parsed && `Remitente resuelto: ${diag.http_sender_email_parsed}`,
         diag.smtp_active && `SMTP fallback: activo (${diag.smtp_host}, from=${diag.smtp_from})`,
