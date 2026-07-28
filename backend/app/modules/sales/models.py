@@ -115,6 +115,13 @@ class Order(Base):
     seller = relationship("User")
     sales_agent = relationship("SalesAgent")
 
+    # Saldo pendiente (no persistido). Bug histórico: esta @property vivía por
+    # error en SalesAgent, así que `order.balance` lanzaba AttributeError y
+    # rompía /finance/cxc/{id}/pay con 500. Aquí es donde pertenece.
+    @property
+    def balance(self) -> float:
+        return round((self.total_amount or 0.0) - (self.paid_amount or 0.0), 2)
+
 
 class SalesAgent(Base):
     """Agente de ventas / comisionista. Puede ser interno (vinculado a un
@@ -136,11 +143,6 @@ class SalesAgent(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    # Convenience (not persisted)
-    @property
-    def balance(self) -> float:
-        return round((self.total_amount or 0.0) - (self.paid_amount or 0.0), 2)
 
 
 class OrderItem(Base):
