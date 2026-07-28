@@ -1513,7 +1513,7 @@ function Login({ t, s, lang, onEnter }) {
   const onKey = (e) => { if (e.key === "Enter" && !loading) handleLogin(); };
 
   return (
-    <div style={{ minHeight: "100vh", background: t.base, display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 480px)", position: "relative", overflow: "hidden" }} className="sthenova-login-grid">
+    <div style={{ minHeight: "100vh", background: t.base, display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(380px, 620px)", position: "relative", overflow: "hidden" }} className="sthenova-login-grid">
       {/* Panel izquierdo: animación con la silueta del NovaMark. El halo
           radial suave mezcla los dos paneles y evita el borde duro. */}
       <div style={{ position: "relative", background: `radial-gradient(ellipse 80% 65% at 50% 45%, ${t.nova}20 0%, ${t.nova}08 40%, transparent 75%), ${t.base}`, overflow: "hidden", minHeight: "100vh" }} className="sthenova-login-canvas">
