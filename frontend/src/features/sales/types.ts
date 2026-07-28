@@ -18,6 +18,8 @@ export interface OrderItem {
   tax_rate: number;
   subtotal?: number;
   total?: number;
+  returned_quantity?: number;   // cuánto se devolvió post-venta (solo en detalle)
+  net_quantity?: number;        // quantity - returned_quantity
 }
 
 export interface Payment {

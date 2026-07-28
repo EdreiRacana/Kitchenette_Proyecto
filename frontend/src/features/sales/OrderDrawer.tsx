@@ -162,14 +162,37 @@ export function OrderDrawer({
                   <th key={h} style={{ padding: "8px 10px", fontSize: 10, fontWeight: 600, color: tk.textLo, borderBottom: `1px solid ${tk.border}`, textAlign: i === 0 ? "left" : "right", textTransform: "uppercase" }}>{h}</th>
                 ))}</tr></thead>
                 <tbody>
-                  {order.items.map((it, i) => (
-                    <tr key={i}>
-                      <td style={td}><span style={{ color: tk.textHi }}>{it.product_name}</span>{it.sku && <span style={{ color: tk.textLo, fontSize: 11 }}> · {it.sku}</span>}</td>
-                      <td style={{ ...td, textAlign: "right" }}>{it.quantity}</td>
-                      <td style={{ ...td, textAlign: "right" }}>{money(it.unit_price)}</td>
-                      <td style={{ ...td, textAlign: "right", color: tk.textHi, fontWeight: 600 }}>{money(it.subtotal ?? it.unit_price * it.quantity)}</td>
-                    </tr>
-                  ))}
+                  {order.items.map((it, i) => {
+                    const rq = it.returned_quantity ?? 0;
+                    const net = it.net_quantity ?? (it.quantity - rq);
+                    const fullyReturned = rq > 0 && net === 0;
+                    const dim = fullyReturned ? 0.55 : 1;
+                    return (
+                      <tr key={i} style={{ opacity: dim }}>
+                        <td style={td}>
+                          <span style={{ color: tk.textHi, textDecoration: fullyReturned ? "line-through" : "none" }}>{it.product_name}</span>
+                          {it.sku && <span style={{ color: tk.textLo, fontSize: 11 }}> · {it.sku}</span>}
+                          {rq > 0 && (
+                            <div style={{ fontSize: 10.5, color: tk.warn, marginTop: 2, fontWeight: 600 }}>
+                              {rq} devuelt{rq === 1 ? "a" : "as"} · {net} netas
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ ...td, textAlign: "right" }}>
+                          {rq > 0 ? (
+                            <>
+                              <span style={{ color: tk.textLo, textDecoration: "line-through" }}>{it.quantity}</span>
+                              <span style={{ color: tk.textHi, marginLeft: 4, fontWeight: 700 }}>{net}</span>
+                            </>
+                          ) : it.quantity}
+                        </td>
+                        <td style={{ ...td, textAlign: "right" }}>{money(it.unit_price)}</td>
+                        <td style={{ ...td, textAlign: "right", color: tk.textHi, fontWeight: 600 }}>
+                          {money((net || 0) * it.unit_price)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
