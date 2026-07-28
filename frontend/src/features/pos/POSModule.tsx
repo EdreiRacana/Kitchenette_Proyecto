@@ -221,6 +221,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const [showArqueos, setShowArqueos] = useState(false);
   const [historyRefresh, setHistoryRefresh] = useState(0);
   const [showPrev, setShowPrev] = useState(false);
+  const [showReturnFinder, setShowReturnFinder] = useState(false);
   const [scanFlash, setScanFlash] = useState<string | null>(null); // feedback breve al escanear
   const [company, setCompany] = useState<{ commercial_name?: string; legal_name?: string; logo_url?: string } | null>(null);
   const [now, setNow] = useState(new Date());
@@ -245,7 +246,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
     loyaltyApi.recommendations(customer.id, 5).then(setCustomerRecs).catch(() => setCustomerRecs([]));
   }, [customer?.id]);
   const searchRef = useRef<HTMLInputElement>(null);
-  const anyModalOpen = showPay || showClose || !!showCash || !!lastSale || showHistory || showPrev || tabletMode;
+  const anyModalOpen = showPay || showClose || !!showCash || !!lastSale || showHistory || showPrev || tabletMode || showReturnFinder;
 
   // Branding: logo y nombre comercial del cliente (para el header premium).
   useEffect(() => {
@@ -420,6 +421,11 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
           </button>
           <button onClick={() => setShowCash("cash_out")} title="Retiro de caja" style={iconBtn}>
             <Minus size={14} /> Retiro
+          </button>
+          <button onClick={() => setShowReturnFinder(true)}
+            title="Devolución / cambio — buscar ticket por folio"
+            style={{ ...iconBtn, background: t.warn + "16", border: `1px solid ${t.warn}44`, color: t.warn, fontWeight: 600 }}>
+            <RotateCcw size={14} /> Devolución
           </button>
           <button onClick={() => setTabletMode(true)}
             title="Registro cliente — el cliente se identifica o captura sus datos"
@@ -730,6 +736,9 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
       )}
       {showHistory && <SalesHistoryDrawer t={t} session={session} refreshKey={historyRefresh}
         onClose={() => setShowHistory(false)} />}
+      {showReturnFinder && <ReturnFinderModal t={t}
+        onClose={() => setShowReturnFinder(false)}
+        onDone={() => { setShowReturnFinder(false); setHistoryRefresh(v => v + 1); }} />}
       {showClose && <CloseSessionModal t={t} session={session}
         onClosed={() => { setShowClose(false); onClosed(); }} onCancel={() => setShowClose(false)} />}
       {showCash && <CashMovementModal t={t} session={session} type={showCash}
@@ -1366,16 +1375,112 @@ function SalesHistoryDrawer({ t, session, refreshKey, onClose }: {
 }
 
 
+// ── Buscador de ticket para devolución (acceso directo desde toolbar) ─────
+// Cuando un cliente llega con un ticket de otro día u otro turno, el cajero
+// no debería tener que bucear el historial. Este modal acepta:
+//   - folio (POS-000123, ORD-000042, etc.)
+//   - o el ID numérico del pedido
+// Al encontrarlo, salta al POSReturnModal normal. No inventa datos: si el
+// backend devuelve 404 o "no devolvible", se muestra el error tal cual.
+function ReturnFinderModal({ t, onClose, onDone }: {
+  t: any; onClose: () => void; onDone: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [target, setTarget] = useState<{ order_id: number; folio: string | null } | null>(null);
+
+  const search = async () => {
+    const raw = q.trim();
+    if (!raw) return;
+    setSearching(true); setError(null);
+    try {
+      // Si es numérico puro, lo tratamos como order_id. Si no, buscamos por folio
+      // vía /sales con q=<folio> y limit=1 y tomamos el primer match.
+      let orderId: number | null = null;
+      let folio: string | null = null;
+      if (/^\d+$/.test(raw)) {
+        orderId = parseInt(raw, 10);
+        folio = null;
+      } else {
+        const page = await salesApi.list({ q: raw, limit: 5, kind: "order" });
+        const match = page.items.find(o => (o.folio || "").toLowerCase() === raw.toLowerCase())
+                   || page.items[0];
+        if (!match) throw new Error("No se encontró ningún pedido con ese folio");
+        orderId = match.id;
+        folio = match.folio;
+      }
+      // Validamos que el pedido tenga algo devolvible antes de abrir el modal.
+      const ro = await salesApi.returnable(orderId!);
+      if (!ro.items.some(it => it.returnable_quantity > 0)) {
+        throw new Error("El pedido existe pero no tiene partidas devolvibles (ya se devolvieron o no tiene detalle).");
+      }
+      setTarget({ order_id: orderId!, folio: folio ?? ro.folio ?? null });
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e?.message || "No se pudo encontrar el pedido");
+    } finally { setSearching(false); }
+  };
+
+  if (target) {
+    return <POSReturnModal t={t} sale={target} onClose={onClose} onDone={onDone} />;
+  }
+
+  return createPortal(
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.75)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: 480, maxWidth: "100%", background: t.base, border: `1px solid ${t.border}`, borderRadius: 14, display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: t.warn + "12" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <RotateCcw size={18} color={t.warn} />
+            <div style={{ fontSize: 15, fontWeight: 800, color: t.textHi }}>Devolución / cambio</div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 4 }}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ fontSize: 13, color: t.textMid }}>
+            Escanea o teclea el folio del ticket (POS-000123, ORD-000042, o el ID del pedido).
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input value={q} onChange={e => setQ(e.target.value)} autoFocus
+              onKeyDown={e => { if (e.key === "Enter") search(); }}
+              placeholder="POS-000123"
+              style={{ flex: 1, padding: "14px 16px", borderRadius: 10, border: `2px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 16, outline: "none", fontFamily: "monospace" }} />
+            <button onClick={search} disabled={searching || !q.trim()}
+              style={{ padding: "0 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", cursor: searching || !q.trim() ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, opacity: !q.trim() ? 0.5 : 1 }}>
+              <Search size={14} /> {searching ? "Buscando…" : "Buscar"}
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: t.textLo, opacity: 0.7 }}>
+            También puedes abrir "Ventas" del turno y usar el botón "Devolver" en cada renglón.
+          </div>
+          {error && (
+            <div style={{ padding: "10px 14px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+              <AlertTriangle size={14} /> {error}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+
 // ── Devolución desde POS ────────────────────────────────────────────────────
-// Modal que abre el cajero desde el historial de ventas. Trae las partidas
-// devolvibles reales (respetando lo ya devuelto), permite marcar cantidades,
-// elegir liquidación (reembolso efectivo, nota de crédito, sin liquidación
-// para cambio) y crea la devolución en /sales/returns. El backend ya se
-// encarga de reintegrar stock, actualizar el saldo y registrar el evento
-// en el pedido — lo cual hace que aparezca en el historial del cliente y
-// en Analytics/Devoluciones del CRM sin código extra.
+// Modal que abre el cajero desde el historial de ventas o desde el buscador
+// de folio de la toolbar. Trae las partidas devolvibles reales (respetando
+// lo ya devuelto), permite marcar cantidades, elegir liquidación (reembolso
+// efectivo, nota de crédito, sin liquidación para cambio) y crea la devolución
+// en /sales/returns. El backend ya se encarga de reintegrar stock, actualizar
+// el saldo y registrar el evento en el pedido — lo cual hace que aparezca en
+// el historial del cliente y en Analytics/Devoluciones del CRM sin código extra.
 function POSReturnModal({ t, sale, onClose, onDone }: {
-  t: any; sale: SessionSale; onClose: () => void; onDone: () => void;
+  t: any;
+  sale: { order_id: number; folio?: string | null };
+  onClose: () => void; onDone: () => void;
 }) {
   type Row = {
     variant_id: number | null; product_name: string | null; sku: string | null;
