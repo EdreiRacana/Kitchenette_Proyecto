@@ -342,6 +342,9 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
         diag.brevo_account_probe_error && `⚠️ No se pudo consultar la cuenta Brevo: ${diag.brevo_account_probe_error}`,
         diag.http_mail_from_raw && `MAIL_FROM raw: ${diag.http_mail_from_raw}`,
         diag.http_sender_email_parsed && `Remitente resuelto: ${diag.http_sender_email_parsed}`,
+        diag.brevo_send_status && `⚡ Brevo /smtp/email HTTP: ${diag.brevo_send_status}`,
+        diag.brevo_message_id && `📬 Brevo messageId: ${diag.brevo_message_id}`,
+        diag.brevo_send_body && !diag.brevo_message_id && `Brevo body: ${diag.brevo_send_body}`,
         diag.smtp_active && `SMTP fallback: activo (${diag.smtp_host}, from=${diag.smtp_from})`,
       ].filter(Boolean).join(" · ") : "";
       const status = res.ok
