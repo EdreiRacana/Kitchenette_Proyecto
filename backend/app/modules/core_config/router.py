@@ -228,11 +228,10 @@ async def test_email_integration(
 ):
     """Envía un correo de prueba con la integración EMAIL activa y devuelve el
     resultado real (ok / error legible) para diagnosticar la configuración."""
-    from app.core.email import send_test_email, _platform_provider, get_active_email_integration
+    from app.core.email import _platform_provider, get_active_email_integration
     from email.utils import parseaddr
     import httpx
     to = payload.to if payload else None
-    ok, error = await send_test_email(db, to=to)
 
     provider, api_key, mail_from = _platform_provider()
     smtp = await get_active_email_integration(db)
@@ -244,6 +243,9 @@ async def test_email_integration(
     brevo_owner_email = None
     brevo_company_name = None
     brevo_account_error = None
+    brevo_send_status = None
+    brevo_send_body = None
+    brevo_message_id = None
     if provider == "brevo" and api_key:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -258,6 +260,39 @@ async def test_email_integration(
         except Exception as exc:
             brevo_account_error = f"{type(exc).__name__}: {exc}"
 
+    # DIRECT PROBE: mandar directo a Brevo /v3/smtp/email SIN pasar por
+    # send_test_email para capturar la respuesta cruda (status + body +
+    # messageId). Esto elimina cualquier posible pérdida de info en la capa
+    # de abstracción. Si Brevo devuelve messageId, la venta está confirmada.
+    ok = False
+    error = None
+    dest = to or brevo_owner_email
+    if provider == "brevo" and api_key and dest and sender_email:
+        payload_json = {
+            "sender": {"name": sender_name or "Sthenova ERP", "email": sender_email},
+            "to": [{"email": dest}],
+            "subject": "Prueba de correo — Sthenova ERP (probe)",
+            "htmlContent": "<p>Probe directo desde /test endpoint.</p>",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.post("https://api.brevo.com/v3/smtp/email",
+                                      headers={"api-key": api_key, "accept": "application/json",
+                                               "content-type": "application/json"},
+                                      json=payload_json)
+            brevo_send_status = r.status_code
+            brevo_send_body = r.text[:500]
+            if r.status_code < 300:
+                try:
+                    brevo_message_id = r.json().get("messageId")
+                except Exception:
+                    pass
+                ok = True
+            else:
+                error = f"Brevo {r.status_code}: {r.text[:250]}"
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+
     diag = {
         "route_taken": "http_api" if provider else ("smtp_integration" if smtp else "none"),
         "http_provider": provider,
@@ -268,11 +303,14 @@ async def test_email_integration(
         "brevo_account_owner": brevo_owner_email,
         "brevo_account_company": brevo_company_name,
         "brevo_account_probe_error": brevo_account_error,
+        "brevo_send_status": brevo_send_status,
+        "brevo_message_id": brevo_message_id,
+        "brevo_send_body": brevo_send_body,
         "smtp_active": bool(smtp),
         "smtp_host": (smtp.meta_data or {}).get("host") if smtp else None,
         "smtp_from": (smtp.meta_data or {}).get("from_email") if smtp else None,
     }
-    return {"ok": ok, "error": error, "to": to, "diagnostic": diag}
+    return {"ok": ok, "error": error, "to": dest, "diagnostic": diag}
 
 @router.delete("/integrations/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_integration(
