@@ -228,7 +228,7 @@ async def test_email_integration(
 ):
     """Envía un correo de prueba con la integración EMAIL activa y devuelve el
     resultado real (ok / error legible) para diagnosticar la configuración."""
-    from app.core.email import _platform_provider, get_active_email_integration
+    from app.core.email import _platform_provider, get_active_email_integration, send_test_email
     from email.utils import parseaddr
     import httpx
     to = payload.to if payload else None
@@ -238,8 +238,7 @@ async def test_email_integration(
     sender_name, sender_email = parseaddr(mail_from) if mail_from else ("", "")
 
     # Ping a Brevo /v3/account para identificar A QUÉ CUENTA pertenece la API
-    # key. Si el email del owner no coincide con el operador o con la cuenta
-    # donde vive el dominio verificado, ahí está el error de config.
+    # key (solo aplica si provider=brevo).
     brevo_owner_email = None
     brevo_company_name = None
     brevo_account_error = None
@@ -260,13 +259,15 @@ async def test_email_integration(
         except Exception as exc:
             brevo_account_error = f"{type(exc).__name__}: {exc}"
 
-    # DIRECT PROBE: mandar directo a Brevo /v3/smtp/email SIN pasar por
-    # send_test_email para capturar la respuesta cruda (status + body +
-    # messageId). Esto elimina cualquier posible pérdida de info en la capa
-    # de abstracción. Si Brevo devuelve messageId, la venta está confirmada.
-    ok = False
-    error = None
     dest = to or brevo_owner_email
+    # ENVÍO REAL: pasa por send_test_email para cualquier provider (resend,
+    # sendgrid, brevo, o SMTP fallback). Este es el path que usa el ERP en
+    # producción; probar por acá garantiza paridad.
+    ok, error = await send_test_email(db, to=dest)
+
+    # PROBE ADICIONAL (solo brevo): direct call para capturar body + messageId
+    # cuando el status es raro (2xx sin log). No aplica a resend/sendgrid
+    # porque su API se comporta de forma más predecible.
     if provider == "brevo" and api_key and dest and sender_email:
         payload_json = {
             "sender": {"name": sender_name or "Sthenova ERP", "email": sender_email},
@@ -287,11 +288,8 @@ async def test_email_integration(
                     brevo_message_id = r.json().get("messageId")
                 except Exception:
                     pass
-                ok = True
-            else:
-                error = f"Brevo {r.status_code}: {r.text[:250]}"
-        except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
+        except Exception:
+            pass
 
     diag = {
         "route_taken": "http_api" if provider else ("smtp_integration" if smtp else "none"),
