@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 140">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0E1838"/>
+      <stop offset="1" stop-color="#1A2856"/>
+    </linearGradient>
+    <linearGradient id="nova" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8CEEFF"/>
+      <stop offset="1" stop-color="#33B2F5"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#49CEF8" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#49CEF8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <g transform="translate(70,72)">
+    <polygon points="0,-62 62,46 0,24 -62,46" fill="url(#bg)"/>
+    <polygon points="0,-62 62,46 0,24 -62,46" fill="none" stroke="#5871BE" stroke-width="2" stroke-linejoin="round"/>
+    <polyline points="0,-62 30,-6 62,46" fill="none" stroke="#5871BE" stroke-width="1.5" stroke-linejoin="round"/>
+    <circle cx="0" cy="-10" r="28" fill="url(#glow)"/>
+    <circle cx="0" cy="-11" r="7" fill="url(#nova)" stroke="#0A1022" stroke-width="0.8"/>
+    <circle cx="0" cy="-11" r="2.4" fill="#E6FBFF"/>
+  </g>
+</svg>
