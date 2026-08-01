@@ -3050,7 +3050,7 @@ function CommunicationPanel({ t, employees, onLoaded }: { t: any; employees: Emp
 // obra) + Código de Comercio (comisionista) + Código Civil (honorarios).
 // ═══════════════════════════════════════════════════════════════════════════
 
-const CONTRACT_TYPES: Array<{ id: string; label: string; legal: string; group: "laboral" | "mercantil" | "civil" }> = [
+const CONTRACT_TEMPLATES: Array<{ id: string; label: string; legal: string; group: "laboral" | "mercantil" | "civil" }> = [
   { id: "indeterminado", label: "Por tiempo indeterminado", legal: "LFT art. 35 — el más común, sin fecha de término.", group: "laboral" },
   { id: "determinado",   label: "Por tiempo determinado",   legal: "LFT art. 37 — requiere causa justificada.", group: "laboral" },
   { id: "prueba",        label: "A prueba",                 legal: "LFT art. 39-A — máx 30 días (180 gerenciales).", group: "laboral" },
@@ -3181,7 +3181,7 @@ function ContractsPanel({ t, employees }: { t: any; employees: Employee[] }) {
               </thead>
               <tbody>
                 {contracts.map(c => {
-                  const ct = CONTRACT_TYPES.find(x => x.id === c.contract_type);
+                  const ct = CONTRACT_TEMPLATES.find(x => x.id === c.contract_type);
                   return (
                     <tr key={c.id} style={{ borderBottom: `1px solid ${t.border}` }}>
                       <td style={{ padding: "10px 12px", color: t.textHi }}>{c.employee_name || "—"}</td>
@@ -3261,7 +3261,7 @@ function ContractFormModal({ t, employees, onClose, onCreated }:
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const selectedType = CONTRACT_TYPES.find(x => x.id === contractType)!;
+  const selectedType = CONTRACT_TEMPLATES.find(x => x.id === contractType)!;
   const needsEndDate = ["determinado", "prueba", "capacitacion", "obra", "temporal"].includes(contractType);
   const isCommission = contractType === "comisionista";
   const isHonorarios = contractType === "honorarios";
@@ -3342,17 +3342,17 @@ function ContractFormModal({ t, employees, onClose, onCreated }:
               <label style={lbl}>Tipo de contrato *</label>
               <select value={contractType} onChange={e => setContractType(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
                 <optgroup label="Laborales (LFT)">
-                  {CONTRACT_TYPES.filter(x => x.group === "laboral").map(x =>
+                  {CONTRACT_TEMPLATES.filter(x => x.group === "laboral").map(x =>
                     <option key={x.id} value={x.id}>{x.label}</option>
                   )}
                 </optgroup>
                 <optgroup label="Mercantil (Cód. Comercio)">
-                  {CONTRACT_TYPES.filter(x => x.group === "mercantil").map(x =>
+                  {CONTRACT_TEMPLATES.filter(x => x.group === "mercantil").map(x =>
                     <option key={x.id} value={x.id}>{x.label}</option>
                   )}
                 </optgroup>
                 <optgroup label="Civil (Cód. Civil Federal)">
-                  {CONTRACT_TYPES.filter(x => x.group === "civil").map(x =>
+                  {CONTRACT_TEMPLATES.filter(x => x.group === "civil").map(x =>
                     <option key={x.id} value={x.id}>{x.label}</option>
                   )}
                 </optgroup>
