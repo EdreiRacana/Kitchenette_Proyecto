@@ -252,3 +252,100 @@ class InboxItem(BaseModel):
     sender_name: Optional[str] = None
     read_at: Optional[datetime] = None
     created_at: datetime
+
+
+# ── Contratos (Fase 3) ─────────────────────────────────────────────────────
+class ContractCreate(BaseModel):
+    employee_id: int
+    contract_type: str
+    salary_amount: float = 0.0
+    salary_frequency: str = "mensual"
+    hours_per_week: Optional[int] = None
+    work_schedule: Optional[str] = None
+    workplace_address: Optional[str] = None
+    job_functions: Optional[str] = None
+    start_date: str
+    end_date: Optional[str] = None
+    commission_pct: Optional[float] = None
+    professional_service: Optional[str] = None
+    non_compete: bool = False
+    confidentiality: bool = True
+
+
+class ContractUpdate(BaseModel):
+    contract_type: Optional[str] = None
+    salary_amount: Optional[float] = None
+    salary_frequency: Optional[str] = None
+    hours_per_week: Optional[int] = None
+    work_schedule: Optional[str] = None
+    workplace_address: Optional[str] = None
+    job_functions: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    commission_pct: Optional[float] = None
+    professional_service: Optional[str] = None
+    non_compete: Optional[bool] = None
+    confidentiality: Optional[bool] = None
+    status: Optional[str] = None
+    signed_document_url: Optional[str] = None
+    termination_reason: Optional[str] = None
+
+
+class ContractOut(BaseModel):
+    id: int
+    employee_id: int
+    employee_name: Optional[str] = None
+    contract_type: str
+    salary_amount: float
+    salary_frequency: str
+    hours_per_week: Optional[int] = None
+    work_schedule: Optional[str] = None
+    workplace_address: Optional[str] = None
+    job_functions: Optional[str] = None
+    start_date: str
+    end_date: Optional[str] = None
+    commission_pct: Optional[float] = None
+    professional_service: Optional[str] = None
+    non_compete: bool
+    confidentiality: bool
+    status: str
+    generated_at: Optional[datetime] = None
+    signed_at: Optional[datetime] = None
+    signed_document_url: Optional[str] = None
+    terminated_at: Optional[datetime] = None
+    termination_reason: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ── Liquidación / finiquito (Fase 4 preview) ───────────────────────────────
+class SettlementRequest(BaseModel):
+    """Cálculo de finiquito conforme LFT. `termination_type` determina si
+    aplica indemnización (despido injustificado) o no (renuncia)."""
+    employee_id: int
+    termination_date: str                    # YYYY-MM-DD
+    termination_type: str                    # renuncia | despido_justificado | despido_injustificado | mutuo_acuerdo
+    include_indemnization: bool = False      # 3 meses + 20 días/año — solo si despido injustificado
+    include_seniority_premium: bool = True   # prima de antigüedad art. 162 LFT (12 días/año, 15+ años)
+    pending_days_worked: int = 0             # días trabajados en el mes en curso no pagados
+    pending_vacation_days: Optional[int] = None    # si None, se calcula desde vacation_days - vacation_used
+
+
+class SettlementItem(BaseModel):
+    concept: str
+    days: float = 0
+    amount: float
+
+
+class SettlementResponse(BaseModel):
+    employee_id: int
+    employee_name: str
+    termination_date: str
+    termination_type: str
+    years_of_service: float
+    daily_salary: float
+    items: List[SettlementItem]
+    total_perceptions: float
+    total_deductions: float
+    total_net: float
+    legal_basis: List[str]                # cita de artículos de la LFT aplicados

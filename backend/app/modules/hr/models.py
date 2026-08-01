@@ -166,3 +166,46 @@ class AnnouncementReceipt(Base):
 
     announcement = relationship("Announcement", back_populates="receipts")
     employee = relationship("Employee")
+
+
+# ── Contratos laborales / de servicios (Fase 3) ────────────────────────────
+# Genera y guarda el contrato firmable. Cada contrato apunta a UN empleado
+# (contract_type distinto al Employee.contract_type porque un mismo empleado
+# puede tener varios contratos históricos, ej. período de prueba → indeterminado).
+class Contract(Base):
+    __tablename__ = "hr_contracts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("hr_employees.id", ondelete="CASCADE"),
+                          nullable=False, index=True)
+    # Tipo de contrato — determina la plantilla legal aplicada:
+    #   indeterminado, determinado, prueba, capacitacion, obra, temporal,
+    #   comisionista, honorarios
+    contract_type = Column(String, nullable=False)
+    # Cláusulas configurables
+    salary_amount = Column(Float, nullable=False, default=0.0)   # sueldo/comisión pactada
+    salary_frequency = Column(String, nullable=False, default="mensual")  # semanal/quincenal/mensual/por_venta
+    hours_per_week = Column(Integer, nullable=True)              # jornada semanal (LFT máx 48)
+    work_schedule = Column(String, nullable=True)                # ej. "L-V 9:00-18:00, S 9:00-14:00"
+    workplace_address = Column(Text, nullable=True)              # domicilio del centro de trabajo
+    job_functions = Column(Text, nullable=True)                  # descripción del puesto y funciones
+    start_date = Column(String, nullable=False)                  # ISO YYYY-MM-DD
+    end_date = Column(String, nullable=True)                     # solo determinado/temporal/prueba/capacitacion
+    # Cláusulas específicas (opcionales, para casos particulares)
+    commission_pct = Column(Float, nullable=True)                # % comisión sobre venta (comisionista)
+    professional_service = Column(Text, nullable=True)           # descripción del servicio (honorarios)
+    non_compete = Column(Boolean, default=False, nullable=False) # cláusula de no competencia
+    confidentiality = Column(Boolean, default=True, nullable=False)  # confidencialidad (default sí)
+    # Estado
+    status = Column(String, nullable=False, default="draft")     # draft, generated, signed, terminated
+    generated_at = Column(DateTime(timezone=True), nullable=True)
+    signed_at = Column(DateTime(timezone=True), nullable=True)
+    signed_document_url = Column(Text, nullable=True)            # URL del PDF firmado escaneado (opcional)
+    terminated_at = Column(DateTime(timezone=True), nullable=True)
+    termination_reason = Column(Text, nullable=True)
+
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    employee = relationship("Employee")

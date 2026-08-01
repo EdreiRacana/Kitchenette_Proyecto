@@ -440,3 +440,68 @@ async def mark_read(receipt_id: int, db: DB, current_user: CurrentUser):
     ok = await service.mark_receipt_read(db, receipt_id, user_email=current_user.email)
     if not ok:
         raise HTTPException(status_code=404, detail="Receipt no encontrado o no autorizado")
+
+
+# ── Contratos (Fase 3) ─────────────────────────────────────────────────────
+@router.post("/contracts", response_model=schemas.ContractOut, status_code=201)
+async def create_contract(data: schemas.ContractCreate, db: DB, current_user: CurrentUser):
+    """Crea un contrato (draft) para un empleado. Requiere rol manager/admin."""
+    _require_manager(current_user)
+    try:
+        c = await service.create_contract(db, data, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    out = await service.get_contract(db, c.id)
+    return out
+
+
+@router.get("/contracts", response_model=List[schemas.ContractOut])
+async def list_contracts(db: DB, current_user: CurrentUser,
+                          employee_id: Optional[int] = None,
+                          status: Optional[str] = None):
+    """Lista contratos con filtros opcionales por empleado o estado."""
+    return await service.list_contracts(db, employee_id=employee_id, status=status)
+
+
+@router.get("/contracts/{contract_id}", response_model=schemas.ContractOut)
+async def get_contract(contract_id: int, db: DB, current_user: CurrentUser):
+    c = await service.get_contract(db, contract_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Contrato no encontrado")
+    return c
+
+
+@router.patch("/contracts/{contract_id}", response_model=schemas.ContractOut)
+async def update_contract(contract_id: int, data: schemas.ContractUpdate,
+                            db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    try:
+        c = await service.update_contract(db, contract_id, data, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not c:
+        raise HTTPException(status_code=404, detail="Contrato no encontrado")
+    return c
+
+
+@router.delete("/contracts/{contract_id}", status_code=204)
+async def delete_contract(contract_id: int, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    ok = await service.delete_contract(db, contract_id, user_id=current_user.id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Contrato no encontrado")
+
+
+@router.get("/contracts/{contract_id}/pdf")
+async def download_contract_pdf(contract_id: int, db: DB, current_user: CurrentUser):
+    """Descarga el PDF del contrato listo para imprimir y firmar."""
+    try:
+        content, filename = await service.generate_contract_pdf_bytes(
+            db, contract_id, user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return Response(
+        content=content, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

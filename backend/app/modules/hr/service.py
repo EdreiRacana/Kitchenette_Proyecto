@@ -1938,3 +1938,193 @@ async def unread_count_for_user(db: AsyncSession, user_email: str) -> int:
                models.AnnouncementReceipt.read_at.is_(None))
     )
     return int(res.scalar_one() or 0)
+
+
+# ── Contratos (Fase 3) ─────────────────────────────────────────────────────
+_VALID_CONTRACT_TYPES = {
+    "indeterminado", "determinado", "prueba", "capacitacion",
+    "obra", "temporal", "comisionista", "honorarios",
+}
+
+
+def _contract_to_out(c: models.Contract, employee_name: Optional[str] = None) -> dict:
+    return {
+        "id": c.id,
+        "employee_id": c.employee_id,
+        "employee_name": employee_name,
+        "contract_type": c.contract_type,
+        "salary_amount": c.salary_amount,
+        "salary_frequency": c.salary_frequency,
+        "hours_per_week": c.hours_per_week,
+        "work_schedule": c.work_schedule,
+        "workplace_address": c.workplace_address,
+        "job_functions": c.job_functions,
+        "start_date": c.start_date,
+        "end_date": c.end_date,
+        "commission_pct": c.commission_pct,
+        "professional_service": c.professional_service,
+        "non_compete": c.non_compete,
+        "confidentiality": c.confidentiality,
+        "status": c.status,
+        "generated_at": c.generated_at,
+        "signed_at": c.signed_at,
+        "signed_document_url": c.signed_document_url,
+        "terminated_at": c.terminated_at,
+        "termination_reason": c.termination_reason,
+        "created_at": c.created_at,
+    }
+
+
+async def create_contract(db: AsyncSession, data: "schemas.ContractCreate",
+                            user_id: Optional[int] = None) -> models.Contract:
+    if data.contract_type not in _VALID_CONTRACT_TYPES:
+        raise ValueError(f"Tipo de contrato inválido: {data.contract_type}")
+    emp = await db.get(models.Employee, data.employee_id)
+    if not emp:
+        raise ValueError("Empleado no existe")
+    c = models.Contract(**data.model_dump(), created_by_id=user_id)
+    db.add(c)
+    await db.commit()
+    await db.refresh(c)
+    await _log_audit(db, user_id, "contract.create",
+                     f"Contrato {c.contract_type} creado para {emp.name} {emp.last_name}",
+                     {"contract_id": c.id, "employee_id": emp.id})
+    return c
+
+
+async def list_contracts(db: AsyncSession, employee_id: Optional[int] = None,
+                          status: Optional[str] = None) -> List[dict]:
+    q = select(models.Contract, models.Employee).join(
+        models.Employee, models.Employee.id == models.Contract.employee_id,
+    ).order_by(models.Contract.created_at.desc())
+    if employee_id:
+        q = q.where(models.Contract.employee_id == employee_id)
+    if status:
+        q = q.where(models.Contract.status == status)
+    res = await db.execute(q)
+    out: List[dict] = []
+    for c, emp in res.all():
+        out.append(_contract_to_out(c, f"{emp.name} {emp.last_name}"))
+    return out
+
+
+async def get_contract(db: AsyncSession, contract_id: int) -> Optional[dict]:
+    res = await db.execute(
+        select(models.Contract, models.Employee)
+        .join(models.Employee, models.Employee.id == models.Contract.employee_id)
+        .where(models.Contract.id == contract_id)
+    )
+    row = res.first()
+    if not row:
+        return None
+    c, emp = row
+    return _contract_to_out(c, f"{emp.name} {emp.last_name}")
+
+
+async def update_contract(db: AsyncSession, contract_id: int,
+                            data: "schemas.ContractUpdate",
+                            user_id: Optional[int] = None) -> Optional[dict]:
+    c = await db.get(models.Contract, contract_id)
+    if not c:
+        return None
+    payload = data.model_dump(exclude_unset=True)
+    if "contract_type" in payload and payload["contract_type"] not in _VALID_CONTRACT_TYPES:
+        raise ValueError(f"Tipo de contrato inválido: {payload['contract_type']}")
+    for k, v in payload.items():
+        setattr(c, k, v)
+    if "status" in payload:
+        from datetime import datetime, timezone
+        if payload["status"] == "signed" and c.signed_at is None:
+            c.signed_at = datetime.now(timezone.utc)
+        if payload["status"] == "terminated" and c.terminated_at is None:
+            c.terminated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(c)
+    await _log_audit(db, user_id, "contract.update",
+                     f"Contrato #{c.id} actualizado", {"contract_id": c.id})
+    return await get_contract(db, contract_id)
+
+
+async def delete_contract(db: AsyncSession, contract_id: int,
+                            user_id: Optional[int] = None) -> bool:
+    c = await db.get(models.Contract, contract_id)
+    if not c:
+        return False
+    await db.delete(c)
+    await db.commit()
+    await _log_audit(db, user_id, "contract.delete",
+                     f"Contrato #{contract_id} eliminado", {"contract_id": contract_id})
+    return True
+
+
+async def _get_company_full(db: AsyncSession) -> dict:
+    """Datos de la empresa para el encabezado del contrato PDF."""
+    try:
+        from app.modules.core_config import models as cfg_models
+        res = await db.execute(select(cfg_models.CompanyProfile).limit(1))
+        cp = res.scalars().first()
+        if cp:
+            return {
+                "name": cp.legal_name or "LA EMPRESA",
+                "rfc": cp.tax_id,
+                "address": cp.address,
+                "city": None,
+                "legal_rep": None,
+            }
+    except Exception:
+        pass
+    return {"name": "LA EMPRESA", "rfc": None, "address": None, "city": None, "legal_rep": None}
+
+
+async def generate_contract_pdf_bytes(db: AsyncSession, contract_id: int,
+                                        user_id: Optional[int] = None) -> tuple[bytes, str]:
+    """Renderiza el PDF del contrato y actualiza status=generated si estaba
+    en draft. Devuelve (bytes, filename)."""
+    from app.modules.hr.contracts_pdf import generate_contract_pdf
+
+    res = await db.execute(
+        select(models.Contract, models.Employee)
+        .join(models.Employee, models.Employee.id == models.Contract.employee_id)
+        .where(models.Contract.id == contract_id)
+    )
+    row = res.first()
+    if not row:
+        raise ValueError("Contrato no encontrado")
+    c, emp = row
+
+    company = await _get_company_full(db)
+    contract_dict = {
+        "id": c.id,
+        "contract_type": c.contract_type,
+        "salary_amount": c.salary_amount,
+        "salary_frequency": c.salary_frequency,
+        "hours_per_week": c.hours_per_week,
+        "work_schedule": c.work_schedule,
+        "workplace_address": c.workplace_address,
+        "job_functions": c.job_functions,
+        "start_date": c.start_date,
+        "end_date": c.end_date,
+        "commission_pct": c.commission_pct,
+        "professional_service": c.professional_service,
+        "non_compete": c.non_compete,
+        "confidentiality": c.confidentiality,
+        "position": emp.position,
+    }
+    employee_dict = {
+        "name": emp.name, "last_name": emp.last_name,
+        "rfc": emp.rfc, "curp": emp.curp, "nss": emp.nss,
+        "address": None,
+    }
+    pdf_bytes = generate_contract_pdf(contract_dict, employee_dict, company)
+
+    if c.status == "draft":
+        from datetime import datetime, timezone
+        c.status = "generated"
+        c.generated_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    safe_name = f"{emp.name}_{emp.last_name}".replace(" ", "_")
+    filename = f"contrato_{c.contract_type}_{safe_name}_{c.id}.pdf"
+    await _log_audit(db, user_id, "contract.pdf",
+                     f"PDF generado para contrato #{c.id}", {"contract_id": c.id})
+    return pdf_bytes, filename

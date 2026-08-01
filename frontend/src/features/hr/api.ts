@@ -96,6 +96,31 @@ export const hrApi = {
   myUnreadCount: () => api.get("/hr/announcements/unread-count").then(r => r.data),
   markReceiptRead: (receiptId: number) =>
     api.post(`/hr/announcements/receipts/${receiptId}/read`).then(r => r.data),
+
+  // Contratos (Fase 3)
+  createContract: (data: {
+    employee_id: number; contract_type: string;
+    salary_amount?: number; salary_frequency?: string;
+    hours_per_week?: number; work_schedule?: string;
+    workplace_address?: string; job_functions?: string;
+    start_date: string; end_date?: string;
+    commission_pct?: number; professional_service?: string;
+    non_compete?: boolean; confidentiality?: boolean;
+  }) => api.post("/hr/contracts", data).then(r => r.data),
+  listContracts: (employeeId?: number, status?: string) =>
+    api.get("/hr/contracts", {
+      params: {
+        employee_id: employeeId || undefined,
+        status: status || undefined,
+      },
+    }).then(r => r.data),
+  getContract: (id: number) => api.get(`/hr/contracts/${id}`).then(r => r.data),
+  updateContract: (id: number, data: any) =>
+    api.patch(`/hr/contracts/${id}`, data).then(r => r.data),
+  deleteContract: (id: number) =>
+    api.delete(`/hr/contracts/${id}`).then(r => r.data),
+  downloadContractPdf: (id: number) =>
+    api.get(`/hr/contracts/${id}/pdf`, { responseType: "blob" }),
 };
 
 export function downloadBlob(blob: Blob, filename: string) {
