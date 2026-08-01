@@ -27,6 +27,7 @@ const NOVA_SHAPE: [number, number][] = [
 const SHAPE_HOLD_MS = 3000;      // tiempo que se mantiene cada forma
 const SHAPE_MORPH_MS = 900;      // transición suave entre formas
 const NUM_PARTICLES = 160;       // partículas del enjambre (mesh interior)
+const ROTATION_PERIOD_MS = 20000;  // una vuelta completa cada 20 segundos
 
 // Espacio seguro dentro del triángulo: centro ligeramente arriba, radio
 // máximo del interior. Deja aire para no invadir vértices ni notch.
@@ -245,6 +246,12 @@ export function TrianglesCanvas({ accent, hi }: {
       const kindFrom = SHAPE_CYCLE[fromIdx];
       const kindTo = SHAPE_CYCLE[toIdx];
 
+      // Rotación continua de la figura (giro lento, en radianes).
+      // Se congela cuando hay hover para que el efecto de "desarme" no
+      // compita con el movimiento.
+      const rotation = reduce ? 0
+        : (elapsed / ROTATION_PERIOD_MS) * Math.PI * 2 * (1 - transicionRed * 0.8);
+
       // ── Halo central suave ──────────────────────────────────────────────
       const centerAlpha = 0.24 * (1 - transicionRed * 0.7);
       if (centerAlpha > 0.02) {
@@ -283,21 +290,25 @@ export function TrianglesCanvas({ accent, hi }: {
         });
       }
 
-      // ── Contorno tenue de la figura actual del ciclo ─────────────────────
+      // ── Contorno tenue de la figura actual del ciclo (rotado) ────────────
       // Ayuda al ojo a "leer" que las partículas rellenan una figura concreta.
       // Se atenúa con el hover.
+      const cosR = Math.cos(rotation);
+      const sinR = Math.sin(rotation);
+      const rotateXY = (nx: number, ny: number): [number, number] =>
+        [nx * cosR - ny * sinR, nx * sinR + ny * cosR];
+
       const shapeOutlineAlpha = 0.18 * (1 - transicionRed);
       if (shapeOutlineAlpha > 0.02) {
         const cornersFrom = shapeCorners(kindFrom);
         const cornersTo = shapeCorners(kindTo);
-        // Solo dibuja el contorno de la figura DOMINANTE (from si morph<0.5, to si >=0.5).
-        // Interpola opacidad para que en el punto medio se atenúe brevemente.
         const useCorners = morph < 0.5 ? cornersFrom : cornersTo;
         const outAlpha = shapeOutlineAlpha * (1 - Math.abs(morph - 0.5) * 2 * 0.6);
         ctx.beginPath();
         useCorners.forEach(([nx, ny], i) => {
-          const px = cx + nx * SHAPE_RADIUS * S;
-          const py = cy + ny * SHAPE_RADIUS * S + CENTER_Y * S;
+          const [rx, ry] = rotateXY(nx, ny);
+          const px = cx + rx * SHAPE_RADIUS * S;
+          const py = cy + ry * SHAPE_RADIUS * S + CENTER_Y * S;
           if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
         });
         ctx.closePath();
@@ -310,10 +321,11 @@ export function TrianglesCanvas({ accent, hi }: {
           const drawVertexDots = (corners: [number, number][], alpha: number) => {
             ctx.fillStyle = toRgba(accent, alpha);
             corners.forEach(([nx, ny]) => {
+              const [rx, ry] = rotateXY(nx, ny);
               ctx.beginPath();
               ctx.arc(
-                cx + nx * SHAPE_RADIUS * S,
-                cy + ny * SHAPE_RADIUS * S + CENTER_Y * S,
+                cx + rx * SHAPE_RADIUS * S,
+                cy + ry * SHAPE_RADIUS * S + CENTER_Y * S,
                 2.4, 0, Math.PI * 2,
               );
               ctx.fill();
@@ -332,8 +344,11 @@ export function TrianglesCanvas({ accent, hi }: {
         const rTo = shapeRadiusAt(p.theta, kindTo);
         const rShape = rFrom + (rTo - rFrom) * morph;
         const magnitude = p.r * rShape * SHAPE_RADIUS * S;
-        const shapeX = magnitude * Math.cos(p.theta);
-        const shapeY = magnitude * Math.sin(p.theta) + CENTER_Y * S;
+        // Rotación: sumamos `rotation` al ángulo al proyectar a xy. La
+        // radial (magnitude) es invariante — solo gira la orientación.
+        const worldAngle = p.theta + rotation;
+        const shapeX = magnitude * Math.cos(worldAngle);
+        const shapeY = magnitude * Math.sin(worldAngle) + CENTER_Y * S;
 
         // Movimiento caótico cuando hay hover
         if (transicionRed > 0.1 && !reduce) {
