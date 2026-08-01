@@ -1513,15 +1513,9 @@ function Login({ t, s, lang, onEnter }) {
   const onKey = (e) => { if (e.key === "Enter" && !loading) handleLogin(); };
 
   return (
-    <div style={{ minHeight: "100vh", background: t.base, display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(380px, 620px)", position: "relative", overflow: "hidden" }} className="sthenova-login-grid">
-      {/* Panel izquierdo: animación con la silueta del NovaMark. El halo
-          radial suave mezcla los dos paneles y evita el borde duro. */}
-      <div style={{ position: "relative", background: `radial-gradient(ellipse 80% 65% at 50% 45%, ${t.nova}20 0%, ${t.nova}08 40%, transparent 75%), ${t.base}`, overflow: "hidden", minHeight: "100vh" }} className="sthenova-login-canvas">
-        <TrianglesCanvas accent={t.nova} dim={t.textLo} hi={t.textHi} />
-      </div>
-
-      {/* Panel derecho: brand header + formulario */}
-      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: "40px 44px", minHeight: "100vh", boxSizing: "border-box", background: t.base, position: "relative" }}>
+    <div style={{ minHeight: "100vh", background: t.base, display: "grid", gridTemplateColumns: "minmax(380px, 620px) minmax(0, 1fr)", position: "relative", overflow: "hidden" }} className="sthenova-login-grid">
+      {/* Panel izquierdo: brand header + formulario */}
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: "40px 44px", minHeight: "100vh", boxSizing: "border-box", background: t.base, position: "relative", order: 1 }}>
         <div style={{ width: "100%", maxWidth: 360, margin: "0 auto" }}>
           {/* Brand header — visible siempre, no solo en móvil */}
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 32 }}>
@@ -1565,13 +1559,18 @@ function Login({ t, s, lang, onEnter }) {
         </div>
       </div>
 
-      {/* Colapso responsive: en pantallas < 900px el panel izquierdo pasa a
-          franja superior de 240px y el formulario baja. El brand header del
-          panel derecho sigue visible arriba del form. */}
+      {/* Panel derecho: animación NovaMark. Con `order: 2` queda a la derecha
+          en desktop y en tablet el CSS de abajo lo re-ordena arriba en móvil. */}
+      <div style={{ position: "relative", background: `radial-gradient(ellipse 80% 65% at 50% 45%, ${t.nova}20 0%, ${t.nova}08 40%, transparent 75%), ${t.base}`, overflow: "hidden", minHeight: "100vh", order: 2 }} className="sthenova-login-canvas">
+        <TrianglesCanvas accent={t.nova} dim={t.textLo} hi={t.textHi} />
+      </div>
+
+      {/* Colapso responsive: en pantallas < 900px la animación pasa a franja
+          superior de 240px y el formulario queda debajo. */}
       <style>{`
         @media (max-width: 900px) {
           .sthenova-login-grid { grid-template-columns: 1fr !important; grid-template-rows: 240px 1fr !important; }
-          .sthenova-login-canvas { min-height: 240px !important; }
+          .sthenova-login-canvas { min-height: 240px !important; order: 0 !important; }
         }
       `}</style>
     </div>
