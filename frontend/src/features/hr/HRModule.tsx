@@ -14,7 +14,7 @@ import {
   Building2, Briefcase, MapPin, Phone, Mail, Hash, Star,
   ChevronDown, ChevronUp, Filter, MoreVertical, Play, Pause,
   CheckSquare, Clock3, UserCheck, UserX, Cake, Award,
-  Megaphone, Send,
+  Megaphone, Send, FileSignature, Trash2,
 } from "lucide-react";
 import { hrApi, downloadBlob } from "./api";
 
@@ -289,6 +289,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
     { id: "payroll", label: "Nómina", icon: Receipt },
     { id: "dispersion", label: "Dispersión", icon: Banknote },
     { id: "communication", label: "Comunicación", icon: Megaphone },
+    { id: "contracts", label: "Contratos", icon: FileSignature },
     { id: "reports", label: "Reportes", icon: FileText },
   ] as const;
 
@@ -1102,6 +1103,11 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Comunicación (anuncios internos) ── */}
       {tab === "communication" && (
         <CommunicationPanel t={t} employees={employees} onLoaded={load} />
+      )}
+
+      {/* ── TAB: Contratos (Fase 3) ── */}
+      {tab === "contracts" && (
+        <ContractsPanel t={t} employees={employees} />
       )}
 
       {/* ── TAB: Reports ── */}
@@ -2975,5 +2981,440 @@ function CommunicationPanel({ t, employees, onLoaded }: { t: any; employees: Emp
         </div>
       </div>
     </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTRATOS — Fase 3
+// Wizard para llenar formulario → guardar → descargar PDF listo para firma
+// Plantillas conforme LFT (indeterminado, determinado, prueba, capacitación,
+// obra) + Código de Comercio (comisionista) + Código Civil (honorarios).
+// ═══════════════════════════════════════════════════════════════════════════
+
+const CONTRACT_TYPES: Array<{ id: string; label: string; legal: string; group: "laboral" | "mercantil" | "civil" }> = [
+  { id: "indeterminado", label: "Por tiempo indeterminado", legal: "LFT art. 35 — el más común, sin fecha de término.", group: "laboral" },
+  { id: "determinado",   label: "Por tiempo determinado",   legal: "LFT art. 37 — requiere causa justificada.", group: "laboral" },
+  { id: "prueba",        label: "A prueba",                 legal: "LFT art. 39-A — máx 30 días (180 gerenciales).", group: "laboral" },
+  { id: "capacitacion",  label: "Capacitación inicial",     legal: "LFT art. 39-B — máx 3 meses (6 gerenciales).", group: "laboral" },
+  { id: "obra",          label: "Obra determinada",         legal: "LFT art. 37 — hasta terminar la obra pactada.", group: "laboral" },
+  { id: "temporal",      label: "Temporal / eventual",      legal: "LFT art. 37 — con inicio y fin definidos.", group: "laboral" },
+  { id: "comisionista",  label: "Comisión mercantil",       legal: "Cód. Comercio arts. 273-308 — NO laboral, sin subordinación.", group: "mercantil" },
+  { id: "honorarios",    label: "Prestación de servicios profesionales (honorarios)", legal: "Cód. Civil Federal arts. 2606-2615 — NO laboral, con CFDI.", group: "civil" },
+];
+
+function ContractsPanel({ t, employees }: { t: any; employees: Employee[] }) {
+  const [contracts, setContracts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [filterEmp, setFilterEmp] = useState<number | "">("");
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = await hrApi.listContracts(filterEmp || undefined);
+      setContracts(Array.isArray(list) ? list : []);
+    } catch { setContracts([]); }
+    finally { setLoading(false); }
+  }, [filterEmp]);
+  useEffect(() => { load(); }, [load]);
+
+  const downloadPdf = async (id: number, empName: string, type: string) => {
+    try {
+      const res = await hrApi.downloadContractPdf(id);
+      downloadBlob(res.data, `contrato_${type}_${empName.replace(/\s+/g, "_")}.pdf`);
+      // Refrescar por si cambió el status draft → generated
+      await load();
+    } catch (e: any) {
+      setMsg(`❌ ${e?.response?.data?.detail || "No se pudo generar el PDF"}`);
+    }
+  };
+
+  const markSigned = async (id: number) => {
+    try {
+      await hrApi.updateContract(id, { status: "signed" });
+      await load();
+      setMsg("✅ Contrato marcado como firmado");
+    } catch (e: any) {
+      setMsg(`❌ ${e?.response?.data?.detail || "No se pudo actualizar"}`);
+    }
+  };
+
+  const terminateContract = async (id: number) => {
+    const reason = window.prompt("Motivo de terminación (opcional):") || "";
+    try {
+      await hrApi.updateContract(id, { status: "terminated", termination_reason: reason });
+      await load();
+      setMsg("Contrato terminado.");
+    } catch (e: any) {
+      setMsg(`❌ ${e?.response?.data?.detail || "No se pudo terminar"}`);
+    }
+  };
+
+  const removeContract = async (id: number) => {
+    if (!window.confirm("¿Eliminar este contrato? Esta acción no se puede deshacer.")) return;
+    try {
+      await hrApi.deleteContract(id);
+      await load();
+    } catch (e: any) {
+      setMsg(`❌ ${e?.response?.data?.detail || "No se pudo eliminar"}`);
+    }
+  };
+
+  const statusColor = (s: string) => s === "signed" ? t.good : s === "terminated" ? t.bad : s === "generated" ? t.nova : t.warn;
+  const statusLabel = (s: string) => ({ draft: "Borrador", generated: "PDF generado", signed: "Firmado", terminated: "Terminado" } as any)[s] || s;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Header con acciones */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <FileSignature size={22} color={t.nova} />
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi }}>Contratos laborales, mercantiles y civiles</div>
+            <div style={{ fontSize: 12, color: t.textLo, marginTop: 2 }}>
+              Plantillas conforme a LFT, Código de Comercio y Código Civil Federal. Genera PDF listo para firma manuscrita.
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <select value={filterEmp} onChange={e => setFilterEmp(e.target.value ? Number(e.target.value) : "")}
+                  style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, cursor: "pointer" }}>
+            <option value="">Todos los empleados</option>
+            {employees.map(e => <option key={e.id} value={e.id}>{e.name} {e.last_name}</option>)}
+          </select>
+          <button onClick={() => setShowForm(true)}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            <Plus size={15} /> Nuevo contrato
+          </button>
+        </div>
+      </div>
+
+      {msg && (
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: msg.startsWith("✅") ? t.good + "18" : msg.startsWith("❌") ? t.bad + "18" : t.nova + "18", color: msg.startsWith("✅") ? t.good : msg.startsWith("❌") ? t.bad : t.nova, fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{msg}</span>
+          <button onClick={() => setMsg(null)} style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer" }}><X size={14} /></button>
+        </div>
+      )}
+
+      {/* Lista de contratos */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, padding: 16 }}>
+        {loading && <div style={{ padding: 30, textAlign: "center", color: t.textLo, fontSize: 13 }}>Cargando contratos…</div>}
+        {!loading && contracts.length === 0 && (
+          <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>
+            <FileSignature size={36} style={{ opacity: 0.3, marginBottom: 10 }} />
+            <div style={{ fontSize: 14, marginBottom: 4 }}>Aún no hay contratos generados.</div>
+            <div style={{ fontSize: 12 }}>Crea el primer contrato para uno de tus empleados.</div>
+          </div>
+        )}
+        {!loading && contracts.length > 0 && (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${t.border}`, color: t.textLo, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  <th style={{ textAlign: "left", padding: "10px 12px" }}>Empleado / parte</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px" }}>Tipo</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px" }}>Vigencia</th>
+                  <th style={{ textAlign: "right", padding: "10px 12px" }}>Monto</th>
+                  <th style={{ textAlign: "center", padding: "10px 12px" }}>Estado</th>
+                  <th style={{ textAlign: "right", padding: "10px 12px" }}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contracts.map(c => {
+                  const ct = CONTRACT_TYPES.find(x => x.id === c.contract_type);
+                  return (
+                    <tr key={c.id} style={{ borderBottom: `1px solid ${t.border}` }}>
+                      <td style={{ padding: "10px 12px", color: t.textHi }}>{c.employee_name || "—"}</td>
+                      <td style={{ padding: "10px 12px", color: t.textMid }}>{ct?.label || c.contract_type}</td>
+                      <td style={{ padding: "10px 12px", color: t.textMid, fontSize: 12 }}>
+                        {c.start_date}{c.end_date ? ` → ${c.end_date}` : " → indefinido"}
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", color: t.textHi, fontFamily: "monospace" }}>
+                        ${Number(c.salary_amount || 0).toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+                        {c.commission_pct ? ` (${c.commission_pct}%)` : ""}
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                        <span style={{ fontSize: 10.5, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: statusColor(c.status) + "22", color: statusColor(c.status), textTransform: "uppercase", letterSpacing: 0.4 }}>
+                          {statusLabel(c.status)}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right" }}>
+                        <div style={{ display: "inline-flex", gap: 6 }}>
+                          <button onClick={() => downloadPdf(c.id, c.employee_name || "empleado", c.contract_type)}
+                                  title="Descargar PDF"
+                                  style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <Download size={13} /> PDF
+                          </button>
+                          {c.status !== "signed" && c.status !== "terminated" && (
+                            <button onClick={() => markSigned(c.id)} title="Marcar firmado"
+                                    style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${t.good}55`, background: t.good + "18", color: t.good, cursor: "pointer", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <Check size={13} /> Firmado
+                            </button>
+                          )}
+                          {c.status === "signed" && (
+                            <button onClick={() => terminateContract(c.id)} title="Terminar"
+                                    style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${t.warn}55`, background: t.warn + "18", color: t.warn, cursor: "pointer", fontSize: 12 }}>
+                              Terminar
+                            </button>
+                          )}
+                          <button onClick={() => removeContract(c.id)} title="Eliminar"
+                                  style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${t.bad}55`, background: t.bad + "10", color: t.bad, cursor: "pointer", fontSize: 12 }}>
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {showForm && (
+        <ContractFormModal t={t} employees={employees}
+                            onClose={() => setShowForm(false)}
+                            onCreated={async (msgTxt) => { setShowForm(false); setMsg(msgTxt); await load(); }} />
+      )}
+    </div>
+  );
+}
+
+
+function ContractFormModal({ t, employees, onClose, onCreated }:
+  { t: any; employees: Employee[]; onClose: () => void; onCreated: (msg: string) => void }) {
+  const [employeeId, setEmployeeId] = useState<number | "">("");
+  const [contractType, setContractType] = useState<string>("indeterminado");
+  const [salaryAmount, setSalaryAmount] = useState<number>(0);
+  const [salaryFrequency, setSalaryFrequency] = useState("mensual");
+  const [hoursPerWeek, setHoursPerWeek] = useState<number>(48);
+  const [workSchedule, setWorkSchedule] = useState("");
+  const [workplaceAddress, setWorkplaceAddress] = useState("");
+  const [jobFunctions, setJobFunctions] = useState("");
+  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState("");
+  const [commissionPct, setCommissionPct] = useState<number>(0);
+  const [professionalService, setProfessionalService] = useState("");
+  const [nonCompete, setNonCompete] = useState(false);
+  const [confidentiality, setConfidentiality] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const selectedType = CONTRACT_TYPES.find(x => x.id === contractType)!;
+  const needsEndDate = ["determinado", "prueba", "capacitacion", "obra", "temporal"].includes(contractType);
+  const isCommission = contractType === "comisionista";
+  const isHonorarios = contractType === "honorarios";
+
+  // Autocompleta salary desde el empleado
+  useEffect(() => {
+    if (!employeeId) return;
+    const e = employees.find(x => x.id === employeeId);
+    if (e?.base_salary && !salaryAmount) setSalaryAmount(e.base_salary);
+    if (e?.department && !workplaceAddress) {/* no-op, address se llena manual */}
+  }, [employeeId, employees]);
+
+  const submit = async () => {
+    if (!employeeId) { setErr("Selecciona un empleado"); return; }
+    if (!startDate) { setErr("Fecha de inicio requerida"); return; }
+    if (needsEndDate && !endDate) { setErr("Este tipo de contrato requiere fecha de fin"); return; }
+    setSaving(true); setErr(null);
+    try {
+      await hrApi.createContract({
+        employee_id: Number(employeeId),
+        contract_type: contractType,
+        salary_amount: salaryAmount,
+        salary_frequency: salaryFrequency,
+        hours_per_week: isCommission || isHonorarios ? undefined : hoursPerWeek,
+        work_schedule: isCommission || isHonorarios ? undefined : workSchedule,
+        workplace_address: workplaceAddress,
+        job_functions: jobFunctions,
+        start_date: startDate,
+        end_date: endDate || undefined,
+        commission_pct: isCommission ? commissionPct : undefined,
+        professional_service: isHonorarios ? professionalService : undefined,
+        non_compete: nonCompete,
+        confidentiality,
+      });
+      onCreated("✅ Contrato creado. Descárgalo desde la lista para imprimir y firmar.");
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "No se pudo crear el contrato");
+      setSaving(false);
+    }
+  };
+
+  const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" };
+  const lbl: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}
+         onClick={onClose}>
+      <div onClick={e => e.stopPropagation()}
+           style={{ background: t.panel, borderRadius: 14, padding: 24, maxWidth: 720, width: "100%", maxHeight: "92vh", overflowY: "auto", border: `1px solid ${t.border}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}>
+              <FileSignature size={20} color={t.nova} /> Nuevo contrato
+            </div>
+            <div style={{ fontSize: 12, color: t.textLo, marginTop: 4 }}>
+              Llena el formulario. El PDF se genera al guardar y queda listo para imprimir y firmar.
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textMid }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Empleado + tipo */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={lbl}>Empleado *</label>
+              <select value={employeeId} onChange={e => setEmployeeId(e.target.value ? Number(e.target.value) : "")}
+                      style={{ ...inp, cursor: "pointer" }}>
+                <option value="">— Elige empleado —</option>
+                {employees.filter(e => e.is_active !== false).map(e =>
+                  <option key={e.id} value={e.id}>{e.name} {e.last_name} — {e.department}</option>
+                )}
+              </select>
+            </div>
+            <div>
+              <label style={lbl}>Tipo de contrato *</label>
+              <select value={contractType} onChange={e => setContractType(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                <optgroup label="Laborales (LFT)">
+                  {CONTRACT_TYPES.filter(x => x.group === "laboral").map(x =>
+                    <option key={x.id} value={x.id}>{x.label}</option>
+                  )}
+                </optgroup>
+                <optgroup label="Mercantil (Cód. Comercio)">
+                  {CONTRACT_TYPES.filter(x => x.group === "mercantil").map(x =>
+                    <option key={x.id} value={x.id}>{x.label}</option>
+                  )}
+                </optgroup>
+                <optgroup label="Civil (Cód. Civil Federal)">
+                  {CONTRACT_TYPES.filter(x => x.group === "civil").map(x =>
+                    <option key={x.id} value={x.id}>{x.label}</option>
+                  )}
+                </optgroup>
+              </select>
+            </div>
+          </div>
+
+          <div style={{ padding: "8px 12px", background: t.panel2, borderRadius: 8, fontSize: 12, color: t.textLo, borderLeft: `3px solid ${t.nova}` }}>
+            <b style={{ color: t.textMid }}>Fundamento:</b> {selectedType.legal}
+          </div>
+
+          {/* Fechas */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={lbl}>Fecha de inicio *</label>
+              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={inp} />
+            </div>
+            <div>
+              <label style={lbl}>Fecha de fin {needsEndDate ? "*" : "(opcional)"}</label>
+              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={inp} />
+            </div>
+          </div>
+
+          {/* Salario / comisión */}
+          <div style={{ display: "grid", gridTemplateColumns: isCommission ? "1fr 1fr 1fr" : "2fr 1fr", gap: 12 }}>
+            <div>
+              <label style={lbl}>{isCommission ? "Base fija (si aplica)" : isHonorarios ? "Honorarios" : "Salario"} (MXN)</label>
+              <input type="number" min={0} step="0.01" value={salaryAmount}
+                     onChange={e => setSalaryAmount(Number(e.target.value))} style={inp} />
+            </div>
+            <div>
+              <label style={lbl}>Periodicidad</label>
+              <select value={salaryFrequency} onChange={e => setSalaryFrequency(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="semanal">Semanal</option>
+                <option value="quincenal">Quincenal</option>
+                <option value="mensual">Mensual</option>
+                {isCommission && <option value="por_venta">Por venta</option>}
+              </select>
+            </div>
+            {isCommission && (
+              <div>
+                <label style={lbl}>Comisión %</label>
+                <input type="number" min={0} max={100} step="0.1" value={commissionPct}
+                       onChange={e => setCommissionPct(Number(e.target.value))} style={inp} />
+              </div>
+            )}
+          </div>
+
+          {/* Jornada (solo laborales) */}
+          {!isCommission && !isHonorarios && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 12 }}>
+              <div>
+                <label style={lbl}>Horas/semana</label>
+                <input type="number" min={1} max={48} value={hoursPerWeek}
+                       onChange={e => setHoursPerWeek(Number(e.target.value))} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Horario</label>
+                <input value={workSchedule} onChange={e => setWorkSchedule(e.target.value)}
+                       placeholder="Ej. Lunes a Viernes de 9:00 a 18:00" style={inp} />
+              </div>
+            </div>
+          )}
+
+          {/* Servicio honorarios */}
+          {isHonorarios && (
+            <div>
+              <label style={lbl}>Descripción del servicio profesional *</label>
+              <textarea rows={3} value={professionalService} onChange={e => setProfessionalService(e.target.value)}
+                        placeholder="Ej. Asesoría contable mensual, elaboración de estados financieros y declaraciones."
+                        style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} />
+            </div>
+          )}
+
+          {/* Funciones */}
+          <div>
+            <label style={lbl}>Funciones / actividades del puesto</label>
+            <textarea rows={3} value={jobFunctions} onChange={e => setJobFunctions(e.target.value)}
+                      placeholder="Describe las principales funciones y responsabilidades."
+                      style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} />
+          </div>
+
+          {/* Domicilio */}
+          <div>
+            <label style={lbl}>Domicilio del centro de trabajo</label>
+            <input value={workplaceAddress} onChange={e => setWorkplaceAddress(e.target.value)}
+                   placeholder="Calle, número, colonia, ciudad" style={inp} />
+          </div>
+
+          {/* Cláusulas opcionales */}
+          <div style={{ padding: 12, background: t.panel2, borderRadius: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: t.textMid }}>
+              <input type="checkbox" checked={confidentiality} onChange={e => setConfidentiality(e.target.checked)} />
+              Incluir cláusula de <b>confidencialidad</b>
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: t.textMid }}>
+              <input type="checkbox" checked={nonCompete} onChange={e => setNonCompete(e.target.checked)} />
+              Incluir cláusula de <b>no competencia</b>
+            </label>
+          </div>
+
+          {err && (
+            <div style={{ padding: "10px 12px", borderRadius: 8, background: t.bad + "18", color: t.bad, fontSize: 13 }}>
+              {err}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+            <button onClick={onClose}
+                    style={{ flex: 1, padding: 12, borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 14 }}>
+              Cancelar
+            </button>
+            <button onClick={submit} disabled={saving || !employeeId}
+                    style={{ flex: 2, padding: 12, borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: saving ? "wait" : "pointer", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: employeeId ? 1 : 0.5 }}>
+              <FileSignature size={16} /> {saving ? "Guardando…" : "Crear contrato"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
