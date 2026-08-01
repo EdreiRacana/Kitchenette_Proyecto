@@ -9,6 +9,7 @@ class EmployeeBase(BaseModel):
     last_name: str
     email: str
     phone: Optional[str] = None
+    photo: Optional[str] = None       # URL o data URI de la foto (subida a Supabase)
     department: str
     position: str
     cost_center: Optional[str] = None
@@ -45,6 +46,7 @@ class EmployeeUpdate(BaseModel):
     last_name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
+    photo: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None
     cost_center: Optional[str] = None

@@ -507,8 +507,15 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                         <td style={{ padding: "13px 16px", fontSize: 12, color: t.nova, fontWeight: 700, fontFamily: "monospace" }}>{e.employee_number}</td>
                         <td style={{ padding: "13px 16px" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <div style={{ width: 34, height: 34, borderRadius: 99, background: `linear-gradient(135deg, ${t.nova}44, ${t.navy}44)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: t.nova, flexShrink: 0 }}>
-                              {e.name[0]}{e.last_name[0]}
+                            <div style={{
+                              width: 34, height: 34, borderRadius: 99,
+                              background: e.photo
+                                ? `url(${e.photo}) center/cover`
+                                : `linear-gradient(135deg, ${t.nova}44, ${t.navy}44)`,
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                              fontSize: 13, fontWeight: 700, color: t.nova, flexShrink: 0,
+                            }}>
+                              {!e.photo && <>{e.name[0]}{e.last_name[0]}</>}
                             </div>
                             <div>
                               <div style={{ fontSize: 13.5, fontWeight: 600, color: t.textHi }}>{fullName(e)}</div>
@@ -1180,8 +1187,15 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           <div onClick={e => e.stopPropagation()} style={{ width: 480, height: "100vh", background: t.panel, borderLeft: `1px solid ${t.border}`, overflowY: "auto", display: "flex", flexDirection: "column" }}>
             {/* Header */}
             <div style={{ padding: 24, borderBottom: `1px solid ${t.border}`, display: "flex", gap: 14, alignItems: "flex-start" }}>
-              <div style={{ width: 56, height: 56, borderRadius: 99, background: `linear-gradient(135deg, ${t.nova}44, ${t.navy}44)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 700, color: t.nova, flexShrink: 0 }}>
-                {selectedEmployee.name[0]}{selectedEmployee.last_name[0]}
+              <div style={{
+                width: 56, height: 56, borderRadius: 99,
+                background: selectedEmployee.photo
+                  ? `url(${selectedEmployee.photo}) center/cover`
+                  : `linear-gradient(135deg, ${t.nova}44, ${t.navy}44)`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 20, fontWeight: 700, color: t.nova, flexShrink: 0,
+              }}>
+                {!selectedEmployee.photo && <>{selectedEmployee.name[0]}{selectedEmployee.last_name[0]}</>}
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 17, fontWeight: 700, color: t.textHi }}>{fullName(selectedEmployee)}</div>
@@ -1303,6 +1317,7 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
   const [form, setForm] = useState({
     name: editing?.name || "", last_name: editing?.last_name || "",
     email: editing?.email || "", phone: editing?.phone || "",
+    photo: editing?.photo || "",
     department: editing?.department || "", position: editing?.position || "",
     cost_center: editing?.cost_center || "",
     contract_type: editing?.contract_type || "indefinido",
@@ -1360,6 +1375,66 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
         <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
           {step === 1 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {/* Foto del empleado — avatar circular con uploader inline.
+                  Se guarda como data URI en `photo` (~50-100KB por foto
+                  redimensionada). Cuando el volumen crezca, migrar a subida
+                  directa a Supabase Storage como los documentos de clientes. */}
+              <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                <label style={{ cursor: "pointer", position: "relative" }} title="Cambiar foto">
+                  <div style={{
+                    width: 84, height: 84, borderRadius: "50%",
+                    background: form.photo ? `url(${form.photo}) center/cover` : t.panel2,
+                    border: `2px solid ${form.photo ? t.nova : t.border}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: t.textLo, fontSize: 24, fontWeight: 700,
+                  }}>
+                    {!form.photo && ((form.name?.[0] || "") + (form.last_name?.[0] || "")).toUpperCase()}
+                  </div>
+                  <div style={{
+                    position: "absolute", bottom: 0, right: 0, width: 26, height: 26,
+                    borderRadius: "50%", background: t.nova, color: "#fff",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 14, fontWeight: 700, border: `2px solid ${t.panel}`,
+                  }}>+</div>
+                  <input type="file" accept="image/*" style={{ display: "none" }}
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      if (f.size > 5 * 1024 * 1024) { alert("La foto no debe exceder 5MB."); return; }
+                      // Redimensionar cliente-side a 512px máx para no guardar
+                      // datauris gigantes en la BD (RH puede llegar a 100+ empleados).
+                      const img = new Image();
+                      const url = URL.createObjectURL(f);
+                      img.onload = () => {
+                        const MAX = 512;
+                        const ratio = Math.min(1, MAX / Math.max(img.width, img.height));
+                        const w = Math.round(img.width * ratio);
+                        const h = Math.round(img.height * ratio);
+                        const canvas = document.createElement("canvas");
+                        canvas.width = w; canvas.height = h;
+                        const ctx = canvas.getContext("2d");
+                        if (!ctx) return;
+                        ctx.drawImage(img, 0, 0, w, h);
+                        const dataUri = canvas.toDataURL("image/jpeg", 0.85);
+                        setForm(x => ({ ...x, photo: dataUri }));
+                        URL.revokeObjectURL(url);
+                      };
+                      img.src = url;
+                    }} />
+                </label>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, color: t.textMid, fontWeight: 600 }}>Foto del empleado</div>
+                  <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 3 }}>
+                    JPG o PNG, hasta 5 MB. Se redimensiona automáticamente para optimizar.
+                  </div>
+                  {form.photo && (
+                    <button type="button" onClick={() => setForm(x => ({ ...x, photo: "" }))}
+                      style={{ marginTop: 6, fontSize: 11.5, background: "transparent", border: "none", color: t.bad, cursor: "pointer", padding: 0 }}>
+                      Quitar foto
+                    </button>
+                  )}
+                </div>
+              </div>
               <div style={g2}>
                 <div><label style={lbl}>Nombre(s) *</label><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={inp} /></div>
                 <div><label style={lbl}>Apellidos *</label><input value={form.last_name} onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))} style={inp} /></div>

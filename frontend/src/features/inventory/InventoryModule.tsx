@@ -360,8 +360,10 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
         </div>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", borderBottom: `1px solid ${t.border}`, marginBottom: 20, overflowX: "auto", gap: 2 }}>
+      {/* Tabs — wrap en múltiples filas si no caben (10+ pestañas). Sin scroll
+          horizontal: el usuario ve TODAS las opciones sin tener que hacer
+          scroll ni descubrirlas. Es el patrón de Notion/Linear con muchas tabs. */}
+      <div style={{ display: "flex", flexWrap: "wrap", borderBottom: `1px solid ${t.border}`, marginBottom: 20, gap: 2, rowGap: 4 }}>
         {TABS.map(({ id, label, icon: Icon }) => (
           <button key={id} onClick={() => setTab(id as Tab)} style={tabBtn(tab === id)}>
             <span style={{ display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}><Icon size={14} />{label}</span>
