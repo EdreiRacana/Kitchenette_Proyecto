@@ -123,7 +123,12 @@ function easeInOutCubic(t: number): number {
 interface Particle {
   r: number;
   theta: number;
-  x: number;    // xy renderizado (con perspectiva ya aplicada)
+  // z0 ∈ [-1, 1] — profundidad propia de cada partícula, fija. Multiplicada
+  // por una "envoltura lente" (mayor en el centro de la figura, menor en el
+  // borde) da al cuerpo entero forma esférica: al rotar sobre Y jamás colapsa
+  // a una línea plana; siempre conserva volumen visible (como un planeta).
+  z0: number;
+  x: number;
   y: number;
   rx: number;
   ry: number;
@@ -168,16 +173,19 @@ export function TrianglesCanvas({ accent, hi }: {
       const S = logoScale();
       const out: Particle[] = [];
       for (let i = 0; i < NUM_PARTICLES; i++) {
-        const nearEdge = i < NUM_PARTICLES * 0.30;
+        const nearEdge = i < NUM_PARTICLES * 0.25;
         const r = nearEdge
           ? 0.85 + Math.random() * 0.15
           : Math.sqrt(Math.random()) * 0.98;
         const theta = Math.random() * Math.PI * 2;
+        // z0 uniforme en [-1, 1] — luego se modula por la envoltura lente
+        // en el render loop para dar forma esférica al cuerpo.
+        const z0 = Math.random() * 2 - 1;
         const rShape = shapeRadiusAt(theta, SHAPE_CYCLE[0]);
         const x = r * rShape * SHAPE_RADIUS * S * Math.cos(theta);
         const y = r * rShape * SHAPE_RADIUS * S * Math.sin(theta) + CENTER_Y * S;
         out.push({
-          r, theta, x, y,
+          r, theta, z0, x, y,
           rx: (Math.random() - 0.5) * S * 1.4,
           ry: (Math.random() - 0.5) * S * 1.4,
           vx: (Math.random() - 0.5) * 0.7,
@@ -329,10 +337,18 @@ export function TrianglesCanvas({ accent, hi }: {
         if (kindTo !== "circle") drawVertexDots(cornersTo, shapeOutlineAlpha * morph * 1.6);
       }
 
-      // ── Posiciones de partículas (interpolación entre figuras + planeta) ──
+      // ── Posiciones de partículas (planeta 3D con volumen tipo lente) ────
+      // Cada partícula tiene profundidad propia (z0). La envoltura lente
+      // (zEnvelope = sqrt(1 - r^2)) hace que las partículas del centro
+      // tengan mayor rango de Z que las del borde, dando forma esférica
+      // al cuerpo. Al rotar sobre Y, el cuerpo mantiene volumen visible
+      // en cualquier ángulo — nunca colapsa a una línea plana.
       const positions: {
-        x: number; y: number; distMouse: number; depth: number; depthAlpha: number;
+        x: number; y: number; distMouse: number; depth: number;
+        depthAlpha: number; sizeMul: number;
       }[] = [];
+      const zDepthScale = SHAPE_RADIUS * S * 0.65;   // amplitud de profundidad
+
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
         const rFrom = shapeRadiusAt(p.theta, kindFrom);
@@ -340,17 +356,27 @@ export function TrianglesCanvas({ accent, hi }: {
         const rShape = rFrom + (rTo - rFrom) * morph;
         const magnitude = p.r * rShape * SHAPE_RADIUS * S;
 
-        // Posición base en el plano de la figura (2D)
+        // Posición base en el plano de la figura (2D antes de rotar)
         const shapeX = magnitude * Math.cos(p.theta);
-        const shapeY = magnitude * Math.sin(p.theta) + CENTER_Y * S;
+        const shapeY = magnitude * Math.sin(p.theta);
+        // Envoltura lente: máximo en el centro (r=0), mínimo en el borde (r=1)
+        const zEnvelope = Math.sqrt(Math.max(0, 1 - p.r * p.r)) * zDepthScale;
+        const zLocal = p.z0 * zEnvelope;
 
-        // Rotación 3D sobre eje Y (planeta)
-        const worldX = shapeX * cosR;
-        const worldZ = shapeX * sinR;
-        const depthScale = 1 + (worldZ / S) * PERSPECTIVE;
-        const perspX = worldX * depthScale;
-        const perspY = shapeY * (1 + PERSPECTIVE * 0.15 * (worldZ / S));
-        const depthAlpha = 0.35 + 0.65 * ((worldZ / S + 1) / 2);   // 0.35 atrás → 1.0 al frente
+        // Rotación 3D sobre eje Y: (shapeX, zLocal) → (worldX, worldZ)
+        const worldX = shapeX * cosR + zLocal * sinR;
+        const worldZ = -shapeX * sinR + zLocal * cosR;
+        const worldY = shapeY;
+
+        // Perspectiva: puntos hacia el frente se agrandan; hacia atrás se
+        // encogen. Con S como referencia de tamaño del cuerpo.
+        const perspFactor = 1 + (worldZ / S) * PERSPECTIVE;
+        const perspX = worldX * perspFactor;
+        const perspY = worldY * perspFactor + CENTER_Y * S;
+        // Alpha por profundidad — al frente 1.0, al fondo 0.25 (contraste
+        // fuerte para reforzar la sensación de 3D).
+        const depthAlpha = 0.25 + 0.75 * ((worldZ / (zDepthScale * 1.1) + 1) / 2);
+        const sizeMul = 0.55 + 0.9 * Math.max(0, Math.min(1, (worldZ / (zDepthScale * 1.1) + 1) / 2));
 
         // Movimiento caótico en hover
         if (transicionRed > 0.1 && !reduce) {
@@ -372,7 +398,7 @@ export function TrianglesCanvas({ accent, hi }: {
         const dm = Math.hypot(xF - mouse.x, yF - mouse.y);
         const distC = Math.hypot(p.x, p.y - CENTER_Y * S);
         const depth = Math.max(0.35, 1 - (distC / (S * 0.7)) * 0.6);
-        positions.push({ x: xF, y: yF, distMouse: dm, depth, depthAlpha });
+        positions.push({ x: xF, y: yF, distMouse: dm, depth, depthAlpha, sizeMul });
       }
 
       // ── Malla: líneas entre partículas cercanas ─────────────────────────
@@ -409,11 +435,14 @@ export function TrianglesCanvas({ accent, hi }: {
       }
 
       // ── Partículas ──────────────────────────────────────────────────────
-      positions.forEach((n) => {
+      // Ordenar por profundidad Z (approximada via sizeMul) para dibujar los
+      // de atrás primero — esto refuerza la sensación 3D de que las que
+      // están al frente tapan a las de atrás.
+      const sorted = [...positions].sort((a, b) => a.sizeMul - b.sizeMul);
+      sorted.forEach((n) => {
         const cerca = n.distMouse < dCerca;
-        // Tamaño modulado por depthAlpha (adelante grande, atrás pequeño)
         const baseSize = 1.4 + 0.9 * n.depth;
-        const size = cerca ? 3.2 : (baseSize * (0.6 + 0.6 * n.depthAlpha));
+        const size = cerca ? 3.4 : baseSize * n.sizeMul;
         ctx.beginPath();
         ctx.arc(n.x, n.y, size, 0, Math.PI * 2);
         if (cerca) {
@@ -421,7 +450,7 @@ export function TrianglesCanvas({ accent, hi }: {
           ctx.shadowColor = accent;
           ctx.shadowBlur = 8;
         } else {
-          ctx.fillStyle = toRgba(hi, (0.35 + 0.5 * n.depth) * n.depthAlpha);
+          ctx.fillStyle = toRgba(hi, (0.30 + 0.55 * n.depth) * n.depthAlpha);
           ctx.shadowBlur = 0;
         }
         ctx.fill();
