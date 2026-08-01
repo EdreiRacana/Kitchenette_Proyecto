@@ -32,6 +32,10 @@ class EmployeeBase(BaseModel):
     infonavit_discount_value: Optional[float] = None
     fonacot_credit: Optional[str] = None
     fonacot_discount_value: Optional[float] = None
+    alimony_type: Optional[str] = None          # porcentaje | cuota_fija | uma_multiple
+    alimony_value: Optional[float] = None
+    alimony_beneficiary: Optional[str] = None
+    alimony_court_order: Optional[str] = None
     vacation_days: int = 0
     vacation_used: int = 0
     is_active: bool = True
@@ -69,6 +73,10 @@ class EmployeeUpdate(BaseModel):
     infonavit_discount_value: Optional[float] = None
     fonacot_credit: Optional[str] = None
     fonacot_discount_value: Optional[float] = None
+    alimony_type: Optional[str] = None
+    alimony_value: Optional[float] = None
+    alimony_beneficiary: Optional[str] = None
+    alimony_court_order: Optional[str] = None
     vacation_days: Optional[int] = None
     vacation_used: Optional[int] = None
     is_active: Optional[bool] = None
@@ -92,6 +100,8 @@ class AttendanceBase(BaseModel):
     notes: Optional[str] = None
     approved: bool = False
     channel: Optional[str] = None
+    incapacity_subtype: Optional[str] = None    # enfermedad_general | maternidad | riesgo_trabajo | paternidad
+    imss_folio: Optional[str] = None
 
 
 class AttendanceCreate(AttendanceBase):
@@ -134,6 +144,7 @@ class PayrollDetailInDB(BaseModel):
     infonavit: float
     fonacot: float
     loan_deduction: float
+    alimony: float = 0.0
     total_gross: float
     total_deductions: float
     total_net: float

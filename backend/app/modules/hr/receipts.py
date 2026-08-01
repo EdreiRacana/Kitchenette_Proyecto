@@ -138,6 +138,7 @@ def build_receipt_pdf(
         ("ISR retenido", detail.get("isr", 0.0)),
         ("INFONAVIT (crédito habitación)", detail.get("infonavit", 0.0)),
         ("FONACOT", detail.get("fonacot", 0.0)),
+        ("Pensión alimenticia (mandato judicial)", detail.get("alimony", 0.0)),
         ("Otros préstamos", detail.get("loan_deduction", 0.0)),
     ]
 

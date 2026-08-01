@@ -472,6 +472,7 @@ async def get_period_detail(db: AsyncSession, period_id: int) -> Optional[dict]:
             "aguinaldo": d.aguinaldo, "subsidy_applied": d.subsidy_applied,
             "imss_employee": d.imss_employee, "isr": d.isr, "infonavit": d.infonavit, "fonacot": d.fonacot,
             "loan_deduction": d.loan_deduction,
+            "alimony": d.alimony,
             "imss_employer": d.imss_employer, "infonavit_employer": d.infonavit_employer,
             "total_gross": d.total_gross, "total_deductions": d.total_deductions,
             "total_net": d.total_net, "dispersion_status": d.dispersion_status, "bank": emp.bank, "clabe": emp.clabe,
@@ -572,6 +573,13 @@ async def _attendance_summary_for_period(
 
     days_absent = 0.0
     days_incapacity = 0.0
+    # Desglose de incapacidades por subtipo — determina el % que paga el patrón:
+    #   enfermedad_general: art. 42 LSS — descuenta días 1-3, IMSS paga 60% desde día 4
+    #   maternidad:         art. 101 LSS — IMSS paga 100% SBC × 42 días pre y 42 post
+    #   riesgo_trabajo:     art. 58 LSS — IMSS paga 100% SBC desde día 1
+    #   paternidad:         art. 132 XXVII bis LFT — patrón paga 100% × 5 días
+    incap_by_subtype = {"enfermedad_general": 0, "maternidad": 0,
+                          "riesgo_trabajo": 0, "paternidad": 0}
     days_vacation = 0.0
     # Horas extra por semana ISO para aplicar el tope de 9h/sem dobles
     extra_by_iso_week: dict = {}
@@ -580,6 +588,11 @@ async def _attendance_summary_for_period(
             days_absent += 1
         elif a.type == "incapacidad":
             days_incapacity += 1
+            sub = getattr(a, "incapacity_subtype", None) or "enfermedad_general"
+            if sub in incap_by_subtype:
+                incap_by_subtype[sub] += 1
+            else:
+                incap_by_subtype["enfermedad_general"] += 1
         elif a.type == "vacacion":
             days_vacation += 1
         elif a.type == "extra" and a.hours:
@@ -597,6 +610,7 @@ async def _attendance_summary_for_period(
     return {
         "days_absent": days_absent,
         "days_incapacity": days_incapacity,
+        "incap_by_subtype": incap_by_subtype,
         "days_vacation": days_vacation,
         "double_hours": double_hours,
         "triple_hours": triple_hours,
@@ -727,9 +741,14 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
         # ── Nómina regular ──────────────────────────────────────────────────
         # Faltas descontadas
         days_absent = att["days_absent"]
-        # Incapacidad: primeros 3 días descontados, el resto lo paga IMSS
+        # Incapacidad: descuento depende del subtipo (LSS arts. 42, 58, 101)
+        #   enfermedad_general: descuenta días 1-3 (IMSS paga 60% desde día 4)
+        #   maternidad / riesgo_trabajo: 0 días descontados (IMSS paga 100% desde día 1)
+        #   paternidad: 0 días descontados (patrón paga 100% × 5 días)
         days_incapacity = att["days_incapacity"]
-        days_deducted_incap = min(days_incapacity, 3)
+        sub = att.get("incap_by_subtype", {})
+        eg = sub.get("enfermedad_general", 0) if sub else int(days_incapacity)
+        days_deducted_incap = min(eg, 3)
         # Vacaciones tomadas se pagan (no se descuentan)
         days_worked = max(period_days - days_absent - days_deducted_incap, 0)
 
@@ -766,8 +785,15 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
         gravable = max(gross_taxable - imss_employee, 0.0)
         isr_ret, sae, _ = calc_isr_net(gravable, period.frequency)
 
+        # Pensión alimenticia (LFT art. 110-V): se aplica sobre percepciones
+        # netas (después de ISR e IMSS del trabajador). Prioridad sobre otros
+        # descuentos convencionales.
+        legal_ded = imss_employee + isr_ret
+        net_before_alimony = max(gross_taxable - legal_ded + sae, 0.0)
+        alimony_amt = calc_alimony(e, net_before_alimony, period.frequency)
+
         total_gross = round(gross_taxable, 2)
-        total_deductions = round(imss_employee + isr_ret + infonavit_amt + fonacot_amt, 2)
+        total_deductions = round(imss_employee + isr_ret + infonavit_amt + fonacot_amt + alimony_amt, 2)
         total_net = round(total_gross - total_deductions + sae, 2)
         state_isn = calc_state_payroll_tax(total_gross, isn_rate)
 
@@ -782,6 +808,7 @@ async def calculate_period(db: AsyncSession, period_id: int, user_id: Optional[i
             subsidy_applied=sae,
             imss_employee=imss_employee, isr=isr_ret,
             infonavit=infonavit_amt, fonacot=fonacot_amt, loan_deduction=0.0,
+            alimony=alimony_amt,
             imss_employer=imss_employer, infonavit_employer=infonavit_employer_amt,
             state_payroll_tax=state_isn,
             total_gross=total_gross,
@@ -1263,6 +1290,29 @@ def calc_fonacot(employee: models.Employee) -> float:
     return round(employee.fonacot_discount_value or 0.0, 2)
 
 
+def calc_alimony(employee: models.Employee, net_perceptions: float,
+                   frequency: str = "quincenal") -> float:
+    """Calcula la pensión alimenticia a retener conforme al tipo de mandato:
+      - porcentaje  → alimony_value% sobre percepciones netas del período
+      - cuota_fija  → alimony_value MXN por período (asumido en la periodicidad
+                       del pago; RH captura ya prorrateado si es mensual)
+      - uma_multiple → alimony_value × UMA mensual prorrateado al período
+
+    LFT art. 110-V: la retención por pensión alimenticia es preferente a
+    cualquier otro descuento y siempre respeta la orden judicial.
+    """
+    if not employee.alimony_type or not employee.alimony_value:
+        return 0.0
+    v = employee.alimony_value or 0.0
+    if employee.alimony_type == "porcentaje":
+        return round(max(net_perceptions, 0.0) * (v / 100.0), 2)
+    if employee.alimony_type == "cuota_fija":
+        return round(v, 2)
+    if employee.alimony_type == "uma_multiple":
+        return round(v * UMA_2026_MONTHLY * _period_fraction(frequency), 2)
+    return 0.0
+
+
 async def generate_infonavit_csv(db: AsyncSession) -> str:
     employees = await get_employees(db)
     buf = io.StringIO()
@@ -1372,6 +1422,7 @@ async def build_employee_receipt(
         "savings_fund": d.savings_fund, "aguinaldo": d.aguinaldo, "subsidy_applied": d.subsidy_applied,
         "imss_employee": d.imss_employee, "isr": d.isr, "infonavit": d.infonavit,
         "fonacot": d.fonacot, "loan_deduction": d.loan_deduction,
+        "alimony": d.alimony,
         "imss_employer": d.imss_employer, "infonavit_employer": d.infonavit_employer,
         "state_payroll_tax": d.state_payroll_tax,
         "notes": d.notes,
@@ -1415,6 +1466,7 @@ async def build_period_receipts_zip(db: AsyncSession, period_id: int) -> tuple[b
             "savings_fund": d.savings_fund, "aguinaldo": d.aguinaldo, "subsidy_applied": d.subsidy_applied,
             "imss_employee": d.imss_employee, "isr": d.isr, "infonavit": d.infonavit,
             "fonacot": d.fonacot, "loan_deduction": d.loan_deduction,
+            "alimony": d.alimony,
             "imss_employer": d.imss_employer, "infonavit_employer": d.infonavit_employer,
             "total_net": d.total_net,
         }
@@ -1519,7 +1571,8 @@ async def update_payroll_detail(
     total_deductions = round(
         (detail.imss_employee or 0.0) + isr_ret
         + (detail.infonavit or 0.0) + (detail.fonacot or 0.0)
-        + (detail.loan_deduction or 0.0),
+        + (detail.loan_deduction or 0.0)
+        + (detail.alimony or 0.0),
         2,
     )
     total_net = round(total_gross - total_deductions + sae, 2)
@@ -2074,6 +2127,140 @@ async def _get_company_full(db: AsyncSession) -> dict:
     except Exception:
         pass
     return {"name": "LA EMPRESA", "rfc": None, "address": None, "city": None, "legal_rep": None}
+
+
+# ── Liquidación / Finiquito (Fase 4) ───────────────────────────────────────
+# Cálculo conforme a la Ley Federal del Trabajo:
+#   Renuncia / mutuo acuerdo / despido justificado → NO indemnización
+#   Despido injustificado → 3 meses + 20 días × año (arts. 48, 50)
+#   Prima de antigüedad (art. 162): 12 días × año, salario tope 2 UMAs, aplica
+#   siempre que renuncie después de 15 años o en cualquier separación involuntaria.
+#
+# Siempre se pagan las partes proporcionales (art. 79-89, 87):
+#   - Días trabajados no pagados
+#   - Vacaciones pendientes (proporcional al año en curso + saldo)
+#   - Prima vacacional (25% sobre las vacaciones)
+#   - Aguinaldo proporcional (15 días × meses trabajados / 12)
+
+def _years_of_service(hire_iso: str, term_iso: str) -> tuple[float, int]:
+    """Regresa (años_decimales, años_completos)."""
+    try:
+        h = date.fromisoformat(hire_iso)
+        t = date.fromisoformat(term_iso)
+    except Exception:
+        return 0.0, 0
+    days = max((t - h).days, 0)
+    yrs = days / 365.25
+    full = int(yrs)
+    return round(yrs, 2), full
+
+
+async def calculate_settlement(db: AsyncSession, req: "schemas.SettlementRequest") -> dict:
+    from app.modules.hr.schemas import SettlementItem
+
+    emp = await db.get(models.Employee, req.employee_id)
+    if not emp:
+        raise ValueError("Empleado no encontrado")
+
+    years_dec, years_full = _years_of_service(emp.hire_date, req.termination_date)
+    base_salary = float(emp.base_salary or 0.0)
+    # Salario diario integrado (SDI) para indemnización: LFT art. 89 exige
+    # integrar prestaciones (aguinaldo, prima vacacional). Aproximación estándar
+    # usando factor 1.0452 (mismo que SBC mínimo con 15 días aguinaldo + 25%
+    # prima sobre 6 días vacaciones al primer año).
+    daily = round(base_salary / 30.0, 2)
+    daily_int = round(daily * 1.0452, 2)  # salario diario integrado
+    uma = UMA_2026
+    daily_capped_2uma = min(daily, uma * 2)  # tope para prima de antigüedad
+
+    items: List[dict] = []
+    legal: List[str] = []
+
+    # Partes proporcionales — siempre aplican
+    # 1) Días trabajados no pagados
+    if req.pending_days_worked > 0:
+        amt = round(daily * req.pending_days_worked, 2)
+        items.append({"concept": "Días trabajados no pagados",
+                      "days": req.pending_days_worked, "amount": amt})
+        legal.append("Art. 82-83 LFT — salario devengado")
+
+    # 2) Aguinaldo proporcional (15 días mínimo × meses / 12)
+    try:
+        t = date.fromisoformat(req.termination_date)
+        start_year = date(t.year, 1, 1)
+        days_year = (t - start_year).days + 1
+        aguinaldo_days = round(15 * days_year / 365.0, 2)
+    except Exception:
+        aguinaldo_days = 0.0
+    if aguinaldo_days > 0:
+        amt = round(daily * aguinaldo_days, 2)
+        items.append({"concept": "Aguinaldo proporcional",
+                      "days": aguinaldo_days, "amount": amt})
+        legal.append("Art. 87 LFT — aguinaldo mínimo 15 días")
+
+    # 3) Vacaciones pendientes
+    pending_vac = req.pending_vacation_days
+    if pending_vac is None:
+        pending_vac = max(int(emp.vacation_days or 0) - int(emp.vacation_used or 0), 0)
+    if pending_vac > 0:
+        amt = round(daily * pending_vac, 2)
+        items.append({"concept": "Vacaciones no disfrutadas",
+                      "days": pending_vac, "amount": amt})
+        legal.append("Art. 76-79 LFT — vacaciones proporcionales")
+
+        # 4) Prima vacacional 25% sobre los días de vacaciones pendientes
+        prima_vac = round(amt * 0.25, 2)
+        items.append({"concept": "Prima vacacional (25%)",
+                      "days": 0, "amount": prima_vac})
+        legal.append("Art. 80 LFT — prima vacacional 25%")
+
+    # 5) Indemnización 3 meses + 20 días × año — solo despido injustificado
+    if req.include_indemnization or req.termination_type == "despido_injustificado":
+        indem_3m = round(daily_int * 90, 2)
+        items.append({"concept": "Indemnización constitucional (3 meses)",
+                      "days": 90, "amount": indem_3m})
+        legal.append("Art. 48 LFT — indemnización 3 meses de salario integrado")
+
+        veinte_dias = round(daily_int * 20 * years_full, 2)
+        if veinte_dias > 0:
+            items.append({"concept": f"Indemnización 20 días × {years_full} año(s) servicio",
+                          "days": 20 * years_full, "amount": veinte_dias})
+            legal.append("Art. 50 fracc II LFT — 20 días por cada año trabajado")
+
+    # 6) Prima de antigüedad — 12 días × año, tope 2 UMAs
+    #    Siempre en separaciones involuntarias; en renuncia solo si >= 15 años
+    apply_seniority = req.include_seniority_premium and (
+        req.termination_type in ("despido_justificado", "despido_injustificado", "mutuo_acuerdo")
+        or (req.termination_type == "renuncia" and years_full >= 15)
+    )
+    if apply_seniority and years_full > 0:
+        prima_ant = round(daily_capped_2uma * 12 * years_full, 2)
+        items.append({"concept": f"Prima de antigüedad (12 días × {years_full} año(s))",
+                      "days": 12 * years_full, "amount": prima_ant})
+        legal.append("Art. 162 LFT — prima de antigüedad, salario tope 2 UMAs")
+
+    total_perceptions = round(sum(i["amount"] for i in items), 2)
+
+    # Deducciones: ISR sobre indemnización (art. 93 LISR — exento hasta 90 UMAs
+    # por año trabajado; aquí NO calculamos el ISR de finiquito porque el CFDI
+    # de percepciones separadas lo determina la nómina definitiva. Se muestra 0
+    # como referencia y RH puede añadir manualmente si aplica).
+    total_deductions = 0.0
+    total_net = round(total_perceptions - total_deductions, 2)
+
+    return {
+        "employee_id": emp.id,
+        "employee_name": f"{emp.name} {emp.last_name}",
+        "termination_date": req.termination_date,
+        "termination_type": req.termination_type,
+        "years_of_service": years_dec,
+        "daily_salary": daily,
+        "items": items,
+        "total_perceptions": total_perceptions,
+        "total_deductions": total_deductions,
+        "total_net": total_net,
+        "legal_basis": legal,
+    }
 
 
 async def generate_contract_pdf_bytes(db: AsyncSession, contract_id: int,

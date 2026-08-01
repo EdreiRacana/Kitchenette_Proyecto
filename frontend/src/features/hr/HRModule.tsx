@@ -14,7 +14,7 @@ import {
   Building2, Briefcase, MapPin, Phone, Mail, Hash, Star,
   ChevronDown, ChevronUp, Filter, MoreVertical, Play, Pause,
   CheckSquare, Clock3, UserCheck, UserX, Cake, Award,
-  Megaphone, Send, FileSignature, Trash2,
+  Megaphone, Send, FileSignature, Trash2, Scale,
 } from "lucide-react";
 import { hrApi, downloadBlob } from "./api";
 
@@ -290,6 +290,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
     { id: "dispersion", label: "Dispersión", icon: Banknote },
     { id: "communication", label: "Comunicación", icon: Megaphone },
     { id: "contracts", label: "Contratos", icon: FileSignature },
+    { id: "settlements", label: "Liquidaciones", icon: Scale },
     { id: "reports", label: "Reportes", icon: FileText },
   ] as const;
 
@@ -1110,6 +1111,11 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
         <ContractsPanel t={t} employees={employees} />
       )}
 
+      {/* ── TAB: Liquidaciones (Fase 4) ── */}
+      {tab === "settlements" && (
+        <SettlementsPanel t={t} employees={employees} />
+      )}
+
       {/* ── TAB: Reports ── */}
       {tab === "reports" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1300,6 +1306,10 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           infonavit_discount_type: form.infonavit_credit ? (form.infonavit_discount_type || null) : null,
           infonavit_discount_value: form.infonavit_discount_value !== "" ? Number(form.infonavit_discount_value) : null,
           fonacot_discount_value: form.fonacot_discount_value !== "" ? Number(form.fonacot_discount_value) : null,
+          alimony_type: form.alimony_type || null,
+          alimony_value: form.alimony_type && form.alimony_value !== "" ? Number(form.alimony_value) : null,
+          alimony_beneficiary: form.alimony_type ? (form.alimony_beneficiary || null) : null,
+          alimony_court_order: form.alimony_type ? (form.alimony_court_order || null) : null,
         };
         if (editingEmployee) await hrApi.updateEmployee(editingEmployee.id, payload);
         else await hrApi.createEmployee(payload);
@@ -1346,6 +1356,10 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
     infonavit_discount_value: editing?.infonavit_discount_value ?? "",
     fonacot_credit: editing?.fonacot_credit || "",
     fonacot_discount_value: editing?.fonacot_discount_value ?? "",
+    alimony_type: editing?.alimony_type || "",
+    alimony_value: editing?.alimony_value ?? "",
+    alimony_beneficiary: editing?.alimony_beneficiary || "",
+    alimony_court_order: editing?.alimony_court_order || "",
   });
 
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
@@ -1595,6 +1609,50 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
               <div style={g2}>
                 <div><label style={lbl}>Crédito FONACOT</label><input value={form.fonacot_credit} onChange={e => setForm(f => ({ ...f, fonacot_credit: e.target.value }))} placeholder="Número de crédito" style={inp} /></div>
                 {form.fonacot_credit && <div><label style={lbl}>Descuento FONACOT por período</label><input type="number" value={form.fonacot_discount_value} onChange={e => setForm(f => ({ ...f, fonacot_discount_value: e.target.value }))} placeholder="Monto fijo" style={inp} /></div>}
+              </div>
+
+              {/* Pensión alimenticia (LFT art. 110-V) */}
+              <div style={{ marginTop: 16, padding: 14, background: t.panel2, borderRadius: 10, border: `1px solid ${t.border}` }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textMid, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                  <Scale size={14} /> PENSIÓN ALIMENTICIA (opcional)
+                </div>
+                <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 10 }}>
+                  Descuento por mandato judicial (LFT art. 110-V). Preferente sobre otros descuentos convencionales.
+                </div>
+                <div style={g2}>
+                  <div>
+                    <label style={lbl}>Tipo de descuento</label>
+                    <select value={form.alimony_type || ""} onChange={e => setForm(f => ({ ...f, alimony_type: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+                      <option value="">— Sin pensión —</option>
+                      <option value="porcentaje">Porcentaje sobre neto</option>
+                      <option value="cuota_fija">Cuota fija por período</option>
+                      <option value="uma_multiple">Múltiplo de UMA mensual</option>
+                    </select>
+                  </div>
+                  {form.alimony_type && (
+                    <div>
+                      <label style={lbl}>Valor {form.alimony_type === "porcentaje" ? "(%)" : form.alimony_type === "uma_multiple" ? "(× UMA)" : "(MXN)"}</label>
+                      <input type="number" min={0} step="0.01" value={form.alimony_value || ""}
+                             onChange={e => setForm((f: any) => ({ ...f, alimony_value: e.target.value }))} style={inp} />
+                    </div>
+                  )}
+                </div>
+                {form.alimony_type && (
+                  <div style={g2}>
+                    <div>
+                      <label style={lbl}>Nombre del acreedor alimentario</label>
+                      <input value={form.alimony_beneficiary || ""}
+                             onChange={e => setForm((f: any) => ({ ...f, alimony_beneficiary: e.target.value }))}
+                             placeholder="Ej. María López (esposa)" style={inp} />
+                    </div>
+                    <div>
+                      <label style={lbl}>Expediente / juzgado</label>
+                      <input value={form.alimony_court_order || ""}
+                             onChange={e => setForm((f: any) => ({ ...f, alimony_court_order: e.target.value }))}
+                             placeholder="Ej. 456/2024, Juzgado Familiar CDMX" style={inp} />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Resumen fiscal (referencia rápida) */}
@@ -3416,5 +3474,219 @@ function ContractFormModal({ t, employees, onClose, onCreated }:
       </div>
     </div>,
     document.body,
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LIQUIDACIÓN / FINIQUITO — Fase 4
+// Calcula finiquito o liquidación conforme LFT (arts. 48, 50, 79-89, 162):
+//   - Partes proporcionales (aguinaldo, vacaciones, prima vacacional, días)
+//   - Indemnización 3 meses + 20 días × año si despido injustificado
+//   - Prima de antigüedad (12 días × año, tope 2 UMAs)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function SettlementsPanel({ t, employees }: { t: any; employees: Employee[] }) {
+  const [employeeId, setEmployeeId] = useState<number | "">("");
+  const [terminationDate, setTerminationDate] = useState(new Date().toISOString().slice(0, 10));
+  const [terminationType, setTerminationType] = useState<string>("renuncia");
+  const [includeIndem, setIncludeIndem] = useState(false);
+  const [includeSeniority, setIncludeSeniority] = useState(true);
+  const [pendingDays, setPendingDays] = useState<number>(0);
+  const [pendingVacDays, setPendingVacDays] = useState<string>("");
+  const [calc, setCalc] = useState<any | null>(null);
+  const [calculating, setCalculating] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // El tipo despido injustificado auto-marca indemnización
+  useEffect(() => {
+    if (terminationType === "despido_injustificado") setIncludeIndem(true);
+    if (terminationType === "renuncia" || terminationType === "despido_justificado") setIncludeIndem(false);
+  }, [terminationType]);
+
+  const submit = async () => {
+    if (!employeeId) { setErr("Selecciona un empleado"); return; }
+    if (!terminationDate) { setErr("Fecha de terminación requerida"); return; }
+    setCalculating(true); setErr(null);
+    try {
+      const r = await hrApi.calculateSettlement({
+        employee_id: Number(employeeId),
+        termination_date: terminationDate,
+        termination_type: terminationType,
+        include_indemnization: includeIndem,
+        include_seniority_premium: includeSeniority,
+        pending_days_worked: pendingDays || 0,
+        pending_vacation_days: pendingVacDays === "" ? null : Number(pendingVacDays),
+      });
+      setCalc(r);
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "No se pudo calcular la liquidación");
+    } finally {
+      setCalculating(false);
+    }
+  };
+
+  const printSettlement = () => {
+    if (!calc) return;
+    const win = window.open("", "_blank");
+    if (!win) return;
+    const rows = calc.items.map((it: any) =>
+      `<tr><td>${it.concept}</td><td style="text-align:right">${it.days || ""}</td><td style="text-align:right">$${Number(it.amount).toLocaleString("es-MX", { minimumFractionDigits: 2 })}</td></tr>`
+    ).join("");
+    win.document.write(`<html><head><title>Liquidación — ${calc.employee_name}</title>
+      <style>body{font-family:Arial,sans-serif;padding:30px;color:#111}
+      h1{font-size:18px;margin-bottom:6px}h2{font-size:13px;color:#555;margin-top:0}
+      table{width:100%;border-collapse:collapse;margin-top:20px}
+      th,td{padding:8px 10px;border-bottom:1px solid #ddd;font-size:12.5px}
+      th{background:#f2f2f2;text-align:left}
+      .total{font-weight:700;background:#f8f8f8}
+      .basis{margin-top:24px;font-size:11px;color:#555}
+      </style></head><body>
+      <h1>Liquidación / Finiquito</h1>
+      <h2>${calc.employee_name} — ${calc.termination_type} — ${calc.termination_date}</h2>
+      <p style="font-size:12px">Años de servicio: <b>${calc.years_of_service}</b> · Salario diario: <b>$${Number(calc.daily_salary).toLocaleString("es-MX", { minimumFractionDigits: 2 })}</b></p>
+      <table>
+        <thead><tr><th>Concepto</th><th style="text-align:right">Días</th><th style="text-align:right">Importe (MXN)</th></tr></thead>
+        <tbody>${rows}
+          <tr class="total"><td>TOTAL A PAGAR</td><td></td><td style="text-align:right">$${Number(calc.total_net).toLocaleString("es-MX", { minimumFractionDigits: 2 })}</td></tr>
+        </tbody>
+      </table>
+      <div class="basis"><b>Base legal:</b><br/>${calc.legal_basis.map((b: string) => `• ${b}`).join("<br/>")}</div>
+      <script>setTimeout(()=>window.print(),300)</script>
+      </body></html>`);
+    win.document.close();
+  };
+
+  const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" };
+  const lbl: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 380px) minmax(0, 1fr)", gap: 16 }}>
+      {/* Formulario */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <Scale size={20} color={t.nova} />
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi }}>Calculadora de liquidación</div>
+            <div style={{ fontSize: 12, color: t.textLo, marginTop: 2 }}>Cumple con LFT arts. 48, 50, 79-89 y 162.</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <label style={lbl}>Empleado *</label>
+            <select value={employeeId} onChange={e => setEmployeeId(e.target.value ? Number(e.target.value) : "")} style={{ ...inp, cursor: "pointer" }}>
+              <option value="">— Elige empleado —</option>
+              {employees.map(e => <option key={e.id} value={e.id}>{e.name} {e.last_name} — {e.department}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Fecha de terminación *</label>
+            <input type="date" value={terminationDate} onChange={e => setTerminationDate(e.target.value)} style={inp} />
+          </div>
+          <div>
+            <label style={lbl}>Motivo *</label>
+            <select value={terminationType} onChange={e => setTerminationType(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+              <option value="renuncia">Renuncia voluntaria</option>
+              <option value="despido_justificado">Despido justificado (art. 47 LFT)</option>
+              <option value="despido_injustificado">Despido injustificado</option>
+              <option value="mutuo_acuerdo">Mutuo acuerdo / terminación</option>
+            </select>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={lbl}>Días pendientes del mes</label>
+              <input type="number" min={0} max={31} value={pendingDays}
+                     onChange={e => setPendingDays(Number(e.target.value))} style={inp} />
+            </div>
+            <div>
+              <label style={lbl}>Vacaciones pendientes</label>
+              <input type="number" min={0} placeholder="auto" value={pendingVacDays}
+                     onChange={e => setPendingVacDays(e.target.value)} style={inp} />
+            </div>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: t.textMid, cursor: "pointer" }}>
+            <input type="checkbox" checked={includeIndem} onChange={e => setIncludeIndem(e.target.checked)} />
+            Incluir <b>indemnización constitucional</b> (3 meses + 20 días/año)
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: t.textMid, cursor: "pointer" }}>
+            <input type="checkbox" checked={includeSeniority} onChange={e => setIncludeSeniority(e.target.checked)} />
+            Incluir <b>prima de antigüedad</b> (12 días/año, tope 2 UMAs)
+          </label>
+
+          {err && (
+            <div style={{ padding: "10px 12px", borderRadius: 8, background: t.bad + "18", color: t.bad, fontSize: 13 }}>{err}</div>
+          )}
+
+          <button onClick={submit} disabled={calculating || !employeeId}
+                  style={{ padding: 12, borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: calculating ? "wait" : "pointer", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: employeeId ? 1 : 0.5 }}>
+            <Scale size={16} /> {calculating ? "Calculando…" : "Calcular liquidación"}
+          </button>
+        </div>
+      </div>
+
+      {/* Resultado */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, padding: 20 }}>
+        {!calc && (
+          <div style={{ padding: 60, textAlign: "center", color: t.textLo }}>
+            <Scale size={36} style={{ opacity: 0.3, marginBottom: 10 }} />
+            <div style={{ fontSize: 14, marginBottom: 4 }}>Aún no calculas una liquidación.</div>
+            <div style={{ fontSize: 12 }}>Completa el formulario y presiona "Calcular".</div>
+          </div>
+        )}
+        {calc && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 10, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: t.textHi }}>{calc.employee_name}</div>
+                <div style={{ fontSize: 12, color: t.textLo, marginTop: 2 }}>
+                  Motivo: <b style={{ color: t.textMid }}>{calc.termination_type.replace(/_/g, " ")}</b> ·
+                  Fecha: <b style={{ color: t.textMid }}>{calc.termination_date}</b> ·
+                  Antigüedad: <b style={{ color: t.textMid }}>{calc.years_of_service} años</b>
+                </div>
+              </div>
+              <button onClick={printSettlement}
+                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5 }}>
+                <FileText size={14} /> Imprimir
+              </button>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${t.border}`, color: t.textLo, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    <th style={{ textAlign: "left", padding: "10px 12px" }}>Concepto</th>
+                    <th style={{ textAlign: "right", padding: "10px 12px" }}>Días</th>
+                    <th style={{ textAlign: "right", padding: "10px 12px" }}>Importe (MXN)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {calc.items.map((it: any, i: number) => (
+                    <tr key={i} style={{ borderBottom: `1px solid ${t.border}` }}>
+                      <td style={{ padding: "9px 12px", color: t.textMid }}>{it.concept}</td>
+                      <td style={{ padding: "9px 12px", textAlign: "right", color: t.textLo, fontFamily: "monospace" }}>{it.days || ""}</td>
+                      <td style={{ padding: "9px 12px", textAlign: "right", color: t.textHi, fontFamily: "monospace" }}>
+                        ${Number(it.amount).toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: t.nova + "15" }}>
+                    <td style={{ padding: "12px", fontWeight: 700, color: t.textHi }}>TOTAL A PAGAR</td>
+                    <td></td>
+                    <td style={{ padding: "12px", textAlign: "right", fontWeight: 700, color: t.nova, fontSize: 15, fontFamily: "monospace" }}>
+                      ${Number(calc.total_net).toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div style={{ marginTop: 16, padding: 12, background: t.panel2, borderRadius: 8, borderLeft: `3px solid ${t.nova}` }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: t.textMid, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Base legal aplicada</div>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: t.textLo, lineHeight: 1.6 }}>
+                {calc.legal_basis.map((b: string, i: number) => <li key={i}>{b}</li>)}
+              </ul>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
