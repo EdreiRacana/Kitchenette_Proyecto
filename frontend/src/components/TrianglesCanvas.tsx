@@ -1,58 +1,101 @@
 /**
  * TrianglesCanvas.tsx
- * Fondo animado del login que reproduce la silueta del logo NovaMark:
- * un triángulo con un notch en la base (punto arriba, dos puntas abajo,
- * hendidura al centro). Los nodos se distribuyen dentro de esa silueta
- * en una malla triangular, cada terna rota individualmente, y cuando el
- * cursor se acerca al centro la estructura "se desarma" en una red
- * caótica y las líneas cercanas al cursor se iluminan.
+ * Fondo animado del login. El contorno del triángulo (silueta NovaMark) se
+ * mantiene siempre visible — es el logo. Dentro del triángulo, un enjambre
+ * de partículas se acomoda cíclicamente en distintas formas:
+ *   círculo → cuadrado → octágono → triángulo → círculo → …
+ * Cada forma se mantiene ~3 segundos con una transición suave.
  *
- * Colores: recibe accent (Nova institucional), dim y hi. NO usa verdes.
- * Accesibilidad: respeta prefers-reduced-motion (congela la animación).
- * Limpieza: cancela raf y quita listeners al desmontar.
+ * Interacción: al pasar el cursor cerca del centro, las partículas se
+ * "desarman" en una red caótica y las líneas cerca del cursor se iluminan
+ * (mismo comportamiento que ya existía).
  *
- * Ligado al logo:
- *  - La malla se dibuja SOLO dentro del polígono NovaMark (0,-1)(1,0.75)(0,0.39)(-1,0.75)
- *  - Además se pinta un wireframe muy tenue del contorno atrás, para que
- *    el ojo vea que la animación es una "descomposición" del logo.
+ * Accesibilidad: prefers-reduced-motion → congela el ciclo en una figura
+ * y desactiva la deformación.
  */
 
 import { useEffect, useRef } from "react";
 
-interface Tri {
-  baseX: number;
-  baseY: number;
-  angulo: number;
-  vRot: number;
-  radio: number;
+// Silueta NovaMark normalizada a [-1..1] (mismo polígono que el SVG del logo,
+// polygon points="0,-62 62,46 0,24 -62,46" → dividido entre 62).
+const NOVA_SHAPE: [number, number][] = [
+  [ 0,   -1.00],
+  [ 1,    0.7419],
+  [ 0,    0.3871],
+  [-1,    0.7419],
+];
+
+const SHAPE_HOLD_MS = 3000;     // tiempo que se mantiene cada forma
+const SHAPE_MORPH_MS = 900;     // transición suave entre formas
+const NUM_PARTICLES = 72;       // partículas del enjambre (mismo count en cada forma)
+
+// Radio máximo interior seguro dentro del triángulo (evita tocar los bordes).
+// El triángulo apunta hacia arriba; el centro geométrico está ligeramente
+// abajo del (0,0) del logo. Con centerY = -0.05 y radius = 0.45 las figuras
+// caben cómodas sin invadir los vértices ni el notch inferior.
+const CENTER_Y = -0.05;
+const SHAPE_RADIUS = 0.45;
+
+function circlePoints(n: number): [number, number][] {
+  const pts: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+    pts.push([Math.cos(a), Math.sin(a)]);
+  }
+  return pts;
+}
+
+// Perímetro parametrizado de un polígono regular con N vértices, muestreado
+// uniformemente. Devuelve `count` puntos distribuidos a lo largo del contorno.
+function polygonPoints(vertices: number, count: number, rotationOffset = 0): [number, number][] {
+  const verts: [number, number][] = [];
+  for (let i = 0; i < vertices; i++) {
+    const a = (i / vertices) * Math.PI * 2 - Math.PI / 2 + rotationOffset;
+    verts.push([Math.cos(a), Math.sin(a)]);
+  }
+  // Muestreo uniforme a lo largo del perímetro
+  const pts: [number, number][] = [];
+  for (let i = 0; i < count; i++) {
+    const t = (i / count) * vertices;   // en cuál lado (fraccional)
+    const side = Math.floor(t) % vertices;
+    const frac = t - Math.floor(t);
+    const [x1, y1] = verts[side];
+    const [x2, y2] = verts[(side + 1) % vertices];
+    pts.push([x1 + (x2 - x1) * frac, y1 + (y2 - y1) * frac]);
+  }
+  return pts;
+}
+
+// Las 4 figuras del ciclo. Todas devuelven puntos en [-1..1] y luego se
+// escalan por SHAPE_RADIUS y se desplazan a (0, CENTER_Y).
+function buildShape(kind: "circle" | "square" | "octagon" | "triangle"): [number, number][] {
+  switch (kind) {
+    case "circle":   return circlePoints(NUM_PARTICLES);
+    case "square":   return polygonPoints(4, NUM_PARTICLES, Math.PI / 4);
+    case "octagon":  return polygonPoints(8, NUM_PARTICLES);
+    // Triángulo apunta hacia arriba (rotación 0 con offset -PI/2 desde polygonPoints)
+    case "triangle": return polygonPoints(3, NUM_PARTICLES);
+  }
+}
+
+const SHAPE_CYCLE: Array<"circle" | "square" | "octagon" | "triangle"> = [
+  "circle", "square", "octagon", "triangle",
+];
+
+// Easing suave (ease-in-out cúbico) para las transiciones entre formas
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+interface Particle {
+  // Posición actual (px relativos al centro del canvas)
+  x: number;
+  y: number;
+  // Movimiento caótico cuando la red se desarma (hover)
   rx: number;
   ry: number;
   vx: number;
   vy: number;
-}
-
-interface Node { x: number; y: number; distMouse: number; }
-
-// Silueta NovaMark normalizada a [-1..1] (mismo polígono que el SVG del logo,
-// polygon points="0,-62 62,46 0,24 -62,46" → dividido entre 62).
-const NOVA_SHAPE: [number, number][] = [
-  [ 0,   -1.00],   // punta superior
-  [ 1,    0.7419], // punta inferior derecha (46/62)
-  [ 0,    0.3871], // notch central inferior (24/62)
-  [-1,    0.7419], // punta inferior izquierda
-];
-
-/** Point-in-polygon (ray casting), robusto para polígonos convexos/cóncavos. */
-function pointInPoly(px: number, py: number, poly: [number, number][]): boolean {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i];
-    const [xj, yj] = poly[j];
-    const intersect = ((yi > py) !== (yj > py)) &&
-      (px < ((xj - xi) * (py - yi)) / (yj - yi + 1e-9) + xi);
-    if (intersect) inside = !inside;
-  }
-  return inside;
 }
 
 export function TrianglesCanvas({ accent, dim, hi }: {
@@ -84,57 +127,39 @@ export function TrianglesCanvas({ accent, dim, hi }: {
 
     const centroX = () => canvas.clientWidth / 2;
     const centroY = () => canvas.clientHeight / 2;
-
-    // Escala del logo dentro del canvas: ~48% del lado más corto para dejar
-    // aire alrededor. Tamaño mínimo garantizado para pantallas móviles.
     const logoScale = () => Math.max(140, Math.min(canvas.clientWidth, canvas.clientHeight) * 0.48);
 
     const mouse = { x: -1000, y: -1000, sobreCentro: false };
 
-    // Genera un enjambre de puntos dentro de la silueta usando una malla
-    // triangular y filtrando por point-in-poly. Cantidad controlada por
-    // `paso` en unidades normalizadas (-1..1).
-    const buildSwarm = (): Tri[] => {
-      const paso = 0.18;
-      const pts: [number, number][] = [];
-      for (let y = -1.05; y <= 0.80; y += paso) {
-        // Offset alternado en x para malla triangular (más orgánico que rejilla)
-        const offset = (Math.round((y + 1) / paso) % 2) * (paso / 2);
-        for (let x = -1.05; x <= 1.05; x += paso) {
-          const px = x + offset;
-          // Margen interior para que los sub-triángulos no se salgan del borde
-          if (pointInPoly(px, y, NOVA_SHAPE) && pointInPoly(px * 0.94, y * 0.94, NOVA_SHAPE)) {
-            pts.push([px, y]);
-          }
-        }
-      }
-      const S = logoScale();
-      return pts.map(([nx, ny]) => ({
-        baseX: nx * S,
-        baseY: ny * S,
-        angulo: Math.random() * Math.PI * 2,
-        vRot: (Math.random() - 0.5) * 0.028,
-        radio: Math.max(9, S * 0.045),
-        rx: (Math.random() - 0.5) * S * 1.8,
-        ry: (Math.random() - 0.5) * S * 1.8,
-        vx: (Math.random() - 0.5) * 0.7,
-        vy: (Math.random() - 0.5) * 0.7,
-      }));
-    };
+    // Pre-computar las 4 figuras normalizadas (independientes de scale)
+    const shapes = SHAPE_CYCLE.map(k => buildShape(k));
 
-    let triangulos = buildSwarm();
-    let scaleActual = logoScale();
+    // Partículas: arrancan directamente en la primera figura (círculo)
+    let scale = logoScale();
+    const scaleShape = (pts: [number, number][]) => pts.map(([nx, ny]) =>
+      [nx * SHAPE_RADIUS * scale, ny * SHAPE_RADIUS * scale + CENTER_Y * scale] as [number, number]
+    );
 
-    // Rebuild solo cuando cambia significativamente el tamaño (evita jitter
-    // al arrastrar el borde de la ventana).
-    const onResizeSwarm = () => {
+    let currentShapePx = scaleShape(shapes[0]);
+    const particles: Particle[] = currentShapePx.map(([x, y]) => ({
+      x, y,
+      rx: (Math.random() - 0.5) * scale * 1.4,
+      ry: (Math.random() - 0.5) * scale * 1.4,
+      vx: (Math.random() - 0.5) * 0.7,
+      vy: (Math.random() - 0.5) * 0.7,
+    }));
+
+    // Rebuild cache cuando cambia mucho el tamaño (evita jitter)
+    let cachedShapesPx = shapes.map(scaleShape);
+
+    const rebuildScale = () => {
       const s = logoScale();
-      if (Math.abs(s - scaleActual) > 40) {
-        scaleActual = s;
-        triangulos = buildSwarm();
+      if (Math.abs(s - scale) > 40) {
+        scale = s;
+        cachedShapesPx = shapes.map(scaleShape);
       }
     };
-    window.addEventListener("resize", onResizeSwarm);
+    window.addEventListener("resize", rebuildScale);
 
     const onMove = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
@@ -160,17 +185,8 @@ export function TrianglesCanvas({ accent, dim, hi }: {
     let transicionRed = 0;
     let raf = 0;
     let stopped = false;
-
-    // ─── B: Pulso ambiente ──────────────────────────────────────────────
-    // Cada ~5.5s se dispara una onda que crece del centro hacia afuera.
-    // Los nodos que cruza la onda brillan brevemente. Solo se lanza en
-    // estado idle (sin red desarmada) y no si el usuario prefiere reducir
-    // movimiento. Con easing cúbico para que se sienta orgánico.
-    const PULSE_PERIOD = 5500;
-    const PULSE_DURATION = 1400;
     const t0 = performance.now();
-    let nextPulseAt = t0 + PULSE_PERIOD * 0.6;   // primer pulso más temprano
-    let activePulseStart: number | null = null;
+    const CYCLE_MS = SHAPE_HOLD_MS + SHAPE_MORPH_MS;   // ciclo total por figura
 
     const animar = () => {
       if (stopped) return;
@@ -180,36 +196,31 @@ export function TrianglesCanvas({ accent, dim, hi }: {
 
       const cx = centroX();
       const cy = centroY();
-      const S = scaleActual;
+      const S = scale;
 
       const objetivo = mouse.sobreCentro ? 1 : 0;
       transicionRed += (objetivo - transicionRed) * 0.06;
 
-      // Programar próximo pulso (solo si estamos idle)
-      if (!reduce && transicionRed < 0.25 && now >= nextPulseAt && activePulseStart === null) {
-        activePulseStart = now;
-        nextPulseAt = now + PULSE_PERIOD;
+      // ── Progreso del ciclo de figuras ────────────────────────────────────
+      // Índice y fase (0..1) de morphing entre figura[i] → figura[i+1].
+      // La primera parte del ciclo (hold) mantiene la figura estable, la
+      // última parte (morph) transiciona con easing.
+      const elapsed = reduce ? 0 : (now - t0);
+      const cycleIdx = Math.floor(elapsed / CYCLE_MS);
+      const cyclePos = (elapsed % CYCLE_MS);
+      const fromIdx = cycleIdx % SHAPE_CYCLE.length;
+      const toIdx = (fromIdx + 1) % SHAPE_CYCLE.length;
+      let morph = 0;
+      if (cyclePos > SHAPE_HOLD_MS) {
+        morph = (cyclePos - SHAPE_HOLD_MS) / SHAPE_MORPH_MS;
+        morph = Math.min(1, Math.max(0, morph));
+        morph = easeInOutCubic(morph);
       }
-      // Pulso INVERSO: la onda arranca en el borde (radio grande) y colapsa
-      // hacia el centro. Sensación de "gravedad" del logo — todo converge.
-      let pulseRadius = 0;
-      let pulseIntensity = 0;
-      if (activePulseStart !== null) {
-        const p = (now - activePulseStart) / PULSE_DURATION;
-        if (p >= 1) {
-          activePulseStart = null;
-        } else {
-          // radio decreciente: empieza en S*1.05 y colapsa a ~0
-          pulseRadius = (1 - Math.pow(p, 2)) * S * 1.05;
-          pulseIntensity = Math.sin(p * Math.PI) * (1 - transicionRed);
-        }
-      }
+      const shapeFrom = cachedShapesPx[fromIdx];
+      const shapeTo = cachedShapesPx[toIdx];
 
-      // ─── A: Halo CENTRAL ────────────────────────────────────────────────
-      // Foco radial suave en el centro de la figura. Reemplaza al halo del
-      // ápice (que se veía como estrella de árbol de navidad). Se atenúa
-      // cuando la red se desarma para no competir con la interacción.
-      const centerAlpha = 0.34 * (1 - transicionRed * 0.7);
+      // ── Halo central suave ──────────────────────────────────────────────
+      const centerAlpha = 0.28 * (1 - transicionRed * 0.7);
       if (centerAlpha > 0.02) {
         const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, S * 0.75);
         grad.addColorStop(0, toRgba(accent, centerAlpha));
@@ -219,8 +230,11 @@ export function TrianglesCanvas({ accent, dim, hi }: {
         ctx.fillRect(cx - S * 1.3, cy - S * 1.3, S * 2.6, S * 2.6);
       }
 
-      // 1) Wireframe tenue del contorno NovaMark de fondo — ancla visual del logo.
-      const outlineAlpha = 0.14 * (1 - transicionRed * 0.85);
+      // ── Contorno del triángulo (logo NovaMark) — SIEMPRE visible ────────
+      // Este es el logo y no debe cubrirse. Se dibuja con opacidad estable,
+      // solo cae un poco cuando la red se desarma (hover) para dejar respirar
+      // el efecto interactivo.
+      const outlineAlpha = 0.55 * (1 - transicionRed * 0.4);
       if (outlineAlpha > 0.01) {
         ctx.beginPath();
         NOVA_SHAPE.forEach(([nx, ny], i) => {
@@ -230,100 +244,103 @@ export function TrianglesCanvas({ accent, dim, hi }: {
         });
         ctx.closePath();
         ctx.strokeStyle = toRgba(accent, outlineAlpha);
-        ctx.lineWidth = 1.4;
+        ctx.lineWidth = 1.8;
         ctx.stroke();
+
+        // Vértices del logo con puntos más grandes
+        ctx.fillStyle = toRgba(accent, outlineAlpha);
+        NOVA_SHAPE.forEach(([nx, ny]) => {
+          ctx.beginPath();
+          ctx.arc(cx + nx * S, cy + ny * S, 3.2, 0, Math.PI * 2);
+          ctx.fill();
+        });
       }
 
-      // 2) Actualizar posiciones y calcular vértices
-      const nodos: (Node & { depth: number; pulseBoost: number })[] = [];
-      const depthMax = S * 0.95;   // distancia de referencia para atenuación de borde
-      triangulos.forEach((t) => {
-        if (!reduce) t.angulo += t.vRot;
-        for (let i = 0; i < 3; i++) {
-          const a = t.angulo + (i * Math.PI * 2) / 3;
-          const tx = t.baseX + Math.cos(a) * t.radio;
-          const ty = t.baseY + Math.sin(a) * t.radio;
-          if (transicionRed > 0.1 && !reduce) {
-            t.rx += t.vx * 0.35;
-            t.ry += t.vy * 0.35;
-            if (Math.abs(t.rx) > S * 0.9) t.vx *= -1;
-            if (Math.abs(t.ry) > S * 0.9) t.vy *= -1;
-          }
-          const xF = cx + (tx * (1 - transicionRed) + (t.rx + Math.cos(a) * S * 0.05) * transicionRed);
-          const yF = cy + (ty * (1 - transicionRed) + (t.ry + Math.sin(a) * S * 0.05) * transicionRed);
-          const dm = Math.hypot(xF - mouse.x, yF - mouse.y);
-          // A: profundidad — nodos cercanos al centro brillan más
-          const distC = Math.hypot(xF - cx, yF - cy);
-          // depth: 1 en centro, ~0.35 en borde (clamp)
-          const depth = Math.max(0.35, 1 - (distC / depthMax) * 0.75);
-          // B: contribución del pulso — banda delgada alrededor del radio actual
-          let pulseBoost = 0;
-          if (pulseIntensity > 0) {
-            const bandDist = Math.abs(distC - pulseRadius);
-            const bandWidth = S * 0.14;
-            if (bandDist < bandWidth) {
-              pulseBoost = (1 - bandDist / bandWidth) * pulseIntensity;
-            }
-          }
-          nodos.push({ x: xF, y: yF, distMouse: dm, depth, pulseBoost });
-        }
-      });
+      // ── Posición objetivo de cada partícula ─────────────────────────────
+      // En modo idle: interpolación entre figura actual y siguiente (morph).
+      // En modo hover: cada partícula se separa y vaga por el interior.
+      const positions: { x: number; y: number; distMouse: number; depth: number }[] = [];
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        const [fx, fy] = shapeFrom[i];
+        const [tx, ty] = shapeTo[i];
+        const shapeX = fx + (tx - fx) * morph;
+        const shapeY = fy + (ty - fy) * morph;
 
-      // 3) Líneas / conexiones — atenuadas por profundidad promedio del par
-      const distMaxLineas = S * (transicionRed > 0.3 ? 0.28 : 0.17);
+        // Actualiza posición caótica cuando hay hover
+        if (transicionRed > 0.1 && !reduce) {
+          p.rx += p.vx * 0.4;
+          p.ry += p.vy * 0.4;
+          if (Math.abs(p.rx) > S * 0.85) p.vx *= -1;
+          if (Math.abs(p.ry - CENTER_Y * S) > S * 0.85) p.vy *= -1;
+        }
+
+        // Interpolación entre posición-shape y posición-caótica
+        const chaosX = p.rx;
+        const chaosY = p.ry + CENTER_Y * S;
+        const targetX = shapeX * (1 - transicionRed) + chaosX * transicionRed;
+        const targetY = shapeY * (1 - transicionRed) + chaosY * transicionRed;
+
+        // Suavizado hacia el objetivo (además del morph propio)
+        p.x += (targetX - p.x) * (reduce ? 1 : 0.18);
+        p.y += (targetY - p.y) * (reduce ? 1 : 0.18);
+
+        const xF = cx + p.x;
+        const yF = cy + p.y;
+        const dm = Math.hypot(xF - mouse.x, yF - mouse.y);
+        // Depth: partículas cerca del centro brillan un poco más
+        const distC = Math.hypot(p.x, p.y - CENTER_Y * S);
+        const depth = Math.max(0.4, 1 - (distC / (S * 0.6)) * 0.6);
+        positions.push({ x: xF, y: yF, distMouse: dm, depth });
+      }
+
+      // ── Líneas entre partículas cercanas ────────────────────────────────
+      const distMaxLineas = transicionRed > 0.3 ? S * 0.28 : S * 0.20;
       const dCerca = S * 0.4;
-      for (let i = 0; i < nodos.length; i++) {
-        for (let j = i + 1; j < nodos.length; j++) {
-          const n1 = nodos[i], n2 = nodos[j];
+      for (let i = 0; i < positions.length; i++) {
+        for (let j = i + 1; j < positions.length; j++) {
+          const n1 = positions[i], n2 = positions[j];
           const d = Math.hypot(n1.x - n2.x, n1.y - n2.y);
           if (d < distMaxLineas) {
             const md = Math.min(n1.distMouse, n2.distMouse);
             const cerca = md < dCerca;
             const depthAvg = (n1.depth + n2.depth) / 2;
-            const pulseAvg = (n1.pulseBoost + n2.pulseBoost) / 2;
             ctx.beginPath();
             ctx.moveTo(n1.x, n1.y);
             ctx.lineTo(n2.x, n2.y);
             if (cerca) {
               const inten = 1 - md / dCerca;
-              ctx.strokeStyle = toRgba(accent, 0.4 + inten * 0.6);
-              ctx.lineWidth = 1.6;
+              ctx.strokeStyle = toRgba(accent, 0.35 + inten * 0.55);
+              ctx.lineWidth = 1.4;
             } else {
-              const baseAlpha = transicionRed > 0.3 ? 0.28 : 0.22;
-              const color = transicionRed > 0.3 ? accent : dim;
-              // Depth atenúa; pulso ilumina temporalmente
-              const alpha = baseAlpha * depthAvg + pulseAvg * 0.45;
-              ctx.strokeStyle = toRgba(pulseAvg > 0.1 ? accent : color, Math.min(0.95, alpha));
-              ctx.lineWidth = 1 + pulseAvg * 0.6;
+              const baseAlpha = transicionRed > 0.3 ? 0.24 : 0.28;
+              const color = transicionRed > 0.3 ? accent : accent;
+              ctx.strokeStyle = toRgba(color, baseAlpha * depthAvg);
+              ctx.lineWidth = 1;
             }
             ctx.stroke();
           }
         }
       }
 
-      // 4) Nodos — tamaño y brillo modulados por profundidad + pulso
-      nodos.forEach((n) => {
+      // ── Partículas (nodos) ───────────────────────────────────────────────
+      positions.forEach((n) => {
         const cerca = n.distMouse < dCerca;
-        const sizeBase = cerca ? 3.4 : (2.0 + 1.2 * n.depth);
-        const size = sizeBase + n.pulseBoost * 1.6;
+        const size = cerca ? 3.6 : (2.2 + 1.2 * n.depth);
         ctx.beginPath();
         ctx.arc(n.x, n.y, size, 0, Math.PI * 2);
         if (cerca) {
           ctx.fillStyle = accent;
           ctx.shadowColor = accent;
           ctx.shadowBlur = 8;
-        } else if (n.pulseBoost > 0.1) {
-          ctx.fillStyle = accent;
-          ctx.shadowColor = accent;
-          ctx.shadowBlur = 6 * n.pulseBoost;
         } else {
-          // hi en centro, dim en borde (mezcla por depth)
-          const useAccent = transicionRed > 0.3;
-          ctx.fillStyle = toRgba(useAccent ? accent : hi, 0.55 + 0.45 * n.depth);
+          ctx.fillStyle = toRgba(hi, 0.55 + 0.45 * n.depth);
           ctx.shadowBlur = 0;
         }
         ctx.fill();
       });
+      // Reset shadow (evita que se acumule en próximos frames)
+      ctx.shadowBlur = 0;
     };
     animar();
 
@@ -331,10 +348,12 @@ export function TrianglesCanvas({ accent, dim, hi }: {
       stopped = true;
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
-      window.removeEventListener("resize", onResizeSwarm);
+      window.removeEventListener("resize", rebuildScale);
       canvas.removeEventListener("mousemove", onMove);
       canvas.removeEventListener("mouseleave", onLeave);
     };
+    // dim se recibe pero ya no se usa (transición cromática simplificada)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accent, dim, hi]);
 
   return <canvas ref={ref} style={{ display: "block", width: "100%", height: "100%" }} aria-hidden />;
