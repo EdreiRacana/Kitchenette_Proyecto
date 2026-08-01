@@ -36,6 +36,15 @@ class Employee(Base):
     infonavit_discount_value = Column(Float, nullable=True)
     fonacot_credit = Column(String, nullable=True)
     fonacot_discount_value = Column(Float, nullable=True)
+    # Pensión alimenticia (LFT art. 110 fracción V — descuento por mandato judicial).
+    # alimony_type: porcentaje | cuota_fija | uma_multiple
+    #   porcentaje: alimony_value = % sobre percepciones netas (después de deducciones legales)
+    #   cuota_fija: alimony_value = MXN por período
+    #   uma_multiple: alimony_value = número de UMAs mensuales
+    alimony_type = Column(String, nullable=True)
+    alimony_value = Column(Float, nullable=True)
+    alimony_beneficiary = Column(String, nullable=True)  # nombre del acreedor alimentario
+    alimony_court_order = Column(String, nullable=True)  # expediente / juzgado
     vacation_days = Column(Integer, nullable=False, default=0)
     vacation_used = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, default=True, nullable=False)
@@ -57,6 +66,15 @@ class Attendance(Base):
     notes = Column(Text, nullable=True)
     approved = Column(Boolean, default=False, nullable=False)
     channel = Column(String, nullable=True)  # biometric, qr, app, whatsapp, kiosk, manual
+    # Subtipo (solo aplica cuando type == 'incapacidad'):
+    #   enfermedad_general | maternidad | riesgo_trabajo | paternidad
+    # Rige el % del salario que paga el patrón vs. lo que subsidia el IMSS:
+    #   enfermedad_general: patrón descuenta días 1-3, IMSS paga 60% desde día 4
+    #   maternidad:         IMSS paga 100% SBC (42+42 días pre y post parto)
+    #   riesgo_trabajo:     IMSS paga 100% desde día 1
+    #   paternidad:         patrón paga 100% × 5 días (art. 132-XXVII bis LFT)
+    incapacity_subtype = Column(String, nullable=True)
+    imss_folio = Column(String, nullable=True)  # folio del certificado IMSS
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     employee = relationship("Employee", back_populates="attendance")
@@ -109,6 +127,7 @@ class PayrollDetail(Base):
     infonavit = Column(Float, nullable=False, default=0.0)
     fonacot = Column(Float, nullable=False, default=0.0)
     loan_deduction = Column(Float, nullable=False, default=0.0)
+    alimony = Column(Float, nullable=False, default=0.0)  # pensión alimenticia retenida (LFT art. 110-V)
     # Cuota patronal (informativa, para SUA + P&L de nómina)
     imss_employer = Column(Float, nullable=False, default=0.0)
     infonavit_employer = Column(Float, nullable=False, default=0.0)   # 5% SBC amortización crédito habitación

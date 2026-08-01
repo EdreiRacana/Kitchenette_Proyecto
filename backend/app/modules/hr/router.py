@@ -505,3 +505,19 @@ async def download_contract_pdf(contract_id: int, db: DB, current_user: CurrentU
         content=content, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Liquidación / Finiquito (Fase 4) ─────────────────────────────────────
+@router.post("/settlements/calculate", response_model=schemas.SettlementResponse)
+async def calculate_settlement(data: schemas.SettlementRequest,
+                                 db: DB, current_user: CurrentUser):
+    """Calcula el finiquito o liquidación de un empleado conforme a la LFT.
+
+    Devuelve el desglose por concepto (partes proporcionales, indemnización si
+    aplica, prima de antigüedad) y la lista de artículos LFT invocados."""
+    _require_manager(current_user)
+    try:
+        result = await service.calculate_settlement(db, data)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return result

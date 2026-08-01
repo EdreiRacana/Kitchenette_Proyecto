@@ -386,6 +386,14 @@ _HR_STATEMENTS = [
     "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS notes              TEXT",
     "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS edited_manually    BOOLEAN DEFAULT FALSE",
     "UPDATE hr_payroll_details SET edited_manually = FALSE WHERE edited_manually IS NULL",
+    # Fase 4 — pensión alimenticia, incapacidades tipificadas
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS alimony_type         VARCHAR",
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS alimony_value        DOUBLE PRECISION",
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS alimony_beneficiary  VARCHAR",
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS alimony_court_order  VARCHAR",
+    "ALTER TABLE hr_attendance ADD COLUMN IF NOT EXISTS incapacity_subtype  VARCHAR",
+    "ALTER TABLE hr_attendance ADD COLUMN IF NOT EXISTS imss_folio          VARCHAR",
+    "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS alimony          DOUBLE PRECISION DEFAULT 0",
 ]
 
 _AUTH_STATEMENTS = [

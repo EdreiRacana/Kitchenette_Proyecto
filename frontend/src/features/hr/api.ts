@@ -121,6 +121,17 @@ export const hrApi = {
     api.delete(`/hr/contracts/${id}`).then(r => r.data),
   downloadContractPdf: (id: number) =>
     api.get(`/hr/contracts/${id}/pdf`, { responseType: "blob" }),
+
+  // Liquidación / finiquito (Fase 4)
+  calculateSettlement: (data: {
+    employee_id: number;
+    termination_date: string;
+    termination_type: string;
+    include_indemnization?: boolean;
+    include_seniority_premium?: boolean;
+    pending_days_worked?: number;
+    pending_vacation_days?: number | null;
+  }) => api.post("/hr/settlements/calculate", data).then(r => r.data),
 };
 
 export function downloadBlob(blob: Blob, filename: string) {
