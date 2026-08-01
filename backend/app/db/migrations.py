@@ -400,6 +400,9 @@ _AUTH_STATEMENTS = [
     "ALTER TABLE roles ADD COLUMN IF NOT EXISTS is_system BOOLEAN DEFAULT FALSE",
     "ALTER TABLE roles ADD COLUMN IF NOT EXISTS color VARCHAR",
     "UPDATE roles SET is_system = FALSE WHERE is_system IS NULL",
+    # Foto de perfil del usuario (data URI); si NULL, /auth/me la resuelve
+    # cayendo al Employee con el mismo email.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS photo TEXT",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_id INTEGER",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret VARCHAR",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT FALSE",

@@ -36,6 +36,7 @@ class Role(RoleBase):
 class UserBase(BaseModel):
     email: EmailStr
     full_name: Optional[str] = None
+    photo: Optional[str] = None       # data URI de la foto de perfil
     is_active: Optional[bool] = True
     role: str = "user"
     role_id: Optional[int] = None
