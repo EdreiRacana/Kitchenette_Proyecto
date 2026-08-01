@@ -14,6 +14,7 @@ import {
   Building2, Briefcase, MapPin, Phone, Mail, Hash, Star,
   ChevronDown, ChevronUp, Filter, MoreVertical, Play, Pause,
   CheckSquare, Clock3, UserCheck, UserX, Cake, Award,
+  Megaphone, Send,
 } from "lucide-react";
 import { hrApi, downloadBlob } from "./api";
 
@@ -185,7 +186,7 @@ const glass = (t: any): React.CSSProperties =>
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function HRModule({ t, s }: { t: any; s: any }) {
-  const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports" | "communication">("dashboard");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
@@ -287,6 +288,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
     { id: "checker", label: "Checador", icon: Fingerprint },
     { id: "payroll", label: "Nómina", icon: Receipt },
     { id: "dispersion", label: "Dispersión", icon: Banknote },
+    { id: "communication", label: "Comunicación", icon: Megaphone },
     { id: "reports", label: "Reportes", icon: FileText },
   ] as const;
 
@@ -1095,6 +1097,11 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           setSelectedPeriod={setSelectedPeriod}
           onDispersed={async () => { await load(); if (selectedPeriod) { const d = await hrApi.periodDetail(selectedPeriod.id); setPeriodDetail(d); } }}
         />
+      )}
+
+      {/* ── TAB: Comunicación (anuncios internos) ── */}
+      {tab === "communication" && (
+        <CommunicationPanel t={t} employees={employees} onLoaded={load} />
       )}
 
       {/* ── TAB: Reports ── */}
@@ -2736,4 +2743,237 @@ function SimpleReportModal({
       </div>
     </div>
   , document.body);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMUNICACIÓN INTERNA — Panel para RH
+// - Compositor: título, mensaje, prioridad, destinatarios (all / dept / specific)
+// - Opción "enviar también por correo" (usa Resend/proveedor de plataforma)
+// - Historial con métricas leído/total
+// ═══════════════════════════════════════════════════════════════════════════
+
+function CommunicationPanel({ t, employees, onLoaded }: { t: any; employees: Employee[]; onLoaded?: () => void }) {
+  const [sent, setSent] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [priority, setPriority] = useState<"info" | "important" | "urgent">("info");
+  const [targetType, setTargetType] = useState<"all" | "department" | "specific">("all");
+  const [targetDept, setTargetDept] = useState("");
+  const [targetEmpIds, setTargetEmpIds] = useState<number[]>([]);
+  const [alsoEmail, setAlsoEmail] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = await hrApi.listSentAnnouncements(50);
+      setSent(Array.isArray(list) ? list : []);
+    } catch { setSent([]); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const departments = useMemo(() => {
+    const s = new Set<string>();
+    for (const e of employees) if (e.department) s.add(e.department);
+    return Array.from(s).sort();
+  }, [employees]);
+
+  const activeEmps = useMemo(() => employees.filter(e => e.is_active !== false), [employees]);
+
+  const preview = useMemo(() => {
+    if (targetType === "all") return activeEmps;
+    if (targetType === "department" && targetDept)
+      return activeEmps.filter(e => e.department === targetDept);
+    if (targetType === "specific")
+      return activeEmps.filter(e => targetEmpIds.includes(e.id));
+    return [];
+  }, [targetType, targetDept, targetEmpIds, activeEmps]);
+
+  const submit = async () => {
+    if (!title.trim() || !body.trim()) { setMsg("Título y mensaje son obligatorios."); return; }
+    if (targetType === "department" && !targetDept) { setMsg("Elige un departamento."); return; }
+    if (targetType === "specific" && targetEmpIds.length === 0) { setMsg("Elige al menos un empleado."); return; }
+    setSending(true); setMsg(null);
+    try {
+      await hrApi.createAnnouncement({
+        title: title.trim(), body: body.trim(), priority,
+        target_type: targetType,
+        target_department: targetType === "department" ? targetDept : undefined,
+        target_employee_ids: targetType === "specific" ? targetEmpIds : undefined,
+        also_email: alsoEmail,
+      });
+      setTitle(""); setBody(""); setTargetEmpIds([]); setAlsoEmail(false);
+      setMsg(`✅ Anuncio enviado a ${preview.length} destinatario${preview.length === 1 ? "" : "s"}.`);
+      await load();
+      onLoaded?.();
+    } catch (e: any) {
+      setMsg(`❌ ${e?.response?.data?.detail || "No se pudo enviar el anuncio."}`);
+    } finally { setSending(false); }
+  };
+
+  const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%", boxSizing: "border-box" };
+  const lbl: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
+  const priorityColor = { info: t.nova, important: t.warn, urgent: t.bad } as const;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 16 }}>
+      {/* Compositor */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <Megaphone size={20} color={t.nova} />
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: t.textHi }}>Enviar anuncio</div>
+            <div style={{ fontSize: 12, color: t.textLo, marginTop: 2 }}>
+              Llega a la campana del destinatario. Opcional por correo.
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <label style={lbl}>Título *</label>
+            <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Ej. Cambio de horario esta semana"
+                   style={inp} maxLength={120} />
+          </div>
+          <div>
+            <label style={lbl}>Mensaje *</label>
+            <textarea value={body} onChange={e => setBody(e.target.value)} rows={5} placeholder="Cuerpo del anuncio…"
+                      style={{ ...inp, fontFamily: "inherit", resize: "vertical" }} maxLength={4000} />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={lbl}>Prioridad</label>
+              <select value={priority} onChange={e => setPriority(e.target.value as any)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="info">Informativo</option>
+                <option value="important">Importante</option>
+                <option value="urgent">Urgente</option>
+              </select>
+            </div>
+            <div>
+              <label style={lbl}>Destinatarios</label>
+              <select value={targetType} onChange={e => setTargetType(e.target.value as any)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="all">Toda la empresa</option>
+                <option value="department">Un departamento</option>
+                <option value="specific">Empleados específicos</option>
+              </select>
+            </div>
+          </div>
+
+          {targetType === "department" && (
+            <div>
+              <label style={lbl}>Departamento *</label>
+              <select value={targetDept} onChange={e => setTargetDept(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                <option value="">— Elige —</option>
+                {departments.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+          )}
+
+          {targetType === "specific" && (
+            <div>
+              <label style={lbl}>Empleados * ({targetEmpIds.length} seleccionado{targetEmpIds.length === 1 ? "" : "s"})</label>
+              <div style={{ maxHeight: 180, overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: 8, padding: 4 }}>
+                {activeEmps.map(e => {
+                  const on = targetEmpIds.includes(e.id);
+                  return (
+                    <label key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", cursor: "pointer", borderRadius: 6, background: on ? t.nova + "18" : "transparent" }}>
+                      <input type="checkbox" checked={on}
+                             onChange={ev => setTargetEmpIds(ids => ev.target.checked ? [...ids, e.id] : ids.filter(i => i !== e.id))} />
+                      <span style={{ fontSize: 12.5, color: t.textHi }}>{e.name} {e.last_name}</span>
+                      <span style={{ fontSize: 11, color: t.textLo, marginLeft: "auto" }}>{e.department}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "8px 0" }}>
+            <input type="checkbox" checked={alsoEmail} onChange={e => setAlsoEmail(e.target.checked)} />
+            <Mail size={14} color={t.textMid} />
+            <span style={{ fontSize: 13, color: t.textMid }}>Enviar también por correo electrónico</span>
+          </label>
+
+          <div style={{ padding: "10px 12px", background: t.panel2, borderRadius: 8, fontSize: 12, color: t.textLo, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span>Este anuncio llegará a <b style={{ color: t.textHi }}>{preview.length}</b> empleado{preview.length === 1 ? "" : "s"}.</span>
+            {alsoEmail && preview.length > 0 && (
+              <span style={{ color: t.warn }}>· {preview.filter(e => e.email).length} con correo</span>
+            )}
+          </div>
+
+          {msg && (
+            <div style={{ padding: "10px 12px", borderRadius: 8, background: msg.startsWith("✅") ? t.good + "18" : t.bad + "18", color: msg.startsWith("✅") ? t.good : t.bad, fontSize: 13 }}>
+              {msg}
+            </div>
+          )}
+
+          <button onClick={submit} disabled={sending || !title.trim() || !body.trim()}
+                  style={{ padding: "12px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${priorityColor[priority]}, ${t.navy})`, color: "#fff", cursor: sending ? "wait" : "pointer", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: (!title.trim() || !body.trim()) ? 0.5 : 1 }}>
+            <Send size={16} /> {sending ? "Enviando…" : `Enviar a ${preview.length} destinatario${preview.length === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      </div>
+
+      {/* Historial */}
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <Bell size={20} color={t.textMid} />
+          <div style={{ fontSize: 16, fontWeight: 700, color: t.textHi }}>Historial de anuncios</div>
+        </div>
+        {loading && <div style={{ padding: 30, textAlign: "center", color: t.textLo, fontSize: 13 }}>Cargando…</div>}
+        {!loading && sent.length === 0 && (
+          <div style={{ padding: 30, textAlign: "center", color: t.textLo, fontSize: 13 }}>
+            <Bell size={28} style={{ opacity: 0.3, marginBottom: 8 }} />
+            <div>Aún no has enviado anuncios.</div>
+          </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 640, overflowY: "auto" }}>
+          {sent.map(a => {
+            const pc = a.priority === "urgent" ? t.bad : a.priority === "important" ? t.warn : t.nova;
+            const pct = a.total_recipients > 0 ? Math.round((a.read_count / a.total_recipients) * 100) : 0;
+            const dt = a.created_at ? new Date(a.created_at) : null;
+            return (
+              <div key={a.id} style={{ padding: "12px 14px", border: `1px solid ${t.border}`, borderLeft: `3px solid ${pc}`, borderRadius: 8, background: t.panel2 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 6 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi }}>{a.title}</div>
+                    <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 2 }}>
+                      {dt?.toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) || ""}
+                      {a.sender_name && ` · ${a.sender_name}`}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: pc + "22", color: pc, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                    {a.priority}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12.5, color: t.textMid, marginBottom: 8, whiteSpace: "pre-wrap", lineHeight: 1.4 }}>
+                  {a.body.length > 200 ? a.body.slice(0, 200) + "…" : a.body}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11.5, color: t.textLo }}>
+                  <span>
+                    {a.target_type === "all" && "Toda la empresa"}
+                    {a.target_type === "department" && `Depto: ${a.target_department}`}
+                    {a.target_type === "specific" && "Empleados específicos"}
+                    {a.also_email && ` · ${a.email_sent_count} correos`}
+                  </span>
+                  <span style={{ color: pct >= 70 ? t.good : pct >= 30 ? t.warn : t.textLo }}>
+                    {a.read_count} / {a.total_recipients} leídos ({pct}%)
+                  </span>
+                </div>
+                {a.email_error && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: t.bad }}>⚠️ {a.email_error}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 }

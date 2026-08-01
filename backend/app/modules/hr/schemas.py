@@ -204,3 +204,51 @@ class HRDashboard(BaseModel):
     by_department: dict
     present_today: int
     absent_today: int
+
+
+# ── Anuncios internos (Fase 2) ─────────────────────────────────────────────
+class AnnouncementCreate(BaseModel):
+    title: str
+    body: str
+    priority: str = "info"          # info | important | urgent
+    target_type: str = "all"         # all | department | specific
+    target_department: Optional[str] = None
+    target_employee_ids: Optional[List[int]] = None  # solo cuando target_type=specific
+    also_email: bool = False
+
+
+class AnnouncementReceiptOut(BaseModel):
+    employee_id: int
+    employee_name: str
+    read_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AnnouncementOut(BaseModel):
+    id: int
+    sender_user_id: Optional[int] = None
+    sender_name: Optional[str] = None
+    title: str
+    body: str
+    priority: str
+    target_type: str
+    target_department: Optional[str] = None
+    also_email: bool
+    email_sent_count: int = 0
+    email_error: Optional[str] = None
+    created_at: datetime
+    total_recipients: int = 0
+    read_count: int = 0
+    model_config = ConfigDict(from_attributes=True)
+
+
+class InboxItem(BaseModel):
+    """Cada anuncio dirigido al empleado logueado, con estado read/unread."""
+    id: int                           # id del receipt
+    announcement_id: int
+    title: str
+    body: str
+    priority: str
+    sender_name: Optional[str] = None
+    read_at: Optional[datetime] = None
+    created_at: datetime

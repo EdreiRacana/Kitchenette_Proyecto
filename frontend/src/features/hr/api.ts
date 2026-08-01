@@ -81,6 +81,21 @@ export const hrApi = {
     api.post("/hr/reports/ptu", { year, total_utilidad: totalUtilidad }, { responseType: "blob" }),
   downloadInfonavitReport: () => api.get("/hr/reports/infonavit", { responseType: "blob" }),
   downloadSUAReport: (periodId: number) => api.get(`/hr/reports/sua/${periodId}`, { responseType: "blob" }),
+
+  // Comunicación interna (Fase 2)
+  createAnnouncement: (data: {
+    title: string; body: string; priority?: string;
+    target_type: "all" | "department" | "specific";
+    target_department?: string; target_employee_ids?: number[];
+    also_email?: boolean;
+  }) => api.post("/hr/announcements", data).then(r => r.data),
+  listSentAnnouncements: (limit = 50) =>
+    api.get("/hr/announcements/sent", { params: { limit } }).then(r => r.data),
+  myInbox: (limit = 30) =>
+    api.get("/hr/announcements/inbox", { params: { limit } }).then(r => r.data),
+  myUnreadCount: () => api.get("/hr/announcements/unread-count").then(r => r.data),
+  markReceiptRead: (receiptId: number) =>
+    api.post(`/hr/announcements/receipts/${receiptId}/read`).then(r => r.data),
 };
 
 export function downloadBlob(blob: Blob, filename: string) {
