@@ -384,3 +384,59 @@ async def edit_payroll_detail(
     if detail is None:
         raise HTTPException(status_code=404, detail="Recibo no encontrado")
     return detail
+
+
+# ── Comunicación interna (Fase 2) ─────────────────────────────────────────
+@router.post("/announcements", response_model=schemas.AnnouncementOut, status_code=201)
+async def create_announcement(data: schemas.AnnouncementCreate, db: DB, current_user: CurrentUser):
+    """RH envía un anuncio a todos, a un departamento o a empleados específicos.
+    Requiere rol manager/admin."""
+    _require_manager(current_user)
+    try:
+        ann = await service.create_announcement(db, data, sender_user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # Serializar con métricas (usar la función de listado y tomar el primero)
+    from sqlalchemy.future import select as _sel
+    from app.modules.hr.models import Announcement, AnnouncementReceipt
+    from sqlalchemy.orm import selectinload as _sl
+    r = await db.execute(_sel(Announcement).options(_sl(Announcement.receipts))
+                          .where(Announcement.id == ann.id))
+    fresh = r.scalar_one()
+    total = len(fresh.receipts or [])
+    read = sum(1 for x in (fresh.receipts or []) if x.read_at is not None)
+    return schemas.AnnouncementOut(
+        id=fresh.id, sender_user_id=fresh.sender_user_id,
+        sender_name=(current_user.full_name or current_user.email),
+        title=fresh.title, body=fresh.body, priority=fresh.priority,
+        target_type=fresh.target_type, target_department=fresh.target_department,
+        also_email=fresh.also_email, email_sent_count=fresh.email_sent_count,
+        email_error=fresh.email_error, created_at=fresh.created_at,
+        total_recipients=total, read_count=read,
+    )
+
+
+@router.get("/announcements/sent", response_model=List[schemas.AnnouncementOut])
+async def list_sent_announcements(db: DB, current_user: CurrentUser, limit: int = 50):
+    """Historial de anuncios enviados con métricas de lectura."""
+    _require_manager(current_user)
+    return await service.list_announcements_sent(db, limit=limit)
+
+
+@router.get("/announcements/inbox", response_model=List[schemas.InboxItem])
+async def my_inbox(db: DB, current_user: CurrentUser, limit: int = 30):
+    """Anuncios dirigidos al empleado logueado. Cualquier usuario puede leerlo."""
+    return await service.inbox_for_user(db, user_email=current_user.email, limit=limit)
+
+
+@router.get("/announcements/unread-count")
+async def my_unread_count(db: DB, current_user: CurrentUser):
+    """Contador para el badge de la campana en el header."""
+    return {"unread": await service.unread_count_for_user(db, user_email=current_user.email)}
+
+
+@router.post("/announcements/receipts/{receipt_id}/read", status_code=204)
+async def mark_read(receipt_id: int, db: DB, current_user: CurrentUser):
+    ok = await service.mark_receipt_read(db, receipt_id, user_email=current_user.email)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Receipt no encontrado o no autorizado")

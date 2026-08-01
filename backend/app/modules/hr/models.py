@@ -126,3 +126,43 @@ class PayrollDetail(Base):
 
     period = relationship("PayrollPeriod", back_populates="details")
     employee = relationship("Employee", back_populates="payroll_details")
+
+
+# ── Comunicación interna ───────────────────────────────────────────────────
+# Anuncios/notificaciones que RH manda a departamentos o empleados
+# específicos. Se muestran en la campana del header del destinatario y
+# opcionalmente se mandan por correo (usando Resend/plataforma).
+class Announcement(Base):
+    __tablename__ = "hr_announcements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sender_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # quién lo envió
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    priority = Column(String, nullable=False, default="info")  # info | important | urgent
+    target_type = Column(String, nullable=False, default="all")  # all | department | specific
+    target_department = Column(String, nullable=True)  # cuando target_type=department
+    also_email = Column(Boolean, default=False, nullable=False)
+    email_sent_count = Column(Integer, default=0, nullable=False)
+    email_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    receipts = relationship("AnnouncementReceipt", back_populates="announcement",
+                            cascade="all, delete-orphan")
+
+
+class AnnouncementReceipt(Base):
+    """1 fila por (anuncio × empleado destinatario). Al abrir la campana
+    se marca read_at. Sirve para métricas de leído por leyente."""
+    __tablename__ = "hr_announcement_receipts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    announcement_id = Column(Integer, ForeignKey("hr_announcements.id", ondelete="CASCADE"),
+                              nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("hr_employees.id", ondelete="CASCADE"),
+                          nullable=False, index=True)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    announcement = relationship("Announcement", back_populates="receipts")
+    employee = relationship("Employee")

@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import datetime, date, timedelta
 import csv
@@ -1756,3 +1757,184 @@ async def get_sua_data(db: AsyncSession, period_id: int) -> List[dict]:
         }
         for d, emp in res.all()
     ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# COMUNICACIÓN INTERNA (Fase 2)
+# Anuncios/notificaciones que RH manda a departamentos o empleados
+# específicos. Cada envío crea 1 Announcement + N AnnouncementReceipt.
+# Cuando `also_email=True` además dispara correo a los destinatarios usando
+# el proveedor de plataforma (Resend/Brevo).
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def _resolve_recipient_employees(db: AsyncSession, target_type: str,
+                                        target_department: Optional[str] = None,
+                                        target_employee_ids: Optional[List[int]] = None
+                                        ) -> List[models.Employee]:
+    """Devuelve la lista de empleados destinatarios según los criterios.
+    Solo empleados activos (status='activo' e is_active=True)."""
+    q = select(models.Employee).where(models.Employee.is_active == True,   # noqa: E712
+                                       models.Employee.status == "activo")
+    if target_type == "department" and target_department:
+        q = q.where(models.Employee.department == target_department)
+    elif target_type == "specific" and target_employee_ids:
+        q = q.where(models.Employee.id.in_(target_employee_ids))
+    # target_type=all → no filtro adicional
+    res = await db.execute(q)
+    return list(res.scalars().all())
+
+
+async def create_announcement(db: AsyncSession, data: "schemas.AnnouncementCreate",
+                                sender_user_id: Optional[int] = None) -> models.Announcement:
+    """Persiste el anuncio + genera un receipt por cada destinatario. Si
+    also_email=True intenta enviar por correo (fallo NO tumba el envío
+    interno; solo se guarda en email_error para diagnóstico)."""
+    # Validaciones básicas antes de tocar la BD
+    if data.target_type not in ("all", "department", "specific"):
+        raise ValueError("target_type debe ser 'all', 'department' o 'specific'")
+    if data.target_type == "department" and not data.target_department:
+        raise ValueError("Falta target_department para target_type='department'")
+    if data.target_type == "specific" and not data.target_employee_ids:
+        raise ValueError("Falta target_employee_ids para target_type='specific'")
+
+    ann = models.Announcement(
+        sender_user_id=sender_user_id, title=data.title.strip(),
+        body=data.body.strip(), priority=data.priority or "info",
+        target_type=data.target_type, target_department=data.target_department,
+        also_email=bool(data.also_email),
+    )
+    db.add(ann)
+    await db.flush()
+
+    recipients = await _resolve_recipient_employees(
+        db, data.target_type, data.target_department, data.target_employee_ids,
+    )
+    for emp in recipients:
+        db.add(models.AnnouncementReceipt(announcement_id=ann.id, employee_id=emp.id))
+    await db.commit()
+    await db.refresh(ann)
+
+    # Correo opcional (best-effort, no bloqueante)
+    if data.also_email and recipients:
+        try:
+            from app.core.email import send_email
+            sent = 0
+            html = (f"<h3>{ann.title}</h3>"
+                    f"<p style='white-space:pre-wrap'>{ann.body}</p>"
+                    f"<hr><p style='color:#888;font-size:12px'>"
+                    f"Enviado a través del sistema Sthenova.</p>")
+            for emp in recipients:
+                if not emp.email:
+                    continue
+                ok = await send_email(db, to=emp.email, subject=ann.title, body_html=html)
+                if ok:
+                    sent += 1
+            ann.email_sent_count = sent
+        except Exception as e:
+            ann.email_error = f"{type(e).__name__}: {str(e)[:200]}"
+        await db.commit()
+        await db.refresh(ann)
+
+    await _log_audit(db, sender_user_id, "SEND_ANNOUNCEMENT",
+                     f"Anuncio '{ann.title}' → {len(recipients)} destinatarios "
+                     f"({ann.target_type})",
+                     {"announcement_id": ann.id, "recipients": len(recipients)})
+    return ann
+
+
+async def list_announcements_sent(db: AsyncSession, *, limit: int = 50) -> List[dict]:
+    """Historial de anuncios enviados con métricas de lectura."""
+    from app.modules.auth.models import User
+    res = await db.execute(
+        select(models.Announcement)
+        .options(selectinload(models.Announcement.receipts))
+        .order_by(models.Announcement.created_at.desc()).limit(limit)
+    )
+    anns = res.scalars().unique().all()
+    # Traigo nombres de senders en batch
+    sender_ids = {a.sender_user_id for a in anns if a.sender_user_id}
+    senders = {}
+    if sender_ids:
+        r2 = await db.execute(select(User.id, User.full_name, User.email)
+                              .where(User.id.in_(sender_ids)))
+        senders = {u.id: (u.full_name or u.email) for u in r2.all()}
+    out = []
+    for a in anns:
+        total = len(a.receipts or [])
+        read = sum(1 for r in (a.receipts or []) if r.read_at is not None)
+        out.append({
+            "id": a.id, "sender_user_id": a.sender_user_id,
+            "sender_name": senders.get(a.sender_user_id),
+            "title": a.title, "body": a.body, "priority": a.priority,
+            "target_type": a.target_type, "target_department": a.target_department,
+            "also_email": a.also_email, "email_sent_count": a.email_sent_count,
+            "email_error": a.email_error, "created_at": a.created_at,
+            "total_recipients": total, "read_count": read,
+        })
+    return out
+
+
+async def inbox_for_user(db: AsyncSession, user_email: str, *, limit: int = 30) -> List[dict]:
+    """Bandeja del empleado: solo sus receipts. Se identifica al empleado
+    por email — asumimos que el email del User coincide con el del
+    Employee. Si no hay match, la bandeja queda vacía."""
+    from app.modules.auth.models import User
+    emp_res = await db.execute(select(models.Employee.id)
+                                .where(models.Employee.email == user_email))
+    emp_id = emp_res.scalar_one_or_none()
+    if not emp_id:
+        return []
+    res = await db.execute(
+        select(models.AnnouncementReceipt, models.Announcement, User.full_name, User.email)
+        .join(models.Announcement, models.AnnouncementReceipt.announcement_id == models.Announcement.id)
+        .outerjoin(User, User.id == models.Announcement.sender_user_id)
+        .where(models.AnnouncementReceipt.employee_id == emp_id)
+        .order_by(models.Announcement.created_at.desc()).limit(limit)
+    )
+    out = []
+    for rec, ann, sender_name, sender_email in res.all():
+        out.append({
+            "id": rec.id, "announcement_id": ann.id,
+            "title": ann.title, "body": ann.body, "priority": ann.priority,
+            "sender_name": sender_name or sender_email,
+            "read_at": rec.read_at, "created_at": ann.created_at,
+        })
+    return out
+
+
+async def mark_receipt_read(db: AsyncSession, receipt_id: int, user_email: str) -> bool:
+    """Marca UN receipt como leído. Solo si pertenece al usuario logueado
+    (por email del employee), para evitar que alguien marque anuncios
+    de otros como leídos."""
+    res = await db.execute(
+        select(models.AnnouncementReceipt, models.Employee)
+        .join(models.Employee, models.Employee.id == models.AnnouncementReceipt.employee_id)
+        .where(models.AnnouncementReceipt.id == receipt_id)
+    )
+    row = res.first()
+    if not row:
+        return False
+    rec, emp = row
+    if emp.email != user_email:
+        return False
+    if rec.read_at is None:
+        from datetime import datetime, timezone
+        rec.read_at = datetime.now(timezone.utc)
+        await db.commit()
+    return True
+
+
+async def unread_count_for_user(db: AsyncSession, user_email: str) -> int:
+    """Cuántos anuncios no leídos tiene el usuario. Para el badge de la
+    campana en el header."""
+    emp_res = await db.execute(select(models.Employee.id)
+                                .where(models.Employee.email == user_email))
+    emp_id = emp_res.scalar_one_or_none()
+    if not emp_id:
+        return 0
+    res = await db.execute(
+        select(func.count(models.AnnouncementReceipt.id))
+        .where(models.AnnouncementReceipt.employee_id == emp_id,
+               models.AnnouncementReceipt.read_at.is_(None))
+    )
+    return int(res.scalar_one() or 0)
