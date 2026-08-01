@@ -2763,11 +2763,12 @@ function NotificationBell({ t, lang, onNavigate }) {
 }
 
 /* ============================ Topbar ============================ */
-function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMenuClick, onNavigate, me, perms }) {
+function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMenuClick, onNavigate, me, perms, refreshMe }) {
   const displayName = (me?.full_name || "").trim() || (me?.email ? me.email.split("@")[0] : "") || "Usuario";
   const initials = displayName
     .split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() || "").join("") || "U";
   const roleName = perms?.role || (perms?.is_superuser ? s.role : (me?.is_superuser ? s.role : ""));
+  const [profileOpen, setProfileOpen] = useState(false);
   return (
     <header style={{ height: 64, flex: "0 0 64px", background: t.panel, borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 14, padding: isMobile ? "0 12px" : "0 20px", position: "sticky", top: 0, zIndex: 20 }}>
       {isMobile && (
@@ -2784,18 +2785,119 @@ function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMe
         <HelpMenu t={t} lang={lang} onNavigate={onNavigate} />
         <NotificationBell t={t} lang={lang} onNavigate={onNavigate} />
         <div style={{ width: 1, height: 26, background: t.border, margin: "0 4px" }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <span style={{ width: 32, height: 32, borderRadius: 999, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: 13, flex: "0 0 auto" }}>{initials}</span>
+        <button onClick={() => setProfileOpen(true)} title="Mi perfil"
+                style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer", background: "transparent", border: "none", padding: 0 }}>
+          {me?.photo ? (
+            <img src={me.photo} alt={displayName} style={{ width: 32, height: 32, borderRadius: 999, objectFit: "cover", border: `1.5px solid ${t.nova}`, flex: "0 0 auto" }} />
+          ) : (
+            <span style={{ width: 32, height: 32, borderRadius: 999, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: 13, flex: "0 0 auto" }}>{initials}</span>
+          )}
           {!isMobile && (
-            <div style={{ lineHeight: 1.2 }}>
+            <div style={{ lineHeight: 1.2, textAlign: "left" }}>
               <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textHi }}>{displayName}</div>
               {roleName && <div style={{ fontSize: 10.5, color: t.textLo }}>{roleName}</div>}
             </div>
           )}
-        </div>
+        </button>
         <button onClick={onLogout} style={iconBtn(t)}><LogOut size={17} /></button>
       </div>
+      {profileOpen && (
+        <ProfileModal t={t} me={me} displayName={displayName} initials={initials} roleName={roleName}
+                       onClose={() => setProfileOpen(false)}
+                       onSaved={async () => { await refreshMe?.(); }} />
+      )}
     </header>
+  );
+}
+
+
+/* ============================ ProfileModal ============================
+   Modal simple: muestra la foto actual (o iniciales), permite subir una
+   nueva o quitarla. La foto se recorta client-side a 512px JPEG q=0.85
+   (mismo patrón que el uploader de empleado). */
+function ProfileModal({ t, me, displayName, initials, roleName, onClose, onSaved }) {
+  const [photo, setPhoto] = useState(me?.photo || "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const handleFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const max = 512;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext("2d");
+        ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+        setPhoto(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = String(ev.target?.result || "");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const save = async () => {
+    setBusy(true); setErr("");
+    try {
+      await api.patch("/auth/me/photo", { photo: photo || null });
+      await onSaved?.();
+      onClose();
+    } catch (e) {
+      setErr(e?.response?.data?.detail || "No se pudo guardar la foto");
+    } finally { setBusy(false); }
+  };
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}
+         onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()}
+           style={{ background: t.panel, borderRadius: 14, padding: 24, maxWidth: 420, width: "100%", border: `1px solid ${t.border}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <div style={{ fontSize: 17, fontWeight: 700, color: t.textHi }}>Mi perfil</div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textMid }}><X size={20} /></button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+          {photo ? (
+            <img src={photo} alt={displayName} style={{ width: 84, height: 84, borderRadius: 999, objectFit: "cover", border: `2px solid ${t.nova}` }} />
+          ) : (
+            <div style={{ width: 84, height: 84, borderRadius: 999, background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontSize: 30 }}>{initials}</div>
+          )}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi }}>{displayName}</div>
+            <div style={{ fontSize: 12, color: t.textLo, marginTop: 2 }}>{me?.email}</div>
+            {roleName && <div style={{ fontSize: 11, color: t.textLo, marginTop: 2 }}>{roleName}</div>}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          <label style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: `1px dashed ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13, textAlign: "center" }}>
+            {photo ? "Cambiar foto" : "Subir foto"}
+            <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => handleFile(e.target.files?.[0])} />
+          </label>
+          {photo && (
+            <button onClick={() => setPhoto("")}
+                    style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.bad}55`, background: t.bad + "18", color: t.bad, cursor: "pointer", fontSize: 13 }}>
+              Quitar
+            </button>
+          )}
+        </div>
+        <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 14 }}>
+          Si estás dado de alta como empleado en RH y no subes foto propia, se usará automáticamente la de tu ficha de empleado.
+        </div>
+        {err && <div style={{ background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 8, padding: "8px 12px", fontSize: 12.5, marginBottom: 12 }}>{err}</div>}
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: 11, borderRadius: 9, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13.5 }}>Cancelar</button>
+          <button onClick={save} disabled={busy || photo === (me?.photo || "")}
+                  style={{ flex: 2, padding: 11, borderRadius: 9, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: busy ? "wait" : "pointer", opacity: (busy || photo === (me?.photo || "")) ? 0.6 : 1 }}>
+            {busy ? "Guardando…" : "Guardar"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 const iconBtn = (t) => ({ position: "relative", width: 36, height: 36, borderRadius: 10, cursor: "pointer", background: "transparent", border: "1px solid transparent", color: t.textMid, display: "grid", placeItems: "center", flex: "0 0 auto" });
@@ -3000,7 +3102,7 @@ export default function App() {
       `}</style>
       <Sidebar t={t} s={s} page={page} setPage={goToPage} collapsed={collapsed} setCollapsed={setCollapsed} mobile={isMobile} mobileOpen={mobileNavOpen} setMobileOpen={setMobileNavOpen} allowedIds={allowedModuleIds} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
-        <Topbar t={t} s={s} lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} onLogout={() => { localStorage.removeItem("token"); setAuthed(false); }} isMobile={isMobile} onMenuClick={() => setMobileNavOpen(true)} onNavigate={handleSearchNavigate} me={me} perms={perms} />
+        <Topbar t={t} s={s} lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} onLogout={() => { localStorage.removeItem("token"); setAuthed(false); }} isMobile={isMobile} onMenuClick={() => setMobileNavOpen(true)} onNavigate={handleSearchNavigate} me={me} perms={perms} refreshMe={() => api.get("/auth/me").then(r => setMe(r.data)).catch(() => {})} />
         <main style={{ flex: 1, padding: isMobile ? 12 : 24, overflowX: "hidden", position: "relative" }}>
           {theme === "dark" && (
             <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>

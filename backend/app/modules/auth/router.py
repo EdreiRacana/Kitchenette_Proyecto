@@ -142,8 +142,42 @@ async def create_user(
 
 @router.get("/me", response_model=schemas.User)
 async def read_users_me(
-    current_user: Annotated[schemas.User, Depends(deps.get_current_active_user)]
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+    current_user: Annotated[User, Depends(deps.get_current_active_user)],
 ):
+    """Devuelve el usuario logueado. Si no tiene foto propia (photo NULL),
+    se resuelve buscando el Employee con el mismo email — así los empleados
+    con foto en RH la ven automáticamente en el topbar sin subirla dos veces."""
+    result = schemas.User.model_validate(current_user)
+    if not result.photo:
+        from app.modules.hr.models import Employee as HREmployee
+        r = await db.execute(select(HREmployee.photo)
+                              .where(HREmployee.email == current_user.email)
+                              .limit(1))
+        emp_photo = r.scalar_one_or_none()
+        if emp_photo:
+            result.photo = emp_photo
+    return result
+
+
+@router.patch("/me/photo", response_model=schemas.User)
+async def update_my_photo(
+    body: dict,
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+    current_user: Annotated[User, Depends(deps.get_current_active_user)],
+):
+    """Actualiza la foto de perfil del usuario logueado.
+    body: { "photo": "data:image/jpeg;base64,..." } o { "photo": null } para quitarla.
+    """
+    photo = body.get("photo")
+    if photo is not None and not isinstance(photo, str):
+        raise HTTPException(status_code=400, detail="photo debe ser un string data URI o null")
+    if photo and len(photo) > 500_000:
+        raise HTTPException(status_code=413, detail="La foto es demasiado grande (máx 500KB); reduce la resolución antes de subir")
+    current_user.photo = photo or None
+    db.add(current_user)
+    await db.commit()
+    await db.refresh(current_user)
     return current_user
 
 
