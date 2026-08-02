@@ -1341,6 +1341,12 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
     name: editing?.name || "", last_name: editing?.last_name || "",
     email: editing?.email || "", phone: editing?.phone || "",
     photo: editing?.photo || "",
+    // LFT art. 25 fracc I — datos personales
+    nationality: editing?.nationality || "Mexicana",
+    birth_date: editing?.birth_date || "",
+    gender: editing?.gender || "",
+    marital_status: editing?.marital_status || "",
+    address: editing?.address || "",
     department: editing?.department || "", position: editing?.position || "",
     cost_center: editing?.cost_center || "",
     contract_type: editing?.contract_type || "indefinido",
@@ -1475,6 +1481,49 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
                 <div><label style={lbl}>RFC *</label><input value={form.rfc} onChange={e => setForm(f => ({ ...f, rfc: e.target.value.toUpperCase() }))} placeholder="AAAA000000XX0" style={{ ...inp, fontFamily: "monospace", textTransform: "uppercase" }} /></div>
               </div>
               <div><label style={lbl}>NSS (IMSS)</label><input value={form.nss} onChange={e => setForm(f => ({ ...f, nss: e.target.value }))} placeholder="11 dígitos" style={{ ...inp, fontFamily: "monospace" }} /></div>
+
+              {/* LFT art. 25 fracc I — datos personales requeridos para el contrato */}
+              <div style={{ marginTop: 8, padding: 12, background: t.panel2, borderRadius: 10, border: `1px solid ${t.border}` }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textMid, marginBottom: 8 }}>
+                  DATOS PARA EL CONTRATO (LFT art. 25)
+                </div>
+                <div style={g2}>
+                  <div>
+                    <label style={lbl}>Nacionalidad</label>
+                    <input value={form.nationality} onChange={e => setForm((f: any) => ({ ...f, nationality: e.target.value }))} placeholder="Mexicana" style={inp} />
+                  </div>
+                  <div>
+                    <label style={lbl}>Fecha de nacimiento</label>
+                    <input type="date" value={form.birth_date} onChange={e => setForm((f: any) => ({ ...f, birth_date: e.target.value }))} style={inp} />
+                  </div>
+                </div>
+                <div style={{ ...g2, marginTop: 10 }}>
+                  <div>
+                    <label style={lbl}>Sexo</label>
+                    <select value={form.gender} onChange={e => setForm((f: any) => ({ ...f, gender: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+                      <option value="">— Elige —</option>
+                      <option value="M">Masculino</option>
+                      <option value="F">Femenino</option>
+                      <option value="X">No binario / Prefiero no decir</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={lbl}>Estado civil</label>
+                    <select value={form.marital_status} onChange={e => setForm((f: any) => ({ ...f, marital_status: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+                      <option value="">— Elige —</option>
+                      <option value="soltero">Soltero(a)</option>
+                      <option value="casado">Casado(a)</option>
+                      <option value="union_libre">Unión libre</option>
+                      <option value="divorciado">Divorciado(a)</option>
+                      <option value="viudo">Viudo(a)</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <label style={lbl}>Domicilio del trabajador</label>
+                  <input value={form.address} onChange={e => setForm((f: any) => ({ ...f, address: e.target.value }))} placeholder="Calle, número, colonia, ciudad, CP" style={inp} />
+                </div>
+              </div>
             </div>
           )}
 
@@ -3258,6 +3307,12 @@ function ContractFormModal({ t, employees, onClose, onCreated }:
   const [professionalService, setProfessionalService] = useState("");
   const [nonCompete, setNonCompete] = useState(false);
   const [confidentiality, setConfidentiality] = useState(true);
+  // LFT art. 25 — extras capturables
+  const [restDays, setRestDays] = useState("Sábado y domingo");
+  const [paymentMethod, setPaymentMethod] = useState("transferencia");
+  const [paymentPlace, setPaymentPlace] = useState("");
+  const [trainingClause, setTrainingClause] = useState("");
+  const [temporaryReason, setTemporaryReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -3295,7 +3350,14 @@ function ContractFormModal({ t, employees, onClose, onCreated }:
         professional_service: isHonorarios ? professionalService : undefined,
         non_compete: nonCompete,
         confidentiality,
-      });
+        // LFT art. 25 extras (solo aplican a contratos laborales)
+        rest_days: isCommission || isHonorarios ? undefined : (restDays || undefined),
+        payment_method: paymentMethod || undefined,
+        payment_place: paymentPlace || undefined,
+        training_clause: isCommission || isHonorarios ? undefined : (trainingClause || undefined),
+        temporary_reason: ["determinado", "temporal", "obra"].includes(contractType)
+          ? (temporaryReason || undefined) : undefined,
+      } as any);
       onCreated("✅ Contrato creado. Descárgalo desde la lista para imprimir y firmar.");
     } catch (e: any) {
       setErr(e?.response?.data?.detail || "No se pudo crear el contrato");
@@ -3441,6 +3503,47 @@ function ContractFormModal({ t, employees, onClose, onCreated }:
             <input value={workplaceAddress} onChange={e => setWorkplaceAddress(e.target.value)}
                    placeholder="Calle, número, colonia, ciudad" style={inp} />
           </div>
+
+          {/* Datos LFT art. 25 — solo para contratos laborales */}
+          {!isCommission && !isHonorarios && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={lbl}>Días de descanso semanal</label>
+                  <input value={restDays} onChange={e => setRestDays(e.target.value)}
+                         placeholder="Ej. Sábado y domingo" style={inp} />
+                </div>
+                <div>
+                  <label style={lbl}>Forma de pago</label>
+                  <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}
+                          style={{ ...inp, cursor: "pointer" }}>
+                    <option value="transferencia">Transferencia electrónica</option>
+                    <option value="efectivo">Efectivo</option>
+                    <option value="cheque">Cheque nominativo</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label style={lbl}>Lugar de pago (domicilio o cuenta CLABE)</label>
+                <input value={paymentPlace} onChange={e => setPaymentPlace(e.target.value)}
+                       placeholder="Ej. CLABE 012...  ó  en el domicilio de la empresa" style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Cláusula de capacitación (art. 132-XV LFT)</label>
+                <textarea rows={2} value={trainingClause} onChange={e => setTrainingClause(e.target.value)}
+                          placeholder="Deja vacío para usar el texto estándar de la Comisión Mixta de Capacitación."
+                          style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} />
+              </div>
+              {["determinado", "temporal", "obra"].includes(contractType) && (
+                <div>
+                  <label style={lbl}>Causa que justifica la temporalidad *</label>
+                  <textarea rows={2} value={temporaryReason} onChange={e => setTemporaryReason(e.target.value)}
+                            placeholder="Ej. Sustitución de trabajador en incapacidad; obra determinada de 6 meses; proyecto específico ABC."
+                            style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} />
+                </div>
+              )}
+            </>
+          )}
 
           {/* Cláusulas opcionales */}
           <div style={{ padding: 12, background: t.panel2, borderRadius: 8, display: "flex", flexDirection: "column", gap: 8 }}>

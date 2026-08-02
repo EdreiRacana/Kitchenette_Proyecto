@@ -10,6 +10,12 @@ class EmployeeBase(BaseModel):
     email: str
     phone: Optional[str] = None
     photo: Optional[str] = None       # URL o data URI de la foto (subida a Supabase)
+    # Datos personales (LFT art. 25)
+    nationality: Optional[str] = None
+    birth_date: Optional[str] = None       # ISO YYYY-MM-DD
+    gender: Optional[str] = None           # M | F | X
+    marital_status: Optional[str] = None
+    address: Optional[str] = None
     department: str
     position: str
     cost_center: Optional[str] = None
@@ -51,6 +57,11 @@ class EmployeeUpdate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     photo: Optional[str] = None
+    nationality: Optional[str] = None
+    birth_date: Optional[str] = None
+    gender: Optional[str] = None
+    marital_status: Optional[str] = None
+    address: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None
     cost_center: Optional[str] = None
@@ -281,6 +292,12 @@ class ContractCreate(BaseModel):
     professional_service: Optional[str] = None
     non_compete: bool = False
     confidentiality: bool = True
+    # LFT art. 25 — extras capturables desde el wizard
+    rest_days: Optional[str] = None            # ej. "Sábado y domingo"
+    payment_method: Optional[str] = None       # transferencia | efectivo | cheque
+    payment_place: Optional[str] = None
+    training_clause: Optional[str] = None      # art. 132-XV
+    temporary_reason: Optional[str] = None     # causa del contrato temporal (art. 37)
 
 
 class ContractUpdate(BaseModel):
@@ -297,6 +314,11 @@ class ContractUpdate(BaseModel):
     professional_service: Optional[str] = None
     non_compete: Optional[bool] = None
     confidentiality: Optional[bool] = None
+    rest_days: Optional[str] = None
+    payment_method: Optional[str] = None
+    payment_place: Optional[str] = None
+    training_clause: Optional[str] = None
+    temporary_reason: Optional[str] = None
     status: Optional[str] = None
     signed_document_url: Optional[str] = None
     termination_reason: Optional[str] = None
@@ -319,6 +341,11 @@ class ContractOut(BaseModel):
     professional_service: Optional[str] = None
     non_compete: bool
     confidentiality: bool
+    rest_days: Optional[str] = None
+    payment_method: Optional[str] = None
+    payment_place: Optional[str] = None
+    training_clause: Optional[str] = None
+    temporary_reason: Optional[str] = None
     status: str
     generated_at: Optional[datetime] = None
     signed_at: Optional[datetime] = None

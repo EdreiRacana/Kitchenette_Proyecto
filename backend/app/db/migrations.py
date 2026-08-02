@@ -394,6 +394,18 @@ _HR_STATEMENTS = [
     "ALTER TABLE hr_attendance ADD COLUMN IF NOT EXISTS incapacity_subtype  VARCHAR",
     "ALTER TABLE hr_attendance ADD COLUMN IF NOT EXISTS imss_folio          VARCHAR",
     "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS alimony          DOUBLE PRECISION DEFAULT 0",
+    # Datos personales del empleado exigidos por LFT art. 25 para contratos
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS nationality   VARCHAR",
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS birth_date    VARCHAR",
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS gender        VARCHAR",
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS marital_status VARCHAR",
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS address       TEXT",
+    # Campos extra de la ficha del contrato (LFT art. 25)
+    "ALTER TABLE hr_contracts ADD COLUMN IF NOT EXISTS rest_days       VARCHAR",
+    "ALTER TABLE hr_contracts ADD COLUMN IF NOT EXISTS payment_method  VARCHAR",
+    "ALTER TABLE hr_contracts ADD COLUMN IF NOT EXISTS payment_place   TEXT",
+    "ALTER TABLE hr_contracts ADD COLUMN IF NOT EXISTS training_clause TEXT",
+    "ALTER TABLE hr_contracts ADD COLUMN IF NOT EXISTS temporary_reason TEXT",
 ]
 
 _AUTH_STATEMENTS = [
