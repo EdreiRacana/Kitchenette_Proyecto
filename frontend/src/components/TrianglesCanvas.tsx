@@ -1,119 +1,63 @@
 /**
  * TrianglesCanvas.tsx
- * Fondo animado del login. Un enjambre de partículas rellena una figura
- * que cambia cíclicamente:
- *   círculo → cuadrado → octágono → NovaMark (silueta del logo) → círculo → …
- * La figura gira sobre su eje vertical con perspectiva 3D (como un planeta):
- * los puntos que quedan "atrás" se atenúan y se contraen; los que quedan
- * "adelante" se ven más grandes y brillantes.
+ * Animación 3D del login. Ciclo de dos figuras rotando sobre eje vertical:
+ *   🌐 GLOBO (esfera abstracta con puntos uniformes en la superficie)
+ *   🔻 LOGO STHENOVA (silueta NovaMark con volumen tipo lente)
+ * Cada figura se mantiene 4 s con transición suave (900 ms), y todo el
+ * cuerpo gira sobre el eje vertical dando una vuelta completa cada 20 s.
  *
- * Interacción: hover cerca del centro desarma la red y las líneas cerca
- * del cursor se iluminan (comportamiento original preservado).
+ * Volumen real 3D — nunca colapsa a línea al rotar:
+ *   - Globo: cada partícula tiene (θ, φ) fijos en la esfera; al rotar
+ *     mantiene silueta circular igual que la Tierra vista de perfil.
+ *   - Logo: cada partícula tiene profundidad z0 fija, modulada por una
+ *     envoltura lente sqrt(1-r²) para dar cuerpo esférico a la silueta.
  *
- * Accesibilidad: prefers-reduced-motion → congela la rotación y el ciclo.
+ * Al pasar el cursor cerca del centro, las partículas se desarman en una
+ * red caótica y las líneas cerca del cursor se iluminan.
+ *
+ * Accesibilidad: prefers-reduced-motion → congela rotación y ciclo.
  */
 
 import { useEffect, useRef } from "react";
 
-// Silueta NovaMark cruda (max radius ≈ 1.245 con [1, 0.7419])
+// Silueta NovaMark (sin normalizar aún — se hace en runtime)
 const NOVA_RAW: [number, number][] = [
   [ 0,   -1.00],
   [ 1,    0.7419],
   [ 0,    0.3871],
   [-1,    0.7419],
 ];
-// Normalizada a max radius = 1 para que quepa en el mismo envelope que los
-// otros polígonos regulares del ciclo.
 const NOVA_MAX_R = Math.max(...NOVA_RAW.map(([x, y]) => Math.hypot(x, y)));
 const NOVA_SHAPE: [number, number][] = NOVA_RAW.map(([x, y]) =>
-  [x / NOVA_MAX_R, y / NOVA_MAX_R] as [number, number]
+  [x / NOVA_MAX_R, y / NOVA_MAX_R] as [number, number],
 );
 
-const SHAPE_HOLD_MS = 3000;         // tiempo que se mantiene cada forma
-const SHAPE_MORPH_MS = 900;         // transición suave entre formas
-const NUM_PARTICLES = 180;          // enjambre (mesh interior)
-const ROTATION_PERIOD_MS = 22000;   // una vuelta cada 22 s (planeta)
+const SHAPE_HOLD_MS = 4000;
+const SHAPE_MORPH_MS = 900;
+const NUM_PARTICLES = 200;
+const ROTATION_PERIOD_MS = 20000;
 
-// Espacio de la figura. Sin logo estático detrás, aprovechamos más pantalla.
-// Ligeramente arriba para dejar aire al footer del formulario en móvil.
-const CENTER_Y = 0;
 const SHAPE_RADIUS = 0.68;
+const PERSPECTIVE = 0.45;             // más pronunciada para reforzar 3D
 
-// Perspectiva del giro planetario: profundidad relativa. Con 0.35 los puntos
-// del "polo cerca" se agrandan ~35% y los del "polo lejos" se encogen igual.
-const PERSPECTIVE = 0.35;
+type ShapeKind = "globe" | "novamark";
+const SHAPE_CYCLE: ShapeKind[] = ["globe", "novamark"];
 
-type ShapeKind = "circle" | "square" | "octagon" | "novamark";
-const SHAPE_CYCLE: ShapeKind[] = ["circle", "square", "octagon", "novamark"];
-
-/** Radio del contorno de un polígono regular con N vértices (circunradio=1)
- *  en el ángulo θ. */
-function polyRadiusAt(theta: number, sides: number, rotOffset = 0): number {
-  const seg = (2 * Math.PI) / sides;
-  const th = ((theta - rotOffset) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-  const local = (th % seg) - seg / 2;
-  return Math.cos(seg / 2) / Math.cos(local);
-}
-
-/** Intersección del rayo desde el origen en ángulo θ contra un polígono
- *  arbitrario. Devuelve la distancia al contorno (o 1 si algo raro pasa). */
-function rayPolyRadius(theta: number, poly: [number, number][]): number {
+/** Distancia del rayo desde el origen al perímetro del polígono NovaMark. */
+function novaRadiusAt(theta: number): number {
   const cx = Math.cos(theta), cy = Math.sin(theta);
   let minT = Infinity;
-  for (let i = 0; i < poly.length; i++) {
-    const [x1, y1] = poly[i];
-    const [x2, y2] = poly[(i + 1) % poly.length];
+  for (let i = 0; i < NOVA_SHAPE.length; i++) {
+    const [x1, y1] = NOVA_SHAPE[i];
+    const [x2, y2] = NOVA_SHAPE[(i + 1) % NOVA_SHAPE.length];
     const dx = x2 - x1, dy = y2 - y1;
     const denom = cx * dy - cy * dx;
     if (Math.abs(denom) < 1e-9) continue;
     const t = (x1 * dy - y1 * dx) / denom;
     const s = (x1 * cy - y1 * cx) / denom;
-    if (t > 1e-6 && s >= -1e-6 && s <= 1 + 1e-6) {
-      if (t < minT) minT = t;
-    }
+    if (t > 1e-6 && s >= -1e-6 && s <= 1 + 1e-6 && t < minT) minT = t;
   }
   return minT === Infinity ? 1 : minT;
-}
-
-function shapeRadiusAt(theta: number, kind: ShapeKind): number {
-  switch (kind) {
-    case "circle":   return 1;
-    case "square":   return polyRadiusAt(theta, 4, Math.PI / 4);
-    case "octagon":  return polyRadiusAt(theta, 8, 0);
-    case "novamark": return rayPolyRadius(theta, NOVA_SHAPE);
-  }
-}
-
-/** Vértices/puntos del contorno para dibujar la guía tenue de la figura. */
-function shapeCorners(kind: ShapeKind): [number, number][] {
-  switch (kind) {
-    case "circle": {
-      const out: [number, number][] = [];
-      for (let i = 0; i < 48; i++) {
-        const a = (i / 48) * Math.PI * 2;
-        out.push([Math.cos(a), Math.sin(a)]);
-      }
-      return out;
-    }
-    case "square": {
-      const out: [number, number][] = [];
-      for (let i = 0; i < 4; i++) {
-        const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-        out.push([Math.cos(a), Math.sin(a)]);
-      }
-      return out;
-    }
-    case "octagon": {
-      const out: [number, number][] = [];
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        out.push([Math.cos(a), Math.sin(a)]);
-      }
-      return out;
-    }
-    case "novamark":
-      return NOVA_SHAPE.map(([x, y]) => [x, y] as [number, number]);
-  }
 }
 
 function easeInOutCubic(t: number): number {
@@ -121,13 +65,15 @@ function easeInOutCubic(t: number): number {
 }
 
 interface Particle {
-  r: number;
-  theta: number;
-  // z0 ∈ [-1, 1] — profundidad propia de cada partícula, fija. Multiplicada
-  // por una "envoltura lente" (mayor en el centro de la figura, menor en el
-  // borde) da al cuerpo entero forma esférica: al rotar sobre Y jamás colapsa
-  // a una línea plana; siempre conserva volumen visible (como un planeta).
-  z0: number;
+  // ── Coordenadas para el GLOBO (esfera de radio 1) ────────────────────
+  sphereTheta: number;    // longitud [0..2π]
+  sphereY: number;        // sin(latitud) — altura fija en la esfera; en [-1..1]
+  sphereR: number;        // cos(latitud) — radio del anillo a esa altura; en [0..1]
+  // ── Coordenadas para el LOGO (silueta 2D + profundidad tipo lente) ───
+  r2d: number;            // radial [0..1] dentro de la silueta
+  theta2d: number;        // ángulo [0..2π] dentro de la silueta
+  z0: number;             // profundidad propia [-1..1] (para envoltura lente)
+  // ── Posición renderizada + caos para hover ───────────────────────────
   x: number;
   y: number;
   rx: number;
@@ -165,7 +111,8 @@ export function TrianglesCanvas({ accent, hi }: {
 
     const centroX = () => canvas.clientWidth / 2;
     const centroY = () => canvas.clientHeight / 2;
-    const logoScale = () => Math.max(160, Math.min(canvas.clientWidth, canvas.clientHeight) * 0.44);
+    const logoScale = () =>
+      Math.max(160, Math.min(canvas.clientWidth, canvas.clientHeight) * 0.44);
 
     const mouse = { x: -1000, y: -1000, sobreCentro: false };
 
@@ -173,19 +120,31 @@ export function TrianglesCanvas({ accent, hi }: {
       const S = logoScale();
       const out: Particle[] = [];
       for (let i = 0; i < NUM_PARTICLES; i++) {
+        // Distribución UNIFORME en la esfera unitaria:
+        //   z uniforme en [-1, 1] → mapea a sin(latitud)
+        //   theta uniforme en [0, 2π]
+        //   r_at_z = sqrt(1 - z²) → cos(latitud)
+        const sphereY = 2 * Math.random() - 1;
+        const sphereR = Math.sqrt(Math.max(0, 1 - sphereY * sphereY));
+        const sphereTheta = Math.random() * Math.PI * 2;
+
+        // Coordenadas independientes para el LOGO — 25% cerca del borde
+        // para reforzar el contorno; resto uniforme dentro.
         const nearEdge = i < NUM_PARTICLES * 0.25;
-        const r = nearEdge
+        const r2d = nearEdge
           ? 0.85 + Math.random() * 0.15
           : Math.sqrt(Math.random()) * 0.98;
-        const theta = Math.random() * Math.PI * 2;
-        // z0 uniforme en [-1, 1] — luego se modula por la envoltura lente
-        // en el render loop para dar forma esférica al cuerpo.
-        const z0 = Math.random() * 2 - 1;
-        const rShape = shapeRadiusAt(theta, SHAPE_CYCLE[0]);
-        const x = r * rShape * SHAPE_RADIUS * S * Math.cos(theta);
-        const y = r * rShape * SHAPE_RADIUS * S * Math.sin(theta) + CENTER_Y * S;
+        const theta2d = Math.random() * Math.PI * 2;
+        const z0 = 2 * Math.random() - 1;
+
+        // Posición inicial en el globo
+        const x = sphereR * Math.cos(sphereTheta) * SHAPE_RADIUS * S;
+        const y = sphereY * SHAPE_RADIUS * S;
+
         out.push({
-          r, theta, z0, x, y,
+          sphereTheta, sphereY, sphereR,
+          r2d, theta2d, z0,
+          x, y,
           rx: (Math.random() - 0.5) * S * 1.4,
           ry: (Math.random() - 0.5) * S * 1.4,
           vx: (Math.random() - 0.5) * 0.7,
@@ -213,7 +172,7 @@ export function TrianglesCanvas({ accent, hi }: {
       mouse.y = e.clientY - rect.top;
       const dx = mouse.x - centroX();
       const dy = mouse.y - centroY();
-      mouse.sobreCentro = Math.hypot(dx, dy) < logoScale() * 0.65;
+      mouse.sobreCentro = Math.hypot(dx, dy) < logoScale() * 0.7;
     };
     const onLeave = () => { mouse.x = -1000; mouse.y = -1000; mouse.sobreCentro = false; };
     canvas.addEventListener("mousemove", onMove);
@@ -250,7 +209,7 @@ export function TrianglesCanvas({ accent, hi }: {
       // Índice de figura + fase de morph
       const elapsed = reduce ? 0 : (now - t0);
       const cycleIdx = Math.floor(elapsed / CYCLE_MS);
-      const cyclePos = (elapsed % CYCLE_MS);
+      const cyclePos = elapsed % CYCLE_MS;
       const fromIdx = cycleIdx % SHAPE_CYCLE.length;
       const toIdx = (fromIdx + 1) % SHAPE_CYCLE.length;
       let morph = 0;
@@ -261,13 +220,9 @@ export function TrianglesCanvas({ accent, hi }: {
       const kindFrom = SHAPE_CYCLE[fromIdx];
       const kindTo = SHAPE_CYCLE[toIdx];
 
-      // ── Rotación planetaria: eje vertical, con perspectiva ─────────────
-      // El eje Y se conserva; la coordenada X del punto en la figura se rota
-      // en 3D: worldX = shapeX * cos(rot), worldZ = shapeX * sin(rot).
-      // Luego se aplica factor de perspectiva basado en Z (los puntos "hacia
-      // el frente" se agrandan y brillan, los "atrás" se contraen y atenúan).
-      // Se pausa parcialmente cuando hay hover.
-      const rotation = reduce ? 0
+      // Rotación planetaria — pausa parcial durante hover
+      const rotation = reduce
+        ? 0
         : (elapsed / ROTATION_PERIOD_MS) * Math.PI * 2 * (1 - transicionRed * 0.8);
       const cosR = Math.cos(rotation);
       const sinR = Math.sin(rotation);
@@ -283,110 +238,74 @@ export function TrianglesCanvas({ accent, hi }: {
         ctx.fillRect(cx - S * 1.6, cy - S * 1.6, S * 3.2, S * 3.2);
       }
 
-      // ── Contorno guía de la figura actual del ciclo (rotado + perspectiva) ──
-      const shapeOutlineAlpha = 0.20 * (1 - transicionRed);
-      if (shapeOutlineAlpha > 0.02) {
-        const cornersFrom = shapeCorners(kindFrom);
-        const cornersTo = shapeCorners(kindTo);
-        const useCorners = morph < 0.5 ? cornersFrom : cornersTo;
-        const outAlpha = shapeOutlineAlpha * (1 - Math.abs(morph - 0.5) * 2 * 0.6);
-
-        const project = (nx: number, ny: number): [number, number, number] => {
-          // Escala al espacio de figura
-          const sx = nx * SHAPE_RADIUS * S;
-          const sy = ny * SHAPE_RADIUS * S + CENTER_Y * S;
-          // Rotación eje Y (3D)
-          const wX = sx * cosR;
-          const wZ = sx * sinR;
-          const depth = 1 + (wZ / S) * PERSPECTIVE;
-          const px = cx + wX * depth;
-          const py = cy + sy * (1 + PERSPECTIVE * 0.15 * (wZ / S));
-          // depthAlpha va 0..1 (1 = al frente, 0 = atrás)
-          const depthAlpha = 0.35 + 0.65 * ((wZ / S + 1) / 2);
-          return [px, py, depthAlpha];
-        };
-
-        // Traza el contorno como polilínea (segmentos individuales para que
-        // cada tramo pueda tener alpha propio; simplificación: alpha promedio).
-        for (let i = 0; i < useCorners.length; i++) {
-          const [nx1, ny1] = useCorners[i];
-          const [nx2, ny2] = useCorners[(i + 1) % useCorners.length];
-          const [p1x, p1y, a1] = project(nx1, ny1);
-          const [p2x, p2y, a2] = project(nx2, ny2);
-          const alpha = outAlpha * (a1 + a2) / 2;
-          if (alpha < 0.01) continue;
-          ctx.beginPath();
-          ctx.moveTo(p1x, p1y);
-          ctx.lineTo(p2x, p2y);
-          ctx.strokeStyle = toRgba(accent, alpha);
-          ctx.lineWidth = 1;
-          ctx.stroke();
+      // Calcula posición 3D de un tipo de figura para una partícula
+      const computeShape = (
+        p: Particle, kind: ShapeKind,
+      ): { x: number; y: number; z: number } => {
+        if (kind === "globe") {
+          // GLOBO — punto fijo en la esfera (rotado sobre Y)
+          const baseX = p.sphereR * Math.cos(p.sphereTheta);
+          const baseZ = p.sphereR * Math.sin(p.sphereTheta);
+          return {
+            x: baseX * cosR + baseZ * sinR,
+            y: p.sphereY,
+            z: -baseX * sinR + baseZ * cosR,
+          };
         }
-
-        // Vértices (solo si la figura tiene esquinas — círculo no cuenta)
-        const drawVertexDots = (corners: [number, number][], alpha: number) => {
-          corners.forEach(([nx, ny]) => {
-            const [px, py, da] = project(nx, ny);
-            ctx.beginPath();
-            ctx.arc(px, py, 2.6, 0, Math.PI * 2);
-            ctx.fillStyle = toRgba(accent, alpha * da);
-            ctx.fill();
-          });
+        // NOVAMARK LENS — silueta 2D con profundidad tipo lente
+        const rShape = novaRadiusAt(p.theta2d);
+        const magnitude = p.r2d * rShape;
+        const s2dX = magnitude * Math.cos(p.theta2d);
+        const s2dY = magnitude * Math.sin(p.theta2d);
+        const zEnv = Math.sqrt(Math.max(0, 1 - p.r2d * p.r2d)) * 0.65;
+        const zLocal = p.z0 * zEnv;
+        return {
+          x: s2dX * cosR + zLocal * sinR,
+          y: s2dY,
+          z: -s2dX * sinR + zLocal * cosR,
         };
-        if (kindFrom !== "circle") drawVertexDots(cornersFrom, shapeOutlineAlpha * (1 - morph) * 1.6);
-        if (kindTo !== "circle") drawVertexDots(cornersTo, shapeOutlineAlpha * morph * 1.6);
-      }
+      };
 
-      // ── Posiciones de partículas (planeta 3D con volumen tipo lente) ────
-      // Cada partícula tiene profundidad propia (z0). La envoltura lente
-      // (zEnvelope = sqrt(1 - r^2)) hace que las partículas del centro
-      // tengan mayor rango de Z que las del borde, dando forma esférica
-      // al cuerpo. Al rotar sobre Y, el cuerpo mantiene volumen visible
-      // en cualquier ángulo — nunca colapsa a una línea plana.
+      // ── Proyección y arreglo por profundidad ──────────────────────────
       const positions: {
         x: number; y: number; distMouse: number; depth: number;
-        depthAlpha: number; sizeMul: number;
+        depthAlpha: number; sizeMul: number; worldZ: number;
       }[] = [];
-      const zDepthScale = SHAPE_RADIUS * S * 0.65;   // amplitud de profundidad
 
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
-        const rFrom = shapeRadiusAt(p.theta, kindFrom);
-        const rTo = shapeRadiusAt(p.theta, kindTo);
-        const rShape = rFrom + (rTo - rFrom) * morph;
-        const magnitude = p.r * rShape * SHAPE_RADIUS * S;
+        const posFrom = computeShape(p, kindFrom);
+        const posTo = computeShape(p, kindTo);
+        // Interpolación entre ambos objetivos (todavía en espacio normalizado
+        // [-1..1] × [-1..1] × [-1..1] aprox.)
+        const world = {
+          x: posFrom.x + (posTo.x - posFrom.x) * morph,
+          y: posFrom.y + (posTo.y - posFrom.y) * morph,
+          z: posFrom.z + (posTo.z - posFrom.z) * morph,
+        };
+        // Escalar al canvas
+        const worldX = world.x * SHAPE_RADIUS * S;
+        const worldY = world.y * SHAPE_RADIUS * S;
+        const worldZ = world.z * SHAPE_RADIUS * S;
 
-        // Posición base en el plano de la figura (2D antes de rotar)
-        const shapeX = magnitude * Math.cos(p.theta);
-        const shapeY = magnitude * Math.sin(p.theta);
-        // Envoltura lente: máximo en el centro (r=0), mínimo en el borde (r=1)
-        const zEnvelope = Math.sqrt(Math.max(0, 1 - p.r * p.r)) * zDepthScale;
-        const zLocal = p.z0 * zEnvelope;
-
-        // Rotación 3D sobre eje Y: (shapeX, zLocal) → (worldX, worldZ)
-        const worldX = shapeX * cosR + zLocal * sinR;
-        const worldZ = -shapeX * sinR + zLocal * cosR;
-        const worldY = shapeY;
-
-        // Perspectiva: puntos hacia el frente se agrandan; hacia atrás se
-        // encogen. Con S como referencia de tamaño del cuerpo.
+        // Perspectiva
         const perspFactor = 1 + (worldZ / S) * PERSPECTIVE;
         const perspX = worldX * perspFactor;
-        const perspY = worldY * perspFactor + CENTER_Y * S;
-        // Alpha por profundidad — al frente 1.0, al fondo 0.25 (contraste
-        // fuerte para reforzar la sensación de 3D).
-        const depthAlpha = 0.25 + 0.75 * ((worldZ / (zDepthScale * 1.1) + 1) / 2);
-        const sizeMul = 0.55 + 0.9 * Math.max(0, Math.min(1, (worldZ / (zDepthScale * 1.1) + 1) / 2));
+        const perspY = worldY * perspFactor;
+        // Alpha por profundidad — al frente 1.0, al fondo 0.2
+        const zNorm = worldZ / (SHAPE_RADIUS * S);   // aprox [-1..1]
+        const depthAlpha = 0.2 + 0.8 * ((zNorm + 1) / 2);
+        const sizeMul = 0.55 + 0.9 * Math.max(0, Math.min(1, (zNorm + 1) / 2));
 
         // Movimiento caótico en hover
         if (transicionRed > 0.1 && !reduce) {
           p.rx += p.vx * 0.4;
           p.ry += p.vy * 0.4;
           if (Math.abs(p.rx) > S * 1.1) p.vx *= -1;
-          if (Math.abs(p.ry - CENTER_Y * S) > S * 1.1) p.vy *= -1;
+          if (Math.abs(p.ry) > S * 1.1) p.vy *= -1;
         }
         const chaosX = p.rx;
-        const chaosY = p.ry + CENTER_Y * S;
+        const chaosY = p.ry;
         const targetX = perspX * (1 - transicionRed) + chaosX * transicionRed;
         const targetY = perspY * (1 - transicionRed) + chaosY * transicionRed;
 
@@ -396,13 +315,17 @@ export function TrianglesCanvas({ accent, hi }: {
         const xF = cx + p.x;
         const yF = cy + p.y;
         const dm = Math.hypot(xF - mouse.x, yF - mouse.y);
-        const distC = Math.hypot(p.x, p.y - CENTER_Y * S);
+        const distC = Math.hypot(p.x, p.y);
         const depth = Math.max(0.35, 1 - (distC / (S * 0.7)) * 0.6);
-        positions.push({ x: xF, y: yF, distMouse: dm, depth, depthAlpha, sizeMul });
+        positions.push({
+          x: xF, y: yF, distMouse: dm, depth, depthAlpha, sizeMul, worldZ,
+        });
       }
 
       // ── Malla: líneas entre partículas cercanas ─────────────────────────
-      const distMaxLineas = transicionRed > 0.3 ? S * 0.22 : S * 0.16;
+      // Densidad menor durante el globo (para que se vea limpio) y mayor
+      // durante el logo (para reforzar la silueta).
+      const distMaxLineas = transicionRed > 0.3 ? S * 0.20 : S * 0.15;
       const dCerca = S * 0.4;
       for (let i = 0; i < positions.length; i++) {
         for (let j = i + 1; j < positions.length; j++) {
@@ -425,7 +348,7 @@ export function TrianglesCanvas({ accent, hi }: {
               ctx.strokeStyle = toRgba(accent, (0.35 + inten * 0.55) * depthAlphaAvg);
               ctx.lineWidth = 1.4;
             } else {
-              const baseAlpha = transicionRed > 0.3 ? 0.20 : 0.30;
+              const baseAlpha = transicionRed > 0.3 ? 0.20 : 0.28;
               ctx.strokeStyle = toRgba(accent, baseAlpha * depthAvg * fadeByDist * depthAlphaAvg);
               ctx.lineWidth = 1;
             }
@@ -434,14 +357,11 @@ export function TrianglesCanvas({ accent, hi }: {
         }
       }
 
-      // ── Partículas ──────────────────────────────────────────────────────
-      // Ordenar por profundidad Z (approximada via sizeMul) para dibujar los
-      // de atrás primero — esto refuerza la sensación 3D de que las que
-      // están al frente tapan a las de atrás.
-      const sorted = [...positions].sort((a, b) => a.sizeMul - b.sizeMul);
+      // ── Partículas (ordenadas por profundidad Z para 3D real) ───────────
+      const sorted = [...positions].sort((a, b) => a.worldZ - b.worldZ);
       sorted.forEach((n) => {
         const cerca = n.distMouse < dCerca;
-        const baseSize = 1.4 + 0.9 * n.depth;
+        const baseSize = 1.5 + 0.9 * n.depth;
         const size = cerca ? 3.4 : baseSize * n.sizeMul;
         ctx.beginPath();
         ctx.arc(n.x, n.y, size, 0, Math.PI * 2);
