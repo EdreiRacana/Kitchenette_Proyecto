@@ -106,6 +106,8 @@ export const hrApi = {
     start_date: string; end_date?: string;
     commission_pct?: number; professional_service?: string;
     non_compete?: boolean; confidentiality?: boolean;
+    rest_days?: string; payment_method?: string; payment_place?: string;
+    training_clause?: string; temporary_reason?: string;
   }) => api.post("/hr/contracts", data).then(r => r.data),
   listContracts: (employeeId?: number, status?: string) =>
     api.get("/hr/contracts", {

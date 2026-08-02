@@ -14,6 +14,12 @@ class Employee(Base):
     email = Column(String, nullable=False, index=True)
     phone = Column(String, nullable=True)
     photo = Column(Text, nullable=True)
+    # Datos personales exigidos por LFT art. 25 (contrato individual de trabajo)
+    nationality = Column(String, nullable=True)        # nacionalidad (ej. Mexicana)
+    birth_date = Column(String, nullable=True)         # ISO date; se usa para calcular edad
+    gender = Column(String, nullable=True)             # M | F | X
+    marital_status = Column(String, nullable=True)     # soltero | casado | union_libre | divorciado | viudo
+    address = Column(Text, nullable=True)              # domicilio del trabajador
     department = Column(String, nullable=False, index=True)
     position = Column(String, nullable=False)
     cost_center = Column(String, nullable=True)
@@ -215,6 +221,12 @@ class Contract(Base):
     professional_service = Column(Text, nullable=True)           # descripción del servicio (honorarios)
     non_compete = Column(Boolean, default=False, nullable=False) # cláusula de no competencia
     confidentiality = Column(Boolean, default=True, nullable=False)  # confidencialidad (default sí)
+    # Extras LFT art. 25 — capturables desde el wizard
+    rest_days = Column(String, nullable=True)                    # ej. "Sábado y domingo"
+    payment_method = Column(String, nullable=True)               # transferencia | efectivo | cheque
+    payment_place = Column(Text, nullable=True)                  # domicilio o cuenta CLABE
+    training_clause = Column(Text, nullable=True)                # descripción del programa de capacitación
+    temporary_reason = Column(Text, nullable=True)               # justificación LFT art. 37 para determinado
     # Estado
     status = Column(String, nullable=False, default="draft")     # draft, generated, signed, terminated
     generated_at = Column(DateTime(timezone=True), nullable=True)

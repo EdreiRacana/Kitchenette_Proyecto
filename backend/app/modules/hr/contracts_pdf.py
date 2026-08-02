@@ -81,9 +81,59 @@ def _fmt_date(iso: str) -> str:
         return iso
 
 
+def _age_from_birth(iso: str) -> str:
+    """Calcula la edad en años a partir de la fecha de nacimiento ISO."""
+    if not iso:
+        return "___"
+    try:
+        d = datetime.strptime(iso, "%Y-%m-%d")
+        now = datetime.now()
+        yrs = now.year - d.year - ((now.month, now.day) < (d.month, d.day))
+        return f"{yrs}"
+    except Exception:
+        return "___"
+
+
+def _gender_label(g: str) -> str:
+    return {"M": "masculino", "F": "femenino", "X": "no binario"}.get((g or "").upper(), "___")
+
+
+def _marital_label(m: str) -> str:
+    return {
+        "soltero": "soltero(a)",
+        "casado": "casado(a)",
+        "union_libre": "en unión libre",
+        "divorciado": "divorciado(a)",
+        "viudo": "viudo(a)",
+    }.get((m or "").lower(), "___")
+
+
+def _payment_label(p: str) -> str:
+    return {
+        "transferencia": "transferencia electrónica bancaria",
+        "efectivo": "efectivo",
+        "cheque": "cheque nominativo",
+    }.get((p or "").lower(), "transferencia electrónica bancaria a la cuenta que EL TRABAJADOR designe")
+
+
+def _vacaciones_dignas_texto() -> str:
+    """Texto que refleja la reforma 2023 (art. 76 LFT):
+    12 días en el año 1, incrementándose 2 días cada año hasta llegar a 20
+    en el año 5; y a partir del sexto, 2 días más cada 5 años de servicio."""
+    return (
+        "EL TRABAJADOR gozará de un período anual de vacaciones pagadas, conforme "
+        "al artículo 76 de la LFT reformado en 2023: <b>12 días</b> al cumplir el "
+        "primer año, incrementándose <b>2 días por cada año subsecuente hasta llegar "
+        "a 20 días</b> al quinto año; a partir del sexto año, aumentará <b>dos días "
+        "por cada cinco años de servicios</b>. Además, prima vacacional del 25% "
+        "sobre el salario correspondiente a los días de vacaciones (art. 80 LFT)."
+    )
+
+
 def _clauses_indefinido(c, e, comp, ss) -> List:
-    """Cláusulas para contrato indeterminado — el más común. Base: LFT arts.
-    20, 21, 24, 25, 35, 47, 82-89, 132."""
+    """Cláusulas para contrato indeterminado — cumple LFT art. 25 completo.
+    Bases: LFT arts. 20, 21, 24, 25, 35, 47, 51, 61-68, 74, 76, 80, 82-89,
+    110, 132 (fracc XV, XXVII-bis), y correlativos LSS/LINFONAVIT."""
     st = ss
     out = []
     out.append(Paragraph("<b>PRIMERA.</b> OBJETO DEL CONTRATO.", st["ClauseHead"]))
@@ -94,117 +144,148 @@ def _clauses_indefinido(c, e, comp, ss) -> List:
         f"35 de la Ley Federal del Trabajo (LFT).",
         st["Clause"]))
 
-    out.append(Paragraph("<b>SEGUNDA.</b> FUNCIONES.", st["ClauseHead"]))
+    out.append(Paragraph("<b>SEGUNDA.</b> FUNCIONES (art. 25-III LFT).", st["ClauseHead"]))
     out.append(Paragraph(
         c.get("job_functions") or "Las inherentes al puesto, así como las demás que le sean asignadas por su superior jerárquico dentro del giro y actividades de la empresa.",
         st["Clause"]))
 
-    out.append(Paragraph("<b>TERCERA.</b> DURACIÓN Y FECHA DE INICIO.", st["ClauseHead"]))
+    out.append(Paragraph("<b>TERCERA.</b> DURACIÓN Y FECHA DE INICIO (art. 25-II LFT).", st["ClauseHead"]))
     out.append(Paragraph(
         f"El presente contrato inicia el <b>{_fmt_date(c['start_date'])}</b> y tendrá vigencia "
         f"indeterminada, subsistiendo mientras exista la materia de trabajo, conforme "
         f"al artículo 35 de la LFT.",
         st["Clause"]))
 
-    out.append(Paragraph("<b>CUARTA.</b> JORNADA Y HORARIO.", st["ClauseHead"]))
+    out.append(Paragraph("<b>CUARTA.</b> JORNADA Y HORARIO (art. 25-V y 61 LFT).", st["ClauseHead"]))
     h = c.get("hours_per_week") or 48
     sched = c.get("work_schedule") or "Lunes a Sábado, en horario que le asigne EL PATRÓN"
     out.append(Paragraph(
-        f"EL TRABAJADOR desempeñará sus labores durante una jornada semanal de <b>{h} horas</b>, "
-        f"conforme al siguiente horario: <b>{sched}</b>, con derecho a los descansos "
-        f"semanales y anuales previstos por la LFT.",
+        f"EL TRABAJADOR desempeñará sus labores durante una jornada semanal de <b>{h} horas</b> "
+        f"(máximo legal 48 h diurna, 42 h nocturna, 45 h mixta conforme al art. 61 LFT), "
+        f"con el siguiente horario: <b>{sched}</b>. Las horas extraordinarias se pagarán "
+        f"conforme a los artículos 66-68 de la LFT (dobles las primeras 9 hrs semanales; "
+        f"triples las excedentes).",
         st["Clause"]))
 
-    out.append(Paragraph("<b>QUINTA.</b> SALARIO.", st["ClauseHead"]))
+    out.append(Paragraph("<b>QUINTA.</b> DESCANSOS SEMANAL Y OBLIGATORIOS (art. 25-IX, 69 y 74 LFT).", st["ClauseHead"]))
+    rest_days = c.get("rest_days") or "el día domingo"
+    out.append(Paragraph(
+        f"EL TRABAJADOR disfrutará de un día de descanso semanal con goce íntegro de salario "
+        f"por cada seis días laborados (art. 69 LFT), correspondiendo específicamente a: "
+        f"<b>{rest_days}</b>. Asimismo, gozará de los descansos obligatorios previstos en el "
+        f"artículo 74 de la LFT.",
+        st["Clause"]))
+
+    out.append(Paragraph("<b>SEXTA.</b> SALARIO, FORMA Y LUGAR DE PAGO (art. 25-VI, VII, 82 y 108 LFT).", st["ClauseHead"]))
     freq_map = {"semanal": "semanal", "quincenal": "quincenal", "mensual": "mensual"}
     freq = freq_map.get(c.get("salary_frequency", "mensual"), "mensual")
+    payment_mode = _payment_label(c.get("payment_method"))
+    payment_place = c.get("payment_place") or "en el domicilio de la fuente de trabajo o mediante"
     out.append(Paragraph(
-        f"EL PATRÓN pagará a EL TRABAJADOR un salario {freq} de <b>{_fmt_currency(c['salary_amount'])}</b>, "
-        f"pagadero en el domicilio de la fuente de trabajo o mediante depósito bancario "
-        f"a la cuenta que EL TRABAJADOR designe. Del salario se harán las deducciones legales "
-        f"correspondientes (ISR, IMSS, INFONAVIT, etc.).",
+        f"EL PATRÓN pagará a EL TRABAJADOR un salario {freq} de "
+        f"<b>{_fmt_currency(c['salary_amount'])}</b>, mediante <b>{payment_mode}</b>, "
+        f"en {payment_place}. Del salario se harán las deducciones legales autorizadas "
+        f"por el art. 110 LFT (ISR, cuotas IMSS, INFONAVIT/FONACOT si aplican, y en su caso "
+        f"pensión alimenticia por mandato judicial).",
         st["Clause"]))
 
-    out.append(Paragraph("<b>SEXTA.</b> LUGAR DE PRESTACIÓN DE SERVICIOS.", st["ClauseHead"]))
+    out.append(Paragraph("<b>SÉPTIMA.</b> LUGAR DE PRESTACIÓN DE SERVICIOS (art. 25-IV LFT).", st["ClauseHead"]))
     out.append(Paragraph(
         f"EL TRABAJADOR prestará sus servicios en: "
         f"<b>{c.get('workplace_address') or comp.get('address') or '___________'}</b>, "
-        f"pudiendo ser reubicado dentro de la misma zona económica en caso de necesidad de la empresa.",
+        f"pudiendo ser reubicado dentro de la misma zona económica en caso de necesidad "
+        f"operativa de la empresa.",
         st["Clause"]))
 
-    out.append(Paragraph("<b>SÉPTIMA.</b> PRESTACIONES DE LEY.", st["ClauseHead"]))
+    out.append(Paragraph("<b>OCTAVA.</b> VACACIONES Y PRIMA VACACIONAL (arts. 76 y 80 LFT — reforma 2023).", st["ClauseHead"]))
+    out.append(Paragraph(_vacaciones_dignas_texto(), st["Clause"]))
+
+    out.append(Paragraph("<b>NOVENA.</b> AGUINALDO Y DEMÁS PRESTACIONES (art. 87 LFT).", st["ClauseHead"]))
     out.append(Paragraph(
-        "EL TRABAJADOR gozará de las prestaciones mínimas de la LFT: aguinaldo (mínimo 15 días "
-        "de salario), vacaciones conforme al artículo 76 de la LFT (12 días a partir del primer "
-        "año trabajado, incrementándose 2 días por cada año subsecuente hasta llegar a 20 días), "
-        "prima vacacional del 25% sobre los días de vacaciones, y demás prestaciones que la ley "
-        "establece.",
+        "EL TRABAJADOR percibirá un aguinaldo anual equivalente a por lo menos <b>15 días "
+        "de salario</b>, pagadero antes del 20 de diciembre de cada año, así como las demás "
+        "prestaciones que la LFT establece a su favor.",
         st["Clause"]))
 
-    out.append(Paragraph("<b>OCTAVA.</b> SEGURIDAD SOCIAL.", st["ClauseHead"]))
+    out.append(Paragraph("<b>DÉCIMA.</b> PERMISO DE PATERNIDAD (art. 132-XXVII bis LFT).", st["ClauseHead"]))
+    out.append(Paragraph(
+        "En caso de nacimiento de hijo o adopción, EL TRABAJADOR gozará de un permiso "
+        "de <b>cinco días laborables con goce de sueldo</b>, conforme al artículo "
+        "132 fracción XXVII bis de la LFT.",
+        st["Clause"]))
+
+    out.append(Paragraph("<b>DÉCIMA PRIMERA.</b> CAPACITACIÓN Y ADIESTRAMIENTO (art. 25-VIII y 132-XV LFT).", st["ClauseHead"]))
+    training = c.get("training_clause") or (
+        "EL PATRÓN proporcionará a EL TRABAJADOR la capacitación y adiestramiento en su "
+        "trabajo conforme a los planes y programas establecidos por la Comisión Mixta "
+        "de Capacitación, Adiestramiento y Productividad de la empresa."
+    )
+    out.append(Paragraph(training, st["Clause"]))
+
+    out.append(Paragraph("<b>DÉCIMA SEGUNDA.</b> SEGURIDAD SOCIAL Y VIVIENDA.", st["ClauseHead"]))
     out.append(Paragraph(
         "EL PATRÓN inscribirá a EL TRABAJADOR ante el Instituto Mexicano del Seguro Social "
-        "(IMSS), el Instituto del Fondo Nacional de la Vivienda para los Trabajadores (INFONAVIT) "
-        "y el Sistema de Ahorro para el Retiro (SAR), cubriendo las cuotas obrero-patronales "
-        "correspondientes.",
+        "(IMSS), el Instituto del Fondo Nacional de la Vivienda para los Trabajadores "
+        "(INFONAVIT) y el Sistema de Ahorro para el Retiro (SAR), cubriendo las cuotas "
+        "obrero-patronales correspondientes.",
         st["Clause"]))
 
+    next_num = "DÉCIMA TERCERA"
     if c.get("confidentiality"):
-        out.append(Paragraph("<b>NOVENA.</b> CONFIDENCIALIDAD.", st["ClauseHead"]))
+        out.append(Paragraph(f"<b>{next_num}.</b> CONFIDENCIALIDAD.", st["ClauseHead"]))
         out.append(Paragraph(
             "EL TRABAJADOR se obliga a guardar absoluta reserva y confidencialidad sobre "
             "cualquier información técnica, comercial, financiera, de clientes, procedimientos "
             "o cualquier otra propiedad intelectual de EL PATRÓN a la que tenga acceso con motivo "
             "de sus funciones, tanto durante la vigencia del contrato como después de su terminación.",
             st["Clause"]))
+        next_num = "DÉCIMA CUARTA"
 
     if c.get("non_compete"):
-        out.append(Paragraph("<b>DÉCIMA.</b> NO COMPETENCIA.", st["ClauseHead"]))
+        out.append(Paragraph(f"<b>{next_num}.</b> NO COMPETENCIA.", st["ClauseHead"]))
         out.append(Paragraph(
             "Durante la vigencia del presente contrato, EL TRABAJADOR se obliga a no prestar "
             "servicios ni participar directa o indirectamente en empresas competidoras de EL PATRÓN, "
             "salvo autorización expresa y por escrito.",
             st["Clause"]))
 
-    out.append(Paragraph("<b>DÉCIMA PRIMERA.</b> CAUSAS DE RESCISIÓN.", st["ClauseHead"]))
+    out.append(Paragraph("<b>PENÚLTIMA.</b> CAUSAS DE RESCISIÓN (arts. 47 y 51 LFT).", st["ClauseHead"]))
     out.append(Paragraph(
         "Serán causa de rescisión sin responsabilidad para EL PATRÓN las señaladas en el "
         "artículo 47 de la LFT, y sin responsabilidad para EL TRABAJADOR las del artículo 51.",
         st["Clause"]))
 
-    out.append(Paragraph("<b>DÉCIMA SEGUNDA.</b> LEY APLICABLE Y JURISDICCIÓN.", st["ClauseHead"]))
+    out.append(Paragraph("<b>ÚLTIMA.</b> LEY APLICABLE Y JURISDICCIÓN.", st["ClauseHead"]))
     out.append(Paragraph(
         "El presente contrato se rige por la Ley Federal del Trabajo. Cualquier controversia "
-        "será competencia de los Tribunales Laborales Federales de la circunscripción donde se "
-        "presten los servicios.",
+        "será competencia de los Tribunales Laborales Federales de la circunscripción donde "
+        "se presten los servicios.",
         st["Clause"]))
     return out
 
 
 def _clauses_determinado(c, e, comp, ss) -> List:
-    """Contrato temporal — art. 37 LFT requiere causa justificada."""
+    """Contrato por tiempo determinado — art. 37 LFT (requiere causa)."""
     st = ss
     out = []
-    out.append(Paragraph("<b>PRIMERA.</b> OBJETO Y CAUSA.", st["ClauseHead"]))
+    out.append(Paragraph("<b>PRIMERA.</b> OBJETO Y CAUSA (art. 37 LFT).", st["ClauseHead"]))
     out.append(Paragraph(
         f"EL PATRÓN contrata a EL TRABAJADOR para desempeñar el puesto de "
-        f"<b>{c.get('position') or '_______________'}</b> por tiempo determinado. Se pacta esta "
-        f"modalidad al amparo del artículo 37 de la LFT, en virtud de que "
-        f"<i>{c.get('temporary_reason') or 'la naturaleza del trabajo así lo exige'}</i>.",
+        f"<b>{c.get('position') or '_______________'}</b> <b>por tiempo determinado</b>. "
+        f"Se pacta esta modalidad al amparo del artículo 37 de la LFT, en virtud de que: "
+        f"<i>{c.get('temporary_reason') or 'la naturaleza del trabajo así lo exige (temporalidad, sustitución, obra o servicio de duración cierta).'}</i>",
         st["Clause"]))
 
-    out.append(Paragraph("<b>SEGUNDA.</b> DURACIÓN.", st["ClauseHead"]))
+    out.append(Paragraph("<b>SEGUNDA.</b> DURACIÓN (art. 25-II LFT).", st["ClauseHead"]))
     out.append(Paragraph(
         f"El contrato inicia el <b>{_fmt_date(c['start_date'])}</b> y concluye el "
-        f"<b>{_fmt_date(c.get('end_date') or '')}</b>, sin necesidad de aviso previo, salvo pacto "
-        f"expreso de renovación.",
+        f"<b>{_fmt_date(c.get('end_date') or '')}</b>, sin necesidad de aviso previo. "
+        f"De subsistir la materia de trabajo, se convertirá en indeterminado (art. 39 LFT).",
         st["Clause"]))
 
-    # Reutiliza las cláusulas de funciones, jornada, salario, prestaciones y ley aplicable
+    # Reutiliza el resto de cláusulas del indeterminado desde "funciones" en adelante
     tail = _clauses_indefinido(c, e, comp, ss)
-    # Nos saltamos las 3 primeras del indefinido (objeto, funciones-1, duración) porque
-    # ya las tenemos aquí. Tomamos desde la 2ª cláusula (funciones) en adelante.
-    out.extend(tail[2:])  # segundo Paragraph = ClauseHead SEGUNDA(funciones)
+    out.extend(tail[2:])
     return out
 
 
@@ -411,6 +492,20 @@ def generate_contract_pdf(contract: Dict[str, Any], employee: Dict[str, Any],
     else:
         role_emp, role_pat = "EL TRABAJADOR", "EL PATRÓN"
 
+    is_labor = not is_civil
+    # Datos personales completos del trabajador (LFT art. 25 fracc I)
+    personal_bits = []
+    if is_labor:
+        if employee.get("nationality"):
+            personal_bits.append(f"de nacionalidad <b>{employee['nationality']}</b>")
+        if employee.get("birth_date"):
+            personal_bits.append(f"<b>{_age_from_birth(employee['birth_date'])} años</b> de edad")
+        if employee.get("gender"):
+            personal_bits.append(f"sexo <b>{_gender_label(employee['gender'])}</b>")
+        if employee.get("marital_status"):
+            personal_bits.append(f"estado civil <b>{_marital_label(employee['marital_status'])}</b>")
+    personal_str = (", " + ", ".join(personal_bits)) if personal_bits else ""
+
     intro = (
         f"En la ciudad de {company.get('city') or '__________'}, a los {_fmt_date(contract['start_date'])}, "
         f"comparecen por una parte <b>{company.get('name') or 'LA EMPRESA'}</b>, "
@@ -418,8 +513,9 @@ def generate_contract_pdf(contract: Dict[str, Any], employee: Dict[str, Any],
         f"<b>{company.get('address') or '____________'}</b>, representada por "
         f"<b>{company.get('legal_rep') or '____________'}</b> en su carácter de representante legal, "
         f"en lo sucesivo <b>{role_pat}</b>; y por la otra parte "
-        f"<b>{employee.get('name', '')} {employee.get('last_name', '')}</b>, "
-        f"con CURP <b>{employee.get('curp') or '__________________'}</b>, "
+        f"<b>{employee.get('name', '')} {employee.get('last_name', '')}</b>"
+        + personal_str
+        + f", con CURP <b>{employee.get('curp') or '__________________'}</b>, "
         f"RFC <b>{employee.get('rfc') or '____________'}</b>"
         + (f", NSS <b>{employee.get('nss')}</b>" if employee.get('nss') else "")
         + f", con domicilio en <b>{employee.get('address') or '____________'}</b>, "
