@@ -147,17 +147,52 @@ async def read_users_me(
 ):
     """Devuelve el usuario logueado. Si no tiene foto propia (photo NULL),
     se resuelve buscando el Employee con el mismo email — así los empleados
-    con foto en RH la ven automáticamente en el topbar sin subirla dos veces."""
+    con foto en RH la ven automáticamente en el topbar sin subirla dos veces.
+    La comparación de email es case-insensitive para tolerar capturas con
+    mayúsculas distintas en las dos tablas."""
     result = schemas.User.model_validate(current_user)
-    if not result.photo:
+    if not result.photo and current_user.email:
         from app.modules.hr.models import Employee as HREmployee
-        r = await db.execute(select(HREmployee.photo)
-                              .where(HREmployee.email == current_user.email)
-                              .limit(1))
+        email_norm = current_user.email.strip().lower()
+        r = await db.execute(
+            select(HREmployee.photo)
+            .where(sqlfunc.lower(HREmployee.email) == email_norm)
+            .where(HREmployee.photo.isnot(None))
+            .limit(1)
+        )
         emp_photo = r.scalar_one_or_none()
         if emp_photo:
             result.photo = emp_photo
     return result
+
+
+@router.get("/me/photo-debug")
+async def photo_debug(
+    db: Annotated[AsyncSession, Depends(deps.get_db)],
+    current_user: Annotated[User, Depends(deps.get_current_active_user)],
+):
+    """Diagnóstico rápido: ¿por qué no aparece mi foto?
+    Devuelve si el user tiene foto propia, si existe un empleado con el mismo
+    email (case-insensitive), y si ese empleado tiene foto. Útil para
+    depurar el auto-link en producción sin abrir la DB."""
+    from app.modules.hr.models import Employee as HREmployee
+    email_norm = (current_user.email or "").strip().lower()
+    r = await db.execute(
+        select(HREmployee.id, HREmployee.email, HREmployee.photo)
+        .where(sqlfunc.lower(HREmployee.email) == email_norm)
+        .limit(1)
+    )
+    row = r.first()
+    return {
+        "user_email": current_user.email,
+        "user_email_normalized": email_norm,
+        "user_has_own_photo": bool(current_user.photo),
+        "user_own_photo_bytes": len(current_user.photo or ""),
+        "matched_employee_id": row[0] if row else None,
+        "matched_employee_email": row[1] if row else None,
+        "matched_employee_has_photo": bool(row and row[2]),
+        "matched_employee_photo_bytes": len(row[2] or "") if row else 0,
+    }
 
 
 @router.patch("/me/photo", response_model=schemas.User)
