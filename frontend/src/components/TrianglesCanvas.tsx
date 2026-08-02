@@ -289,9 +289,10 @@ export function TrianglesCanvas({ accent, hi }: {
     // sin el marear del giro rápido.
     let rotationAccum = 0;
     let lastFrame = t0;
-    // Velocidad de rotación por figura — el LOGO se detiene por completo
-    // para que el usuario pueda leer la silueta con claridad.
-    const speedFor = (kind: ShapeKind) => (kind === "globe" ? 1.0 : 0.0);
+    // Velocidad de rotación CONSTANTE para ambas figuras — el logo se lee
+    // igual porque el 65% de sus partículas están en el contorno, la
+    // silueta es reconocible aún girando.
+    const speedFor = (_kind: ShapeKind) => 1.0;
 
     const animar = () => {
       if (stopped) return;
