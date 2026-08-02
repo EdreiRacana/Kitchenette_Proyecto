@@ -380,13 +380,27 @@ def build_receipt_pdf(
                           f"{employee.get('name', '')} {employee.get('last_name', '')}".strip())
     c.drawCentredString(150 * mm, y_sign - 8 * mm, company_name_str.title())
 
-    # ── Pie: separado en DOS renglones para evitar el encimado ─────────────
+    # ── Pie: timestamp en línea propia arriba, después divider, después el
+    # texto legal en 2 renglones. Cada bloque en su propia banda vertical
+    # para eliminar cualquier encimado sin importar el largo del texto.
     footer_note = (company.get("document_footer") or
                     "Este documento es el recibo administrativo interno. El CFDI 4.0 timbrado con "
                     "sello SAT se emite por separado al integrarse un PAC autorizado.")
+
+    # Fila 1 (arriba): timestamp + página, right-aligned, en su propia línea
+    c.setFont("Helvetica", 7)
     c.setFillColor(colors.HexColor(SLATE_500))
-    c.setFont("Helvetica-Oblique", 7)
-    # Wrap manual a 130 chars para evitar overflow
+    c.drawRightString(
+        W - 12 * mm, 20 * mm,
+        f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}   ·   Página 1 de 1",
+    )
+
+    # Divider fino entre timestamp y footer legal
+    c.setStrokeColor(_alpha(SLATE_500, 0.25))
+    c.setLineWidth(0.4)
+    c.line(12 * mm, 17.5 * mm, W - 12 * mm, 17.5 * mm)
+
+    # Fila 2-3: texto legal, wrap a 2 renglones, left-aligned, cabe todo el ancho
     def _wrap(txt: str, width: int) -> List[str]:
         words = txt.split()
         lines, cur = [], ""
@@ -398,17 +412,13 @@ def build_receipt_pdf(
                 cur = w
         if cur:
             lines.append(cur)
-        return lines[:2]  # máx 2 renglones
+        return lines[:2]
 
-    wrapped = _wrap(footer_note, 130)
-    footer_y = 15 * mm
-    for i, line in enumerate(wrapped):
-        c.drawString(12 * mm, footer_y - i * 3.2 * mm, line)
-    # Timestamp abajo a la derecha
-    c.setFont("Helvetica", 7)
+    c.setFont("Helvetica-Oblique", 7)
     c.setFillColor(colors.HexColor(SLATE_500))
-    c.drawRightString(W - 12 * mm, 15 * mm,
-                        f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}   ·   Página 1 de 1")
+    wrapped = _wrap(footer_note, 140)
+    for i, line in enumerate(wrapped):
+        c.drawString(12 * mm, 14 * mm - i * 3.2 * mm, line)
 
     c.showPage()
     c.save()
