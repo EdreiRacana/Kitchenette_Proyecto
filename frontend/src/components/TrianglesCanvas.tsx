@@ -32,12 +32,12 @@ const NOVA_SHAPE: [number, number][] = NOVA_RAW.map(([x, y]) =>
   [x / NOVA_MAX_R, y / NOVA_MAX_R] as [number, number],
 );
 
-const SHAPE_HOLD_MS = 5000;
-const SHAPE_MORPH_MS = 900;
-const NUM_PARTICLES = 260;             // más partículas para ver continentes
-const ROTATION_PERIOD_MS = 35000;      // más lento (antes 20s)
+const SHAPE_HOLD_MS = 5500;
+const SHAPE_MORPH_MS = 1200;           // transición más larga para suavizar
+const NUM_PARTICLES = 480;             // muchas más para ver continentes densos
+const ROTATION_PERIOD_MS = 40000;      // aún más lento
 
-const SHAPE_RADIUS = 0.68;
+const SHAPE_RADIUS = 0.70;
 const PERSPECTIVE = 0.45;
 
 type ShapeKind = "globe" | "novamark";
@@ -50,34 +50,33 @@ const SHAPE_CYCLE: ShapeKind[] = ["globe", "novamark"];
 // y se pintan brillantes; el resto (océano) queda tenue.
 const LANDMASSES: [number, number, number][] = [
   // Norteamérica
-  [65, -150, 10],  [58, -125, 12], [55, -105, 15], [45, -95, 14],
-  [38, -110, 10], [35, -90, 10],  [22, -100, 8],
+  [65, -150, 14],  [58, -120, 18], [50, -100, 20], [40, -95, 17],
+  [30, -100, 13],  [22, -100, 10],
   // Groenlandia
-  [72, -40, 10],
+  [72, -40, 14],
   // Sudamérica
-  [-5, -60, 14],   [-18, -63, 12], [-33, -65, 8],  [-45, -70, 6],
-  [0, -55, 8],
+  [0, -60, 15],    [-10, -60, 16], [-25, -60, 14], [-40, -68, 10],
+  [-50, -70, 6],
   // Europa
-  [58, 20, 8],     [50, 12, 9],    [45, 5, 6],     [60, 35, 8],
-  [40, 25, 7],
+  [55, 20, 14],    [45, 10, 12],   [60, 40, 10],
   // África
-  [18, 5, 11],     [15, 25, 12],   [5, 25, 12],    [-5, 20, 11],
-  [-18, 25, 11],   [-28, 22, 8],
+  [20, 10, 15],    [15, 25, 14],   [5, 25, 14],    [-8, 22, 14],
+  [-20, 27, 13],   [-30, 22, 8],
   // Madagascar
-  [-20, 47, 5],
+  [-20, 47, 6],
   // Asia
-  [55, 60, 12],    [58, 85, 12],   [55, 110, 12],  [50, 135, 10],
-  [42, 75, 10],    [38, 100, 12],  [30, 90, 10],   [25, 60, 8],
+  [58, 60, 18],    [60, 90, 18],   [58, 120, 16],  [55, 145, 12],
+  [45, 75, 16],    [40, 105, 16],  [32, 90, 14],   [28, 55, 10],
   // India
-  [22, 78, 10],
+  [22, 78, 12],
   // Sudeste asiático
-  [15, 100, 8],    [5, 108, 6],    [0, 115, 6],    [-5, 120, 6],
+  [12, 100, 12],   [0, 115, 10],   [-5, 125, 8],
   // Japón
-  [37, 138, 4],
+  [37, 138, 5],
   // Australia
-  [-25, 135, 12],
-  // Antártida (delgada franja sur)
-  [-78, 0, 20],    [-78, 90, 20],  [-78, -90, 20],
+  [-25, 135, 15],
+  // Antártida (franja sur más presente)
+  [-80, 0, 25],    [-80, 90, 25],  [-80, -90, 25],
 ];
 
 /** Distancia angular (great-circle) entre dos puntos (grados). */
@@ -174,50 +173,78 @@ export function TrianglesCanvas({ accent, hi }: {
     const initParticles = (): Particle[] => {
       const S = logoScale();
       const out: Particle[] = [];
-      // Estrategia: por cada partícula elegimos su ubicación en la esfera
-      // y evaluamos si cae en un continente. Para asegurar suficientes
-      // puntos en tierra (que suele ser ~30% del área), rechazamos aleatoriamente
-      // parte de los oceánicos hasta lograr ~55% land / 45% ocean visualmente.
+
+      // ── (A) 380 puntos de TIERRA: sampleados DENTRO de los blobs de LANDMASSES
+      // Esto garantiza continentes densos y reconocibles. Cada blob aporta
+      // puntos proporcionales a su radio² (blobs grandes = más puntos).
+      const landTotalWeight = LANDMASSES.reduce((a, [, , r]) => a + r * r, 0);
+      const targetLand = 380;
+      for (const [blat, blon, brad] of LANDMASSES) {
+        const nHere = Math.max(1, Math.round(targetLand * (brad * brad) / landTotalWeight));
+        for (let k = 0; k < nHere; k++) {
+          // Muestreo dentro del casquete esférico de radio `brad` alrededor
+          // de (blat, blon). Uniforme dentro del disco angular.
+          const u = Math.random();
+          const angDist = Math.sqrt(u) * brad;       // 0..brad grados
+          const bearing = Math.random() * 2 * Math.PI;
+          // Desplazamiento en lat/lon (aprox — bien para blobs pequeños)
+          const dLat = angDist * Math.cos(bearing);
+          const dLon = angDist * Math.sin(bearing) / Math.max(0.15, Math.cos(blat * Math.PI / 180));
+          const lat = Math.max(-89, Math.min(89, blat + dLat));
+          const lon = ((blon + dLon + 540) % 360) - 180;
+          // A esfera
+          const latRad = lat * Math.PI / 180;
+          const lonRad = lon * Math.PI / 180;
+          const sphereY = Math.sin(latRad);
+          const sphereR = Math.cos(latRad);
+          const sphereTheta = lonRad + Math.PI;      // origen en lon=-180
+
+          out.push(makeParticle(sphereTheta, sphereY, sphereR, true, S));
+        }
+      }
+
+      // ── (B) 100 puntos de OCÉANO: uniformes en la esfera, saltando los que
+      // caen en tierra (para que no dupliquen densidad continental).
+      let oceanAdded = 0;
       let attempts = 0;
-      const wantLandRatio = 0.55;
-      let landCount = 0;
-      while (out.length < NUM_PARTICLES && attempts < NUM_PARTICLES * 30) {
+      while (oceanAdded < 100 && attempts < 4000) {
         attempts++;
-        // Uniforme en la esfera
         const sphereY = 2 * Math.random() - 1;
         const sphereR = Math.sqrt(Math.max(0, 1 - sphereY * sphereY));
         const sphereTheta = Math.random() * Math.PI * 2;
-        // A grados
-        const lat = (Math.asin(sphereY) * 180) / Math.PI;
-        const lon = ((sphereTheta * 180) / Math.PI + 180) % 360 - 180;
-        const isLand = isContinent(lat, lon);
-        // Rechazo aleatorio de océano si ya tenemos muchos, para privilegiar tierra
-        const currentLandRatio = out.length > 0 ? landCount / out.length : 0;
-        if (!isLand && currentLandRatio < wantLandRatio && Math.random() < 0.6) continue;
-
-        const nearEdge = out.length < NUM_PARTICLES * 0.25;
-        const r2d = nearEdge
-          ? 0.85 + Math.random() * 0.15
-          : Math.sqrt(Math.random()) * 0.98;
-        const theta2d = Math.random() * Math.PI * 2;
-        const z0 = 2 * Math.random() - 1;
-
-        const x = sphereR * Math.cos(sphereTheta) * SHAPE_RADIUS * S;
-        const y = sphereY * SHAPE_RADIUS * S;
-
-        if (isLand) landCount++;
-        out.push({
-          sphereTheta, sphereY, sphereR, isLand,
-          r2d, theta2d, z0,
-          x, y,
-          rx: (Math.random() - 0.5) * S * 1.4,
-          ry: (Math.random() - 0.5) * S * 1.4,
-          vx: (Math.random() - 0.5) * 0.7,
-          vy: (Math.random() - 0.5) * 0.7,
-        });
+        const lat = Math.asin(sphereY) * 180 / Math.PI;
+        const lon = ((sphereTheta * 180 / Math.PI + 180) % 360) - 180;
+        if (isContinent(lat, lon)) continue;
+        out.push(makeParticle(sphereTheta, sphereY, sphereR, false, S));
+        oceanAdded++;
       }
       return out;
     };
+
+    // Fábrica de partícula — asigna también coords aleatorias para el LOGO.
+    // Estrategia LOGO: 65% de las partículas se acomodan en el CONTORNO
+    // (r2d ∈ [0.90, 1.0]) y 35% en el interior — así el silueta del NovaMark
+    // se lee claramente aún con las mismas partículas del globo.
+    function makeParticle(sphereTheta: number, sphereY: number, sphereR: number,
+                            isLand: boolean, S: number): Particle {
+      const onOutline = Math.random() < 0.65;
+      const r2d = onOutline
+        ? 0.90 + Math.random() * 0.10
+        : Math.sqrt(Math.random()) * 0.88;
+      const theta2d = Math.random() * Math.PI * 2;
+      const z0 = 2 * Math.random() - 1;
+      const x = sphereR * Math.cos(sphereTheta) * SHAPE_RADIUS * S;
+      const y = sphereY * SHAPE_RADIUS * S;
+      return {
+        sphereTheta, sphereY, sphereR, isLand,
+        r2d, theta2d, z0,
+        x, y,
+        rx: (Math.random() - 0.5) * S * 1.4,
+        ry: (Math.random() - 0.5) * S * 1.4,
+        vx: (Math.random() - 0.5) * 0.7,
+        vy: (Math.random() - 0.5) * 0.7,
+      };
+    }
 
     let scale = logoScale();
     let particles = initParticles();
@@ -262,7 +289,9 @@ export function TrianglesCanvas({ accent, hi }: {
     // sin el marear del giro rápido.
     let rotationAccum = 0;
     let lastFrame = t0;
-    const speedFor = (kind: ShapeKind) => (kind === "globe" ? 1.0 : 0.15);
+    // Velocidad de rotación por figura — el LOGO se detiene por completo
+    // para que el usuario pueda leer la silueta con claridad.
+    const speedFor = (kind: ShapeKind) => (kind === "globe" ? 1.0 : 0.0);
 
     const animar = () => {
       if (stopped) return;
