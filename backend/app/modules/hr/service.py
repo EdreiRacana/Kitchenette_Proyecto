@@ -1428,10 +1428,9 @@ async def build_employee_receipt(
         "notes": d.notes,
         "total_net": d.total_net,
     }
-    company_name, company_rfc = await _get_company_info(db)
+    company = await _get_company_full(db)
     pdf = build_receipt_pdf(
-        _employee_to_dict(emp), period_dict, detail_dict,
-        company_name=company_name, company_rfc=company_rfc,
+        _employee_to_dict(emp), period_dict, detail_dict, company=company,
     )
     safe = _full_name(emp).replace(" ", "_")
     return pdf, f"recibo_{emp.employee_number}_{safe}_periodo_{period_id}.pdf"
@@ -1451,7 +1450,7 @@ async def build_period_receipts_zip(db: AsyncSession, period_id: int) -> tuple[b
     if not rows:
         raise ValueError("El período no tiene recibos calculados")
 
-    company_name, company_rfc = await _get_company_info(db)
+    company = await _get_company_full(db)
     files: List[tuple[str, bytes]] = []
     for d, emp, p in rows:
         period_dict = {
@@ -1471,8 +1470,7 @@ async def build_period_receipts_zip(db: AsyncSession, period_id: int) -> tuple[b
             "total_net": d.total_net,
         }
         pdf = build_receipt_pdf(
-            _employee_to_dict(emp), period_dict, detail_dict,
-            company_name=company_name, company_rfc=company_rfc,
+            _employee_to_dict(emp), period_dict, detail_dict, company=company,
         )
         safe = _full_name(emp).replace(" ", "_")
         files.append((f"recibo_{emp.employee_number}_{safe}.pdf", pdf))
@@ -2111,7 +2109,7 @@ async def delete_contract(db: AsyncSession, contract_id: int,
 
 
 async def _get_company_full(db: AsyncSession) -> dict:
-    """Datos de la empresa para el encabezado del contrato PDF."""
+    """Datos completos de la empresa para PDFs (contratos, recibos, etc.)."""
     try:
         from app.modules.core_config import models as cfg_models
         res = await db.execute(select(cfg_models.CompanyProfile).limit(1))
@@ -2119,14 +2117,27 @@ async def _get_company_full(db: AsyncSession) -> dict:
         if cp:
             return {
                 "name": cp.legal_name or "LA EMPRESA",
+                "commercial_name": getattr(cp, "commercial_name", None),
                 "rfc": cp.tax_id,
                 "address": cp.address,
+                "email": getattr(cp, "contact_email", None),
+                "phone": getattr(cp, "contact_phone", None),
+                "logo_bytes": getattr(cp, "logo_bytes", None),
+                "logo_mime": getattr(cp, "logo_mime", None),
+                "brand_color": getattr(cp, "brand_color", None) or "#0E1838",
+                "document_footer": getattr(cp, "document_footer", None),
                 "city": None,
                 "legal_rep": None,
             }
     except Exception:
         pass
-    return {"name": "LA EMPRESA", "rfc": None, "address": None, "city": None, "legal_rep": None}
+    return {
+        "name": "LA EMPRESA", "commercial_name": None, "rfc": None,
+        "address": None, "email": None, "phone": None,
+        "logo_bytes": None, "logo_mime": None,
+        "brand_color": "#0E1838", "document_footer": None,
+        "city": None, "legal_rep": None,
+    }
 
 
 # ── Liquidación / Finiquito (Fase 4) ───────────────────────────────────────
