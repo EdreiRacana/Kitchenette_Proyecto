@@ -32,16 +32,70 @@ const NOVA_SHAPE: [number, number][] = NOVA_RAW.map(([x, y]) =>
   [x / NOVA_MAX_R, y / NOVA_MAX_R] as [number, number],
 );
 
-const SHAPE_HOLD_MS = 4000;
+const SHAPE_HOLD_MS = 5000;
 const SHAPE_MORPH_MS = 900;
-const NUM_PARTICLES = 200;
-const ROTATION_PERIOD_MS = 20000;
+const NUM_PARTICLES = 260;             // más partículas para ver continentes
+const ROTATION_PERIOD_MS = 35000;      // más lento (antes 20s)
 
 const SHAPE_RADIUS = 0.68;
-const PERSPECTIVE = 0.45;             // más pronunciada para reforzar 3D
+const PERSPECTIVE = 0.45;
 
 type ShapeKind = "globe" | "novamark";
 const SHAPE_CYCLE: ShapeKind[] = ["globe", "novamark"];
+
+// ── Máscara aproximada de continentes ─────────────────────────────────────
+// Cada entrada: [latitud, longitud, radio_angular_deg] representa un "blob"
+// terrestre. La unión de estos blobs bosqueja los continentes de forma
+// reconocible: partículas dentro de algún blob se marcan como "continente"
+// y se pintan brillantes; el resto (océano) queda tenue.
+const LANDMASSES: [number, number, number][] = [
+  // Norteamérica
+  [65, -150, 10],  [58, -125, 12], [55, -105, 15], [45, -95, 14],
+  [38, -110, 10], [35, -90, 10],  [22, -100, 8],
+  // Groenlandia
+  [72, -40, 10],
+  // Sudamérica
+  [-5, -60, 14],   [-18, -63, 12], [-33, -65, 8],  [-45, -70, 6],
+  [0, -55, 8],
+  // Europa
+  [58, 20, 8],     [50, 12, 9],    [45, 5, 6],     [60, 35, 8],
+  [40, 25, 7],
+  // África
+  [18, 5, 11],     [15, 25, 12],   [5, 25, 12],    [-5, 20, 11],
+  [-18, 25, 11],   [-28, 22, 8],
+  // Madagascar
+  [-20, 47, 5],
+  // Asia
+  [55, 60, 12],    [58, 85, 12],   [55, 110, 12],  [50, 135, 10],
+  [42, 75, 10],    [38, 100, 12],  [30, 90, 10],   [25, 60, 8],
+  // India
+  [22, 78, 10],
+  // Sudeste asiático
+  [15, 100, 8],    [5, 108, 6],    [0, 115, 6],    [-5, 120, 6],
+  // Japón
+  [37, 138, 4],
+  // Australia
+  [-25, 135, 12],
+  // Antártida (delgada franja sur)
+  [-78, 0, 20],    [-78, 90, 20],  [-78, -90, 20],
+];
+
+/** Distancia angular (great-circle) entre dos puntos (grados). */
+function greatCircleDeg(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const φ1 = toRad(lat1), φ2 = toRad(lat2);
+  const Δλ = toRad(lon2 - lon1);
+  const cosD = Math.sin(φ1) * Math.sin(φ2) + Math.cos(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  return (Math.acos(Math.max(-1, Math.min(1, cosD))) * 180) / Math.PI;
+}
+
+/** ¿La partícula en (lat, lon) cae dentro de algún blob terrestre? */
+function isContinent(lat: number, lon: number): boolean {
+  for (const [bl, bo, r] of LANDMASSES) {
+    if (greatCircleDeg(lat, lon, bl, bo) < r) return true;
+  }
+  return false;
+}
 
 /** Distancia del rayo desde el origen al perímetro del polígono NovaMark. */
 function novaRadiusAt(theta: number): number {
@@ -69,10 +123,11 @@ interface Particle {
   sphereTheta: number;    // longitud [0..2π]
   sphereY: number;        // sin(latitud) — altura fija en la esfera; en [-1..1]
   sphereR: number;        // cos(latitud) — radio del anillo a esa altura; en [0..1]
+  isLand: boolean;        // ¿cae en algún continente? (para brillo/tamaño)
   // ── Coordenadas para el LOGO (silueta 2D + profundidad tipo lente) ───
-  r2d: number;            // radial [0..1] dentro de la silueta
-  theta2d: number;        // ángulo [0..2π] dentro de la silueta
-  z0: number;             // profundidad propia [-1..1] (para envoltura lente)
+  r2d: number;
+  theta2d: number;
+  z0: number;
   // ── Posición renderizada + caos para hover ───────────────────────────
   x: number;
   y: number;
@@ -119,30 +174,40 @@ export function TrianglesCanvas({ accent, hi }: {
     const initParticles = (): Particle[] => {
       const S = logoScale();
       const out: Particle[] = [];
-      for (let i = 0; i < NUM_PARTICLES; i++) {
-        // Distribución UNIFORME en la esfera unitaria:
-        //   z uniforme en [-1, 1] → mapea a sin(latitud)
-        //   theta uniforme en [0, 2π]
-        //   r_at_z = sqrt(1 - z²) → cos(latitud)
+      // Estrategia: por cada partícula elegimos su ubicación en la esfera
+      // y evaluamos si cae en un continente. Para asegurar suficientes
+      // puntos en tierra (que suele ser ~30% del área), rechazamos aleatoriamente
+      // parte de los oceánicos hasta lograr ~55% land / 45% ocean visualmente.
+      let attempts = 0;
+      const wantLandRatio = 0.55;
+      let landCount = 0;
+      while (out.length < NUM_PARTICLES && attempts < NUM_PARTICLES * 30) {
+        attempts++;
+        // Uniforme en la esfera
         const sphereY = 2 * Math.random() - 1;
         const sphereR = Math.sqrt(Math.max(0, 1 - sphereY * sphereY));
         const sphereTheta = Math.random() * Math.PI * 2;
+        // A grados
+        const lat = (Math.asin(sphereY) * 180) / Math.PI;
+        const lon = ((sphereTheta * 180) / Math.PI + 180) % 360 - 180;
+        const isLand = isContinent(lat, lon);
+        // Rechazo aleatorio de océano si ya tenemos muchos, para privilegiar tierra
+        const currentLandRatio = out.length > 0 ? landCount / out.length : 0;
+        if (!isLand && currentLandRatio < wantLandRatio && Math.random() < 0.6) continue;
 
-        // Coordenadas independientes para el LOGO — 25% cerca del borde
-        // para reforzar el contorno; resto uniforme dentro.
-        const nearEdge = i < NUM_PARTICLES * 0.25;
+        const nearEdge = out.length < NUM_PARTICLES * 0.25;
         const r2d = nearEdge
           ? 0.85 + Math.random() * 0.15
           : Math.sqrt(Math.random()) * 0.98;
         const theta2d = Math.random() * Math.PI * 2;
         const z0 = 2 * Math.random() - 1;
 
-        // Posición inicial en el globo
         const x = sphereR * Math.cos(sphereTheta) * SHAPE_RADIUS * S;
         const y = sphereY * SHAPE_RADIUS * S;
 
+        if (isLand) landCount++;
         out.push({
-          sphereTheta, sphereY, sphereR,
+          sphereTheta, sphereY, sphereR, isLand,
           r2d, theta2d, z0,
           x, y,
           rx: (Math.random() - 0.5) * S * 1.4,
@@ -192,6 +257,12 @@ export function TrianglesCanvas({ accent, hi }: {
     let stopped = false;
     const t0 = performance.now();
     const CYCLE_MS = SHAPE_HOLD_MS + SHAPE_MORPH_MS;
+    // Rotación acumulada con velocidad variable: 1.0 en globo, 0.15 en logo.
+    // Esto permite que durante el logo se pueda apreciar bien su silueta
+    // sin el marear del giro rápido.
+    let rotationAccum = 0;
+    let lastFrame = t0;
+    const speedFor = (kind: ShapeKind) => (kind === "globe" ? 1.0 : 0.15);
 
     const animar = () => {
       if (stopped) return;
@@ -220,10 +291,18 @@ export function TrianglesCanvas({ accent, hi }: {
       const kindFrom = SHAPE_CYCLE[fromIdx];
       const kindTo = SHAPE_CYCLE[toIdx];
 
-      // Rotación planetaria — pausa parcial durante hover
-      const rotation = reduce
-        ? 0
-        : (elapsed / ROTATION_PERIOD_MS) * Math.PI * 2 * (1 - transicionRed * 0.8);
+      // Rotación planetaria con velocidad variable por figura.
+      //   globo → 1.0x   (una vuelta cada 35s)
+      //   logo  → 0.15x  (la silueta apenas se mueve durante su hold)
+      // Además pausa parcial durante hover.
+      const dt = now - lastFrame;
+      lastFrame = now;
+      if (!reduce) {
+        const speed = speedFor(kindFrom) + (speedFor(kindTo) - speedFor(kindFrom)) * morph;
+        const hoverFactor = (1 - transicionRed * 0.8);
+        rotationAccum += (dt / ROTATION_PERIOD_MS) * Math.PI * 2 * speed * hoverFactor;
+      }
+      const rotation = rotationAccum;
       const cosR = Math.cos(rotation);
       const sinR = Math.sin(rotation);
 
@@ -267,9 +346,16 @@ export function TrianglesCanvas({ accent, hi }: {
       };
 
       // ── Proyección y arreglo por profundidad ──────────────────────────
+      // Peso "cuánto se ve como globo" (0 = logo puro, 1 = globo puro).
+      // Se usa para atenuar/enfatizar la distinción tierra/océano — durante
+      // el logo la distinción no aplica.
+      const globeWeight = kindFrom === "globe"
+        ? (kindTo === "globe" ? 1 : 1 - morph)
+        : (kindTo === "globe" ? morph : 0);
+
       const positions: {
         x: number; y: number; distMouse: number; depth: number;
-        depthAlpha: number; sizeMul: number; worldZ: number;
+        depthAlpha: number; sizeMul: number; worldZ: number; isLand: boolean;
       }[] = [];
 
       for (let i = 0; i < particles.length; i++) {
@@ -319,12 +405,14 @@ export function TrianglesCanvas({ accent, hi }: {
         const depth = Math.max(0.35, 1 - (distC / (S * 0.7)) * 0.6);
         positions.push({
           x: xF, y: yF, distMouse: dm, depth, depthAlpha, sizeMul, worldZ,
+          isLand: p.isLand,
         });
       }
 
       // ── Malla: líneas entre partículas cercanas ─────────────────────────
-      // Densidad menor durante el globo (para que se vea limpio) y mayor
-      // durante el logo (para reforzar la silueta).
+      // Durante el globo, solo conectamos tierra-tierra y omitimos las
+      // líneas hacia océano — así los continentes se leen como blobs sólidos.
+      // Durante el logo, todas las conexiones son válidas para reforzar silueta.
       const distMaxLineas = transicionRed > 0.3 ? S * 0.20 : S * 0.15;
       const dCerca = S * 0.4;
       for (let i = 0; i < positions.length; i++) {
@@ -333,44 +421,55 @@ export function TrianglesCanvas({ accent, hi }: {
           const dx = n1.x - n2.x;
           const dy = n1.y - n2.y;
           const d2 = dx * dx + dy * dy;
-          if (d2 < distMaxLineas * distMaxLineas) {
-            const d = Math.sqrt(d2);
-            const md = Math.min(n1.distMouse, n2.distMouse);
-            const cerca = md < dCerca;
-            const depthAvg = (n1.depth + n2.depth) / 2;
-            const depthAlphaAvg = (n1.depthAlpha + n2.depthAlpha) / 2;
-            const fadeByDist = 1 - d / distMaxLineas;
-            ctx.beginPath();
-            ctx.moveTo(n1.x, n1.y);
-            ctx.lineTo(n2.x, n2.y);
-            if (cerca) {
-              const inten = 1 - md / dCerca;
-              ctx.strokeStyle = toRgba(accent, (0.35 + inten * 0.55) * depthAlphaAvg);
-              ctx.lineWidth = 1.4;
-            } else {
-              const baseAlpha = transicionRed > 0.3 ? 0.20 : 0.28;
-              ctx.strokeStyle = toRgba(accent, baseAlpha * depthAvg * fadeByDist * depthAlphaAvg);
-              ctx.lineWidth = 1;
-            }
-            ctx.stroke();
+          if (d2 >= distMaxLineas * distMaxLineas) continue;
+
+          // Filtro globo: solo tierra-tierra
+          if (globeWeight > 0.5 && !(n1.isLand && n2.isLand)) continue;
+
+          const d = Math.sqrt(d2);
+          const md = Math.min(n1.distMouse, n2.distMouse);
+          const cerca = md < dCerca;
+          const depthAvg = (n1.depth + n2.depth) / 2;
+          const depthAlphaAvg = (n1.depthAlpha + n2.depthAlpha) / 2;
+          const fadeByDist = 1 - d / distMaxLineas;
+          ctx.beginPath();
+          ctx.moveTo(n1.x, n1.y);
+          ctx.lineTo(n2.x, n2.y);
+          if (cerca) {
+            const inten = 1 - md / dCerca;
+            ctx.strokeStyle = toRgba(accent, (0.35 + inten * 0.55) * depthAlphaAvg);
+            ctx.lineWidth = 1.4;
+          } else {
+            const baseAlpha = transicionRed > 0.3 ? 0.20 : 0.32;
+            ctx.strokeStyle = toRgba(accent, baseAlpha * depthAvg * fadeByDist * depthAlphaAvg);
+            ctx.lineWidth = 1;
           }
+          ctx.stroke();
         }
       }
 
       // ── Partículas (ordenadas por profundidad Z para 3D real) ───────────
+      // En modo globo: tierra brillante y grande, océano tenue y chico.
+      // En modo logo: todas iguales.
       const sorted = [...positions].sort((a, b) => a.worldZ - b.worldZ);
       sorted.forEach((n) => {
         const cerca = n.distMouse < dCerca;
         const baseSize = 1.5 + 0.9 * n.depth;
-        const size = cerca ? 3.4 : baseSize * n.sizeMul;
+        // Boost de tamaño/brillo para tierra durante el globo
+        const landBoost = 1 + globeWeight * (n.isLand ? 0.6 : -0.35);
+        const size = cerca ? 3.4 : baseSize * n.sizeMul * landBoost;
         ctx.beginPath();
-        ctx.arc(n.x, n.y, size, 0, Math.PI * 2);
+        ctx.arc(n.x, n.y, Math.max(0.6, size), 0, Math.PI * 2);
         if (cerca) {
           ctx.fillStyle = accent;
           ctx.shadowColor = accent;
           ctx.shadowBlur = 8;
         } else {
-          ctx.fillStyle = toRgba(hi, (0.30 + 0.55 * n.depth) * n.depthAlpha);
+          // Alpha: en globo, tierra ~0.9, océano ~0.15; en logo, ~0.55.
+          const globeAlpha = n.isLand ? 0.90 : 0.15;
+          const logoAlpha = 0.55;
+          const baseAlpha = globeAlpha * globeWeight + logoAlpha * (1 - globeWeight);
+          ctx.fillStyle = toRgba(hi, baseAlpha * (0.55 + 0.45 * n.depth) * n.depthAlpha);
           ctx.shadowBlur = 0;
         }
         ctx.fill();
