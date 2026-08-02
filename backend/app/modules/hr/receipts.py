@@ -49,9 +49,26 @@ def _to_date(v) -> str:
         return str(v)
 
 
+import re
+_HEX_RE = re.compile(r"^#?[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$")
+
+
+def _safe_hex(value: Optional[str], fallback: str = "#0E1838") -> str:
+    """Regresa un color hex válido (#RRGGBB). Si `value` es None, vacío,
+    o no matchea el formato hex, devuelve `fallback`. Esto evita crashes
+    cuando la empresa tiene guardado un color con formato inválido."""
+    if not value or not isinstance(value, str):
+        return fallback
+    v = value.strip()
+    if not _HEX_RE.match(v):
+        return fallback
+    return v if v.startswith("#") else f"#{v}"
+
+
 def _alpha(hex_color: str, alpha: float) -> colors.Color:
-    """Convierte '#RRGGBB' a Color con canal alpha (0..1)."""
-    h = hex_color.lstrip("#")
+    """Convierte '#RRGGBB' a Color con canal alpha (0..1). Tolera color
+    inválido cayendo al NAVY institucional."""
+    h = _safe_hex(hex_color).lstrip("#")
     if len(h) == 3:
         h = "".join(c * 2 for c in h)
     r = int(h[0:2], 16) / 255.0
@@ -113,7 +130,7 @@ def build_receipt_pdf(
     c = canvas.Canvas(buf, pagesize=LETTER)
     W, H = LETTER
 
-    brand = company.get("brand_color") or NAVY
+    brand = _safe_hex(company.get("brand_color"), NAVY)
     # ── Encabezado: banda superior con logo + datos de empresa ─────────────
     HDR_H = 32 * mm
     c.setFillColor(colors.HexColor(brand))
