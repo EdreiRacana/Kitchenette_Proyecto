@@ -300,6 +300,10 @@ async def receipt_pdf(period_id: int, employee_id: int, db: DB, current_user: Cu
         pdf, filename = await service.build_employee_receipt(db, period_id, employee_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        # Cualquier otro crash del generador se propaga con detalle al cliente
+        # en lugar de un 500 silencioso. Facilita depuración en producción.
+        raise HTTPException(status_code=500, detail=f"Error generando recibo PDF: {type(e).__name__}: {e}")
     return Response(
         content=pdf, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
@@ -312,6 +316,8 @@ async def receipts_zip(period_id: int, db: DB, current_user: CurrentUser):
         content, filename = await service.build_period_receipts_zip(db, period_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generando ZIP de recibos: {type(e).__name__}: {e}")
     return Response(
         content=content, media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},

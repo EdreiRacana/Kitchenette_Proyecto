@@ -854,7 +854,21 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                           try {
                             const res = await hrApi.downloadReceiptsZip(p.id);
                             downloadBlob(res.data, `recibos_${p.name.replace(/\s+/g, "_")}.zip`);
-                          } catch { alert("Error al generar los recibos PDF"); }
+                          } catch (err: any) {
+                            // Extrae el detail del blob de error (axios lo entrega como Blob cuando responseType=blob)
+                            let msg = "Error al generar los recibos PDF";
+                            try {
+                              const blob = err?.response?.data;
+                              if (blob instanceof Blob) {
+                                const txt = await blob.text();
+                                const j = JSON.parse(txt);
+                                if (j?.detail) msg = `Error: ${j.detail}`;
+                              } else if (err?.response?.data?.detail) {
+                                msg = `Error: ${err.response.data.detail}`;
+                              }
+                            } catch { /* usa msg default */ }
+                            alert(msg);
+                          }
                         }}
                         title="Descargar recibos PDF (ZIP)"
                         style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11 }}
