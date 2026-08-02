@@ -1,10 +1,10 @@
-"""Recibos de nómina en PDF.
+"""Recibos de nómina en PDF — diseño premium multi-empresa.
 
-Generador profesional multi-empresa con reportlab. El encabezado toma los
-datos del `CompanyProfile` (razón social, RFC, domicilio, contacto, logo)
-para que cada empresa cliente del ERP vea los suyos. Colores institucionales
-con transparencia para percepciones/deducciones, layout paginado que evita
-sobreposición del contenido con las firmas y el pie.
+Header con gradiente vertical (color de marca abajo → transparente arriba),
+logo alojado correctamente dentro del header, subfila con Tipo/Folio debajo
+de la línea del header. Tablas con contorno sólido de color + fondo tenue
+translúcido + esquinas redondeadas. Bloque de "NETO A DEPOSITAR" también
+redondeado con acento lateral.
 
 Nota: este PDF NO sustituye al CFDI 4.0 timbrado por un PAC — es el recibo
 administrativo interno. Cuando se integre timbrado, este mismo recibo
@@ -14,20 +14,20 @@ llevará el UUID y sello del SAT.
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import LETTER
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Table, TableStyle
 
 
-# ── Utilidades de formato ──────────────────────────────────────────────────
+# ── Utilidades ────────────────────────────────────────────────────────────
 def _money(v: float) -> str:
     return f"${(v or 0.0):,.2f}"
 
@@ -49,14 +49,11 @@ def _to_date(v) -> str:
         return str(v)
 
 
-import re
 _HEX_RE = re.compile(r"^#?[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$")
 
 
 def _safe_hex(value: Optional[str], fallback: str = "#0E1838") -> str:
-    """Regresa un color hex válido (#RRGGBB). Si `value` es None, vacío,
-    o no matchea el formato hex, devuelve `fallback`. Esto evita crashes
-    cuando la empresa tiene guardado un color con formato inválido."""
+    """Regresa un color hex válido (#RRGGBB) o el fallback."""
     if not value or not isinstance(value, str):
         return fallback
     v = value.strip()
@@ -66,8 +63,7 @@ def _safe_hex(value: Optional[str], fallback: str = "#0E1838") -> str:
 
 
 def _alpha(hex_color: str, alpha: float) -> colors.Color:
-    """Convierte '#RRGGBB' a Color con canal alpha (0..1). Tolera color
-    inválido cayendo al NAVY institucional."""
+    """'#RRGGBB' → Color con alpha (0..1). Tolera hex inválido."""
     h = _safe_hex(hex_color).lstrip("#")
     if len(h) == 3:
         h = "".join(c * 2 for c in h)
@@ -82,27 +78,82 @@ NAVY = "#0E1838"
 GREEN = "#0F9D70"
 RED = "#DC2626"
 BORDER = "#CBD5E1"
+SLATE_400 = "#94A3B8"
 SLATE_500 = "#64748B"
+SLATE_600 = "#475569"
 SLATE_700 = "#334155"
+SLATE_900 = "#0F172A"
 
 
-def _draw_logo(c: canvas.Canvas, logo_bytes: Optional[bytes], x: float, y: float,
-                 max_w: float, max_h: float) -> float:
-    """Dibuja el logo desde bytes en (x,y) respetando aspect ratio.
-    Devuelve el ancho realmente usado (0 si no se dibujó)."""
+def _draw_gradient_band(c: canvas.Canvas, x: float, y_bottom: float,
+                         w: float, h: float, hex_color: str,
+                         alpha_bottom: float = 1.0, alpha_top: float = 0.0,
+                         steps: int = 40) -> None:
+    """Dibuja una banda con gradiente vertical (color abajo → transparente
+    arriba). ReportLab no tiene gradientes nativos simples: aproximamos
+    con `steps` bandas horizontales de alpha decreciente."""
+    for i in range(steps):
+        f = i / (steps - 1)
+        a = alpha_bottom + (alpha_top - alpha_bottom) * f
+        if a < 0.01:
+            continue
+        c.setFillColor(_alpha(hex_color, a))
+        band_h = h / steps + 0.6   # solape para evitar líneas visibles
+        c.rect(x, y_bottom + i * (h / steps), w, band_h, fill=1, stroke=0)
+
+
+def _draw_logo(c: canvas.Canvas, logo_bytes: Optional[bytes],
+                 x: float, y_bottom: float, box_w: float, box_h: float) -> float:
+    """Dibuja el logo DENTRO del rectángulo (x, y_bottom, box_w, box_h)
+    respetando aspect ratio y centrado verticalmente. Regresa el ancho
+    real que ocupó (0 si no dibujó)."""
     if not logo_bytes:
         return 0.0
     try:
         img = ImageReader(io.BytesIO(logo_bytes))
         iw, ih = img.getSize()
-        ratio = min(max_w / iw, max_h / ih)
+        ratio = min(box_w / iw, box_h / ih)
         w = iw * ratio
         h = ih * ratio
-        c.drawImage(img, x, y - h + max_h * 0.15, width=w, height=h,
-                    mask="auto", preserveAspectRatio=True)
+        # Centrar verticalmente en la caja
+        y = y_bottom + (box_h - h) / 2
+        c.drawImage(img, x, y, width=w, height=h, mask="auto",
+                    preserveAspectRatio=True)
         return w
     except Exception:
         return 0.0
+
+
+def _rounded_border_box(c: canvas.Canvas, x: float, y_bottom: float,
+                          w: float, h: float, radius: float,
+                          border_color: colors.Color,
+                          fill_color: Optional[colors.Color] = None,
+                          border_width: float = 0.9) -> None:
+    """Dibuja un rectángulo con esquinas redondeadas: borde sólido y fill
+    opcional (traslúcido)."""
+    if fill_color is not None:
+        c.setFillColor(fill_color)
+        c.setStrokeColor(border_color)
+        c.setLineWidth(border_width)
+        c.roundRect(x, y_bottom, w, h, radius, stroke=1, fill=1)
+    else:
+        c.setStrokeColor(border_color)
+        c.setLineWidth(border_width)
+        c.roundRect(x, y_bottom, w, h, radius, stroke=1, fill=0)
+
+
+def _wrap(txt: str, width: int, max_lines: int = 2) -> List[str]:
+    words = txt.split()
+    lines, cur = [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 <= width:
+            cur = (cur + " " + w).strip()
+        else:
+            lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines[:max_lines]
 
 
 def build_receipt_pdf(
@@ -110,15 +161,10 @@ def build_receipt_pdf(
     period: dict,
     detail: dict,
     company: Optional[dict] = None,
-    # Compatibilidad con firma antigua (kwargs)
     company_name: Optional[str] = None,
     company_rfc: Optional[str] = None,
 ) -> bytes:
-    """Genera el PDF del recibo de un empleado en un período dado.
-
-    `company` es un dict con: name, commercial_name, rfc, address, email,
-    phone, logo_bytes, logo_mime, brand_color, document_footer.
-    """
+    """Genera el PDF del recibo de un empleado en un período dado."""
     if company is None:
         company = {}
     if company_name and not company.get("name"):
@@ -131,55 +177,73 @@ def build_receipt_pdf(
     W, H = LETTER
 
     brand = _safe_hex(company.get("brand_color"), NAVY)
-    # ── Encabezado: banda superior con logo + datos de empresa ─────────────
-    HDR_H = 32 * mm
-    c.setFillColor(colors.HexColor(brand))
-    c.rect(0, H - HDR_H, W, HDR_H, fill=1, stroke=0)
 
-    # Sub-banda de acento (línea fina abajo del header)
-    c.setFillColor(_alpha(brand, 0.6))
-    c.rect(0, H - HDR_H - 1.2 * mm, W, 1.2 * mm, fill=1, stroke=0)
+    # ═══════════════════════════════════════════════════════════════════════
+    # HEADER — Gradiente vertical + logo bien alojado + info empresa
+    # ═══════════════════════════════════════════════════════════════════════
+    HDR_H = 34 * mm
+    hdr_y = H - HDR_H
 
-    # Logo a la izquierda (si existe)
-    logo_w = _draw_logo(c, company.get("logo_bytes"),
-                         x=12 * mm, y=H - HDR_H + 4 * mm,
-                         max_w=24 * mm, max_h=22 * mm)
-    text_x = 12 * mm + (logo_w + 6 * mm if logo_w > 0 else 0)
+    # Gradiente vertical: opaco abajo → transparente arriba
+    _draw_gradient_band(
+        c, x=0, y_bottom=hdr_y, w=W, h=HDR_H, hex_color=brand,
+        alpha_bottom=0.95, alpha_top=0.05, steps=48,
+    )
 
-    # Nombre razón social
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 14)
+    # Franja fina de acento inferior (marca la separación con el resto)
+    c.setFillColor(_alpha(brand, 0.85))
+    c.rect(0, hdr_y - 1.0 * mm, W, 1.0 * mm, fill=1, stroke=0)
+
+    # Logo bien alojado dentro del header (a la izquierda, con margen)
+    LOGO_BOX_W, LOGO_BOX_H = 26 * mm, HDR_H - 8 * mm
+    logo_w = _draw_logo(
+        c, company.get("logo_bytes"),
+        x=12 * mm, y_bottom=hdr_y + 4 * mm,
+        box_w=LOGO_BOX_W, box_h=LOGO_BOX_H,
+    )
+    text_x = 12 * mm + (logo_w + 8 * mm if logo_w > 0 else 0)
+
+    # Nombre / razón social — el color es blanco pero como el gradiente
+    # se atenúa arriba, se percibe la mezcla. Sombra sutil para legibilidad.
     company_name_str = (company.get("commercial_name") or company.get("name") or "EMPRESA").upper()
-    c.drawString(text_x, H - 12 * mm, company_name_str[:60])
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 15)
+    c.drawString(text_x, hdr_y + HDR_H - 12 * mm, company_name_str[:60])
 
-    # Sub-línea con razón social (si commercial_name existe y es distinto)
-    if company.get("commercial_name") and company.get("name") and company["commercial_name"] != company["name"]:
+    # Sublinea con razón social si difiere del comercial
+    if (company.get("commercial_name") and company.get("name")
+            and company["commercial_name"] != company["name"]):
         c.setFont("Helvetica", 8.5)
-        c.setFillColor(_alpha("#FFFFFF", 0.75))
-        c.drawString(text_x, H - 16.5 * mm, company["name"][:80])
+        c.setFillColor(_alpha("#FFFFFF", 0.80))
+        c.drawString(text_x, hdr_y + HDR_H - 16.5 * mm, company["name"][:80])
 
-    # Línea de contacto (RFC · domicilio · email · phone)
-    c.setFont("Helvetica", 8)
-    c.setFillColor(_alpha("#FFFFFF", 0.85))
+    # Línea de contacto — RFC · domicilio · email · teléfono
     contact_parts = []
     if company.get("rfc"):
         contact_parts.append(f"RFC: {company['rfc']}")
     if company.get("address"):
         addr = company["address"]
-        contact_parts.append(addr[:80] + ("…" if len(addr) > 80 else ""))
+        contact_parts.append(addr[:70] + ("…" if len(addr) > 70 else ""))
     if company.get("email"):
         contact_parts.append(company["email"])
     if company.get("phone"):
         contact_parts.append(f"Tel. {company['phone']}")
+    c.setFont("Helvetica", 8)
+    c.setFillColor(_alpha("#FFFFFF", 0.90))
     contact_line = "  ·  ".join(contact_parts)
     if contact_line:
-        c.drawString(text_x, H - 22 * mm, contact_line[:140])
+        c.drawString(text_x, hdr_y + 4 * mm, contact_line[:150])
 
-    # Título recibo (derecha)
+    # Título derecha
     c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 12)
-    c.drawRightString(W - 12 * mm, H - 12 * mm, "RECIBO DE NÓMINA")
-    c.setFont("Helvetica", 9)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawRightString(W - 12 * mm, hdr_y + HDR_H - 12 * mm, "RECIBO DE NÓMINA")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # SUBFILA DEBAJO DEL HEADER — Tipo · Folio · Fecha pago
+    # (antes estaba encimada dentro del header)
+    # ═══════════════════════════════════════════════════════════════════════
+    sub_y = hdr_y - 8 * mm
     kind = period.get("kind", "regular")
     kind_label = {
         "regular": "Ordinaria",
@@ -187,21 +251,40 @@ def build_receipt_pdf(
         "prima_vacacional": "Prima vacacional",
         "finiquito": "Finiquito",
     }.get(kind, kind.title())
-    c.setFillColor(_alpha("#FFFFFF", 0.85))
-    c.drawRightString(W - 12 * mm, H - 17.5 * mm, f"Tipo: {kind_label}")
-    period_name = _safe(period.get("name"))[:40]
-    c.drawRightString(W - 12 * mm, H - 22 * mm, f"Folio interno: {period_name}")
 
-    # ── Sección: Datos del empleado y período ──────────────────────────────
-    y = H - HDR_H - 10 * mm
+    # Chip a la izquierda con "Tipo"
+    chip_w = 42 * mm
+    _rounded_border_box(
+        c, x=12 * mm, y_bottom=sub_y - 1.5 * mm, w=chip_w, h=6.5 * mm,
+        radius=2.5, border_color=_alpha(brand, 0.35),
+        fill_color=_alpha(brand, 0.06),
+    )
+    c.setFillColor(colors.HexColor(brand))
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(12 * mm + 3 * mm, sub_y + 0.7 * mm, "TIPO")
+    c.setFillColor(colors.HexColor(SLATE_700))
+    c.setFont("Helvetica", 9)
+    c.drawString(12 * mm + 15 * mm, sub_y + 0.7 * mm, kind_label)
 
+    # Folio (nombre del período) a la derecha
+    c.setFillColor(colors.HexColor(SLATE_500))
+    c.setFont("Helvetica", 8)
+    c.drawRightString(W - 12 * mm, sub_y + 3 * mm, "FOLIO INTERNO")
+    c.setFillColor(colors.HexColor(SLATE_700))
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawRightString(W - 12 * mm, sub_y - 1 * mm, _safe(period.get("name"))[:60])
+
+    y = sub_y - 12 * mm
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # SECCIÓN: Datos del empleado y período
+    # ═══════════════════════════════════════════════════════════════════════
     def _section_title(txt: str, yy: float):
         c.setFillColor(colors.HexColor(brand))
         c.setFont("Helvetica-Bold", 9.5)
         c.drawString(12 * mm, yy, txt.upper())
-        # subrayado sutil
-        c.setStrokeColor(_alpha(brand, 0.35))
-        c.setLineWidth(0.6)
+        c.setStrokeColor(_alpha(brand, 0.30))
+        c.setLineWidth(0.5)
         c.line(12 * mm, yy - 1.5 * mm, W - 12 * mm, yy - 1.5 * mm)
 
     _section_title("Datos del empleado y período", y)
@@ -226,7 +309,7 @@ def build_receipt_pdf(
         ("Días faltas", f"{detail.get('days_absent', 0):g}"),
     ]
 
-    row_h = 4.6 * mm
+    row_h = 4.5 * mm
     label_col_w = 32 * mm
     left_x = 12 * mm
     right_x = W / 2 + 4 * mm
@@ -249,7 +332,11 @@ def build_receipt_pdf(
             c.drawString(right_x + label_col_w, yy, info_right[i][1])
     y -= max(len(info_left), len(info_right)) * row_h + 6 * mm
 
-    # ── Tablas de percepciones y deducciones ───────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════════
+    # TABLAS de percepciones y deducciones
+    # Diseño: rectángulo redondeado con contorno sólido de color + fondo
+    # muy tenue traslúcido. Header sin fill sólido — solo texto colorido.
+    # ═══════════════════════════════════════════════════════════════════════
     percepciones = [
         ("Sueldo del período", detail.get("salary_earned", 0.0)),
         ("Horas extra dobles", detail.get("overtime_double", 0.0)),
@@ -274,71 +361,106 @@ def build_receipt_pdf(
     total_perc = sum(v for _k, v in percepciones)
     total_ded = sum(v for _k, v in deducciones)
 
+    tbl_w = (W - 24 * mm) / 2 - 2 * mm    # dos tablas lado a lado con gap
+    tbl_x_perc = 12 * mm
+    tbl_x_ded = 12 * mm + tbl_w + 4 * mm
+
     def _mk_table(title: str, rows: list, total_label: str, total_value: float,
-                    header_color_hex: str):
-        data = [[title, "Importe"]]
+                    color_hex: str) -> Tuple[Table, float]:
+        # Tabla interna con estilos SIN bordes (los bordes los dibujamos
+        # como rounded rect afuera). Header: texto en color, fondo transparente.
+        data = [[title, "IMPORTE"]]
         for k, v in rows:
             data.append([k, _money(v)])
         data.append([total_label, _money(total_value)])
-        tbl = Table(data, colWidths=[62 * mm, 26 * mm])
-        # Fila header sólida; filas con background alterno translúcido;
-        # total con fondo tinte del color de sección (transparente).
+        col1 = tbl_w * 0.65
+        col2 = tbl_w - col1
+        tbl = Table(data, colWidths=[col1, col2])
         style = TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(header_color_hex)),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            # Header — sin fondo, solo texto colorido y negrita
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("FONTSIZE", (0, 0), (-1, 0), 9),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(color_hex)),
             ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-            ("TOPPADDING", (0, 0), (-1, 0), 6),
-            ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
-            ("TOPPADDING", (0, 1), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, 0), 8),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.6, _alpha(color_hex, 0.35)),
+            ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+            # Cuerpo
+            ("FONTNAME", (0, 1), (-1, -2), "Helvetica"),
+            ("FONTSIZE", (0, 1), (-1, -1), 8.5),
+            ("TEXTCOLOR", (0, 1), (0, -2), colors.HexColor(SLATE_700)),
+            ("TEXTCOLOR", (1, 1), (1, -2), colors.HexColor(SLATE_900)),
             ("ALIGN", (1, 0), (1, -1), "RIGHT"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LINEBELOW", (0, 0), (-1, 0), 0, colors.transparent),
-            ("LINEBELOW", (0, 1), (-1, -2), 0.3, colors.HexColor(BORDER)),
-            ("BACKGROUND", (0, -1), (-1, -1), _alpha(header_color_hex, 0.14)),
+            ("BOTTOMPADDING", (0, 1), (-1, -2), 4.5),
+            ("TOPPADDING", (0, 1), (-1, -2), 4.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 12),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+            # Total — separado con línea sutil, texto en color
+            ("LINEABOVE", (0, -1), (-1, -1), 0.7, _alpha(color_hex, 0.40)),
             ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-            ("TEXTCOLOR", (0, -1), (-1, -1), colors.HexColor(header_color_hex)),
-            ("LINEABOVE", (0, -1), (-1, -1), 0.6, _alpha(header_color_hex, 0.45)),
-            ("TOPPADDING", (0, -1), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, -1), (-1, -1), 6),
+            ("FONTSIZE", (0, -1), (-1, -1), 9.5),
+            ("TEXTCOLOR", (0, -1), (-1, -1), colors.HexColor(color_hex)),
+            ("TOPPADDING", (0, -1), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, -1), (-1, -1), 8),
         ])
-        # Filas alternas con tinte muy suave del color de sección
+        # Filas alternas con tinte muy tenue para lectura
         for i in range(1, len(data) - 1):
             if i % 2 == 0:
-                style.add("BACKGROUND", (0, i), (-1, i), _alpha(header_color_hex, 0.05))
+                style.add("BACKGROUND", (0, i), (-1, i), _alpha(color_hex, 0.035))
         tbl.setStyle(style)
-        return tbl
+        tbl.wrapOn(c, tbl_w, H)
+        return tbl, tbl._height
 
-    tbl_perc = _mk_table("Percepciones", percepciones, "Total percepciones", total_perc, GREEN)
-    tbl_ded = _mk_table("Deducciones", deducciones, "Total deducciones", total_ded, RED)
-    tbl_perc.wrapOn(c, W, H)
-    tbl_ded.wrapOn(c, W, H)
-    table_h = max(tbl_perc._height, tbl_ded._height)
-    tbl_perc.drawOn(c, 12 * mm, y - tbl_perc._height)
-    tbl_ded.drawOn(c, W / 2 + 4 * mm, y - tbl_ded._height)
+    tbl_perc, h_perc = _mk_table("PERCEPCIONES", percepciones,
+                                     "Total percepciones", total_perc, GREEN)
+    tbl_ded, h_ded = _mk_table("DEDUCCIONES", deducciones,
+                                   "Total deducciones", total_ded, RED)
+    table_h = max(h_perc, h_ded)
+
+    # Fondo redondeado transparente + borde sólido para cada tabla
+    _rounded_border_box(
+        c, x=tbl_x_perc, y_bottom=y - table_h, w=tbl_w, h=table_h,
+        radius=4, border_color=_alpha(GREEN, 0.55),
+        fill_color=_alpha(GREEN, 0.03), border_width=1.0,
+    )
+    _rounded_border_box(
+        c, x=tbl_x_ded, y_bottom=y - table_h, w=tbl_w, h=table_h,
+        radius=4, border_color=_alpha(RED, 0.55),
+        fill_color=_alpha(RED, 0.03), border_width=1.0,
+    )
+    tbl_perc.drawOn(c, tbl_x_perc, y - h_perc)
+    tbl_ded.drawOn(c, tbl_x_ded, y - h_ded)
     y -= table_h + 8 * mm
 
-    # ── Neto a depositar (banda destacada, gradiente sólido + acento) ─────
+    # ═══════════════════════════════════════════════════════════════════════
+    # NETO A DEPOSITAR — banda redondeada con acento lateral
+    # ═══════════════════════════════════════════════════════════════════════
     neto = float(detail.get("total_net", 0.0))
     neto_h = 17 * mm
-    c.setFillColor(_alpha(GREEN, 0.12))
-    c.rect(12 * mm, y - neto_h, W - 24 * mm, neto_h, fill=1, stroke=0)
-    # Banda de acento izquierda
+    _rounded_border_box(
+        c, x=12 * mm, y_bottom=y - neto_h, w=W - 24 * mm, h=neto_h,
+        radius=6, border_color=_alpha(GREEN, 0.5),
+        fill_color=_alpha(GREEN, 0.10), border_width=1.0,
+    )
+    # Acento vertical izquierdo (barra sólida)
     c.setFillColor(colors.HexColor(GREEN))
-    c.rect(12 * mm, y - neto_h, 3 * mm, neto_h, fill=1, stroke=0)
+    c.roundRect(12 * mm, y - neto_h, 3.2 * mm, neto_h, 1.5, stroke=0, fill=1)
+
     c.setFillColor(colors.HexColor(GREEN))
     c.setFont("Helvetica-Bold", 11.5)
-    c.drawString(20 * mm, y - 7 * mm, "NETO A DEPOSITAR")
-    c.setFont("Helvetica", 8)
+    c.drawString(21 * mm, y - 7 * mm, "NETO A DEPOSITAR")
     c.setFillColor(colors.HexColor(SLATE_500))
-    c.drawString(20 * mm, y - 12 * mm, "Cantidad transferida al trabajador")
+    c.setFont("Helvetica", 8)
+    c.drawString(21 * mm, y - 12 * mm, "Cantidad transferida al trabajador")
     c.setFillColor(colors.HexColor(GREEN))
     c.setFont("Helvetica-Bold", 20)
     c.drawRightString(W - 18 * mm, y - 11 * mm, _money(neto))
     y -= neto_h + 6 * mm
 
-    # ── Datos de pago (banco/CLABE) — en su propia fila para que no se pierda ─
+    # ═══════════════════════════════════════════════════════════════════════
+    # Método de pago + cargas del patrón
+    # ═══════════════════════════════════════════════════════════════════════
     c.setFillColor(colors.HexColor(SLATE_500))
     c.setFont("Helvetica", 8)
     c.drawString(12 * mm, y, "Método de pago")
@@ -346,11 +468,10 @@ def build_receipt_pdf(
     c.setFont("Helvetica-Bold", 9)
     bank = employee.get("bank") or "—"
     clabe = employee.get("clabe") or "—"
-    c.drawString(12 * mm + 22 * mm, y, f"Transferencia electrónica — {bank}  ·  CLABE: {clabe}")
-    y -= 5 * mm
+    c.drawString(12 * mm + 22 * mm, y,
+                    f"Transferencia electrónica — {bank}  ·  CLABE: {clabe}")
+    y -= 6 * mm
 
-    # ── Cuotas patronales (secundario, informativo) ────────────────────────
-    y -= 2 * mm
     _section_title("Cargas del patrón (informativas — no afectan el neto)", y)
     y -= 5.5 * mm
     c.setFillColor(colors.HexColor(SLATE_700))
@@ -366,7 +487,7 @@ def build_receipt_pdf(
         c.drawString(12 * mm, y, line)
         y -= 4 * mm
 
-    # Notas del capturista (si existen)
+    # Notas del capturista
     note = (detail.get("notes") or "").strip()
     if note:
         y -= 2 * mm
@@ -380,11 +501,12 @@ def build_receipt_pdf(
             c.drawString(12 * mm, y, line)
             y -= 3.5 * mm
 
-    # ── Firmas — SIEMPRE por encima del pie, con margen garantizado ────────
-    # Nunca por debajo de 42mm (deja aire al footer que vive en 12mm).
-    y_sign = max(y - 18 * mm, 42 * mm)
-    c.setStrokeColor(colors.HexColor(SLATE_500))
-    c.setLineWidth(0.6)
+    # ═══════════════════════════════════════════════════════════════════════
+    # Firmas — por encima del pie con margen garantizado
+    # ═══════════════════════════════════════════════════════════════════════
+    y_sign = max(y - 16 * mm, 44 * mm)
+    c.setStrokeColor(colors.HexColor(SLATE_400))
+    c.setLineWidth(0.5)
     c.line(28 * mm, y_sign, 92 * mm, y_sign)
     c.line(118 * mm, y_sign, 182 * mm, y_sign)
     c.setFillColor(colors.HexColor(SLATE_700))
@@ -397,44 +519,25 @@ def build_receipt_pdf(
                           f"{employee.get('name', '')} {employee.get('last_name', '')}".strip())
     c.drawCentredString(150 * mm, y_sign - 8 * mm, company_name_str.title())
 
-    # ── Pie: timestamp en línea propia arriba, después divider, después el
-    # texto legal en 2 renglones. Cada bloque en su propia banda vertical
-    # para eliminar cualquier encimado sin importar el largo del texto.
-    footer_note = (company.get("document_footer") or
-                    "Este documento es el recibo administrativo interno. El CFDI 4.0 timbrado con "
-                    "sello SAT se emite por separado al integrarse un PAC autorizado.")
-
-    # Fila 1 (arriba): timestamp + página, right-aligned, en su propia línea
+    # ═══════════════════════════════════════════════════════════════════════
+    # Pie — timestamp arriba, divider, texto legal debajo (sin encimados)
+    # ═══════════════════════════════════════════════════════════════════════
     c.setFont("Helvetica", 7)
     c.setFillColor(colors.HexColor(SLATE_500))
     c.drawRightString(
         W - 12 * mm, 20 * mm,
         f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}   ·   Página 1 de 1",
     )
-
-    # Divider fino entre timestamp y footer legal
     c.setStrokeColor(_alpha(SLATE_500, 0.25))
     c.setLineWidth(0.4)
     c.line(12 * mm, 17.5 * mm, W - 12 * mm, 17.5 * mm)
 
-    # Fila 2-3: texto legal, wrap a 2 renglones, left-aligned, cabe todo el ancho
-    def _wrap(txt: str, width: int) -> List[str]:
-        words = txt.split()
-        lines, cur = [], ""
-        for w in words:
-            if len(cur) + len(w) + 1 <= width:
-                cur = (cur + " " + w).strip()
-            else:
-                lines.append(cur)
-                cur = w
-        if cur:
-            lines.append(cur)
-        return lines[:2]
-
+    footer_note = (company.get("document_footer") or
+                    "Este documento es el recibo administrativo interno. El CFDI 4.0 timbrado con "
+                    "sello SAT se emite por separado al integrarse un PAC autorizado.")
     c.setFont("Helvetica-Oblique", 7)
     c.setFillColor(colors.HexColor(SLATE_500))
-    wrapped = _wrap(footer_note, 140)
-    for i, line in enumerate(wrapped):
+    for i, line in enumerate(_wrap(footer_note, 140, 2)):
         c.drawString(12 * mm, 14 * mm - i * 3.2 * mm, line)
 
     c.showPage()
