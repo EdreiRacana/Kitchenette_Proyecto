@@ -34,13 +34,15 @@ const NOVA_SHAPE: [number, number][] = NOVA_RAW.map(([x, y]) =>
 
 const SHAPE_HOLD_MS = 5500;
 const SHAPE_MORPH_MS = 1200;
-const NUM_PARTICLES = 900;             // densidad alta para definir continentes
-const TARGET_LAND = 720;               // 80% del total en tierra
-const TARGET_OCEAN = 180;              // 20% en océano (backdrop tenue)
+// Filosofía: MENOS puntos con MÁS contraste. Los continentes se leen por el
+// contraste (denso vs vacío), no por la cantidad total de puntos.
+const NUM_PARTICLES = 520;
+const TARGET_LAND = 460;               // 88% del total en tierra
+const TARGET_OCEAN = 60;               // 12% océano (solo backdrop mínimo)
 const ROTATION_PERIOD_MS = 40000;
-const AXIS_TILT_DEG = 18;              // inclinación tipo Tierra (23° reales)
+const AXIS_TILT_DEG = 18;
 
-const SHAPE_RADIUS = 0.70;
+const SHAPE_RADIUS = 0.72;
 const PERSPECTIVE = 0.45;
 
 type ShapeKind = "globe" | "novamark";
@@ -235,20 +237,15 @@ export function TrianglesCanvas({ accent, hi }: {
 
     // Fábrica de partícula — asigna también coords aleatorias para el LOGO.
     // Estrategia LOGO: 65% de las partículas se acomodan en el CONTORNO
-    // Distribución en 3 anillos: 75% en el CONTORNO, 15% en anillo INTERMEDIO
-    // (r2d ∈ [0.55, 0.75] — refuerza estructura interna), 10% en el CENTRO
-    // (r2d ∈ [0, 0.35] — puntos que sugieren el "corazón" del logo).
+    // LOGO — silueta muy definida: 88% en el CONTORNO (r=0.94-1.0), 12% en
+    // anillo interior sutil. Cero puntos en el centro (menos ruido, más
+    // silueta pura).
     function makeParticle(sphereTheta: number, sphereY: number, sphereR: number,
                             isLand: boolean, S: number): Particle {
       const bucket = Math.random();
-      let r2d: number;
-      if (bucket < 0.75) {
-        r2d = 0.92 + Math.random() * 0.08;             // contorno definido
-      } else if (bucket < 0.90) {
-        r2d = 0.55 + Math.random() * 0.20;             // anillo intermedio
-      } else {
-        r2d = Math.random() * 0.35;                    // núcleo central
-      }
+      const r2d = bucket < 0.88
+        ? 0.94 + Math.random() * 0.06     // contorno crisp
+        : 0.60 + Math.random() * 0.25;    // anillo interior sutil
       const theta2d = Math.random() * Math.PI * 2;
       const z0 = 2 * Math.random() - 1;
       const x = sphereR * Math.cos(sphereTheta) * SHAPE_RADIUS * S;
@@ -470,18 +467,22 @@ export function TrianglesCanvas({ accent, hi }: {
       }
 
       // ── Malla: líneas entre partículas cercanas ─────────────────────────
-      // Durante el globo, solo conectamos tierra-tierra y omitimos las
-      // líneas hacia océano — así los continentes se leen como blobs sólidos.
-      // Durante el logo, todas las conexiones son válidas para reforzar silueta.
-      const distMaxLineas = transicionRed > 0.3 ? S * 0.20 : S * 0.15;
+      // Durante el globo, SOLO líneas tierra-tierra en rango corto para
+      // que los continentes se lean como bloques cohesionados (no atravesar
+      // océanos). Durante el logo, todas las conexiones para silueta.
+      // Distancias distintas por modo — más generosas en globo para atar puntos cercanos de tierra.
+      const distMaxLineasLand = S * 0.10;    // corto — solo dentro del mismo continente
+      const distMaxLineasLogo = S * 0.14;
+      const distMaxLineas = globeWeight > 0.5 ? distMaxLineasLand : distMaxLineasLogo;
       const dCerca = S * 0.4;
+      const distMaxSquared = distMaxLineas * distMaxLineas;
       for (let i = 0; i < positions.length; i++) {
         for (let j = i + 1; j < positions.length; j++) {
           const n1 = positions[i], n2 = positions[j];
           const dx = n1.x - n2.x;
           const dy = n1.y - n2.y;
           const d2 = dx * dx + dy * dy;
-          if (d2 >= distMaxLineas * distMaxLineas) continue;
+          if (d2 >= distMaxSquared) continue;
 
           // Filtro globo: solo tierra-tierra
           if (globeWeight > 0.5 && !(n1.isLand && n2.isLand)) continue;
@@ -489,7 +490,6 @@ export function TrianglesCanvas({ accent, hi }: {
           const d = Math.sqrt(d2);
           const md = Math.min(n1.distMouse, n2.distMouse);
           const cerca = md < dCerca;
-          const depthAvg = (n1.depth + n2.depth) / 2;
           const depthAlphaAvg = (n1.depthAlpha + n2.depthAlpha) / 2;
           const fadeByDist = 1 - d / distMaxLineas;
           ctx.beginPath();
@@ -500,33 +500,39 @@ export function TrianglesCanvas({ accent, hi }: {
             ctx.strokeStyle = toRgba(accent, (0.35 + inten * 0.55) * depthAlphaAvg);
             ctx.lineWidth = 1.4;
           } else {
-            const baseAlpha = transicionRed > 0.3 ? 0.20 : 0.32;
-            ctx.strokeStyle = toRgba(accent, baseAlpha * depthAvg * fadeByDist * depthAlphaAvg);
-            ctx.lineWidth = 1;
+            // Líneas tierra-tierra en globo: más marcadas para tejer continentes
+            const baseAlpha = globeWeight > 0.5 ? 0.55 : 0.32;
+            ctx.strokeStyle = toRgba(accent, baseAlpha * fadeByDist * depthAlphaAvg);
+            ctx.lineWidth = globeWeight > 0.5 ? 1.1 : 1;
           }
           ctx.stroke();
         }
       }
 
       // ── Partículas (ordenadas por profundidad Z para 3D real) ───────────
-      // En modo globo: tierra brillante y grande, océano tenue y chico.
-      // En modo logo: todas iguales.
+      // CONTRASTE MÁXIMO en modo globo: tierra grande + brillante + con glow;
+      // océano MUY tenue (backdrop de estrellitas). El contraste es lo que
+      // hace visibles los continentes, no la cantidad total de puntos.
       const sorted = [...positions].sort((a, b) => a.worldZ - b.worldZ);
       sorted.forEach((n) => {
         const cerca = n.distMouse < dCerca;
-        const baseSize = 1.5 + 0.9 * n.depth;
-        // Boost de tamaño/brillo para tierra durante el globo
-        const landBoost = 1 + globeWeight * (n.isLand ? 0.6 : -0.35);
+        const baseSize = 1.4 + 0.9 * n.depth;
+        // Boost fuerte de tamaño para tierra durante globo
+        const landBoost = 1 + globeWeight * (n.isLand ? 0.9 : -0.55);
         const size = cerca ? 3.4 : baseSize * n.sizeMul * landBoost;
         ctx.beginPath();
-        ctx.arc(n.x, n.y, Math.max(0.6, size), 0, Math.PI * 2);
+        ctx.arc(n.x, n.y, Math.max(0.5, size), 0, Math.PI * 2);
         if (cerca) {
           ctx.fillStyle = accent;
           ctx.shadowColor = accent;
           ctx.shadowBlur = 8;
+        } else if (globeWeight > 0.5 && n.isLand) {
+          // Tierra: brillante + halo sutil para reforzar visibilidad
+          ctx.fillStyle = toRgba(hi, 0.95 * n.depthAlpha);
+          ctx.shadowColor = accent;
+          ctx.shadowBlur = 3.5;
         } else {
-          // Alpha: en globo, tierra ~0.9, océano ~0.15; en logo, ~0.55.
-          const globeAlpha = n.isLand ? 0.90 : 0.15;
+          const globeAlpha = n.isLand ? 0.90 : 0.08;   // océano casi invisible
           const logoAlpha = 0.55;
           const baseAlpha = globeAlpha * globeWeight + logoAlpha * (1 - globeWeight);
           ctx.fillStyle = toRgba(hi, baseAlpha * (0.55 + 0.45 * n.depth) * n.depthAlpha);
