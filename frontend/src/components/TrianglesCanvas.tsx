@@ -32,15 +32,15 @@ const NOVA_SHAPE: [number, number][] = NOVA_RAW.map(([x, y]) =>
   [x / NOVA_MAX_R, y / NOVA_MAX_R] as [number, number],
 );
 
-const SHAPE_HOLD_MS = 5500;
+const SHAPE_HOLD_MS = 8000;                  // más tiempo para apreciar cada figura
 const SHAPE_MORPH_MS = 1200;
-// Filosofía correcta: DENSIDAD ALTA de puntos PEQUEÑOS. Los globos terráqueos
-// de referencia (Datamaps, D3 globes, corporate visuals) usan ~1500-2500
-// puntitos que forman los continentes como pixel-art de alta resolución.
-const NUM_PARTICLES = 1700;
-const TARGET_LAND = 1550;               // 91% del total en tierra
-const TARGET_OCEAN = 150;               // 9% océano — muy tenue, backdrop
-const ROTATION_PERIOD_MS = 40000;
+// Filosofía halftone/pixel-art: puntos en CUADRÍCULA REGULAR cada 2.5° de
+// lat/lon (no aleatorios). Solo se dibujan los que caen en tierra. Esto
+// produce el look "impreso" de globos corporativos world-class donde los
+// continentes se ven como shapes de halftone.
+const GRID_STEP_DEG = 2.5;                    // spacing del grid
+const TARGET_OCEAN = 0;                       // CERO puntos de océano — todo lo visible es tierra
+const ROTATION_PERIOD_MS = 45000;             // giro un poco más lento (era 40s)
 const AXIS_TILT_DEG = 18;
 
 const SHAPE_RADIUS = 0.72;
@@ -235,42 +235,27 @@ export function TrianglesCanvas({ accent, hi }: {
       const S = logoScale();
       const out: Particle[] = [];
 
-      // Función auxiliar: sample uniforme en la esfera, evalúa si es tierra
-      // y construye la partícula. La distribución esférica uniforme SE HACE
-      // por z uniforme + theta uniforme (sin concentración en polos).
-      const sampleOne = (): { sphereY: number; sphereR: number;
-                                sphereTheta: number; lat: number; lon: number } => {
-        const sphereY = 2 * Math.random() - 1;
-        const sphereR = Math.sqrt(Math.max(0, 1 - sphereY * sphereY));
-        const sphereTheta = Math.random() * Math.PI * 2;
-        const lat = (Math.asin(sphereY) * 180) / Math.PI;
-        const lon = ((sphereTheta * 180 / Math.PI + 180) % 360) - 180;
-        return { sphereY, sphereR, sphereTheta, lat, lon };
-      };
-
-      // ── (A) TIERRA: rechazo puro. Sampleamos hasta obtener TARGET_LAND
-      // puntos dentro de algún continente. Como la tierra es ~29% del área
-      // esférica, necesitamos ~460/0.29 ≈ 1600 samples. Presupuesto amplio
-      // por si algunos polígonos son pequeños.
-      let landCount = 0;
-      let attempts = 0;
-      while (landCount < TARGET_LAND && attempts < 30000) {
-        attempts++;
-        const s = sampleOne();
-        if (!isContinent(s.lat, s.lon)) continue;
-        out.push(makeParticle(s.sphereTheta, s.sphereY, s.sphereR, true, S));
-        landCount++;
-      }
-
-      // ── (B) OCÉANO: mismo rechazo pero al revés (solo aguas).
-      let oceanCount = 0;
-      attempts = 0;
-      while (oceanCount < TARGET_OCEAN && attempts < 5000) {
-        attempts++;
-        const s = sampleOne();
-        if (isContinent(s.lat, s.lon)) continue;
-        out.push(makeParticle(s.sphereTheta, s.sphereY, s.sphereR, false, S));
-        oceanCount++;
+      // ── GRID REGULAR estilo halftone ─────────────────────────────────────
+      // Recorremos la esfera en cuadrícula fija (cada GRID_STEP_DEG grados
+      // de lat/lon). Para cada celda, si su centro cae en tierra, agregamos
+      // una partícula. Como el paso longitudinal es constante pero los
+      // meridianos convergen en los polos, ajustamos la densidad por latitud
+      // multiplicando el paso de lon por 1/cos(lat) para densidad ~uniforme
+      // en la superficie de la esfera (evita cluster en los polos).
+      for (let lat = -80; lat <= 82; lat += GRID_STEP_DEG) {
+        const latRad = (lat * Math.PI) / 180;
+        // Paso de lon proporcional a 1/cos(lat) para densidad uniforme
+        // (a lat 60°, cos=0.5, así lon avanza el doble para el mismo arco).
+        const cosLat = Math.max(0.1, Math.cos(latRad));
+        const lonStep = GRID_STEP_DEG / cosLat;
+        for (let lon = -180; lon < 180; lon += lonStep) {
+          if (!isContinent(lat, lon)) continue;
+          const lonRad = (lon * Math.PI) / 180;
+          const sphereY = Math.sin(latRad);
+          const sphereR = Math.cos(latRad);
+          const sphereTheta = lonRad + Math.PI;
+          out.push(makeParticle(sphereTheta, sphereY, sphereR, true, S));
+        }
       }
       return out;
     };
@@ -547,33 +532,28 @@ export function TrianglesCanvas({ accent, hi }: {
         }
       }
 
-      // ── Partículas ──────────────────────────────────────────────────────
-      // Con densidad ALTA (1700 pts), los tamaños son PEQUEÑOS — típico de
-      // globos terráqueos "world-class": cada continente es una nube densa
-      // de puntitos que forman la silueta como pixel-art.
+      // ── Partículas — halftone style ─────────────────────────────────────
+      // Puntos MUY pequeños y uniformes, típico del look de globo corporativo
+      // world-class. Cada continente es una malla de miles de puntos idénticos
+      // como una imagen impresa en halftone. Cero shadow (evita saturación).
       const sorted = [...positions].sort((a, b) => a.worldZ - b.worldZ);
       sorted.forEach((n) => {
         const cerca = n.distMouse < dCerca;
-        // Tamaños compactos — la densidad total dibuja el continente, no cada punto por sí solo
-        const baseSize = 0.9 + 0.5 * n.depth;
-        // Boost sutil para tierra en globo
-        const landBoost = 1 + globeWeight * (n.isLand ? 0.35 : -0.65);
-        const size = cerca ? 3.0 : baseSize * n.sizeMul * landBoost;
+        // Tamaño uniforme, un pelín más grande al frente (perspectiva)
+        const baseSize = 0.85 + 0.35 * n.sizeMul;
+        const size = cerca ? 2.6 : baseSize;
         ctx.beginPath();
-        ctx.arc(n.x, n.y, Math.max(0.35, size), 0, Math.PI * 2);
+        ctx.arc(n.x, n.y, Math.max(0.4, size), 0, Math.PI * 2);
         if (cerca) {
           ctx.fillStyle = accent;
           ctx.shadowColor = accent;
-          ctx.shadowBlur = 6;
-        } else if (globeWeight > 0.5 && n.isLand) {
-          // Tierra: brillante, sin shadow (evita saturación con 1500+ pts)
-          ctx.fillStyle = toRgba(hi, 0.92 * n.depthAlpha);
-          ctx.shadowBlur = 0;
+          ctx.shadowBlur = 5;
         } else {
-          const globeAlpha = n.isLand ? 0.90 : 0.06;   // océano casi invisible
-          const logoAlpha = 0.55;
-          const baseAlpha = globeAlpha * globeWeight + logoAlpha * (1 - globeWeight);
-          ctx.fillStyle = toRgba(hi, baseAlpha * (0.55 + 0.45 * n.depth) * n.depthAlpha);
+          // Todos los puntos son tierra ahora → alpha alto con degradado por depth
+          const alpha = globeWeight > 0.5
+            ? 0.88 * n.depthAlpha                          // globo: puntos brillantes
+            : 0.55 * (0.55 + 0.45 * n.depth) * n.depthAlpha; // logo: más suave
+          ctx.fillStyle = toRgba(hi, alpha);
           ctx.shadowBlur = 0;
         }
         ctx.fill();
