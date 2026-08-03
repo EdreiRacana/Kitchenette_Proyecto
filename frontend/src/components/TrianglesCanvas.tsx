@@ -49,121 +49,83 @@ const PERSPECTIVE = 0.45;
 type ShapeKind = "globe" | "novamark";
 const SHAPE_CYCLE: ShapeKind[] = ["globe", "novamark"];
 
-// ── Contornos reales de los continentes (polígonos lat/lon) ──────────────
-// Cada continente definido como un polígono simple. Las partículas se
-// generan por rechazo: uniforme en la esfera y solo se conservan las que
-// caen DENTRO del polígono → el enjambre forma la silueta real, no un
-// blob difuso.
-const CONTINENTS: Array<[number, number][]> = [
-  // ÁFRICA — traza costa norte, cuerno, este, cabo, oeste
-  [[37, -6], [37, 10], [31, 22], [30, 30], [15, 40], [12, 42],
-   [-1, 42], [-10, 40], [-25, 33], [-35, 20], [-28, 15], [-15, 12],
-   [0, 9], [4, 8], [6, 3], [4, -8], [10, -15], [20, -17], [28, -12]],
-  // MADAGASCAR (rectangular simplificado)
-  [[-11, 51], [-25, 50], [-25, 43], [-11, 43]],
-  // SUDAMÉRICA — Guajira, Amazonia, cuerno sur, Tierra del Fuego, Chile
-  [[12, -72], [10, -60], [5, -52], [-5, -35], [-15, -39], [-25, -47],
-   [-33, -53], [-40, -63], [-52, -68], [-55, -70], [-45, -75], [-35, -73],
-   [-15, -76], [-3, -81], [7, -78]],
-  // NORTEAMÉRICA — Alaska, Ártico canadiense, Atlántico E, Florida, México
-  // continental. Costa del Pacífico va Chiapas → Acapulco → PV → Mazatlán →
-  // costa de Sonora (queda al ESTE del Golfo de California) → USA Arizona
-  // → Tijuana → costa oeste USA → Alaska. El Golfo de California queda
-  // como agua entre mainland y Baja (península separada abajo).
-  [[72, -155], [70, -140], [80, -95], [75, -75], [58, -63], [45, -60],
-   [40, -74], [28, -80], [24, -82], [18, -88], [8, -78], [15, -96],
-   [17, -101], [21, -106], [23, -107], [27, -110], [30, -111], [32, -114.5],
-   [33, -117.5], [48, -125], [58, -135], [60, -145], [65, -165], [70, -160]],
-  // BAJA CALIFORNIA (península separada por el Golfo de California)
-  // Traza costa oeste (Pacífico) desde Cabo hasta Tijuana, luego costa este
-  // (Golfo) hasta cerca de Cabo.
-  [[22.5, -110], [24, -111], [26, -113], [30, -116], [33, -117.5],
-   [33, -114.5], [30, -113.5], [26, -110.5], [24, -109.5]],
-  // GROENLANDIA
-  [[83, -30], [80, -20], [70, -22], [60, -45], [70, -55], [80, -60]],
-  // EUROPA — Escandinavia, Rusia W, Turquía, Mediterráneo, Iberia, UK, Noruega
-  [[71, 25], [69, 32], [60, 30], [55, 40], [50, 40], [45, 40],
-   [40, 30], [35, 27], [36, 22], [37, 15], [43, 8], [42, 3],
-   [36, -6], [43, -9], [50, -5], [55, -10], [58, -5], [64, 12], [70, 20]],
-  // ASIA — Siberia, Kamchatka, Japón (grouped), China, SE Asia, India, Medio Oriente
-  [[78, 60], [78, 100], [70, 140], [65, 172], [58, 162], [43, 145],
-   [36, 140], [33, 130], [30, 120], [22, 115], [20, 110], [10, 107],
-   [1, 104], [-5, 106], [6, 100], [12, 92], [15, 80], [8, 78],
-   [22, 68], [25, 60], [25, 55], [20, 55], [17, 42], [22, 39],
-   [30, 34], [36, 36], [40, 45], [45, 55], [55, 55], [65, 75]],
-  // AUSTRALIA — norte, Cape York, Great Barrier, Brisbane, Sydney,
-  // Melbourne, Adelaide, Perth, NW Cape, Darwin W
-  [[-11, 132], [-11, 143], [-16, 146], [-25, 153], [-33, 152],
-   [-38, 145], [-35, 138], [-32, 115], [-22, 114], [-13, 130]],
-  // NUEVA GUINEA
-  [[-1, 131], [-2, 141], [-8, 148], [-11, 142], [-8, 137], [-5, 133]],
-  // JAPÓN (islas — como polígono simple)
-  [[45, 141], [42, 145], [36, 141], [33, 133], [32, 130], [36, 138]],
-  // ANTÁRTIDA (banda sur simplificada)
-  [[-68, -180], [-68, 180], [-88, 180], [-88, -180]],
-];
+// ── Bitmap real de coastlines (Natural Earth 110m, rasterizado 180x90) ───
+// 180 cols × 90 rows = 16200 celdas, ~4791 tierra (29.6% — coincide con la
+// Tierra real). Cada celda 2° × 2°. Encoded como hex string (~4KB).
+// col 0 = -180°, col 179 = +178°; row 0 = 89° N, row 89 = -89° S.
+const WORLD_BITMAP_W = 180;
+const WORLD_BITMAP_H = 90;
+const WORLD_BITMAP_HEX =
+  "00000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+  "00000000000000000000000000000000000000000000000000000000000000000007f800ffc00000" +
+  "00000000000000000000000000000017ff3fffffe00000000000004000000000000000000061df0f" +
+  "fffff0000f8000000003c000000000000000030027c3ffffff800020000000000600000000000000" +
+  "00038afc007ffff00000000030007ffc001d80000000000e88b7b003fffe000000000c003ffffec0" +
+  "0000080180009fc33fc00fffa00000300041dffffffffffffe00ffffffffffffffffffffffe00fff" +
+  "1200000000000201fffffffffffffffffffffff800140020000000000000cfffffffffffffffffff" +
+  "ffff06140000000000000000000fffffffff8034078000003e7fffffffffffffffffff01fdffffff" +
+  "e01e0038000007e7ffffffffffffffff2f0007807ffffe01e4000000007e3ffffffffffffff82200" +
+  "001001fffff80fe000000182c7fffffffffffffe00f000080007fffff9ff8000003820ffffffffff" +
+  "ffffc00e000000007fffff9ffc000006cfffffffffffffffffc08000000003ffffffffc000000dff" +
+  "fffffffffffffff4000000000017ffffff460000007fffffffffffffffff400000000000fffffffc" +
+  "10000007ffffffffffffffffe400000000000fffffff600000007f7f97cffffffffffc0000000000" +
+  "00ffffffe00000007f19f03cffffffffff8c00000000000ffffffc00000003c26f7fe7ffffffffe0" +
+  "800000000000ffffff000000007c02dffe7fffffff8408000000000007fffff0000000018740ffe7" +
+  "fffffffe630000000000003fffff000000001fe022ffffffffffc4f0000000000001ffffc0000000" +
+  "03ff000ffffffffffc180000000000000ffff8000000007ffef7ffffffffffe0000000000000003f" +
+  "c04000000007ffffffdffffffffe0000000000000005f80400000001fffffefe7fffffffc0000000" +
+  "000000002f80000000001fffffe7f41ffffffc0000000000000000780c00000003ffffff7ff07fff" +
+  "ff20000000000000000786100000007ffffffbfe07fcff0000000000000000003cc020000003ffff" +
+  "ff9fe03f07e8000000000000000000fc000000003ffffff9f801e07f02000000000000000000f000" +
+  "000007ffffffde001c01f020000000000000000003000000003ffffffe8001c01f82000000000000" +
+  "00000010f0000003fffffff3000c013008000000000000000000aff000001fffffffe000a0120000" +
+  "000000000000000001ff800000fffffffe00020000080000000000000000001fff00000687ffffc0" +
+  "00002c1800000000000000000001fff80000001ffff800000143800000000000000000003fff8000" +
+  "0001ffff000000187a00000000000000000003fffe0000003fffe0000000c7818000000000000000" +
+  "003ffffc000001fffc00000006762b800000000000000007fffff000000fffc000000020101e0000" +
+  "0000000000003fffff800000fffc00000001c001f08000000000000001fffff000000fffc0000000" +
+  "00880d02000000000000001ffffe0000007ffc000000000000000000000000000000ffffe000000f" +
+  "ffc20000000001c400000000000000000ffffe000000fffc2000000000fc6004000000000000003f" +
+  "ffc000000fff8e000000001fe6000000000000000001fffc000000fff0e000000001ffe000000000" +
+  "000000001fffc0000007ff0c00000000ffff808000000000000001fff00000007ff0c00000001fff" +
+  "f800000000000000001ffc00000007fe0800000001ffffc00000000000000001ffc00000003fc000" +
+  "0000001ffffe00000000000000003ff800000003fc0000000001ffffe00000000000000003ff8000" +
+  "00001f80000000000ffffe00000000000000003ff000000001f00000000000f07fc0000000000000" +
+  "0003f8000000000000000000000801f800800000000000007fc000000000000000000000000f8004" +
+  "00000000000007e00000000000000000000000000000600000000000007a00000000000000000000" +
+  "000003000c00000000000003c0000000000000000000000000100180000000000000780000000000" +
+  "000000000000000000300000000000000780000000000000000000000000000000000000000000f0" +
+  "0000000000000000800000000000000000000000000e000000000000000000000000000000000000" +
+  "00000000700000000000000000000000000000000000000000000300000000000000000000000000" +
+  "00000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+  "00000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+  "00000000000000000000000000000000000000020000000000000000000000000000000000000000" +
+  "0000c00000000000001e00020ff9ffe000000000000000000c0000000000013fff87fffffffff000" +
+  "00000000000003e00000001ffffffff3fffffffffffc000000000038400f000001ffffffffffffff" +
+  "ffffffffe000000ffff4ffffc000007ffffffffffffffffffffff800001ffffffffe000001ffffff" +
+  "ffffffffffffffffff00004fffffffffe00070fffffffffffffffffffffffff000000fffffffffe0" +
+  "080ffffffffffffffffffffffffc000007fffffffffffffffffffffffffffffffffffffff80007fc" +
+  "00000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+  "00000000000000000000000000000000000000000000000000";
 
-/** Ray-casting point-in-polygon. Polígono en formato [[lat, lon], ...]. */
-function pointInPoly(lat: number, lon: number, poly: [number, number][]): boolean {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [yi, xi] = poly[i];
-    const [yj, xj] = poly[j];
-    const intersect = (yi > lat) !== (yj > lat)
-      && lon < ((xj - xi) * (lat - yi)) / (yj - yi + 1e-9) + xi;
-    if (intersect) inside = !inside;
+// Decodifica una sola vez a Uint8Array para lookup rápido.
+const WORLD_BITMAP = (() => {
+  const buf = new Uint8Array(WORLD_BITMAP_HEX.length / 2);
+  for (let i = 0; i < buf.length; i++) {
+    buf[i] = parseInt(WORLD_BITMAP_HEX.substr(i * 2, 2), 16);
   }
-  return inside;
-}
+  return buf;
+})();
 
-// Legacy: array vacío para no romper referencias que aún queden a LANDMASSES.
-const LANDMASSES: [number, number, number][] = [
-  // NORTEAMÉRICA — Alaska, Canadá, USA, México, Centroamérica
-  [68, -150, 12],  [65, -130, 14], [60, -110, 16], [55, -105, 18],
-  [50, -100, 18], [45, -90, 16],  [42, -75, 14],  [38, -85, 14],
-  [35, -100, 14], [30, -100, 12], [25, -100, 10], [22, -105, 8],
-  [17, -90, 8],
-  // Groenlandia
-  [75, -40, 10],   [70, -45, 12],
-  // SUDAMÉRICA — Venezuela, Brasil, Argentina, Chile, Perú
-  [8, -68, 12],    [0, -60, 15],   [-8, -55, 15],  [-15, -55, 14],
-  [-25, -55, 14],  [-30, -65, 12], [-40, -68, 9],  [-48, -72, 6],
-  [-55, -68, 4],
-  // EUROPA — más detalle: UK, Iberia, Balcanes, Escandinavia, Rusia oeste
-  [58, -3, 6],     [50, 5, 8],     [55, 15, 10],   [45, 12, 10],
-  [42, 18, 8],     [40, 25, 8],    [60, 15, 10],   [65, 25, 10],
-  [55, 35, 12],
-  // ÁFRICA — Sahara, Sahel, Congo, Sudáfrica
-  [30, 5, 10],     [25, 15, 12],   [20, 25, 12],   [15, 30, 12],
-  [10, 20, 12],    [5, 25, 12],    [0, 20, 12],    [-5, 22, 12],
-  [-15, 20, 12],   [-22, 25, 12],  [-30, 22, 8],
-  // Madagascar
-  [-20, 47, 5],
-  // ASIA — Siberia, Kazajstán, China, Corea, Japón, Medio Oriente
-  [60, 60, 14],    [65, 90, 14],   [65, 120, 12],  [60, 145, 10],
-  [50, 60, 12],    [50, 90, 14],   [45, 110, 12],  [45, 130, 10],
-  [40, 75, 12],    [40, 105, 12],  [35, 128, 6],   [37, 138, 5],
-  [35, 45, 10],    [30, 55, 8],    [28, 68, 10],
-  // India + subcontinente
-  [22, 78, 14],    [15, 78, 10],
-  // Sudeste asiático — Indochina, Indonesia, Filipinas
-  [15, 100, 10],   [10, 105, 8],   [5, 115, 8],    [0, 112, 8],
-  [-5, 120, 8],    [12, 122, 5],
-  // Nueva Guinea
-  [-6, 140, 8],
-  // AUSTRALIA
-  [-22, 122, 10],  [-25, 135, 12], [-28, 148, 10], [-35, 148, 6],
-  // Antártida
-  [-80, -60, 20],  [-80, 0, 20],   [-80, 60, 20],  [-80, 120, 20],
-  [-80, 180, 20],
-];
-
-/** ¿La partícula en (lat, lon) cae dentro de algún continente real? */
+/** ¿La partícula en (lat, lon) cae en tierra según el mapa mundial real? */
 function isContinent(lat: number, lon: number): boolean {
-  for (const poly of CONTINENTS) {
-    if (pointInPoly(lat, lon, poly)) return true;
-  }
-  return false;
+  if (lat > 89 || lat < -89) return false;
+  const col = Math.floor((lon + 179) / 2);
+  const row = Math.floor((89 - lat) / 2);
+  if (col < 0 || col >= WORLD_BITMAP_W || row < 0 || row >= WORLD_BITMAP_H) return false;
+  const idx = row * WORLD_BITMAP_W + col;
+  const byte = WORLD_BITMAP[idx >> 3];
+  return (byte & (1 << (7 - (idx & 7)))) !== 0;
 }
 
 /** Distancia del rayo desde el origen al perímetro del polígono NovaMark. */
@@ -450,6 +412,7 @@ export function TrianglesCanvas({ accent, hi }: {
       const positions: {
         x: number; y: number; distMouse: number; depth: number;
         depthAlpha: number; sizeMul: number; worldZ: number; isLand: boolean;
+        origIdx: number;
       }[] = [];
 
       for (let i = 0; i < particles.length; i++) {
@@ -501,18 +464,15 @@ export function TrianglesCanvas({ accent, hi }: {
         const depth = Math.max(0.35, 1 - (distC / (S * 0.7)) * 0.6);
         positions.push({
           x: xF, y: yF, distMouse: dm, depth, depthAlpha, sizeMul, worldZ,
-          isLand: p.isLand,
+          isLand: p.isLand, origIdx: i,
         });
       }
 
-      // ── Malla: líneas entre partículas cercanas ─────────────────────────
-      // Durante GLOBO: NO dibujar líneas (la densidad de puntos alone define
-      // los continentes, las líneas solo agregarían ruido con 1700 puntos).
-      // Durante LOGO: líneas cortas para reforzar la silueta del NovaMark.
-      // Durante HOVER: líneas cerca del cursor para el efecto interactivo.
+      // ── Malla: SOLO líneas cerca del cursor (hover). Sin líneas en globo
+      // ni logo — evita saturación con ~1850 puntos. La densidad los define.
       const dCerca = S * 0.4;
-      if (globeWeight < 0.5 || transicionRed > 0.15) {
-        const distMaxLineas = globeWeight > 0.5 ? S * 0.10 : S * 0.12;
+      if (transicionRed > 0.15) {
+        const distMaxLineas = S * 0.12;
         const distMaxSquared = distMaxLineas * distMaxLineas;
         for (let i = 0; i < positions.length; i++) {
           for (let j = i + 1; j < positions.length; j++) {
@@ -521,39 +481,30 @@ export function TrianglesCanvas({ accent, hi }: {
             const dy = n1.y - n2.y;
             const d2 = dx * dx + dy * dy;
             if (d2 >= distMaxSquared) continue;
-
-            const d = Math.sqrt(d2);
             const md = Math.min(n1.distMouse, n2.distMouse);
-            const cerca = md < dCerca;
-            // Fuera del hover, solo dibujamos en modo LOGO (globeWeight bajo)
-            if (!cerca && globeWeight > 0.5) continue;
+            if (md >= dCerca) continue;
             const depthAlphaAvg = (n1.depthAlpha + n2.depthAlpha) / 2;
-            const fadeByDist = 1 - d / distMaxLineas;
+            const inten = 1 - md / dCerca;
             ctx.beginPath();
             ctx.moveTo(n1.x, n1.y);
             ctx.lineTo(n2.x, n2.y);
-            if (cerca) {
-              const inten = 1 - md / dCerca;
-              ctx.strokeStyle = toRgba(accent, (0.30 + inten * 0.50) * depthAlphaAvg);
-              ctx.lineWidth = 1.2;
-            } else {
-              // Solo LOGO
-              ctx.strokeStyle = toRgba(accent, 0.28 * fadeByDist * depthAlphaAvg);
-              ctx.lineWidth = 0.9;
-            }
+            ctx.strokeStyle = toRgba(accent, (0.30 + inten * 0.50) * depthAlphaAvg);
+            ctx.lineWidth = 1.2;
             ctx.stroke();
           }
         }
       }
 
       // ── Partículas — halftone style ─────────────────────────────────────
-      // Puntos MUY pequeños y uniformes, típico del look de globo corporativo
-      // world-class. Cada continente es una malla de miles de puntos idénticos
-      // como una imagen impresa en halftone. Cero shadow (evita saturación).
+      // Puntos MUY pequeños y uniformes. En modo LOGO subsampleamos (solo
+      // cada 3ra partícula) para evitar la saturación que el usuario reportó
+      // con 1850 puntos amontonados en una silueta pequeña.
       const sorted = [...positions].sort((a, b) => a.worldZ - b.worldZ);
+      const logoMode = globeWeight < 0.5;
       sorted.forEach((n) => {
         const cerca = n.distMouse < dCerca;
-        // Tamaño uniforme, un pelín más grande al frente (perspectiva)
+        // Subsample en logo: dibuja solo si (índice original % 3 === 0)
+        if (logoMode && !cerca && (n.origIdx % 3) !== 0) return;
         const baseSize = 0.85 + 0.35 * n.sizeMul;
         const size = cerca ? 2.6 : baseSize;
         ctx.beginPath();
@@ -563,10 +514,9 @@ export function TrianglesCanvas({ accent, hi }: {
           ctx.shadowColor = accent;
           ctx.shadowBlur = 5;
         } else {
-          // Todos los puntos son tierra ahora → alpha alto con degradado por depth
           const alpha = globeWeight > 0.5
-            ? 0.88 * n.depthAlpha                          // globo: puntos brillantes
-            : 0.55 * (0.55 + 0.45 * n.depth) * n.depthAlpha; // logo: más suave
+            ? 0.88 * n.depthAlpha
+            : 0.55 * (0.55 + 0.45 * n.depth) * n.depthAlpha;
           ctx.fillStyle = toRgba(hi, alpha);
           ctx.shadowBlur = 0;
         }
