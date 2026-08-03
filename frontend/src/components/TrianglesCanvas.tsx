@@ -34,11 +34,12 @@ const NOVA_SHAPE: [number, number][] = NOVA_RAW.map(([x, y]) =>
 
 const SHAPE_HOLD_MS = 5500;
 const SHAPE_MORPH_MS = 1200;
-// Filosofía: MENOS puntos con MÁS contraste. Los continentes se leen por el
-// contraste (denso vs vacío), no por la cantidad total de puntos.
-const NUM_PARTICLES = 520;
-const TARGET_LAND = 460;               // 88% del total en tierra
-const TARGET_OCEAN = 60;               // 12% océano (solo backdrop mínimo)
+// Filosofía correcta: DENSIDAD ALTA de puntos PEQUEÑOS. Los globos terráqueos
+// de referencia (Datamaps, D3 globes, corporate visuals) usan ~1500-2500
+// puntitos que forman los continentes como pixel-art de alta resolución.
+const NUM_PARTICLES = 1700;
+const TARGET_LAND = 1550;               // 91% del total en tierra
+const TARGET_OCEAN = 150;               // 9% océano — muy tenue, backdrop
 const ROTATION_PERIOD_MS = 40000;
 const AXIS_TILT_DEG = 18;
 
@@ -506,72 +507,70 @@ export function TrianglesCanvas({ accent, hi }: {
       }
 
       // ── Malla: líneas entre partículas cercanas ─────────────────────────
-      // Durante el globo, SOLO líneas tierra-tierra en rango corto para
-      // que los continentes se lean como bloques cohesionados (no atravesar
-      // océanos). Durante el logo, todas las conexiones para silueta.
-      // Distancias distintas por modo — más generosas en globo para atar puntos cercanos de tierra.
-      const distMaxLineasLand = S * 0.10;    // corto — solo dentro del mismo continente
-      const distMaxLineasLogo = S * 0.14;
-      const distMaxLineas = globeWeight > 0.5 ? distMaxLineasLand : distMaxLineasLogo;
+      // Durante GLOBO: NO dibujar líneas (la densidad de puntos alone define
+      // los continentes, las líneas solo agregarían ruido con 1700 puntos).
+      // Durante LOGO: líneas cortas para reforzar la silueta del NovaMark.
+      // Durante HOVER: líneas cerca del cursor para el efecto interactivo.
       const dCerca = S * 0.4;
-      const distMaxSquared = distMaxLineas * distMaxLineas;
-      for (let i = 0; i < positions.length; i++) {
-        for (let j = i + 1; j < positions.length; j++) {
-          const n1 = positions[i], n2 = positions[j];
-          const dx = n1.x - n2.x;
-          const dy = n1.y - n2.y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 >= distMaxSquared) continue;
+      if (globeWeight < 0.5 || transicionRed > 0.15) {
+        const distMaxLineas = globeWeight > 0.5 ? S * 0.10 : S * 0.12;
+        const distMaxSquared = distMaxLineas * distMaxLineas;
+        for (let i = 0; i < positions.length; i++) {
+          for (let j = i + 1; j < positions.length; j++) {
+            const n1 = positions[i], n2 = positions[j];
+            const dx = n1.x - n2.x;
+            const dy = n1.y - n2.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 >= distMaxSquared) continue;
 
-          // Filtro globo: solo tierra-tierra
-          if (globeWeight > 0.5 && !(n1.isLand && n2.isLand)) continue;
-
-          const d = Math.sqrt(d2);
-          const md = Math.min(n1.distMouse, n2.distMouse);
-          const cerca = md < dCerca;
-          const depthAlphaAvg = (n1.depthAlpha + n2.depthAlpha) / 2;
-          const fadeByDist = 1 - d / distMaxLineas;
-          ctx.beginPath();
-          ctx.moveTo(n1.x, n1.y);
-          ctx.lineTo(n2.x, n2.y);
-          if (cerca) {
-            const inten = 1 - md / dCerca;
-            ctx.strokeStyle = toRgba(accent, (0.35 + inten * 0.55) * depthAlphaAvg);
-            ctx.lineWidth = 1.4;
-          } else {
-            // Líneas tierra-tierra en globo: más marcadas para tejer continentes
-            const baseAlpha = globeWeight > 0.5 ? 0.55 : 0.32;
-            ctx.strokeStyle = toRgba(accent, baseAlpha * fadeByDist * depthAlphaAvg);
-            ctx.lineWidth = globeWeight > 0.5 ? 1.1 : 1;
+            const d = Math.sqrt(d2);
+            const md = Math.min(n1.distMouse, n2.distMouse);
+            const cerca = md < dCerca;
+            // Fuera del hover, solo dibujamos en modo LOGO (globeWeight bajo)
+            if (!cerca && globeWeight > 0.5) continue;
+            const depthAlphaAvg = (n1.depthAlpha + n2.depthAlpha) / 2;
+            const fadeByDist = 1 - d / distMaxLineas;
+            ctx.beginPath();
+            ctx.moveTo(n1.x, n1.y);
+            ctx.lineTo(n2.x, n2.y);
+            if (cerca) {
+              const inten = 1 - md / dCerca;
+              ctx.strokeStyle = toRgba(accent, (0.30 + inten * 0.50) * depthAlphaAvg);
+              ctx.lineWidth = 1.2;
+            } else {
+              // Solo LOGO
+              ctx.strokeStyle = toRgba(accent, 0.28 * fadeByDist * depthAlphaAvg);
+              ctx.lineWidth = 0.9;
+            }
+            ctx.stroke();
           }
-          ctx.stroke();
         }
       }
 
-      // ── Partículas (ordenadas por profundidad Z para 3D real) ───────────
-      // CONTRASTE MÁXIMO en modo globo: tierra grande + brillante + con glow;
-      // océano MUY tenue (backdrop de estrellitas). El contraste es lo que
-      // hace visibles los continentes, no la cantidad total de puntos.
+      // ── Partículas ──────────────────────────────────────────────────────
+      // Con densidad ALTA (1700 pts), los tamaños son PEQUEÑOS — típico de
+      // globos terráqueos "world-class": cada continente es una nube densa
+      // de puntitos que forman la silueta como pixel-art.
       const sorted = [...positions].sort((a, b) => a.worldZ - b.worldZ);
       sorted.forEach((n) => {
         const cerca = n.distMouse < dCerca;
-        const baseSize = 1.4 + 0.9 * n.depth;
-        // Boost fuerte de tamaño para tierra durante globo
-        const landBoost = 1 + globeWeight * (n.isLand ? 0.9 : -0.55);
-        const size = cerca ? 3.4 : baseSize * n.sizeMul * landBoost;
+        // Tamaños compactos — la densidad total dibuja el continente, no cada punto por sí solo
+        const baseSize = 0.9 + 0.5 * n.depth;
+        // Boost sutil para tierra en globo
+        const landBoost = 1 + globeWeight * (n.isLand ? 0.35 : -0.65);
+        const size = cerca ? 3.0 : baseSize * n.sizeMul * landBoost;
         ctx.beginPath();
-        ctx.arc(n.x, n.y, Math.max(0.5, size), 0, Math.PI * 2);
+        ctx.arc(n.x, n.y, Math.max(0.35, size), 0, Math.PI * 2);
         if (cerca) {
           ctx.fillStyle = accent;
           ctx.shadowColor = accent;
-          ctx.shadowBlur = 8;
+          ctx.shadowBlur = 6;
         } else if (globeWeight > 0.5 && n.isLand) {
-          // Tierra: brillante + halo sutil para reforzar visibilidad
-          ctx.fillStyle = toRgba(hi, 0.95 * n.depthAlpha);
-          ctx.shadowColor = accent;
-          ctx.shadowBlur = 3.5;
+          // Tierra: brillante, sin shadow (evita saturación con 1500+ pts)
+          ctx.fillStyle = toRgba(hi, 0.92 * n.depthAlpha);
+          ctx.shadowBlur = 0;
         } else {
-          const globeAlpha = n.isLand ? 0.90 : 0.08;   // océano casi invisible
+          const globeAlpha = n.isLand ? 0.90 : 0.06;   // océano casi invisible
           const logoAlpha = 0.55;
           const baseAlpha = globeAlpha * globeWeight + logoAlpha * (1 - globeWeight);
           ctx.fillStyle = toRgba(hi, baseAlpha * (0.55 + 0.45 * n.depth) * n.depthAlpha);
