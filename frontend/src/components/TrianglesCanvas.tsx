@@ -48,11 +48,65 @@ const PERSPECTIVE = 0.45;
 type ShapeKind = "globe" | "novamark";
 const SHAPE_CYCLE: ShapeKind[] = ["globe", "novamark"];
 
-// ── Máscara aproximada de continentes ─────────────────────────────────────
-// Cada entrada: [latitud, longitud, radio_angular_deg] representa un "blob"
-// terrestre. La unión de estos blobs bosqueja los continentes de forma
-// reconocible: partículas dentro de algún blob se marcan como "continente"
-// y se pintan brillantes; el resto (océano) queda tenue.
+// ── Contornos reales de los continentes (polígonos lat/lon) ──────────────
+// Cada continente definido como un polígono simple. Las partículas se
+// generan por rechazo: uniforme en la esfera y solo se conservan las que
+// caen DENTRO del polígono → el enjambre forma la silueta real, no un
+// blob difuso.
+const CONTINENTS: Array<[number, number][]> = [
+  // ÁFRICA — traza costa norte, cuerno, este, cabo, oeste
+  [[37, -6], [37, 10], [31, 22], [30, 30], [15, 40], [12, 42],
+   [-1, 42], [-10, 40], [-25, 33], [-35, 20], [-28, 15], [-15, 12],
+   [0, 9], [4, 8], [6, 3], [4, -8], [10, -15], [20, -17], [28, -12]],
+  // MADAGASCAR (rectangular simplificado)
+  [[-11, 51], [-25, 50], [-25, 43], [-11, 43]],
+  // SUDAMÉRICA — Guajira, Amazonia, cuerno sur, Tierra del Fuego, Chile
+  [[12, -72], [10, -60], [5, -52], [-5, -35], [-15, -39], [-25, -47],
+   [-33, -53], [-40, -63], [-52, -68], [-55, -70], [-45, -75], [-35, -73],
+   [-15, -76], [-3, -81], [7, -78]],
+  // NORTEAMÉRICA — Alaska, Ártico canadiense, Atlántico E, Florida, México, Pacífico
+  [[72, -155], [70, -140], [80, -95], [75, -75], [58, -63], [45, -60],
+   [40, -74], [28, -80], [24, -82], [18, -88], [8, -78], [15, -95],
+   [23, -110], [32, -117], [48, -125], [58, -135], [60, -145], [65, -165],
+   [70, -160]],
+  // GROENLANDIA
+  [[83, -30], [80, -20], [70, -22], [60, -45], [70, -55], [80, -60]],
+  // EUROPA — Escandinavia, Rusia W, Turquía, Mediterráneo, Iberia, UK, Noruega
+  [[71, 25], [69, 32], [60, 30], [55, 40], [50, 40], [45, 40],
+   [40, 30], [35, 27], [36, 22], [37, 15], [43, 8], [42, 3],
+   [36, -6], [43, -9], [50, -5], [55, -10], [58, -5], [64, 12], [70, 20]],
+  // ASIA — Siberia, Kamchatka, Japón (grouped), China, SE Asia, India, Medio Oriente
+  [[78, 60], [78, 100], [70, 140], [65, 172], [58, 162], [43, 145],
+   [36, 140], [33, 130], [30, 120], [22, 115], [20, 110], [10, 107],
+   [1, 104], [-5, 106], [6, 100], [12, 92], [15, 80], [8, 78],
+   [22, 68], [25, 60], [25, 55], [20, 55], [17, 42], [22, 39],
+   [30, 34], [36, 36], [40, 45], [45, 55], [55, 55], [65, 75]],
+  // AUSTRALIA — norte, Cape York, Great Barrier, Brisbane, Sydney,
+  // Melbourne, Adelaide, Perth, NW Cape, Darwin W
+  [[-11, 132], [-11, 143], [-16, 146], [-25, 153], [-33, 152],
+   [-38, 145], [-35, 138], [-32, 115], [-22, 114], [-13, 130]],
+  // NUEVA GUINEA
+  [[-1, 131], [-2, 141], [-8, 148], [-11, 142], [-8, 137], [-5, 133]],
+  // JAPÓN (islas — como polígono simple)
+  [[45, 141], [42, 145], [36, 141], [33, 133], [32, 130], [36, 138]],
+  // ANTÁRTIDA (banda sur simplificada)
+  [[-68, -180], [-68, 180], [-88, 180], [-88, -180]],
+];
+
+/** Ray-casting point-in-polygon. Polígono en formato [[lat, lon], ...]. */
+function pointInPoly(lat: number, lon: number, poly: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [yi, xi] = poly[i];
+    const [yj, xj] = poly[j];
+    const intersect = (yi > lat) !== (yj > lat)
+      && lon < ((xj - xi) * (lat - yi)) / (yj - yi + 1e-9) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+// Legacy: array vacío para no romper referencias que aún queden a LANDMASSES.
 const LANDMASSES: [number, number, number][] = [
   // NORTEAMÉRICA — Alaska, Canadá, USA, México, Centroamérica
   [68, -150, 12],  [65, -130, 14], [60, -110, 16], [55, -105, 18],
@@ -94,19 +148,10 @@ const LANDMASSES: [number, number, number][] = [
   [-80, 180, 20],
 ];
 
-/** Distancia angular (great-circle) entre dos puntos (grados). */
-function greatCircleDeg(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const φ1 = toRad(lat1), φ2 = toRad(lat2);
-  const Δλ = toRad(lon2 - lon1);
-  const cosD = Math.sin(φ1) * Math.sin(φ2) + Math.cos(φ1) * Math.cos(φ2) * Math.cos(Δλ);
-  return (Math.acos(Math.max(-1, Math.min(1, cosD))) * 180) / Math.PI;
-}
-
-/** ¿La partícula en (lat, lon) cae dentro de algún blob terrestre? */
+/** ¿La partícula en (lat, lon) cae dentro de algún continente real? */
 function isContinent(lat: number, lon: number): boolean {
-  for (const [bl, bo, r] of LANDMASSES) {
-    if (greatCircleDeg(lat, lon, bl, bo) < r) return true;
+  for (const poly of CONTINENTS) {
+    if (pointInPoly(lat, lon, poly)) return true;
   }
   return false;
 }
@@ -189,48 +234,42 @@ export function TrianglesCanvas({ accent, hi }: {
       const S = logoScale();
       const out: Particle[] = [];
 
-      // ── (A) TIERRA: sampleados DENTRO de los blobs de LANDMASSES.
-      // Cada blob aporta puntos proporcionales a su radio² (blobs grandes
-      // → más puntos, densidad uniforme por área).
-      const landTotalWeight = LANDMASSES.reduce((a, [, , r]) => a + r * r, 0);
-      for (const [blat, blon, brad] of LANDMASSES) {
-        const nHere = Math.max(1, Math.round(TARGET_LAND * (brad * brad) / landTotalWeight));
-        for (let k = 0; k < nHere; k++) {
-          // Muestreo dentro del casquete esférico de radio `brad` alrededor
-          // de (blat, blon). Uniforme dentro del disco angular.
-          const u = Math.random();
-          const angDist = Math.sqrt(u) * brad;       // 0..brad grados
-          const bearing = Math.random() * 2 * Math.PI;
-          // Desplazamiento en lat/lon (aprox — bien para blobs pequeños)
-          const dLat = angDist * Math.cos(bearing);
-          const dLon = angDist * Math.sin(bearing) / Math.max(0.15, Math.cos(blat * Math.PI / 180));
-          const lat = Math.max(-89, Math.min(89, blat + dLat));
-          const lon = ((blon + dLon + 540) % 360) - 180;
-          // A esfera
-          const latRad = lat * Math.PI / 180;
-          const lonRad = lon * Math.PI / 180;
-          const sphereY = Math.sin(latRad);
-          const sphereR = Math.cos(latRad);
-          const sphereTheta = lonRad + Math.PI;      // origen en lon=-180
-
-          out.push(makeParticle(sphereTheta, sphereY, sphereR, true, S));
-        }
-      }
-
-      // ── (B) OCÉANO: uniformes en la esfera, saltando los que caen en
-      // tierra (para no duplicar densidad continental).
-      let oceanAdded = 0;
-      let attempts = 0;
-      while (oceanAdded < TARGET_OCEAN && attempts < 8000) {
-        attempts++;
+      // Función auxiliar: sample uniforme en la esfera, evalúa si es tierra
+      // y construye la partícula. La distribución esférica uniforme SE HACE
+      // por z uniforme + theta uniforme (sin concentración en polos).
+      const sampleOne = (): { sphereY: number; sphereR: number;
+                                sphereTheta: number; lat: number; lon: number } => {
         const sphereY = 2 * Math.random() - 1;
         const sphereR = Math.sqrt(Math.max(0, 1 - sphereY * sphereY));
         const sphereTheta = Math.random() * Math.PI * 2;
-        const lat = Math.asin(sphereY) * 180 / Math.PI;
+        const lat = (Math.asin(sphereY) * 180) / Math.PI;
         const lon = ((sphereTheta * 180 / Math.PI + 180) % 360) - 180;
-        if (isContinent(lat, lon)) continue;
-        out.push(makeParticle(sphereTheta, sphereY, sphereR, false, S));
-        oceanAdded++;
+        return { sphereY, sphereR, sphereTheta, lat, lon };
+      };
+
+      // ── (A) TIERRA: rechazo puro. Sampleamos hasta obtener TARGET_LAND
+      // puntos dentro de algún continente. Como la tierra es ~29% del área
+      // esférica, necesitamos ~460/0.29 ≈ 1600 samples. Presupuesto amplio
+      // por si algunos polígonos son pequeños.
+      let landCount = 0;
+      let attempts = 0;
+      while (landCount < TARGET_LAND && attempts < 30000) {
+        attempts++;
+        const s = sampleOne();
+        if (!isContinent(s.lat, s.lon)) continue;
+        out.push(makeParticle(s.sphereTheta, s.sphereY, s.sphereR, true, S));
+        landCount++;
+      }
+
+      // ── (B) OCÉANO: mismo rechazo pero al revés (solo aguas).
+      let oceanCount = 0;
+      attempts = 0;
+      while (oceanCount < TARGET_OCEAN && attempts < 5000) {
+        attempts++;
+        const s = sampleOne();
+        if (isContinent(s.lat, s.lon)) continue;
+        out.push(makeParticle(s.sphereTheta, s.sphereY, s.sphereR, false, S));
+        oceanCount++;
       }
       return out;
     };
