@@ -32,8 +32,8 @@ const NOVA_SHAPE: [number, number][] = NOVA_RAW.map(([x, y]) =>
   [x / NOVA_MAX_R, y / NOVA_MAX_R] as [number, number],
 );
 
-const SHAPE_HOLD_MS = 8000;                  // más tiempo para apreciar cada figura
-const SHAPE_MORPH_MS = 1200;
+const SHAPE_HOLD_MS = 9000;                  // 1s más por figura
+const SHAPE_MORPH_MS = 2200;                 // transición notoriamente más lenta
 // Filosofía halftone/pixel-art: puntos en CUADRÍCULA REGULAR cada 2.5° de
 // lat/lon (no aleatorios). Solo se dibujan los que caen en tierra. Esto
 // produce el look "impreso" de globos corporativos world-class donde los
@@ -65,11 +65,20 @@ const CONTINENTS: Array<[number, number][]> = [
   [[12, -72], [10, -60], [5, -52], [-5, -35], [-15, -39], [-25, -47],
    [-33, -53], [-40, -63], [-52, -68], [-55, -70], [-45, -75], [-35, -73],
    [-15, -76], [-3, -81], [7, -78]],
-  // NORTEAMÉRICA — Alaska, Ártico canadiense, Atlántico E, Florida, México, Pacífico
+  // NORTEAMÉRICA — Alaska, Ártico canadiense, Atlántico E, Florida, México
+  // continental. Costa del Pacífico va Chiapas → Acapulco → PV → Mazatlán →
+  // costa de Sonora (queda al ESTE del Golfo de California) → USA Arizona
+  // → Tijuana → costa oeste USA → Alaska. El Golfo de California queda
+  // como agua entre mainland y Baja (península separada abajo).
   [[72, -155], [70, -140], [80, -95], [75, -75], [58, -63], [45, -60],
-   [40, -74], [28, -80], [24, -82], [18, -88], [8, -78], [15, -95],
-   [23, -110], [32, -117], [48, -125], [58, -135], [60, -145], [65, -165],
-   [70, -160]],
+   [40, -74], [28, -80], [24, -82], [18, -88], [8, -78], [15, -96],
+   [17, -101], [21, -106], [23, -107], [27, -110], [30, -111], [32, -114.5],
+   [33, -117.5], [48, -125], [58, -135], [60, -145], [65, -165], [70, -160]],
+  // BAJA CALIFORNIA (península separada por el Golfo de California)
+  // Traza costa oeste (Pacífico) desde Cabo hasta Tijuana, luego costa este
+  // (Golfo) hasta cerca de Cabo.
+  [[22.5, -110], [24, -111], [26, -113], [30, -116], [33, -117.5],
+   [33, -114.5], [30, -113.5], [26, -110.5], [24, -109.5]],
   // GROENLANDIA
   [[83, -30], [80, -20], [70, -22], [60, -45], [70, -55], [80, -60]],
   // EUROPA — Escandinavia, Rusia W, Turquía, Mediterráneo, Iberia, UK, Noruega
@@ -401,11 +410,14 @@ export function TrianglesCanvas({ accent, hi }: {
         if (kind === "globe") {
           // GLOBO — punto fijo en la esfera, rotado sobre Y (spin) y luego
           // inclinado sobre eje Z (tilt tipo Tierra) para efecto premium.
+          // IMPORTANTE: sphereY (=sin(lat)) sigue convención matemática
+          // (norte positivo), pero canvas tiene y+ hacia ABAJO. Invertimos
+          // aquí en el eje Y para que el norte aparezca ARRIBA en pantalla.
           const baseX = p.sphereR * Math.cos(p.sphereTheta);
           const baseZ = p.sphereR * Math.sin(p.sphereTheta);
           const spunX = baseX * cosR + baseZ * sinR;
           const spunZ = -baseX * sinR + baseZ * cosR;
-          const spunY = p.sphereY;
+          const spunY = -p.sphereY;    // ← norte arriba en canvas
           // Rotación en plano XY (tilt): x' = x·cosT - y·sinT ; y' = x·sinT + y·cosT
           return {
             x: spunX * cosT - spunY * sinT,
@@ -451,7 +463,9 @@ export function TrianglesCanvas({ accent, hi }: {
           y: posFrom.y + (posTo.y - posFrom.y) * morph,
           z: posFrom.z + (posTo.z - posFrom.z) * morph,
         };
-        // Escalar al canvas
+        // Escalar al canvas (la inversión Y de la esfera se hace dentro
+        // de computeShape solo para el globo; el logo ya usa convención
+        // canvas por naturaleza).
         const worldX = world.x * SHAPE_RADIUS * S;
         const worldY = world.y * SHAPE_RADIUS * S;
         const worldZ = world.z * SHAPE_RADIUS * S;
