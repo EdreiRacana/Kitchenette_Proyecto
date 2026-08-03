@@ -181,49 +181,45 @@ def build_receipt_pdf(
     HDR_GREY = "#64748B"    # slate-500
 
     # ═══════════════════════════════════════════════════════════════════════
-    # HEADER — Capa gris translúcida (~10% opacidad), sin colores de marca
+    # HEADER — Compacto, tipografía reducida a estándar profesional
     # ═══════════════════════════════════════════════════════════════════════
-    HDR_H = 34 * mm
+    HDR_H = 24 * mm                              # antes 34mm — más compacto
     hdr_y = H - HDR_H
 
     # Fondo gris uniforme translúcido (10% opaco = 90% traslúcido)
-    c.setFillColor(_alpha(HDR_GREY, 0.10))
+    c.setFillColor(_alpha(HDR_GREY, 0.08))
     c.rect(0, hdr_y, W, HDR_H, fill=1, stroke=0)
 
     # Línea sutil de separación abajo del header
     c.setStrokeColor(_alpha(HDR_GREY, 0.30))
-    c.setLineWidth(0.6)
+    c.setLineWidth(0.5)
     c.line(0, hdr_y, W, hdr_y)
 
-    # Fondo blanco opaco redondeado detrás del logo — evita que logos con
-    # fondo transparente o colores claros se laven contra el header gris.
-    # Solo se dibuja si hay logo; si no, se omite para no crear un hueco vacío.
-    LOGO_BOX_W, LOGO_BOX_H = 26 * mm, HDR_H - 8 * mm
-    LOGO_X, LOGO_Y = 12 * mm, hdr_y + 4 * mm
+    # Fondo blanco opaco redondeado detrás del logo
+    LOGO_BOX_W, LOGO_BOX_H = 18 * mm, HDR_H - 6 * mm
+    LOGO_X, LOGO_Y = 12 * mm, hdr_y + 3 * mm
     if company.get("logo_bytes"):
-        # Rectángulo blanco un poco más grande que el box del logo, con
-        # esquinas redondeadas y borde muy sutil gris. Fondo 100% opaco.
-        pad = 2 * mm
+        pad = 1.5 * mm
         c.setFillColor(colors.white)
         c.setStrokeColor(_alpha(HDR_GREY, 0.25))
         c.setLineWidth(0.4)
         c.roundRect(LOGO_X - pad, LOGO_Y - pad,
                     LOGO_BOX_W + 2 * pad, LOGO_BOX_H + 2 * pad,
-                    3, stroke=1, fill=1)
+                    2.5, stroke=1, fill=1)
 
     logo_w = _draw_logo(
         c, company.get("logo_bytes"),
         x=LOGO_X, y_bottom=LOGO_Y,
         box_w=LOGO_BOX_W, box_h=LOGO_BOX_H,
     )
-    text_x = 12 * mm + (logo_w + 8 * mm if logo_w > 0 else 0)
+    text_x = 12 * mm + (logo_w + 6 * mm if logo_w > 0 else 0)
 
     company_name_str = (company.get("commercial_name") or company.get("name") or "EMPRESA").upper()
 
-    # Nombre / razón social en gris oscuro (visible sobre el fondo tenue)
+    # Nombre / razón social — reducido de 15pt a 11pt
     c.setFillColor(colors.HexColor(SLATE_700))
-    c.setFont("Helvetica-Bold", 15)
-    c.drawString(text_x, hdr_y + HDR_H - 12 * mm, company_name_str[:60])
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(text_x, hdr_y + HDR_H - 8 * mm, company_name_str[:60])
 
     if (company.get("commercial_name") and company.get("name")
             and company["commercial_name"] != company["name"]):
@@ -241,22 +237,21 @@ def build_receipt_pdf(
         contact_parts.append(company["email"])
     if company.get("phone"):
         contact_parts.append(f"Tel. {company['phone']}")
-    c.setFont("Helvetica", 8)
+    c.setFont("Helvetica", 6.8)
     c.setFillColor(colors.HexColor(SLATE_600))
     contact_line = "  ·  ".join(contact_parts)
     if contact_line:
-        c.drawString(text_x, hdr_y + 4 * mm, contact_line[:150])
+        c.drawString(text_x, hdr_y + 3 * mm, contact_line[:150])
 
-    # Título derecha — mismo gris institucional
+    # Título derecha — reducido de 13pt a 10.5pt
     c.setFillColor(colors.HexColor(SLATE_700))
-    c.setFont("Helvetica-Bold", 13)
-    c.drawRightString(W - 12 * mm, hdr_y + HDR_H - 12 * mm, "RECIBO DE NÓMINA")
+    c.setFont("Helvetica-Bold", 10.5)
+    c.drawRightString(W - 12 * mm, hdr_y + HDR_H - 8 * mm, "RECIBO DE NÓMINA")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # SUBFILA DEBAJO DEL HEADER — Tipo · Folio · Fecha pago
-    # (antes estaba encimada dentro del header)
+    # SUBFILA DEBAJO DEL HEADER — Tipo · Folio
     # ═══════════════════════════════════════════════════════════════════════
-    sub_y = hdr_y - 8 * mm
+    sub_y = hdr_y - 6 * mm
     kind = period.get("kind", "regular")
     kind_label = {
         "regular": "Ordinaria",
@@ -265,41 +260,40 @@ def build_receipt_pdf(
         "finiquito": "Finiquito",
     }.get(kind, kind.title())
 
-    # Chip a la izquierda con "Tipo" — solo borde exterior gris, sin fondo
-    chip_w = 42 * mm
+    # Chip TIPO reducido
+    chip_w = 34 * mm
     _rounded_border_box(
-        c, x=12 * mm, y_bottom=sub_y - 1.5 * mm, w=chip_w, h=6.5 * mm,
-        radius=2.5, border_color=_alpha(HDR_GREY, 0.55),
+        c, x=12 * mm, y_bottom=sub_y - 1.2 * mm, w=chip_w, h=5 * mm,
+        radius=2, border_color=_alpha(HDR_GREY, 0.55),
         fill_color=None,
     )
     c.setFillColor(colors.HexColor(SLATE_700))
-    c.setFont("Helvetica-Bold", 8)
-    c.drawString(12 * mm + 3 * mm, sub_y + 0.7 * mm, "TIPO")
+    c.setFont("Helvetica-Bold", 6.8)
+    c.drawString(12 * mm + 2.5 * mm, sub_y + 0.5 * mm, "TIPO")
     c.setFillColor(colors.HexColor(SLATE_700))
-    c.setFont("Helvetica", 9)
-    c.drawString(12 * mm + 15 * mm, sub_y + 0.7 * mm, kind_label)
+    c.setFont("Helvetica", 7.8)
+    c.drawString(12 * mm + 12 * mm, sub_y + 0.5 * mm, kind_label)
 
-    # Folio (nombre del período) a la derecha
+    # Folio a la derecha
     c.setFillColor(colors.HexColor(SLATE_500))
-    c.setFont("Helvetica", 8)
-    c.drawRightString(W - 12 * mm, sub_y + 3 * mm, "FOLIO INTERNO")
+    c.setFont("Helvetica", 6.8)
+    c.drawRightString(W - 12 * mm, sub_y + 2.5 * mm, "FOLIO INTERNO")
     c.setFillColor(colors.HexColor(SLATE_700))
-    c.setFont("Helvetica-Bold", 9.5)
+    c.setFont("Helvetica-Bold", 8)
     c.drawRightString(W - 12 * mm, sub_y - 1 * mm, _safe(period.get("name"))[:60])
 
-    y = sub_y - 12 * mm
+    y = sub_y - 10 * mm
 
     # ═══════════════════════════════════════════════════════════════════════
     # SECCIÓN: Datos del empleado y período
     # ═══════════════════════════════════════════════════════════════════════
     def _section_title(txt: str, yy: float):
-        # Título en gris institucional (mismo tono del header, no color de marca)
         c.setFillColor(colors.HexColor(SLATE_700))
-        c.setFont("Helvetica-Bold", 9.5)
+        c.setFont("Helvetica-Bold", 8)   # reducido de 9.5pt
         c.drawString(12 * mm, yy, txt.upper())
         c.setStrokeColor(_alpha(HDR_GREY, 0.35))
-        c.setLineWidth(0.5)
-        c.line(12 * mm, yy - 1.5 * mm, W - 12 * mm, yy - 1.5 * mm)
+        c.setLineWidth(0.4)
+        c.line(12 * mm, yy - 1.2 * mm, W - 12 * mm, yy - 1.2 * mm)
 
     _section_title("Datos del empleado y período", y)
     y -= 6 * mm
@@ -323,8 +317,8 @@ def build_receipt_pdf(
         ("Días faltas", f"{detail.get('days_absent', 0):g}"),
     ]
 
-    row_h = 4.5 * mm
-    label_col_w = 32 * mm
+    row_h = 3.8 * mm
+    label_col_w = 28 * mm
     left_x = 12 * mm
     right_x = W / 2 + 4 * mm
 
@@ -332,19 +326,19 @@ def build_receipt_pdf(
         yy = y - i * row_h
         if i < len(info_left):
             c.setFillColor(colors.HexColor(SLATE_500))
-            c.setFont("Helvetica", 8)
+            c.setFont("Helvetica", 6.8)
             c.drawString(left_x, yy, info_left[i][0])
             c.setFillColor(colors.HexColor(SLATE_700))
-            c.setFont("Helvetica-Bold", 9)
+            c.setFont("Helvetica-Bold", 7.8)
             c.drawString(left_x + label_col_w, yy, info_left[i][1])
         if i < len(info_right):
             c.setFillColor(colors.HexColor(SLATE_500))
-            c.setFont("Helvetica", 8)
+            c.setFont("Helvetica", 6.8)
             c.drawString(right_x, yy, info_right[i][0])
             c.setFillColor(colors.HexColor(SLATE_700))
-            c.setFont("Helvetica-Bold", 9)
+            c.setFont("Helvetica-Bold", 7.8)
             c.drawString(right_x + label_col_w, yy, info_right[i][1])
-    y -= max(len(info_left), len(info_right)) * row_h + 6 * mm
+    y -= max(len(info_left), len(info_right)) * row_h + 5 * mm
 
     # ═══════════════════════════════════════════════════════════════════════
     # TABLAS de percepciones y deducciones
@@ -393,30 +387,30 @@ def build_receipt_pdf(
         style = TableStyle([
             # Header — sin fondo, solo texto colorido y negrita
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 9),
+            ("FONTSIZE", (0, 0), (-1, 0), 7.5),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(color_hex)),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-            ("TOPPADDING", (0, 0), (-1, 0), 8),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.6, _alpha(color_hex, 0.35)),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 4),
+            ("TOPPADDING", (0, 0), (-1, 0), 5),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.5, _alpha(color_hex, 0.35)),
             ("ALIGN", (1, 0), (1, 0), "RIGHT"),
             # Cuerpo
             ("FONTNAME", (0, 1), (-1, -2), "Helvetica"),
-            ("FONTSIZE", (0, 1), (-1, -1), 8.5),
+            ("FONTSIZE", (0, 1), (-1, -1), 7.2),
             ("TEXTCOLOR", (0, 1), (0, -2), colors.HexColor(SLATE_700)),
             ("TEXTCOLOR", (1, 1), (1, -2), colors.HexColor(SLATE_900)),
             ("ALIGN", (1, 0), (1, -1), "RIGHT"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("BOTTOMPADDING", (0, 1), (-1, -2), 4.5),
-            ("TOPPADDING", (0, 1), (-1, -2), 4.5),
-            ("LEFTPADDING", (0, 0), (-1, -1), 12),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+            ("BOTTOMPADDING", (0, 1), (-1, -2), 3),
+            ("TOPPADDING", (0, 1), (-1, -2), 3),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
             # Total — separado con línea sutil, texto en color
-            ("LINEABOVE", (0, -1), (-1, -1), 0.7, _alpha(color_hex, 0.40)),
+            ("LINEABOVE", (0, -1), (-1, -1), 0.6, _alpha(color_hex, 0.40)),
             ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (0, -1), (-1, -1), 9.5),
+            ("FONTSIZE", (0, -1), (-1, -1), 8),
             ("TEXTCOLOR", (0, -1), (-1, -1), colors.HexColor(color_hex)),
-            ("TOPPADDING", (0, -1), (-1, -1), 7),
-            ("BOTTOMPADDING", (0, -1), (-1, -1), 8),
+            ("TOPPADDING", (0, -1), (-1, -1), 4.5),
+            ("BOTTOMPADDING", (0, -1), (-1, -1), 5),
         ])
         # Sin filas alternas — solo texto sobre transparente
         tbl.setStyle(style)
@@ -442,13 +436,13 @@ def build_receipt_pdf(
     )
     tbl_perc.drawOn(c, tbl_x_perc, y - h_perc)
     tbl_ded.drawOn(c, tbl_x_ded, y - h_ded)
-    y -= table_h + 8 * mm
+    y -= table_h + 6 * mm
 
     # ═══════════════════════════════════════════════════════════════════════
     # NETO A DEPOSITAR — patrón de puntos anti-falsificación + borde sólido
     # ═══════════════════════════════════════════════════════════════════════
     neto = float(detail.get("total_net", 0.0))
-    neto_h = 17 * mm
+    neto_h = 13 * mm
     neto_x = 12 * mm
     neto_w = W - 24 * mm
 
@@ -480,38 +474,38 @@ def build_receipt_pdf(
 
     # Acento vertical izquierdo (barra sólida) — sobrepintado encima de los puntos
     c.setFillColor(colors.HexColor(GREEN))
-    c.roundRect(neto_x, y - neto_h, 3.2 * mm, neto_h, 1.5, stroke=0, fill=1)
+    c.roundRect(neto_x, y - neto_h, 2.4 * mm, neto_h, 1.2, stroke=0, fill=1)
 
     # Texto — se dibuja al final para que quede sobre los puntos y sea legible
     c.setFillColor(colors.HexColor(GREEN))
-    c.setFont("Helvetica-Bold", 11.5)
-    c.drawString(21 * mm, y - 7 * mm, "NETO A DEPOSITAR")
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawString(18 * mm, y - 5.5 * mm, "NETO A DEPOSITAR")
     c.setFillColor(colors.HexColor(SLATE_500))
-    c.setFont("Helvetica", 8)
-    c.drawString(21 * mm, y - 12 * mm, "Cantidad transferida al trabajador")
+    c.setFont("Helvetica", 6.5)
+    c.drawString(18 * mm, y - 9.5 * mm, "Cantidad transferida al trabajador")
     c.setFillColor(colors.HexColor(GREEN))
-    c.setFont("Helvetica-Bold", 20)
-    c.drawRightString(W - 18 * mm, y - 11 * mm, _money(neto))
-    y -= neto_h + 6 * mm
+    c.setFont("Helvetica-Bold", 15)
+    c.drawRightString(W - 15 * mm, y - 8.5 * mm, _money(neto))
+    y -= neto_h + 5 * mm
 
     # ═══════════════════════════════════════════════════════════════════════
     # Método de pago + cargas del patrón
     # ═══════════════════════════════════════════════════════════════════════
     c.setFillColor(colors.HexColor(SLATE_500))
-    c.setFont("Helvetica", 8)
+    c.setFont("Helvetica", 6.8)
     c.drawString(12 * mm, y, "Método de pago")
     c.setFillColor(colors.HexColor(SLATE_700))
-    c.setFont("Helvetica-Bold", 9)
+    c.setFont("Helvetica-Bold", 7.5)
     bank = employee.get("bank") or "—"
     clabe = employee.get("clabe") or "—"
-    c.drawString(12 * mm + 22 * mm, y,
+    c.drawString(12 * mm + 20 * mm, y,
                     f"Transferencia electrónica — {bank}  ·  CLABE: {clabe}")
-    y -= 6 * mm
+    y -= 5 * mm
 
     _section_title("Cargas del patrón (informativas — no afectan el neto)", y)
-    y -= 5.5 * mm
+    y -= 4.5 * mm
     c.setFillColor(colors.HexColor(SLATE_700))
-    c.setFont("Helvetica", 8.5)
+    c.setFont("Helvetica", 7.2)
     patronal = [
         f"IMSS patronal: {_money(detail.get('imss_employer', 0.0))}",
         f"INFONAVIT patronal (5% SBC): {_money(detail.get('infonavit_employer', 0.0))}",
@@ -521,60 +515,60 @@ def build_receipt_pdf(
         patronal.append(f"Impuesto sobre nómina estatal (ISN): {_money(isn)}")
     for line in patronal:
         c.drawString(12 * mm, y, line)
-        y -= 4 * mm
+        y -= 3.3 * mm
 
     # Notas del capturista
     note = (detail.get("notes") or "").strip()
     if note:
-        y -= 2 * mm
+        y -= 1.5 * mm
         c.setFillColor(colors.HexColor(brand))
-        c.setFont("Helvetica-Bold", 8.5)
+        c.setFont("Helvetica-Bold", 7.2)
         c.drawString(12 * mm, y, "Notas:")
-        y -= 4 * mm
+        y -= 3.3 * mm
         c.setFillColor(colors.HexColor(SLATE_700))
-        c.setFont("Helvetica-Oblique", 8)
-        for line in [note[i:i + 110] for i in range(0, len(note), 110)][:3]:
+        c.setFont("Helvetica-Oblique", 6.8)
+        for line in [note[i:i + 130] for i in range(0, len(note), 130)][:3]:
             c.drawString(12 * mm, y, line)
-            y -= 3.5 * mm
+            y -= 3 * mm
 
     # ═══════════════════════════════════════════════════════════════════════
     # Firmas — por encima del pie con margen garantizado
     # ═══════════════════════════════════════════════════════════════════════
-    y_sign = max(y - 16 * mm, 44 * mm)
+    y_sign = max(y - 13 * mm, 40 * mm)
     c.setStrokeColor(colors.HexColor(SLATE_400))
-    c.setLineWidth(0.5)
+    c.setLineWidth(0.4)
     c.line(28 * mm, y_sign, 92 * mm, y_sign)
     c.line(118 * mm, y_sign, 182 * mm, y_sign)
     c.setFillColor(colors.HexColor(SLATE_700))
-    c.setFont("Helvetica-Bold", 8.5)
-    c.drawCentredString(60 * mm, y_sign - 4 * mm, "Recibí conforme (empleado)")
-    c.drawCentredString(150 * mm, y_sign - 4 * mm, "Autoriza (patrón)")
+    c.setFont("Helvetica-Bold", 7.2)
+    c.drawCentredString(60 * mm, y_sign - 3.3 * mm, "Recibí conforme (empleado)")
+    c.drawCentredString(150 * mm, y_sign - 3.3 * mm, "Autoriza (patrón)")
     c.setFillColor(colors.HexColor(SLATE_500))
-    c.setFont("Helvetica", 7.5)
-    c.drawCentredString(60 * mm, y_sign - 8 * mm,
+    c.setFont("Helvetica", 6.5)
+    c.drawCentredString(60 * mm, y_sign - 6.5 * mm,
                           f"{employee.get('name', '')} {employee.get('last_name', '')}".strip())
-    c.drawCentredString(150 * mm, y_sign - 8 * mm, company_name_str.title())
+    c.drawCentredString(150 * mm, y_sign - 6.5 * mm, company_name_str.title())
 
     # ═══════════════════════════════════════════════════════════════════════
     # Pie — timestamp arriba, divider, texto legal debajo (sin encimados)
     # ═══════════════════════════════════════════════════════════════════════
-    c.setFont("Helvetica", 7)
+    c.setFont("Helvetica", 6.2)
     c.setFillColor(colors.HexColor(SLATE_500))
     c.drawRightString(
-        W - 12 * mm, 20 * mm,
+        W - 12 * mm, 18 * mm,
         f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}   ·   Página 1 de 1",
     )
     c.setStrokeColor(_alpha(SLATE_500, 0.25))
-    c.setLineWidth(0.4)
-    c.line(12 * mm, 17.5 * mm, W - 12 * mm, 17.5 * mm)
+    c.setLineWidth(0.35)
+    c.line(12 * mm, 16 * mm, W - 12 * mm, 16 * mm)
 
     footer_note = (company.get("document_footer") or
                     "Este documento es el recibo administrativo interno. El CFDI 4.0 timbrado con "
                     "sello SAT se emite por separado al integrarse un PAC autorizado.")
-    c.setFont("Helvetica-Oblique", 7)
+    c.setFont("Helvetica-Oblique", 6.2)
     c.setFillColor(colors.HexColor(SLATE_500))
-    for i, line in enumerate(_wrap(footer_note, 140, 2)):
-        c.drawString(12 * mm, 14 * mm - i * 3.2 * mm, line)
+    for i, line in enumerate(_wrap(footer_note, 155, 2)):
+        c.drawString(12 * mm, 13 * mm - i * 2.8 * mm, line)
 
     c.showPage()
     c.save()
