@@ -33,9 +33,12 @@ const NOVA_SHAPE: [number, number][] = NOVA_RAW.map(([x, y]) =>
 );
 
 const SHAPE_HOLD_MS = 5500;
-const SHAPE_MORPH_MS = 1200;           // transición más larga para suavizar
-const NUM_PARTICLES = 480;             // muchas más para ver continentes densos
-const ROTATION_PERIOD_MS = 40000;      // aún más lento
+const SHAPE_MORPH_MS = 1200;
+const NUM_PARTICLES = 900;             // densidad alta para definir continentes
+const TARGET_LAND = 720;               // 80% del total en tierra
+const TARGET_OCEAN = 180;              // 20% en océano (backdrop tenue)
+const ROTATION_PERIOD_MS = 40000;
+const AXIS_TILT_DEG = 18;              // inclinación tipo Tierra (23° reales)
 
 const SHAPE_RADIUS = 0.70;
 const PERSPECTIVE = 0.45;
@@ -49,34 +52,44 @@ const SHAPE_CYCLE: ShapeKind[] = ["globe", "novamark"];
 // reconocible: partículas dentro de algún blob se marcan como "continente"
 // y se pintan brillantes; el resto (océano) queda tenue.
 const LANDMASSES: [number, number, number][] = [
-  // Norteamérica
-  [65, -150, 14],  [58, -120, 18], [50, -100, 20], [40, -95, 17],
-  [30, -100, 13],  [22, -100, 10],
+  // NORTEAMÉRICA — Alaska, Canadá, USA, México, Centroamérica
+  [68, -150, 12],  [65, -130, 14], [60, -110, 16], [55, -105, 18],
+  [50, -100, 18], [45, -90, 16],  [42, -75, 14],  [38, -85, 14],
+  [35, -100, 14], [30, -100, 12], [25, -100, 10], [22, -105, 8],
+  [17, -90, 8],
   // Groenlandia
-  [72, -40, 14],
-  // Sudamérica
-  [0, -60, 15],    [-10, -60, 16], [-25, -60, 14], [-40, -68, 10],
-  [-50, -70, 6],
-  // Europa
-  [55, 20, 14],    [45, 10, 12],   [60, 40, 10],
-  // África
-  [20, 10, 15],    [15, 25, 14],   [5, 25, 14],    [-8, 22, 14],
-  [-20, 27, 13],   [-30, 22, 8],
+  [75, -40, 10],   [70, -45, 12],
+  // SUDAMÉRICA — Venezuela, Brasil, Argentina, Chile, Perú
+  [8, -68, 12],    [0, -60, 15],   [-8, -55, 15],  [-15, -55, 14],
+  [-25, -55, 14],  [-30, -65, 12], [-40, -68, 9],  [-48, -72, 6],
+  [-55, -68, 4],
+  // EUROPA — más detalle: UK, Iberia, Balcanes, Escandinavia, Rusia oeste
+  [58, -3, 6],     [50, 5, 8],     [55, 15, 10],   [45, 12, 10],
+  [42, 18, 8],     [40, 25, 8],    [60, 15, 10],   [65, 25, 10],
+  [55, 35, 12],
+  // ÁFRICA — Sahara, Sahel, Congo, Sudáfrica
+  [30, 5, 10],     [25, 15, 12],   [20, 25, 12],   [15, 30, 12],
+  [10, 20, 12],    [5, 25, 12],    [0, 20, 12],    [-5, 22, 12],
+  [-15, 20, 12],   [-22, 25, 12],  [-30, 22, 8],
   // Madagascar
-  [-20, 47, 6],
-  // Asia
-  [58, 60, 18],    [60, 90, 18],   [58, 120, 16],  [55, 145, 12],
-  [45, 75, 16],    [40, 105, 16],  [32, 90, 14],   [28, 55, 10],
-  // India
-  [22, 78, 12],
-  // Sudeste asiático
-  [12, 100, 12],   [0, 115, 10],   [-5, 125, 8],
-  // Japón
-  [37, 138, 5],
-  // Australia
-  [-25, 135, 15],
-  // Antártida (franja sur más presente)
-  [-80, 0, 25],    [-80, 90, 25],  [-80, -90, 25],
+  [-20, 47, 5],
+  // ASIA — Siberia, Kazajstán, China, Corea, Japón, Medio Oriente
+  [60, 60, 14],    [65, 90, 14],   [65, 120, 12],  [60, 145, 10],
+  [50, 60, 12],    [50, 90, 14],   [45, 110, 12],  [45, 130, 10],
+  [40, 75, 12],    [40, 105, 12],  [35, 128, 6],   [37, 138, 5],
+  [35, 45, 10],    [30, 55, 8],    [28, 68, 10],
+  // India + subcontinente
+  [22, 78, 14],    [15, 78, 10],
+  // Sudeste asiático — Indochina, Indonesia, Filipinas
+  [15, 100, 10],   [10, 105, 8],   [5, 115, 8],    [0, 112, 8],
+  [-5, 120, 8],    [12, 122, 5],
+  // Nueva Guinea
+  [-6, 140, 8],
+  // AUSTRALIA
+  [-22, 122, 10],  [-25, 135, 12], [-28, 148, 10], [-35, 148, 6],
+  // Antártida
+  [-80, -60, 20],  [-80, 0, 20],   [-80, 60, 20],  [-80, 120, 20],
+  [-80, 180, 20],
 ];
 
 /** Distancia angular (great-circle) entre dos puntos (grados). */
@@ -174,13 +187,12 @@ export function TrianglesCanvas({ accent, hi }: {
       const S = logoScale();
       const out: Particle[] = [];
 
-      // ── (A) 380 puntos de TIERRA: sampleados DENTRO de los blobs de LANDMASSES
-      // Esto garantiza continentes densos y reconocibles. Cada blob aporta
-      // puntos proporcionales a su radio² (blobs grandes = más puntos).
+      // ── (A) TIERRA: sampleados DENTRO de los blobs de LANDMASSES.
+      // Cada blob aporta puntos proporcionales a su radio² (blobs grandes
+      // → más puntos, densidad uniforme por área).
       const landTotalWeight = LANDMASSES.reduce((a, [, , r]) => a + r * r, 0);
-      const targetLand = 380;
       for (const [blat, blon, brad] of LANDMASSES) {
-        const nHere = Math.max(1, Math.round(targetLand * (brad * brad) / landTotalWeight));
+        const nHere = Math.max(1, Math.round(TARGET_LAND * (brad * brad) / landTotalWeight));
         for (let k = 0; k < nHere; k++) {
           // Muestreo dentro del casquete esférico de radio `brad` alrededor
           // de (blat, blon). Uniforme dentro del disco angular.
@@ -203,11 +215,11 @@ export function TrianglesCanvas({ accent, hi }: {
         }
       }
 
-      // ── (B) 100 puntos de OCÉANO: uniformes en la esfera, saltando los que
-      // caen en tierra (para que no dupliquen densidad continental).
+      // ── (B) OCÉANO: uniformes en la esfera, saltando los que caen en
+      // tierra (para no duplicar densidad continental).
       let oceanAdded = 0;
       let attempts = 0;
-      while (oceanAdded < 100 && attempts < 4000) {
+      while (oceanAdded < TARGET_OCEAN && attempts < 8000) {
         attempts++;
         const sphereY = 2 * Math.random() - 1;
         const sphereR = Math.sqrt(Math.max(0, 1 - sphereY * sphereY));
@@ -223,14 +235,20 @@ export function TrianglesCanvas({ accent, hi }: {
 
     // Fábrica de partícula — asigna también coords aleatorias para el LOGO.
     // Estrategia LOGO: 65% de las partículas se acomodan en el CONTORNO
-    // (r2d ∈ [0.90, 1.0]) y 35% en el interior — así el silueta del NovaMark
-    // se lee claramente aún con las mismas partículas del globo.
+    // Distribución en 3 anillos: 75% en el CONTORNO, 15% en anillo INTERMEDIO
+    // (r2d ∈ [0.55, 0.75] — refuerza estructura interna), 10% en el CENTRO
+    // (r2d ∈ [0, 0.35] — puntos que sugieren el "corazón" del logo).
     function makeParticle(sphereTheta: number, sphereY: number, sphereR: number,
                             isLand: boolean, S: number): Particle {
-      const onOutline = Math.random() < 0.65;
-      const r2d = onOutline
-        ? 0.90 + Math.random() * 0.10
-        : Math.sqrt(Math.random()) * 0.88;
+      const bucket = Math.random();
+      let r2d: number;
+      if (bucket < 0.75) {
+        r2d = 0.92 + Math.random() * 0.08;             // contorno definido
+      } else if (bucket < 0.90) {
+        r2d = 0.55 + Math.random() * 0.20;             // anillo intermedio
+      } else {
+        r2d = Math.random() * 0.35;                    // núcleo central
+      }
       const theta2d = Math.random() * Math.PI * 2;
       const z0 = 2 * Math.random() - 1;
       const x = sphereR * Math.cos(sphereTheta) * SHAPE_RADIUS * S;
@@ -348,17 +366,29 @@ export function TrianglesCanvas({ accent, hi }: {
       }
 
       // Calcula posición 3D de un tipo de figura para una partícula
+      // Inclinación axial: rota TODO el globo un ángulo constante en el
+      // plano XY (como el eje de la Tierra a ~23°). Se aplica DESPUÉS del
+      // spin en Y, así el eje visible del planeta queda inclinado.
+      const tiltRad = (AXIS_TILT_DEG * Math.PI) / 180;
+      const cosT = Math.cos(tiltRad);
+      const sinT = Math.sin(tiltRad);
+
       const computeShape = (
         p: Particle, kind: ShapeKind,
       ): { x: number; y: number; z: number } => {
         if (kind === "globe") {
-          // GLOBO — punto fijo en la esfera (rotado sobre Y)
+          // GLOBO — punto fijo en la esfera, rotado sobre Y (spin) y luego
+          // inclinado sobre eje Z (tilt tipo Tierra) para efecto premium.
           const baseX = p.sphereR * Math.cos(p.sphereTheta);
           const baseZ = p.sphereR * Math.sin(p.sphereTheta);
+          const spunX = baseX * cosR + baseZ * sinR;
+          const spunZ = -baseX * sinR + baseZ * cosR;
+          const spunY = p.sphereY;
+          // Rotación en plano XY (tilt): x' = x·cosT - y·sinT ; y' = x·sinT + y·cosT
           return {
-            x: baseX * cosR + baseZ * sinR,
-            y: p.sphereY,
-            z: -baseX * sinR + baseZ * cosR,
+            x: spunX * cosT - spunY * sinT,
+            y: spunX * sinT + spunY * cosT,
+            z: spunZ,
           };
         }
         // NOVAMARK LENS — silueta 2D con profundidad tipo lente
