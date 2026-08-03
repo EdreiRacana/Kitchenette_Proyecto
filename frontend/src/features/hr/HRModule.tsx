@@ -200,6 +200,8 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [selectedPeriod, setSelectedPeriod] = useState<PayrollPeriod | null>(null);
   const [periodDetail, setPeriodDetail] = useState<any | null>(null);
+  // Set de period IDs actualmente descargando su ZIP (para spinner + evitar doble click)
+  const [zipDownloading, setZipDownloading] = useState<Set<number>>(new Set());
   const [attendanceForm, setAttendanceForm] = useState(false);
   const [periodForm, setPeriodForm] = useState(false);
   const [reportModal, setReportModal] = useState<null | {
@@ -849,31 +851,44 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                     )}
                     {(p.status === "calculated" || p.status === "approved" || p.status === "dispersed") && (
                       <button
+                        disabled={zipDownloading.has(p.id)}
                         onClick={async e => {
                           e.stopPropagation();
+                          if (zipDownloading.has(p.id)) return;
+                          setZipDownloading(s => new Set(s).add(p.id));
                           try {
                             const res = await hrApi.downloadReceiptsZip(p.id);
                             downloadBlob(res.data, `recibos_${p.name.replace(/\s+/g, "_")}.zip`);
                           } catch (err: any) {
-                            // Extrae el detail del blob de error (axios lo entrega como Blob cuando responseType=blob)
-                            let msg = "Error al generar los recibos PDF";
-                            try {
-                              const blob = err?.response?.data;
-                              if (blob instanceof Blob) {
-                                const txt = await blob.text();
-                                const j = JSON.parse(txt);
-                                if (j?.detail) msg = `Error: ${j.detail}`;
-                              } else if (err?.response?.data?.detail) {
-                                msg = `Error: ${err.response.data.detail}`;
-                              }
-                            } catch { /* usa msg default */ }
-                            alert(msg);
+                            // Timeout / network error → mensaje explícito
+                            if (err?.code === "ECONNABORTED" || /timeout/i.test(err?.message || "")) {
+                              alert("El servidor tardó demasiado (posible arranque en frío de Render). Vuelve a intentar en 30s — el backend ya debe estar despierto.");
+                            } else {
+                              let msg = "Error al generar los recibos PDF";
+                              try {
+                                const blob = err?.response?.data;
+                                if (blob instanceof Blob) {
+                                  const txt = await blob.text();
+                                  const j = JSON.parse(txt);
+                                  if (j?.detail) msg = `Error: ${j.detail}`;
+                                } else if (err?.response?.data?.detail) {
+                                  msg = `Error: ${err.response.data.detail}`;
+                                }
+                              } catch { /* usa msg default */ }
+                              alert(msg);
+                            }
+                          } finally {
+                            setZipDownloading(s => {
+                              const n = new Set(s); n.delete(p.id); return n;
+                            });
                           }
                         }}
-                        title="Descargar recibos PDF (ZIP)"
-                        style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11 }}
+                        title={zipDownloading.has(p.id) ? "Generando ZIP…" : "Descargar recibos PDF (ZIP)"}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: zipDownloading.has(p.id) ? "wait" : "pointer", fontSize: 11, opacity: zipDownloading.has(p.id) ? 0.6 : 1 }}
                       >
-                        <FileText size={13} />
+                        {zipDownloading.has(p.id)
+                          ? <RefreshCw size={13} className="spin" />
+                          : <FileText size={13} />}
                       </button>
                     )}
                   </div>

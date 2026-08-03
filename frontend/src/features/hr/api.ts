@@ -29,11 +29,14 @@ export const hrApi = {
   dispersionSummary: (periodId: number) =>
     api.get(`/hr/payroll/periods/${periodId}/dispersion-summary`).then(r => r.data),
 
-  // Recibos PDF y aguinaldo
+  // Recibos PDF y aguinaldo — timeout amplio de 90s por el cold start de Render
+  // (backend se apaga después de 15 min y el primer request tarda en despertar)
   downloadReceipt: (periodId: number, employeeId: number) =>
-    api.get(`/hr/payroll/periods/${periodId}/receipts/${employeeId}.pdf`, { responseType: "blob" }),
+    api.get(`/hr/payroll/periods/${periodId}/receipts/${employeeId}.pdf`,
+             { responseType: "blob", timeout: 90000 }),
   downloadReceiptsZip: (periodId: number) =>
-    api.get(`/hr/payroll/periods/${periodId}/receipts.zip`, { responseType: "blob" }),
+    api.get(`/hr/payroll/periods/${periodId}/receipts.zip`,
+             { responseType: "blob", timeout: 90000 }),
   createAguinaldo: (year: number, paymentDate: string) =>
     api.post(`/hr/payroll/aguinaldo`, { year, payment_date: paymentDate }).then(r => r.data),
 
