@@ -177,24 +177,25 @@ def build_receipt_pdf(
     W, H = LETTER
 
     brand = _safe_hex(company.get("brand_color"), NAVY)
+    # Color gris institucional para el header (neutro, profesional, no invasivo)
+    HDR_GREY = "#64748B"    # slate-500
 
     # ═══════════════════════════════════════════════════════════════════════
-    # HEADER — Gradiente vertical + logo bien alojado + info empresa
+    # HEADER — Capa gris translúcida (~10% opacidad), sin colores de marca
     # ═══════════════════════════════════════════════════════════════════════
     HDR_H = 34 * mm
     hdr_y = H - HDR_H
 
-    # Gradiente vertical: opaco abajo → transparente arriba
-    _draw_gradient_band(
-        c, x=0, y_bottom=hdr_y, w=W, h=HDR_H, hex_color=brand,
-        alpha_bottom=0.95, alpha_top=0.05, steps=48,
-    )
+    # Fondo gris uniforme translúcido (10% opaco = 90% traslúcido)
+    c.setFillColor(_alpha(HDR_GREY, 0.10))
+    c.rect(0, hdr_y, W, HDR_H, fill=1, stroke=0)
 
-    # Franja fina de acento inferior (marca la separación con el resto)
-    c.setFillColor(_alpha(brand, 0.85))
-    c.rect(0, hdr_y - 1.0 * mm, W, 1.0 * mm, fill=1, stroke=0)
+    # Línea sutil de separación abajo del header
+    c.setStrokeColor(_alpha(HDR_GREY, 0.30))
+    c.setLineWidth(0.6)
+    c.line(0, hdr_y, W, hdr_y)
 
-    # Logo bien alojado dentro del header (a la izquierda, con margen)
+    # Logo bien alojado dentro del header
     LOGO_BOX_W, LOGO_BOX_H = 26 * mm, HDR_H - 8 * mm
     logo_w = _draw_logo(
         c, company.get("logo_bytes"),
@@ -203,21 +204,19 @@ def build_receipt_pdf(
     )
     text_x = 12 * mm + (logo_w + 8 * mm if logo_w > 0 else 0)
 
-    # Nombre / razón social — el color es blanco pero como el gradiente
-    # se atenúa arriba, se percibe la mezcla. Sombra sutil para legibilidad.
     company_name_str = (company.get("commercial_name") or company.get("name") or "EMPRESA").upper()
-    c.setFillColor(colors.white)
+
+    # Nombre / razón social en gris oscuro (visible sobre el fondo tenue)
+    c.setFillColor(colors.HexColor(SLATE_700))
     c.setFont("Helvetica-Bold", 15)
     c.drawString(text_x, hdr_y + HDR_H - 12 * mm, company_name_str[:60])
 
-    # Sublinea con razón social si difiere del comercial
     if (company.get("commercial_name") and company.get("name")
             and company["commercial_name"] != company["name"]):
         c.setFont("Helvetica", 8.5)
-        c.setFillColor(_alpha("#FFFFFF", 0.80))
+        c.setFillColor(colors.HexColor(SLATE_600))
         c.drawString(text_x, hdr_y + HDR_H - 16.5 * mm, company["name"][:80])
 
-    # Línea de contacto — RFC · domicilio · email · teléfono
     contact_parts = []
     if company.get("rfc"):
         contact_parts.append(f"RFC: {company['rfc']}")
@@ -229,13 +228,13 @@ def build_receipt_pdf(
     if company.get("phone"):
         contact_parts.append(f"Tel. {company['phone']}")
     c.setFont("Helvetica", 8)
-    c.setFillColor(_alpha("#FFFFFF", 0.90))
+    c.setFillColor(colors.HexColor(SLATE_600))
     contact_line = "  ·  ".join(contact_parts)
     if contact_line:
         c.drawString(text_x, hdr_y + 4 * mm, contact_line[:150])
 
-    # Título derecha
-    c.setFillColor(colors.white)
+    # Título derecha — mismo gris institucional
+    c.setFillColor(colors.HexColor(SLATE_700))
     c.setFont("Helvetica-Bold", 13)
     c.drawRightString(W - 12 * mm, hdr_y + HDR_H - 12 * mm, "RECIBO DE NÓMINA")
 
@@ -252,14 +251,14 @@ def build_receipt_pdf(
         "finiquito": "Finiquito",
     }.get(kind, kind.title())
 
-    # Chip a la izquierda con "Tipo"
+    # Chip a la izquierda con "Tipo" — solo borde exterior gris, sin fondo
     chip_w = 42 * mm
     _rounded_border_box(
         c, x=12 * mm, y_bottom=sub_y - 1.5 * mm, w=chip_w, h=6.5 * mm,
-        radius=2.5, border_color=_alpha(brand, 0.35),
-        fill_color=_alpha(brand, 0.06),
+        radius=2.5, border_color=_alpha(HDR_GREY, 0.55),
+        fill_color=None,
     )
-    c.setFillColor(colors.HexColor(brand))
+    c.setFillColor(colors.HexColor(SLATE_700))
     c.setFont("Helvetica-Bold", 8)
     c.drawString(12 * mm + 3 * mm, sub_y + 0.7 * mm, "TIPO")
     c.setFillColor(colors.HexColor(SLATE_700))
@@ -280,10 +279,11 @@ def build_receipt_pdf(
     # SECCIÓN: Datos del empleado y período
     # ═══════════════════════════════════════════════════════════════════════
     def _section_title(txt: str, yy: float):
-        c.setFillColor(colors.HexColor(brand))
+        # Título en gris institucional (mismo tono del header, no color de marca)
+        c.setFillColor(colors.HexColor(SLATE_700))
         c.setFont("Helvetica-Bold", 9.5)
         c.drawString(12 * mm, yy, txt.upper())
-        c.setStrokeColor(_alpha(brand, 0.30))
+        c.setStrokeColor(_alpha(HDR_GREY, 0.35))
         c.setLineWidth(0.5)
         c.line(12 * mm, yy - 1.5 * mm, W - 12 * mm, yy - 1.5 * mm)
 
@@ -404,10 +404,7 @@ def build_receipt_pdf(
             ("TOPPADDING", (0, -1), (-1, -1), 7),
             ("BOTTOMPADDING", (0, -1), (-1, -1), 8),
         ])
-        # Filas alternas con tinte muy tenue para lectura
-        for i in range(1, len(data) - 1):
-            if i % 2 == 0:
-                style.add("BACKGROUND", (0, i), (-1, i), _alpha(color_hex, 0.035))
+        # Sin filas alternas — solo texto sobre transparente
         tbl.setStyle(style)
         tbl.wrapOn(c, tbl_w, H)
         return tbl, tbl._height
@@ -418,35 +415,60 @@ def build_receipt_pdf(
                                    "Total deducciones", total_ded, RED)
     table_h = max(h_perc, h_ded)
 
-    # Fondo redondeado transparente + borde sólido para cada tabla
+    # Solo BORDE exterior redondeado — sin fondo interior
     _rounded_border_box(
         c, x=tbl_x_perc, y_bottom=y - table_h, w=tbl_w, h=table_h,
-        radius=4, border_color=_alpha(GREEN, 0.55),
-        fill_color=_alpha(GREEN, 0.03), border_width=1.0,
+        radius=4, border_color=_alpha(GREEN, 0.65),
+        fill_color=None, border_width=1.0,
     )
     _rounded_border_box(
         c, x=tbl_x_ded, y_bottom=y - table_h, w=tbl_w, h=table_h,
-        radius=4, border_color=_alpha(RED, 0.55),
-        fill_color=_alpha(RED, 0.03), border_width=1.0,
+        radius=4, border_color=_alpha(RED, 0.65),
+        fill_color=None, border_width=1.0,
     )
     tbl_perc.drawOn(c, tbl_x_perc, y - h_perc)
     tbl_ded.drawOn(c, tbl_x_ded, y - h_ded)
     y -= table_h + 8 * mm
 
     # ═══════════════════════════════════════════════════════════════════════
-    # NETO A DEPOSITAR — banda redondeada con acento lateral
+    # NETO A DEPOSITAR — patrón de puntos anti-falsificación + borde sólido
     # ═══════════════════════════════════════════════════════════════════════
     neto = float(detail.get("total_net", 0.0))
     neto_h = 17 * mm
-    _rounded_border_box(
-        c, x=12 * mm, y_bottom=y - neto_h, w=W - 24 * mm, h=neto_h,
-        radius=6, border_color=_alpha(GREEN, 0.5),
-        fill_color=_alpha(GREEN, 0.10), border_width=1.0,
-    )
-    # Acento vertical izquierdo (barra sólida)
-    c.setFillColor(colors.HexColor(GREEN))
-    c.roundRect(12 * mm, y - neto_h, 3.2 * mm, neto_h, 1.5, stroke=0, fill=1)
+    neto_x = 12 * mm
+    neto_w = W - 24 * mm
 
+    # Recuadro exterior con borde verde y SIN fondo (para poner puntos dentro)
+    _rounded_border_box(
+        c, x=neto_x, y_bottom=y - neto_h, w=neto_w, h=neto_h,
+        radius=6, border_color=_alpha(GREEN, 0.6),
+        fill_color=None, border_width=1.0,
+    )
+
+    # Patrón de puntos verdes tenues como marca anti-falsificación (guilloché).
+    # Rejilla regular con offset alternado. Los puntos ocupan todo el
+    # recuadro pero son suficientemente tenues para no estorbar la lectura.
+    c.setFillColor(_alpha(GREEN, 0.28))
+    dot_r = 0.4
+    dot_spacing = 2.0 * mm
+    rows_n = int(neto_h / dot_spacing)
+    cols_n = int(neto_w / dot_spacing)
+    for ri in range(rows_n + 1):
+        for ci in range(cols_n + 1):
+            offset = (dot_spacing / 2) if ri % 2 else 0
+            px = neto_x + ci * dot_spacing + offset
+            py = (y - neto_h) + ri * dot_spacing
+            # Mantener dentro del recuadro (con margen para no encimar el borde)
+            if (px < neto_x + 1 or px > neto_x + neto_w - 1 or
+                    py < (y - neto_h) + 1 or py > y - 1):
+                continue
+            c.circle(px, py, dot_r, stroke=0, fill=1)
+
+    # Acento vertical izquierdo (barra sólida) — sobrepintado encima de los puntos
+    c.setFillColor(colors.HexColor(GREEN))
+    c.roundRect(neto_x, y - neto_h, 3.2 * mm, neto_h, 1.5, stroke=0, fill=1)
+
+    # Texto — se dibuja al final para que quede sobre los puntos y sea legible
     c.setFillColor(colors.HexColor(GREEN))
     c.setFont("Helvetica-Bold", 11.5)
     c.drawString(21 * mm, y - 7 * mm, "NETO A DEPOSITAR")
