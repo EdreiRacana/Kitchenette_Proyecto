@@ -195,11 +195,25 @@ def build_receipt_pdf(
     c.setLineWidth(0.6)
     c.line(0, hdr_y, W, hdr_y)
 
-    # Logo bien alojado dentro del header
+    # Fondo blanco opaco redondeado detrás del logo — evita que logos con
+    # fondo transparente o colores claros se laven contra el header gris.
+    # Solo se dibuja si hay logo; si no, se omite para no crear un hueco vacío.
     LOGO_BOX_W, LOGO_BOX_H = 26 * mm, HDR_H - 8 * mm
+    LOGO_X, LOGO_Y = 12 * mm, hdr_y + 4 * mm
+    if company.get("logo_bytes"):
+        # Rectángulo blanco un poco más grande que el box del logo, con
+        # esquinas redondeadas y borde muy sutil gris. Fondo 100% opaco.
+        pad = 2 * mm
+        c.setFillColor(colors.white)
+        c.setStrokeColor(_alpha(HDR_GREY, 0.25))
+        c.setLineWidth(0.4)
+        c.roundRect(LOGO_X - pad, LOGO_Y - pad,
+                    LOGO_BOX_W + 2 * pad, LOGO_BOX_H + 2 * pad,
+                    3, stroke=1, fill=1)
+
     logo_w = _draw_logo(
         c, company.get("logo_bytes"),
-        x=12 * mm, y_bottom=hdr_y + 4 * mm,
+        x=LOGO_X, y_bottom=LOGO_Y,
         box_w=LOGO_BOX_W, box_h=LOGO_BOX_H,
     )
     text_x = 12 * mm + (logo_w + 8 * mm if logo_w > 0 else 0)
