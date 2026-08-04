@@ -833,11 +833,12 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
   const [reports, setReports] = useState<SellOutReport[]>([]);
   const [stores, setStores] = useState<RetailStore[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
-  // Filtros
+  // Filtros (arrancan vacíos, no filtran nada al montar)
   const [storeFilter, setStoreFilter] = useState<number | null>(null);
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
@@ -845,25 +846,32 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
   const [limit, setLimit] = useState<number>(500);
 
   const load = async () => {
-    setLoading(true);
+    setLoading(true); setLoadErr(null);
     try {
-      const r = await retailApi.listSellOut({
-        channel_id: selectedChannel || undefined,
-        store_id: storeFilter || undefined,
-        period_start_gte: dateFrom ? new Date(dateFrom + "T00:00:00").toISOString() : undefined,
-        period_start_lt: dateTo ? new Date(dateTo + "T23:59:59").toISOString() : undefined,
-        limit,
-      });
-      setReports(r);
+      const params: any = { limit };
+      if (selectedChannel) params.channel_id = selectedChannel;
+      if (storeFilter) params.store_id = storeFilter;
+      if (dateFrom) params.period_start_gte = new Date(dateFrom + "T00:00:00").toISOString();
+      if (dateTo) params.period_start_lt = new Date(dateTo + "T23:59:59").toISOString();
+      const r = await retailApi.listSellOut(params);
+      setReports(r || []);
+    } catch (e: any) {
+      setLoadErr(e?.response?.data?.detail || e?.message || "Error al cargar sell-out");
+      setReports([]);
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, [selectedChannel, storeFilter, dateFrom, dateTo, limit]);
 
-  // Cargar tiendas para el filtro
+  // Cargar tiendas para el filtro. Al cambiar canal, si el storeFilter
+  // no aplica a ninguna tienda nueva, lo reseteamos aparte para evitar
+  // triggers duplicados del load principal.
   useEffect(() => {
     retailApi.listStores({ channel_id: selectedChannel || undefined, active_only: true })
-      .then(setStores).catch(() => setStores([]));
-    setStoreFilter(null);   // reset al cambiar canal
+      .then(ss => {
+        setStores(ss);
+        setStoreFilter(prev => (prev && !ss.some(s => s.id === prev)) ? null : prev);
+      })
+      .catch(() => setStores([]));
   }, [selectedChannel]);
 
   // Búsqueda por texto (client-side sobre lo cargado)
@@ -909,9 +917,14 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10, flexWrap: "wrap" }}>
         <div style={{ color: t.textLo, fontSize: 13 }}>
-          {filteredReports.length} reportes {activeFilters && `(filtrados de ${reports.length})`}
+          <b style={{ color: t.textHi }}>{filteredReports.length}</b> reportes
+          {activeFilters && ` (filtrados de ${reports.length})`}
+          {loading && " · cargando…"}
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button onClick={load} style={btnGhost(t)} title="Recargar">
+            <RefreshCw size={13} /> Recargar
+          </button>
           <button disabled={downloading} onClick={() => downloadTemplate("xlsx")} style={btnGhost(t)} title="Descargar plantilla Excel con hojas de referencia">
             <FileText size={13} /> {downloading ? "…" : "Plantilla Excel"}
           </button>
@@ -932,6 +945,12 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
           </button>
         </div>
       </div>
+
+      {loadErr && (
+        <div style={{ padding: 12, background: t.bad + "18", border: `1px solid ${t.bad}55`, borderRadius: 8, color: t.bad, fontSize: 12, marginBottom: 12 }}>
+          <b>Error al cargar:</b> {loadErr}
+        </div>
+      )}
 
       {/* Barra de filtros */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 140px 140px 200px auto", gap: 8, marginBottom: 14, alignItems: "end", padding: "10px 12px", background: t.panel2, borderRadius: 8, border: `1px solid ${t.border}` }}>
