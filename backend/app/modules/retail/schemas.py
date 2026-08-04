@@ -738,7 +738,12 @@ class SourceWarehouseOption(BaseModel):
     id: int
     name: str
     location: Optional[str] = None
-    type: str  # own, marketplace, etc.
+    type: str  # own, consignment, marketplace, etc.
+    # Si viene de la consignación de una tienda, el id/nombre de la tienda
+    # para que la UI pueda etiquetar "Tienda: Walmart Insurgentes"
+    store_id: Optional[int] = None
+    store_name: Optional[str] = None
+    channel_name: Optional[str] = None
 
 
 class TransferItem(BaseModel):
@@ -771,6 +776,90 @@ class TransferResponse(BaseModel):
     warnings: int
     total_units: int
     results: List[TransferItemResult]
+
+
+# ── Traslados tienda↔tienda ─────────────────────────────────────────────
+
+class StoreTransferItem(BaseModel):
+    """Un item = mover N unidades de una variante de tienda A a tienda B."""
+    from_store_id: int
+    to_store_id: int
+    variant_id: int
+    units: int = Field(ge=1)
+    notes: Optional[str] = None
+
+
+class StoreTransferRequest(BaseModel):
+    items: List[StoreTransferItem]
+
+
+class StoreTransferItemResult(BaseModel):
+    from_store_id: int
+    to_store_id: int
+    variant_id: int
+    units_requested: int
+    units_transferred: int
+    status: str    # transferred | insufficient_stock | no_consignment | error
+    message: Optional[str] = None
+    out_movement_id: Optional[int] = None
+    in_movement_id: Optional[int] = None
+
+
+class StoreTransferResponse(BaseModel):
+    transferred_lines: int
+    warnings: int
+    total_units: int
+    results: List[StoreTransferItemResult]
+
+
+class StoreTransferSuggestion(BaseModel):
+    """Propuesta del motor: mover excedente de tienda_origen a tienda_destino."""
+    from_store_id: int
+    from_store_name: str
+    from_channel_name: Optional[str] = None
+    to_store_id: int
+    to_store_name: str
+    to_channel_name: Optional[str] = None
+    variant_id: int
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    units_suggested: int
+    from_wos: float
+    from_on_hand: int
+    from_velocity: float
+    to_wos: float
+    to_on_hand: int
+    to_velocity: float
+    priority: str    # urgent | high | normal
+    reason: str
+
+
+class StoreTransferSuggestionsResponse(BaseModel):
+    suggestions: List[StoreTransferSuggestion]
+    generated_at: datetime
+    velocity_window_days: int
+    target_wos_weeks: float
+    critical_wos_weeks: float
+    overstock_wos_weeks: float
+
+
+class StoreTransferBulkRow(BaseModel):
+    """Resultado por fila del bulk import (para reporte)."""
+    row_number: int
+    status: str    # ok | error
+    message: Optional[str] = None
+    from_store: Optional[str] = None
+    to_store: Optional[str] = None
+    sku: Optional[str] = None
+    units: Optional[int] = None
+
+
+class StoreTransferBulkResponse(BaseModel):
+    total_rows: int
+    valid_rows: int
+    error_rows: int
+    transfer: Optional[StoreTransferResponse] = None
+    rows: List[StoreTransferBulkRow]
 
 
 # ── Perfiles de importación por cadena ──────────────────────────────────

@@ -3883,18 +3883,49 @@ async def notify_alerts(
 # ── Replenishment: crear traslado ────────────────────────────────────────
 
 async def list_source_warehouses(db: AsyncSession) -> List[schemas.SourceWarehouseOption]:
-    """Warehouses de origen para traslados (typical: type=own)."""
+    """Orígenes válidos para traslados: almacenes centrales (type=own) +
+    almacenes de consignación de tiendas activas (para traslados
+    tienda→tienda). Los de tienda se etiquetan con store_id/store_name/channel.
+    """
+    # Todos los warehouses activos (incluye consignaciones)
     res = await db.execute(
         select(inv_models.Warehouse)
-        .where(inv_models.Warehouse.is_active.is_(True),
-                inv_models.Warehouse.type != "consignment")
+        .where(inv_models.Warehouse.is_active.is_(True))
         .order_by(inv_models.Warehouse.name)
     )
-    return [
-        schemas.SourceWarehouseOption(
-            id=w.id, name=w.name, location=w.location, type=w.type or "own",
-        ) for w in res.scalars().all()
-    ]
+    warehouses = list(res.scalars().all())
+
+    # Mapa warehouse_id → (store, channel_name) para consignaciones de tiendas
+    st_res = await db.execute(
+        select(models.RetailStore, models.RetailChannel.name)
+        .join(models.RetailChannel,
+              models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(models.RetailStore.is_active.is_(True),
+               models.RetailStore.consignment_warehouse_id.is_not(None))
+    )
+    store_by_wh: Dict[int, Tuple[models.RetailStore, str]] = {}
+    for store, chname in st_res.all():
+        if store.consignment_warehouse_id:
+            store_by_wh[store.consignment_warehouse_id] = (store, chname)
+
+    out: List[schemas.SourceWarehouseOption] = []
+    for w in warehouses:
+        st = store_by_wh.get(w.id)
+        if st is not None:
+            store, chname = st
+            out.append(schemas.SourceWarehouseOption(
+                id=w.id, name=w.name, location=w.location,
+                type=w.type or "consignment",
+                store_id=store.id, store_name=store.name, channel_name=chname,
+            ))
+        elif (w.type or "own") != "consignment":
+            # Central u otros tipos "propios" — origen tradicional
+            out.append(schemas.SourceWarehouseOption(
+                id=w.id, name=w.name, location=w.location, type=w.type or "own",
+            ))
+        # Consignaciones que NO están asignadas a ninguna tienda activa se
+        # excluyen (huérfanas — no queremos ofrecerlas como origen).
+    return out
 
 
 async def create_transfer(
@@ -4014,6 +4045,668 @@ async def create_transfer(
         warnings=warnings_ct,
         total_units=total_units,
         results=results,
+    )
+
+
+# ── Traslados tienda↔tienda ─────────────────────────────────────────────
+
+# Umbrales para el motor de sugerencias. Se usan como fallback cuando
+# el canal no tiene los suyos configurados.
+_DEFAULT_TARGET_WOS = 4.0
+_DEFAULT_CRITICAL_WOS = 2.0
+_DEFAULT_OVERSTOCK_WOS = 8.0
+_SUGGESTION_MIN_UNITS = 1        # nunca sugerir < 1 unidad
+_SUGGESTION_MIN_VELOCITY = 0.25  # tienda destino debe vender ≥ 0.25 u/sem
+
+
+async def _velocity_by_store_variant(
+    db: AsyncSession, window_days: int,
+) -> Dict[Tuple[int, int], float]:
+    """Velocidad semanal promedio por (store, variant) usando la última
+    ventana. Regresa unidades por semana (no por día).
+    """
+    since = datetime.now(timezone.utc) - timedelta(days=window_days)
+    q = (
+        select(
+            models.SellOutReport.store_id,
+            models.SellOutReport.variant_id,
+            func.sum(models.SellOutReport.units_sold).label("sold"),
+        )
+        .where(
+            models.SellOutReport.period_start >= since,
+            models.SellOutReport.variant_id.is_not(None),
+        )
+        .group_by(models.SellOutReport.store_id,
+                  models.SellOutReport.variant_id)
+    )
+    rows = (await db.execute(q)).all()
+    weeks = max(window_days / 7.0, 1.0)
+    result: Dict[Tuple[int, int], float] = {}
+    for store_id, variant_id, sold in rows:
+        result[(store_id, variant_id)] = float(sold or 0) / weeks
+    return result
+
+
+async def _on_hand_by_store_variant(
+    db: AsyncSession,
+) -> Dict[Tuple[int, int], int]:
+    """On-hand actual = stock en el consignment_warehouse de cada tienda
+    para cada variante. Usa StockLevel como fuente de verdad (no el
+    snapshot del sellout report).
+    """
+    q = (
+        select(
+            models.RetailStore.id,
+            inv_models.StockLevel.variant_id,
+            inv_models.StockLevel.quantity,
+        )
+        .join(inv_models.StockLevel,
+              inv_models.StockLevel.warehouse_id
+              == models.RetailStore.consignment_warehouse_id)
+        .where(models.RetailStore.is_active.is_(True),
+               models.RetailStore.consignment_warehouse_id.is_not(None))
+    )
+    rows = (await db.execute(q)).all()
+    return {
+        (store_id, variant_id): int(qty or 0)
+        for store_id, variant_id, qty in rows
+    }
+
+
+def _wos(on_hand: int, velocity_per_week: float) -> float:
+    if velocity_per_week <= 0:
+        return WOS_INFINITY if on_hand > 0 else 0.0
+    return _clamp(on_hand / velocity_per_week)
+
+
+async def suggest_store_transfers(
+    db: AsyncSession,
+    channel_id: Optional[int] = None,
+    window_days: int = VELOCITY_WINDOW_DAYS,
+    target_wos: Optional[float] = None,
+    critical_wos: Optional[float] = None,
+    overstock_wos: Optional[float] = None,
+    max_suggestions: int = 200,
+) -> schemas.StoreTransferSuggestionsResponse:
+    """Motor de sugerencias tienda↔tienda basado en desbalance de WoS.
+
+    Para cada SKU:
+      1. Calcula WoS por tienda (on-hand ÷ velocity).
+      2. Identifica tiendas EMISORAS (WoS ≥ overstock) y RECEPTORAS
+         (WoS ≤ critical o sin stock con velocidad ≥ min).
+      3. Empareja greedy: la emisora con más excedente manda a la
+         receptora con más faltante, hasta agotar excedente o llegar
+         a target en la receptora.
+      4. Prioridad: urgent = receptora con stock=0 y ventas; high = WoS
+         crítico; normal = solo rebalance.
+
+    channel_id opcional: si viene, solo empareja tiendas del mismo canal
+    (política común — Walmart no manda a HEB). Si es None, permite
+    cross-channel.
+    """
+    # Canal defaults
+    ch = None
+    if channel_id is not None:
+        ch = await db.get(models.RetailChannel, channel_id)
+    t_wos = target_wos if target_wos is not None else (
+        (ch.target_wos_weeks if ch else None) or _DEFAULT_TARGET_WOS
+    )
+    c_wos = critical_wos if critical_wos is not None else (
+        (ch.critical_wos_weeks if ch else None) or _DEFAULT_CRITICAL_WOS
+    )
+    o_wos = overstock_wos if overstock_wos is not None else (
+        (ch.overstock_wos_weeks if ch else None) or _DEFAULT_OVERSTOCK_WOS
+    )
+
+    # Tiendas activas con consignación (opcionalmente filtradas por canal)
+    st_q = (
+        select(models.RetailStore, models.RetailChannel.name)
+        .join(models.RetailChannel,
+              models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(models.RetailStore.is_active.is_(True),
+               models.RetailStore.consignment_warehouse_id.is_not(None))
+    )
+    if channel_id is not None:
+        st_q = st_q.where(models.RetailStore.channel_id == channel_id)
+    stores_data: Dict[int, Tuple[models.RetailStore, str]] = {}
+    for s, chname in (await db.execute(st_q)).all():
+        stores_data[s.id] = (s, chname)
+
+    if len(stores_data) < 2:
+        return schemas.StoreTransferSuggestionsResponse(
+            suggestions=[], generated_at=datetime.now(timezone.utc),
+            velocity_window_days=window_days,
+            target_wos_weeks=t_wos, critical_wos_weeks=c_wos,
+            overstock_wos_weeks=o_wos,
+        )
+
+    velocity = await _velocity_by_store_variant(db, window_days)
+    on_hand = await _on_hand_by_store_variant(db)
+
+    # Snapshot de nombres de variantes (una sola query batch)
+    variant_ids = {vid for (_sid, vid) in on_hand.keys()} | {
+        vid for (_sid, vid) in velocity.keys()
+    }
+    variant_info: Dict[int, Tuple[Optional[str], Optional[str]]] = {}
+    if variant_ids:
+        # Import perezoso para no crear dependencia circular a nivel módulo
+        from app.modules.inventory import models as inv_m
+        vrows = (await db.execute(
+            select(inv_m.ProductVariant.id, inv_m.ProductVariant.sku,
+                    inv_m.ProductVariant.name)
+            .where(inv_m.ProductVariant.id.in_(variant_ids))
+        )).all()
+        variant_info = {vid: (sku, name) for vid, sku, name in vrows}
+
+    # Reagrupamos por variante para hacer el matching
+    by_variant: Dict[int, List[Tuple[int, int, float, float]]] = {}
+    # tuple: (store_id, on_hand, velocity_per_week, wos)
+    variant_stores = set()
+    for (sid, vid), oh in on_hand.items():
+        if sid not in stores_data:
+            continue
+        vel = velocity.get((sid, vid), 0.0)
+        variant_stores.add((sid, vid))
+        by_variant.setdefault(vid, []).append(
+            (sid, oh, vel, _wos(oh, vel))
+        )
+    # Añadimos también (sid, vid) que solo aparecen con ventas (sin stock)
+    for (sid, vid), vel in velocity.items():
+        if sid not in stores_data or (sid, vid) in variant_stores:
+            continue
+        by_variant.setdefault(vid, []).append((sid, 0, vel, 0.0))
+
+    suggestions: List[schemas.StoreTransferSuggestion] = []
+    for vid, tuples in by_variant.items():
+        # Emisoras: excedente por encima del target
+        senders = []
+        # Receptoras: faltante hasta el target
+        receivers = []
+        for sid, oh, vel, wos in tuples:
+            if vel >= _SUGGESTION_MIN_VELOCITY and wos <= c_wos and oh <= vel * t_wos:
+                # Necesita — cantidad para llegar a target
+                need = int(round(vel * t_wos - oh))
+                if need >= _SUGGESTION_MIN_UNITS:
+                    receivers.append({
+                        "store_id": sid, "on_hand": oh, "velocity": vel,
+                        "wos": wos, "need": need,
+                    })
+            elif wos >= o_wos and oh > 0:
+                # Sobrante — cantidad por encima del target (mantiene reserva
+                # local; no vacía la tienda emisora)
+                keep = max(int(round(vel * t_wos)), 0)
+                surplus = oh - keep
+                if surplus >= _SUGGESTION_MIN_UNITS:
+                    senders.append({
+                        "store_id": sid, "on_hand": oh, "velocity": vel,
+                        "wos": wos, "surplus": surplus,
+                    })
+
+        if not senders or not receivers:
+            continue
+
+        # Greedy: ordenar por urgencia
+        receivers.sort(key=lambda r: (r["wos"], -r["need"]))
+        senders.sort(key=lambda s: (-s["surplus"], -s["wos"]))
+
+        for rcv in receivers:
+            need = rcv["need"]
+            if need <= 0:
+                continue
+            for snd in senders:
+                if need <= 0:
+                    break
+                if snd["surplus"] <= 0:
+                    continue
+                if snd["store_id"] == rcv["store_id"]:
+                    continue
+                move = min(need, snd["surplus"])
+                if move < _SUGGESTION_MIN_UNITS:
+                    continue
+
+                # Prioridad
+                if rcv["on_hand"] == 0 and rcv["velocity"] > 0:
+                    priority = "urgent"
+                    reason = f"Tienda destino sin stock — vende {rcv['velocity']:.1f} u/sem"
+                elif rcv["wos"] < c_wos:
+                    priority = "high"
+                    reason = f"WoS destino {rcv['wos']:.1f}s < crítico {c_wos:.0f}s; origen {snd['wos']:.1f}s > sobrestock {o_wos:.0f}s"
+                else:
+                    priority = "normal"
+                    reason = f"Rebalanceo: origen {snd['wos']:.1f}s, destino {rcv['wos']:.1f}s"
+
+                from_store, from_ch = stores_data[snd["store_id"]]
+                to_store, to_ch = stores_data[rcv["store_id"]]
+                sku, name = variant_info.get(vid, (None, None))
+                suggestions.append(schemas.StoreTransferSuggestion(
+                    from_store_id=snd["store_id"],
+                    from_store_name=from_store.name,
+                    from_channel_name=from_ch,
+                    to_store_id=rcv["store_id"],
+                    to_store_name=to_store.name,
+                    to_channel_name=to_ch,
+                    variant_id=vid, sku=sku, product_name=name,
+                    units_suggested=move,
+                    from_wos=round(snd["wos"], 2), from_on_hand=snd["on_hand"],
+                    from_velocity=round(snd["velocity"], 2),
+                    to_wos=round(rcv["wos"], 2), to_on_hand=rcv["on_hand"],
+                    to_velocity=round(rcv["velocity"], 2),
+                    priority=priority, reason=reason,
+                ))
+                snd["surplus"] -= move
+                need -= move
+
+    # Ordenar por prioridad y truncar
+    prio_order = {"urgent": 0, "high": 1, "normal": 2}
+    suggestions.sort(key=lambda s: (
+        prio_order.get(s.priority, 3), -s.units_suggested,
+    ))
+    suggestions = suggestions[:max_suggestions]
+
+    return schemas.StoreTransferSuggestionsResponse(
+        suggestions=suggestions,
+        generated_at=datetime.now(timezone.utc),
+        velocity_window_days=window_days,
+        target_wos_weeks=t_wos,
+        critical_wos_weeks=c_wos,
+        overstock_wos_weeks=o_wos,
+    )
+
+
+async def create_store_transfer(
+    db: AsyncSession, req: schemas.StoreTransferRequest,
+    user_id: Optional[int] = None,
+) -> schemas.StoreTransferResponse:
+    """Ejecuta traslados tienda→tienda. Un OUT+IN par por item entre las
+    consignaciones. Igual manejo de rollback que create_transfer.
+    """
+    from app.modules.inventory import schemas as inv_schemas, service as inv_service
+
+    results: List[schemas.StoreTransferItemResult] = []
+    transferred_lines = 0
+    warnings_ct = 0
+    total_units = 0
+
+    # Preload stores para evitar N+1
+    store_ids = {i.from_store_id for i in req.items} | {i.to_store_id for i in req.items}
+    st_rows = (await db.execute(
+        select(models.RetailStore).where(models.RetailStore.id.in_(store_ids))
+    )).scalars().all()
+    stores = {s.id: s for s in st_rows}
+
+    for item in req.items:
+        src_store = stores.get(item.from_store_id)
+        dst_store = stores.get(item.to_store_id)
+        if src_store is None or dst_store is None:
+            results.append(schemas.StoreTransferItemResult(
+                from_store_id=item.from_store_id, to_store_id=item.to_store_id,
+                variant_id=item.variant_id, units_requested=item.units,
+                units_transferred=0, status="error",
+                message="Tienda origen o destino no encontrada",
+            ))
+            warnings_ct += 1; continue
+        if src_store.id == dst_store.id:
+            results.append(schemas.StoreTransferItemResult(
+                from_store_id=item.from_store_id, to_store_id=item.to_store_id,
+                variant_id=item.variant_id, units_requested=item.units,
+                units_transferred=0, status="error",
+                message="Origen y destino son la misma tienda",
+            ))
+            warnings_ct += 1; continue
+        if src_store.consignment_warehouse_id is None:
+            results.append(schemas.StoreTransferItemResult(
+                from_store_id=item.from_store_id, to_store_id=item.to_store_id,
+                variant_id=item.variant_id, units_requested=item.units,
+                units_transferred=0, status="no_consignment",
+                message=f"Tienda origen '{src_store.name}' sin almacén de consignación",
+            ))
+            warnings_ct += 1; continue
+        if dst_store.consignment_warehouse_id is None:
+            results.append(schemas.StoreTransferItemResult(
+                from_store_id=item.from_store_id, to_store_id=item.to_store_id,
+                variant_id=item.variant_id, units_requested=item.units,
+                units_transferred=0, status="no_consignment",
+                message=f"Tienda destino '{dst_store.name}' sin almacén de consignación",
+            ))
+            warnings_ct += 1; continue
+
+        # Verificar stock origen
+        stock = int((await db.execute(
+            select(inv_models.StockLevel.quantity).where(
+                inv_models.StockLevel.variant_id == item.variant_id,
+                inv_models.StockLevel.warehouse_id
+                    == src_store.consignment_warehouse_id,
+            )
+        )).scalar() or 0)
+        if stock < item.units:
+            results.append(schemas.StoreTransferItemResult(
+                from_store_id=item.from_store_id, to_store_id=item.to_store_id,
+                variant_id=item.variant_id, units_requested=item.units,
+                units_transferred=0, status="insufficient_stock",
+                message=f"Stock en '{src_store.name}' = {stock}, solicitado {item.units}",
+            ))
+            warnings_ct += 1; continue
+
+        ref = f"store_transfer:from:{src_store.id}:to:{dst_store.id}"
+        out = None
+        try:
+            out = await inv_service.adjust_stock(db, inv_schemas.StockMovementCreate(
+                variant_id=item.variant_id,
+                warehouse_id=src_store.consignment_warehouse_id,
+                quantity=item.units, movement_type="out",
+                reference=ref,
+                notes=f"Traslado tienda→tienda · {src_store.name} → {dst_store.name}"
+                       + (f" · {item.notes}" if item.notes else ""),
+            ), user_id=user_id)
+            in_ = await inv_service.adjust_stock(db, inv_schemas.StockMovementCreate(
+                variant_id=item.variant_id,
+                warehouse_id=dst_store.consignment_warehouse_id,
+                quantity=item.units, movement_type="in",
+                unit_cost=out.unit_cost or 0.0,
+                reference=ref,
+                notes=f"Entrada por traslado desde tienda {src_store.name}",
+            ), user_id=user_id)
+            results.append(schemas.StoreTransferItemResult(
+                from_store_id=item.from_store_id, to_store_id=item.to_store_id,
+                variant_id=item.variant_id, units_requested=item.units,
+                units_transferred=item.units, status="transferred",
+                out_movement_id=out.id, in_movement_id=in_.id,
+            ))
+            transferred_lines += 1
+            total_units += item.units
+        except Exception as e:
+            rollback_note = None
+            if out is not None:
+                try:
+                    await inv_service.adjust_stock(db, inv_schemas.StockMovementCreate(
+                        variant_id=item.variant_id,
+                        warehouse_id=src_store.consignment_warehouse_id,
+                        quantity=item.units, movement_type="adjustment",
+                        unit_cost=out.unit_cost or 0.0,
+                        reference=f"{ref}:rollback",
+                        notes="Reversión: OUT aplicado pero IN falló",
+                    ), user_id=user_id)
+                    rollback_note = " (stock devuelto al origen)"
+                except Exception as re:
+                    log.error(
+                        "store_transfer rollback FAILED from=%s to=%s variant=%s: %s",
+                        src_store.id, dst_store.id, item.variant_id, re,
+                    )
+                    rollback_note = " (ROLLBACK MANUAL REQUERIDO)"
+            log.warning(
+                "store_transfer falló from=%s to=%s variant=%s: %s%s",
+                src_store.id, dst_store.id, item.variant_id, e,
+                rollback_note or "",
+            )
+            results.append(schemas.StoreTransferItemResult(
+                from_store_id=item.from_store_id, to_store_id=item.to_store_id,
+                variant_id=item.variant_id, units_requested=item.units,
+                units_transferred=0, status="error",
+                message=f"{e}{rollback_note or ''}",
+            ))
+            warnings_ct += 1
+
+    return schemas.StoreTransferResponse(
+        transferred_lines=transferred_lines, warnings=warnings_ct,
+        total_units=total_units, results=results,
+    )
+
+
+# Encabezados de la plantilla masiva
+STORE_TRANSFER_HEADERS = [
+    "tienda_origen", "tienda_destino", "sku", "unidades", "notas",
+]
+
+
+async def build_store_transfer_template_xlsx(db: AsyncSession) -> bytes:
+    """Plantilla profesional para traslados masivos tienda↔tienda.
+    Incluye hojas de instrucciones + catálogo de tiendas + catálogo de SKUs.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Traslados"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1E3A8A")
+    center = Alignment(horizontal="center")
+
+    ws.append(STORE_TRANSFER_HEADERS)
+    for col_idx in range(1, len(STORE_TRANSFER_HEADERS) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+
+    widths = [32, 32, 20, 12, 40]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # Cargar catálogos para la fila-ejemplo y las hojas de referencia
+    st_rows = (await db.execute(
+        select(models.RetailStore, models.RetailChannel.name)
+        .join(models.RetailChannel,
+              models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(models.RetailStore.is_active.is_(True))
+        .order_by(models.RetailChannel.name, models.RetailStore.name)
+    )).all()
+    stores = [{"channel": chname, "store": s.name, "codigo": s.code or "",
+                "codigo_externo": s.external_code or "",
+                "consignacion": "sí" if s.consignment_warehouse_id else "NO"}
+              for s, chname in st_rows]
+
+    from app.modules.inventory import models as inv_m
+    prod_rows = (await db.execute(
+        select(inv_m.ProductVariant.sku, inv_m.ProductVariant.name)
+        .where(inv_m.ProductVariant.sku.is_not(None))
+        .order_by(inv_m.ProductVariant.sku).limit(500)
+    )).all()
+
+    # Fila de ejemplo
+    ex_from = stores[0]["store"] if stores else "Tienda A"
+    ex_to = stores[1]["store"] if len(stores) > 1 else "Tienda B"
+    ex_sku = prod_rows[0][0] if prod_rows else "SKU-001"
+    ws.append([ex_from, ex_to, ex_sku, 5, "Rebalanceo por sobrestock"])
+    grey = PatternFill("solid", fgColor="F1F5F9")
+    italic = Font(italic=True, color="64748B")
+    for col_idx in range(1, len(STORE_TRANSFER_HEADERS) + 1):
+        cell = ws.cell(row=2, column=col_idx)
+        cell.fill = grey; cell.font = italic
+    ws.freeze_panes = "A2"
+
+    # Hoja de tiendas de referencia
+    st_sheet = wb.create_sheet("Tiendas")
+    st_sheet.append(["cadena", "tienda", "codigo", "codigo_externo", "consignacion"])
+    for c in st_sheet[1]:
+        c.font = header_font; c.fill = header_fill
+    for s in stores:
+        st_sheet.append([s["channel"], s["store"], s["codigo"],
+                         s["codigo_externo"], s["consignacion"]])
+    for i, w in enumerate([22, 32, 16, 20, 16], start=1):
+        st_sheet.column_dimensions[get_column_letter(i)].width = w
+
+    # Hoja de SKUs de referencia
+    sku_sheet = wb.create_sheet("SKUs")
+    sku_sheet.append(["sku", "nombre"])
+    for c in sku_sheet[1]:
+        c.font = header_font; c.fill = header_fill
+    for sku, name in prod_rows:
+        sku_sheet.append([sku, name])
+    sku_sheet.column_dimensions["A"].width = 22
+    sku_sheet.column_dimensions["B"].width = 48
+
+    # Instrucciones al frente
+    ws_i = wb.create_sheet("Instrucciones", 0)
+    lines = [
+        "Plantilla de Traslados Tienda ↔ Tienda",
+        "",
+        "Cómo llenarla:",
+        "  1) Una fila = mover N unidades de un SKU de una tienda a otra.",
+        "  2) 'tienda_origen' y 'tienda_destino' se buscan por nombre exacto de la tienda o por su código interno.",
+        "  3) 'sku' se busca en el catálogo. Si el SKU no existe, la fila se marca como error.",
+        "  4) Ambas tiendas deben tener un almacén de consignación asignado (columna 'consignacion' = sí en la hoja Tiendas).",
+        "  5) 'unidades' debe ser un entero ≥ 1. Si la tienda origen no tiene stock suficiente, la fila se marca como insufficient_stock.",
+        "  6) Cada fila se procesa aisladamente — si una falla, las demás siguen. El sistema devuelve reporte por fila.",
+        "  7) Las hojas 'Tiendas' y 'SKUs' son solo referencia; puedes borrarlas antes de subir.",
+    ]
+    for row_ix, line in enumerate(lines, start=1):
+        c = ws_i.cell(row=row_ix, column=1, value=line)
+        if row_ix == 1:
+            c.font = Font(bold=True, size=14, color="1E3A8A")
+    ws_i.column_dimensions["A"].width = 110
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+async def bulk_import_store_transfers(
+    db: AsyncSession, file_content: bytes, filename: str,
+    user_id: Optional[int] = None,
+) -> schemas.StoreTransferBulkResponse:
+    """Parsea plantilla XLSX/CSV de traslados y los ejecuta."""
+    from openpyxl import load_workbook
+
+    ext = (filename or "").lower().rsplit(".", 1)[-1]
+    rows: List[List[Any]] = []
+    if ext == "csv":
+        text = file_content.decode("utf-8-sig", errors="replace")
+        reader = csv.reader(io.StringIO(text))
+        rows = list(reader)
+    else:
+        wb = load_workbook(io.BytesIO(file_content), data_only=True)
+        ws = wb["Traslados"] if "Traslados" in wb.sheetnames else wb.active
+        for r in ws.iter_rows(values_only=True):
+            rows.append(list(r))
+
+    if not rows:
+        return schemas.StoreTransferBulkResponse(
+            total_rows=0, valid_rows=0, error_rows=0,
+            transfer=None, rows=[],
+        )
+
+    # Header
+    header = [str(c or "").strip().lower() for c in rows[0]]
+    def _col(name: str) -> int:
+        try:
+            return header.index(name)
+        except ValueError:
+            return -1
+    i_from = _col("tienda_origen")
+    i_to = _col("tienda_destino")
+    i_sku = _col("sku")
+    i_units = _col("unidades")
+    i_notes = _col("notas")
+
+    missing = [n for n, i in [
+        ("tienda_origen", i_from), ("tienda_destino", i_to),
+        ("sku", i_sku), ("unidades", i_units),
+    ] if i < 0]
+    if missing:
+        return schemas.StoreTransferBulkResponse(
+            total_rows=len(rows) - 1, valid_rows=0, error_rows=len(rows) - 1,
+            transfer=None,
+            rows=[schemas.StoreTransferBulkRow(
+                row_number=0, status="error",
+                message=f"Faltan columnas: {', '.join(missing)}",
+            )],
+        )
+
+    # Precarga catálogos para lookup por nombre o código
+    st_res = (await db.execute(
+        select(models.RetailStore).where(models.RetailStore.is_active.is_(True))
+    )).scalars().all()
+    stores_by_key: Dict[str, models.RetailStore] = {}
+    for s in st_res:
+        stores_by_key[s.name.strip().lower()] = s
+        if s.code:
+            stores_by_key[s.code.strip().lower()] = s
+        if s.external_code:
+            stores_by_key[s.external_code.strip().lower()] = s
+
+    from app.modules.inventory import models as inv_m
+    var_res = (await db.execute(
+        select(inv_m.ProductVariant.id, inv_m.ProductVariant.sku)
+        .where(inv_m.ProductVariant.sku.is_not(None))
+    )).all()
+    variants_by_sku: Dict[str, int] = {
+        (sku or "").strip().lower(): vid for vid, sku in var_res
+    }
+
+    bulk_rows: List[schemas.StoreTransferBulkRow] = []
+    items: List[schemas.StoreTransferItem] = []
+    valid_row_index: List[int] = []   # mapea items[i] → bulk_rows index
+
+    for ridx, row in enumerate(rows[1:], start=2):
+        if all(v is None or v == "" for v in row):
+            continue
+        from_raw = str(row[i_from] or "").strip()
+        to_raw = str(row[i_to] or "").strip()
+        sku_raw = str(row[i_sku] or "").strip()
+        units_raw = row[i_units] if i_units >= 0 else None
+        notes = str(row[i_notes] or "").strip() if i_notes >= 0 else None
+
+        errors = []
+        if not from_raw: errors.append("tienda_origen vacío")
+        if not to_raw: errors.append("tienda_destino vacío")
+        if not sku_raw: errors.append("sku vacío")
+        try:
+            units = int(float(units_raw)) if units_raw not in (None, "") else 0
+        except (TypeError, ValueError):
+            units = 0
+            errors.append("unidades inválidas")
+        if units < 1: errors.append("unidades debe ser ≥ 1")
+
+        src = stores_by_key.get(from_raw.lower()) if from_raw else None
+        dst = stores_by_key.get(to_raw.lower()) if to_raw else None
+        if from_raw and src is None:
+            errors.append(f"tienda_origen '{from_raw}' no encontrada")
+        if to_raw and dst is None:
+            errors.append(f"tienda_destino '{to_raw}' no encontrada")
+        if src and dst and src.id == dst.id:
+            errors.append("origen == destino")
+        vid = variants_by_sku.get(sku_raw.lower()) if sku_raw else None
+        if sku_raw and vid is None:
+            errors.append(f"sku '{sku_raw}' no encontrado")
+
+        if errors:
+            bulk_rows.append(schemas.StoreTransferBulkRow(
+                row_number=ridx, status="error", message="; ".join(errors),
+                from_store=from_raw or None, to_store=to_raw or None,
+                sku=sku_raw or None, units=units or None,
+            ))
+        else:
+            items.append(schemas.StoreTransferItem(
+                from_store_id=src.id, to_store_id=dst.id,
+                variant_id=vid, units=units,
+                notes=notes or None,
+            ))
+            bulk_rows.append(schemas.StoreTransferBulkRow(
+                row_number=ridx, status="ok",
+                from_store=src.name, to_store=dst.name,
+                sku=sku_raw, units=units,
+            ))
+            valid_row_index.append(len(bulk_rows) - 1)
+
+    transfer_resp: Optional[schemas.StoreTransferResponse] = None
+    if items:
+        transfer_resp = await create_store_transfer(
+            db, schemas.StoreTransferRequest(items=items), user_id=user_id,
+        )
+        # Anotar el status real del ejecución sobre las filas ok
+        for idx, res in zip(valid_row_index, transfer_resp.results):
+            if res.status != "transferred":
+                bulk_rows[idx].status = res.status
+                bulk_rows[idx].message = res.message
+
+    valid_ct = sum(1 for r in bulk_rows if r.status == "ok")
+    err_ct = sum(1 for r in bulk_rows if r.status != "ok")
+    return schemas.StoreTransferBulkResponse(
+        total_rows=len(bulk_rows), valid_rows=valid_ct, error_rows=err_ct,
+        transfer=transfer_resp, rows=bulk_rows,
     )
 
 
