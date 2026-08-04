@@ -113,6 +113,12 @@ class BulkStoresResponse(BaseModel):
 # ── Sell-Out Reports ─────────────────────────────────────────────────────
 
 class SellOutReportBase(BaseModel):
+    # NOTA: quitamos ge=0 de los campos numéricos porque los datos
+    # históricos pueden tener negativos legítimos (ajustes, devoluciones
+    # netas que sobrepasan ventas, on_hand negativo por descuentos
+    # de consignación mal reportados por la cadena). El listado NO debe
+    # tronar por eso. La validación de negativos en captura se hace
+    # en el endpoint create/update, no aquí.
     store_id: int
     variant_id: Optional[int] = None
     product_name: Optional[str] = None
@@ -120,15 +126,21 @@ class SellOutReportBase(BaseModel):
     period_start: datetime
     period_end: datetime
     period_type: str = Field(default="week", pattern="^(day|week|month)$")
+    units_sold: int = 0
+    units_returned: int = 0
+    units_on_hand: int = 0
+    revenue: float = 0.0
+    returns_amount: float = 0.0
+    notes: Optional[str] = None
+
+
+class SellOutReportCreate(SellOutReportBase):
+    # En creación sí exigimos >= 0 (validación de entrada del usuario)
     units_sold: int = Field(default=0, ge=0)
     units_returned: int = Field(default=0, ge=0)
     units_on_hand: int = Field(default=0, ge=0)
     revenue: float = Field(default=0.0, ge=0)
     returns_amount: float = Field(default=0.0, ge=0)
-    notes: Optional[str] = None
-
-
-class SellOutReportCreate(SellOutReportBase):
     source: str = Field(default="manual", pattern="^(manual|csv|excel|edi|api)$")
 
 
