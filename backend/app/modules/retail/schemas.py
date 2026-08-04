@@ -1107,3 +1107,161 @@ class RetailReturnsSummary(BaseModel):
     total_pending_units: int
     total_good_units: int
     total_damaged_units: int
+
+
+# ── Category Management ─────────────────────────────────────────────────
+
+class RetailCategoryBase(BaseModel):
+    code: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=200)
+    parent_id: Optional[int] = None
+    priority: str = Field(default="N", pattern="^(A|B|C|N)$")
+    color: Optional[str] = None
+    foda_strengths: Optional[str] = None
+    foda_weaknesses: Optional[str] = None
+    foda_opportunities: Optional[str] = None
+    foda_threats: Optional[str] = None
+    target_margin_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    target_wos_weeks: Optional[float] = Field(default=None, ge=0)
+    notes: Optional[str] = None
+    is_active: bool = True
+
+
+class RetailCategoryCreate(RetailCategoryBase):
+    pass
+
+
+class RetailCategoryUpdate(BaseModel):
+    code: Optional[str] = None
+    name: Optional[str] = None
+    parent_id: Optional[int] = None
+    priority: Optional[str] = Field(default=None, pattern="^(A|B|C|N)$")
+    color: Optional[str] = None
+    foda_strengths: Optional[str] = None
+    foda_weaknesses: Optional[str] = None
+    foda_opportunities: Optional[str] = None
+    foda_threats: Optional[str] = None
+    target_margin_pct: Optional[float] = None
+    target_wos_weeks: Optional[float] = None
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class RetailCategoryOut(RetailCategoryBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    parent_name: Optional[str] = None
+    depth: int = 0
+    # KPIs cacheados (calculados por el motor kpis_by_category)
+    skus_count: int = 0
+    stores_count: int = 0
+    total_units_sold: int = 0
+    total_revenue: float = 0.0
+    total_returns_units: int = 0
+    avg_wos_weeks: Optional[float] = None
+    return_rate_pct: float = 0.0
+    created_at: Optional[datetime] = None
+
+
+class RetailCategoryTreeNode(RetailCategoryOut):
+    children: List["RetailCategoryTreeNode"] = Field(default_factory=list)
+
+
+class CategoryKPIs(BaseModel):
+    category_id: int
+    code: str
+    name: str
+    priority: str
+    skus_count: int
+    stores_count: int
+    total_units_sold: int
+    total_revenue: float
+    total_returns_units: int
+    return_rate_pct: float
+    avg_wos_weeks: Optional[float] = None
+    # Top 5 SKUs por revenue en la categoría (para drilldown)
+    top_skus: List[dict] = Field(default_factory=list)
+
+
+class CategoryDashboardResponse(BaseModel):
+    generated_at: datetime
+    days: int
+    total_categories: int
+    total_revenue: float
+    priorities: dict     # {A: {revenue, units, ...}, B: {...}, C: {...}}
+    categories: List[CategoryKPIs]
+
+
+# ── Never Be Out (must-have) ────────────────────────────────────────────
+
+class MustHaveSKU(BaseModel):
+    """Un SKU marcado como must-have para retail."""
+    variant_id: int
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    category: Optional[str] = None
+    is_must_have: bool = True
+    # Estado de servicio actual — por tienda con consignación
+    stores_covered: int      # tiendas donde tenemos stock > 0
+    stores_stockout: int     # tiendas donde stock = 0 con velocidad > 0
+    coverage_pct: float      # stores_covered / total_stores × 100
+    total_on_hand: int
+    weekly_velocity: float
+    wos_weeks: float
+
+
+class MustHaveSummary(BaseModel):
+    generated_at: datetime
+    total_must_haves: int
+    fully_covered: int              # todas las tiendas con stock
+    partial_coverage: int           # algunas con stock, otras no
+    stockout_critical: int          # 0 tiendas con stock y hay ventas
+    avg_coverage_pct: float
+    skus: List[MustHaveSKU]
+
+
+class MustHaveToggle(BaseModel):
+    variant_id: int
+    is_must_have: bool
+
+
+# ── Matriz Get Blue (velocity × margen) ─────────────────────────────────
+
+class GetBlueRow(BaseModel):
+    variant_id: int
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    category: Optional[str] = None
+    units_sold: int
+    weekly_velocity: float
+    revenue: float
+    cogs: float                    # costo total
+    margin: float                  # revenue - cogs
+    margin_pct: float              # margin / revenue × 100
+    quadrant: str                  # star | cash_cow | question_mark | dog
+    is_must_have: bool = False
+
+
+class GetBlueQuadrant(BaseModel):
+    key: str                       # star | cash_cow | question_mark | dog
+    label: str
+    action: str                    # qué hacer con estos SKUs
+    color: str
+    skus_count: int
+    total_revenue: float
+    total_margin: float
+    avg_margin_pct: float
+    avg_velocity: float
+
+
+class GetBlueResponse(BaseModel):
+    generated_at: datetime
+    days: int
+    channel_id: Optional[int] = None
+    velocity_threshold: float      # cut point de velocity (mediana)
+    margin_threshold: float        # cut point de margen (mediana)
+    total_skus: int
+    total_revenue: float
+    total_margin: float
+    quadrants: List[GetBlueQuadrant]
+    rows: List[GetBlueRow]

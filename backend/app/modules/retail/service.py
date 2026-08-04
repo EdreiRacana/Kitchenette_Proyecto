@@ -4187,17 +4187,18 @@ async def suggest_store_transfers(
     variant_ids = {vid for (_sid, vid) in on_hand.keys()} | {
         vid for (_sid, vid) in velocity.keys()
     }
-    variant_info: Dict[int, Tuple[Optional[str], Optional[str]]] = {}
+    variant_info: Dict[int, Tuple[Optional[str], Optional[str], bool]] = {}
     if variant_ids:
-        # Nombre del producto vive en Product, no en ProductVariant
+        # Nombre del producto vive en Product, no en ProductVariant.
+        # Traemos también is_must_have para bumpear prioridad urgent.
         from app.modules.inventory import models as inv_m
         vrows = (await db.execute(
             select(inv_m.ProductVariant.id, inv_m.ProductVariant.sku,
-                    inv_m.Product.name)
+                    inv_m.Product.name, inv_m.ProductVariant.is_must_have)
             .join(inv_m.Product, inv_m.ProductVariant.product_id == inv_m.Product.id)
             .where(inv_m.ProductVariant.id.in_(variant_ids))
         )).all()
-        variant_info = {vid: (sku, name) for vid, sku, name in vrows}
+        variant_info = {vid: (sku, name, bool(mh)) for vid, sku, name, mh in vrows}
 
     # Reagrupamos por variante para hacer el matching
     by_variant: Dict[int, List[Tuple[int, int, float, float]]] = {}
@@ -4265,8 +4266,13 @@ async def suggest_store_transfers(
                 if move < _SUGGESTION_MIN_UNITS:
                     continue
 
-                # Prioridad
-                if rcv["on_hand"] == 0 and rcv["velocity"] > 0:
+                sku, name, must_have = variant_info.get(vid, (None, None, False))
+
+                # Prioridad — must-have SIEMPRE es urgent (Never Be Out)
+                if must_have:
+                    priority = "urgent"
+                    reason = f"NEVER BE OUT · SKU crítico · destino WoS {rcv['wos']:.1f}s / origen {snd['wos']:.1f}s"
+                elif rcv["on_hand"] == 0 and rcv["velocity"] > 0:
                     priority = "urgent"
                     reason = f"Tienda destino sin stock — vende {rcv['velocity']:.1f} u/sem"
                 elif rcv["wos"] < c_wos:
@@ -4278,7 +4284,6 @@ async def suggest_store_transfers(
 
                 from_store, from_ch = stores_data[snd["store_id"]]
                 to_store, to_ch = stores_data[rcv["store_id"]]
-                sku, name = variant_info.get(vid, (None, None))
                 suggestions.append(schemas.StoreTransferSuggestion(
                     from_store_id=snd["store_id"],
                     from_store_name=from_store.name,
@@ -5802,4 +5807,516 @@ async def returns_summary(
         )),
         total_good_units=int(sum((r.good or 0) for r in rows)),
         total_damaged_units=int(sum((r.dmg or 0) for r in rows)),
+    )
+
+
+# ── Category Management ─────────────────────────────────────────────────
+
+async def list_categories(
+    db: AsyncSession, active_only: bool = False,
+) -> List[schemas.RetailCategoryOut]:
+    stmt = select(models.RetailCategory)
+    if active_only:
+        stmt = stmt.where(models.RetailCategory.is_active.is_(True))
+    stmt = stmt.order_by(models.RetailCategory.priority.asc(),
+                          models.RetailCategory.name.asc())
+    rows = list((await db.execute(stmt)).scalars().all())
+    parents = {r.id: r.name for r in rows}
+    # Depth: contar padres
+    def _depth(c: models.RetailCategory) -> int:
+        d = 0
+        cur = c
+        seen = set()
+        while cur.parent_id is not None and cur.parent_id not in seen:
+            seen.add(cur.id)
+            nxt = next((x for x in rows if x.id == cur.parent_id), None)
+            if nxt is None:
+                break
+            cur = nxt
+            d += 1
+        return d
+
+    return [
+        schemas.RetailCategoryOut(
+            id=r.id, code=r.code, name=r.name, parent_id=r.parent_id,
+            parent_name=parents.get(r.parent_id) if r.parent_id else None,
+            priority=r.priority, color=r.color,
+            foda_strengths=r.foda_strengths, foda_weaknesses=r.foda_weaknesses,
+            foda_opportunities=r.foda_opportunities, foda_threats=r.foda_threats,
+            target_margin_pct=r.target_margin_pct,
+            target_wos_weeks=r.target_wos_weeks,
+            notes=r.notes, is_active=r.is_active,
+            depth=_depth(r), created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
+async def get_category_tree(
+    db: AsyncSession, active_only: bool = False,
+) -> List[schemas.RetailCategoryTreeNode]:
+    flat = await list_categories(db, active_only=active_only)
+    by_id: Dict[int, schemas.RetailCategoryTreeNode] = {}
+    for c in flat:
+        by_id[c.id] = schemas.RetailCategoryTreeNode(
+            **c.model_dump(), children=[],
+        )
+    roots = []
+    for c in flat:
+        node = by_id[c.id]
+        if c.parent_id and c.parent_id in by_id:
+            by_id[c.parent_id].children.append(node)
+        else:
+            roots.append(node)
+    return roots
+
+
+async def create_category(
+    db: AsyncSession, data: schemas.RetailCategoryCreate,
+) -> models.RetailCategory:
+    c = models.RetailCategory(**data.model_dump(exclude_unset=True))
+    db.add(c); await db.commit(); await db.refresh(c)
+    return c
+
+
+async def update_category(
+    db: AsyncSession, cat_id: int, data: schemas.RetailCategoryUpdate,
+) -> Optional[models.RetailCategory]:
+    c = await db.get(models.RetailCategory, cat_id)
+    if c is None:
+        return None
+    for k, v in data.model_dump(exclude_unset=True).items():
+        setattr(c, k, v)
+    await db.commit(); await db.refresh(c)
+    return c
+
+
+async def delete_category(db: AsyncSession, cat_id: int) -> bool:
+    c = await db.get(models.RetailCategory, cat_id)
+    if c is None:
+        return False
+    await db.delete(c); await db.commit()
+    return True
+
+
+async def category_dashboard(
+    db: AsyncSession, channel_id: Optional[int] = None, days: int = 28,
+) -> schemas.CategoryDashboardResponse:
+    """KPIs agregados por categoría — cross-join sell_out con Product.category
+    (los variantes se linkean a la categoría vía Product.category == RetailCategory.code).
+    """
+    from app.modules.inventory import models as inv_m
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    cats = list((await db.execute(
+        select(models.RetailCategory).order_by(
+            models.RetailCategory.priority.asc(), models.RetailCategory.name.asc(),
+        )
+    )).scalars().all())
+    if not cats:
+        return schemas.CategoryDashboardResponse(
+            generated_at=datetime.now(timezone.utc), days=days,
+            total_categories=0, total_revenue=0.0,
+            priorities={"A": {"revenue": 0, "units": 0}, "B": {"revenue": 0, "units": 0},
+                        "C": {"revenue": 0, "units": 0}, "N": {"revenue": 0, "units": 0}},
+            categories=[],
+        )
+
+    # Agregado por (Product.category, variant): units_sold, revenue, units_returned
+    stmt = (
+        select(
+            inv_m.Product.category.label("cat_code"),
+            models.SellOutReport.variant_id,
+            inv_m.Product.name.label("product_name"),
+            inv_m.ProductVariant.sku.label("sku"),
+            func.sum(models.SellOutReport.units_sold).label("units"),
+            func.sum(models.SellOutReport.revenue).label("revenue"),
+            func.sum(models.SellOutReport.units_returned).label("returns"),
+            func.count(func.distinct(models.SellOutReport.store_id)).label("stores"),
+        )
+        .join(inv_m.ProductVariant,
+              models.SellOutReport.variant_id == inv_m.ProductVariant.id)
+        .join(inv_m.Product,
+              inv_m.ProductVariant.product_id == inv_m.Product.id)
+        .join(models.RetailStore,
+              models.SellOutReport.store_id == models.RetailStore.id)
+        .where(
+            models.SellOutReport.period_start >= since,
+            models.SellOutReport.variant_id.is_not(None),
+            inv_m.Product.category.is_not(None),
+        )
+        .group_by(inv_m.Product.category, models.SellOutReport.variant_id,
+                   inv_m.Product.name, inv_m.ProductVariant.sku)
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailStore.channel_id == channel_id)
+
+    rows = (await db.execute(stmt)).all()
+
+    # Agregar por category_code (case-insensitive match)
+    by_code: Dict[str, dict] = {}
+    for r in rows:
+        code = (r.cat_code or "").strip()
+        if not code:
+            continue
+        key = code.lower()
+        b = by_code.setdefault(key, {
+            "code": code, "units": 0, "revenue": 0.0,
+            "returns": 0, "stores": set(), "top_skus": [],
+        })
+        b["units"] += int(r.units or 0)
+        b["revenue"] += float(r.revenue or 0.0)
+        b["returns"] += int(r.returns or 0)
+        b["stores"].add(r.variant_id)   # placeholder
+        b["top_skus"].append({
+            "variant_id": r.variant_id, "sku": r.sku, "name": r.product_name,
+            "units": int(r.units or 0), "revenue": float(r.revenue or 0.0),
+        })
+
+    # Building categoryKPIs por category
+    category_kpis: List[schemas.CategoryKPIs] = []
+    priorities = {"A": {"revenue": 0.0, "units": 0},
+                   "B": {"revenue": 0.0, "units": 0},
+                   "C": {"revenue": 0.0, "units": 0},
+                   "N": {"revenue": 0.0, "units": 0}}
+    total_revenue = 0.0
+
+    for cat in cats:
+        b = by_code.get((cat.code or "").lower(), {
+            "units": 0, "revenue": 0.0, "returns": 0, "top_skus": [],
+        })
+        skus = sorted(b.get("top_skus", []), key=lambda x: -x["revenue"])[:5]
+        skus_count = len(b.get("top_skus", []))
+        ret_pct = round((b["returns"] / b["units"] * 100.0), 2) if b["units"] > 0 else 0.0
+        category_kpis.append(schemas.CategoryKPIs(
+            category_id=cat.id, code=cat.code, name=cat.name,
+            priority=cat.priority,
+            skus_count=skus_count, stores_count=0,   # simplificado
+            total_units_sold=int(b["units"]),
+            total_revenue=round(b["revenue"], 2),
+            total_returns_units=int(b["returns"]),
+            return_rate_pct=ret_pct,
+            avg_wos_weeks=None,
+            top_skus=skus,
+        ))
+        p = priorities.get(cat.priority, priorities["N"])
+        p["revenue"] += b["revenue"]
+        p["units"] += b["units"]
+        total_revenue += b["revenue"]
+
+    return schemas.CategoryDashboardResponse(
+        generated_at=datetime.now(timezone.utc), days=days,
+        total_categories=len(cats),
+        total_revenue=round(total_revenue, 2),
+        priorities={k: {"revenue": round(v["revenue"], 2), "units": int(v["units"])}
+                     for k, v in priorities.items()},
+        categories=category_kpis,
+    )
+
+
+# ── Never Be Out (must-have SKUs) ───────────────────────────────────────
+
+async def list_must_haves(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    window_days: int = 28,
+) -> schemas.MustHaveSummary:
+    """Lista todos los SKUs marcados must-have y su estado de cobertura
+    real por tienda (cuántas tienen stock, cuántas están en stockout con
+    ventas).
+    """
+    from app.modules.inventory import models as inv_m
+
+    # SKUs marcados
+    m_rows = (await db.execute(
+        select(inv_m.ProductVariant.id, inv_m.ProductVariant.sku,
+                inv_m.Product.name, inv_m.Product.category)
+        .join(inv_m.Product, inv_m.ProductVariant.product_id == inv_m.Product.id)
+        .where(inv_m.ProductVariant.is_must_have.is_(True),
+                inv_m.ProductVariant.is_active.is_(True))
+    )).all()
+
+    if not m_rows:
+        return schemas.MustHaveSummary(
+            generated_at=datetime.now(timezone.utc),
+            total_must_haves=0, fully_covered=0, partial_coverage=0,
+            stockout_critical=0, avg_coverage_pct=0.0, skus=[],
+        )
+
+    variant_ids = [r[0] for r in m_rows]
+
+    # Tiendas con consignación
+    st_q = (
+        select(models.RetailStore.id,
+                models.RetailStore.consignment_warehouse_id)
+        .where(models.RetailStore.is_active.is_(True),
+                models.RetailStore.consignment_warehouse_id.is_not(None))
+    )
+    if channel_id is not None:
+        st_q = st_q.where(models.RetailStore.channel_id == channel_id)
+    stores = (await db.execute(st_q)).all()
+    total_stores = len(stores)
+    store_ids = [s.id for s in stores]
+    consignment_wh_ids = {s.id: s.consignment_warehouse_id for s in stores}
+
+    # Stock por (store, variant) — usando consignment warehouses
+    on_hand: Dict[Tuple[int, int], int] = {}
+    if store_ids:
+        wh_ids = [w for w in consignment_wh_ids.values() if w]
+        oh_q = (
+            select(inv_m.StockLevel.variant_id, inv_m.StockLevel.warehouse_id,
+                    inv_m.StockLevel.quantity)
+            .where(inv_m.StockLevel.variant_id.in_(variant_ids),
+                    inv_m.StockLevel.warehouse_id.in_(wh_ids))
+        )
+        for vid, wh_id, qty in (await db.execute(oh_q)).all():
+            # Reverse-lookup store from warehouse
+            for sid, cwh in consignment_wh_ids.items():
+                if cwh == wh_id:
+                    on_hand[(sid, vid)] = int(qty or 0)
+                    break
+
+    # Velocity — same as suggestions
+    velocity = await _velocity_by_store_variant(db, window_days)
+
+    skus_out: List[schemas.MustHaveSKU] = []
+    fully = 0; partial = 0; critical = 0
+    total_cov_pct = 0.0
+
+    for vid, sku, prod_name, category in m_rows:
+        stores_covered = sum(
+            1 for sid in store_ids if on_hand.get((sid, vid), 0) > 0
+        )
+        stores_stockout = sum(
+            1 for sid in store_ids
+            if on_hand.get((sid, vid), 0) == 0
+                and velocity.get((sid, vid), 0.0) > 0.25
+        )
+        total_oh = sum(on_hand.get((sid, vid), 0) for sid in store_ids)
+        total_vel = sum(velocity.get((sid, vid), 0.0) for sid in store_ids)
+        wos = _wos(total_oh, total_vel)
+        coverage_pct = (stores_covered / total_stores * 100.0) if total_stores > 0 else 0.0
+
+        if total_stores == 0:
+            pass
+        elif stores_covered == total_stores:
+            fully += 1
+        elif stores_covered > 0:
+            partial += 1
+        else:
+            if total_vel > 0:
+                critical += 1
+            else:
+                # Sin ventas — no clasifica
+                pass
+        total_cov_pct += coverage_pct
+
+        skus_out.append(schemas.MustHaveSKU(
+            variant_id=vid, sku=sku, product_name=prod_name, category=category,
+            is_must_have=True,
+            stores_covered=stores_covered, stores_stockout=stores_stockout,
+            coverage_pct=round(coverage_pct, 1),
+            total_on_hand=total_oh,
+            weekly_velocity=round(total_vel, 2),
+            wos_weeks=round(wos, 2),
+        ))
+
+    # Ordena por criticidad (menor cobertura primero)
+    skus_out.sort(key=lambda s: (s.coverage_pct, -s.stores_stockout))
+
+    avg_cov = total_cov_pct / len(m_rows) if m_rows else 0.0
+    return schemas.MustHaveSummary(
+        generated_at=datetime.now(timezone.utc),
+        total_must_haves=len(m_rows),
+        fully_covered=fully, partial_coverage=partial,
+        stockout_critical=critical,
+        avg_coverage_pct=round(avg_cov, 1),
+        skus=skus_out,
+    )
+
+
+async def toggle_must_have(
+    db: AsyncSession, variant_id: int, is_must_have: bool,
+) -> bool:
+    """Marca/desmarca un SKU como must-have."""
+    from app.modules.inventory import models as inv_m
+    v = await db.get(inv_m.ProductVariant, variant_id)
+    if v is None:
+        return False
+    v.is_must_have = is_must_have
+    await db.commit()
+    return True
+
+
+# ── Matriz Get Blue (velocity × margen) ─────────────────────────────────
+
+_QUADRANT_META = {
+    "star": {
+        "label": "Estrellas",
+        "action": "Proteger, invertir, dar más facing en anaquel. No dejar caer.",
+        "color": "#22c55e",
+    },
+    "cash_cow": {
+        "label": "Vacas lecheras",
+        "action": "Mantener eficiente. Negociar mejor con proveedor para subir margen.",
+        "color": "#3b82f6",
+    },
+    "question_mark": {
+        "label": "Incógnitas",
+        "action": "Probar promo, mejor ubicación o descontinuar si no reaccionan.",
+        "color": "#f59e0b",
+    },
+    "dog": {
+        "label": "Perros",
+        "action": "Candidatos a descontinuar. Liberar espacio de anaquel.",
+        "color": "#ef4444",
+    },
+}
+
+
+def _median(xs: List[float]) -> float:
+    if not xs:
+        return 0.0
+    s = sorted(xs)
+    n = len(s)
+    m = n // 2
+    return s[m] if n % 2 else (s[m - 1] + s[m]) / 2.0
+
+
+async def get_blue_matrix(
+    db: AsyncSession, channel_id: Optional[int] = None, days: int = 90,
+    min_units: int = 1,
+) -> schemas.GetBlueResponse:
+    """Matriz Get Blue: cruce velocity × margen%. Eje X: unidades por
+    semana. Eje Y: margen porcentual. Cuadrantes se separan por la
+    mediana de cada eje.
+    """
+    from app.modules.inventory import models as inv_m
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    weeks = max(days / 7.0, 1.0)
+
+    stmt = (
+        select(
+            models.SellOutReport.variant_id,
+            inv_m.ProductVariant.sku,
+            inv_m.Product.name.label("product_name"),
+            inv_m.Product.category,
+            inv_m.ProductVariant.cost_price,
+            inv_m.ProductVariant.is_must_have,
+            func.sum(models.SellOutReport.units_sold).label("units"),
+            func.sum(models.SellOutReport.revenue).label("revenue"),
+        )
+        .join(inv_m.ProductVariant,
+              models.SellOutReport.variant_id == inv_m.ProductVariant.id)
+        .join(inv_m.Product,
+              inv_m.ProductVariant.product_id == inv_m.Product.id)
+        .join(models.RetailStore,
+              models.SellOutReport.store_id == models.RetailStore.id)
+        .where(
+            models.SellOutReport.period_start >= since,
+            models.SellOutReport.variant_id.is_not(None),
+        )
+        .group_by(models.SellOutReport.variant_id, inv_m.ProductVariant.sku,
+                   inv_m.Product.name, inv_m.Product.category,
+                   inv_m.ProductVariant.cost_price,
+                   inv_m.ProductVariant.is_must_have)
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailStore.channel_id == channel_id)
+
+    rows = (await db.execute(stmt)).all()
+
+    # Preparar filas + calcular margen
+    tmp: List[Dict[str, Any]] = []
+    for r in rows:
+        units = int(r.units or 0)
+        if units < min_units:
+            continue
+        revenue = float(r.revenue or 0.0)
+        cost = float(r.cost_price or 0.0)
+        cogs = cost * units
+        margin = revenue - cogs
+        margin_pct = (margin / revenue * 100.0) if revenue > 0 else 0.0
+        velocity = units / weeks
+        tmp.append({
+            "variant_id": r.variant_id, "sku": r.sku,
+            "product_name": r.product_name, "category": r.category,
+            "is_must_have": bool(r.is_must_have),
+            "units": units, "revenue": round(revenue, 2),
+            "cogs": round(cogs, 2), "margin": round(margin, 2),
+            "margin_pct": round(margin_pct, 2),
+            "velocity": round(velocity, 3),
+        })
+
+    if not tmp:
+        return schemas.GetBlueResponse(
+            generated_at=datetime.now(timezone.utc), days=days,
+            channel_id=channel_id,
+            velocity_threshold=0.0, margin_threshold=0.0,
+            total_skus=0, total_revenue=0.0, total_margin=0.0,
+            quadrants=[
+                schemas.GetBlueQuadrant(
+                    key=k, label=v["label"], action=v["action"], color=v["color"],
+                    skus_count=0, total_revenue=0.0, total_margin=0.0,
+                    avg_margin_pct=0.0, avg_velocity=0.0,
+                ) for k, v in _QUADRANT_META.items()
+            ],
+            rows=[],
+        )
+
+    # Umbrales = mediana de cada eje
+    v_thr = _median([r["velocity"] for r in tmp])
+    m_thr = _median([r["margin_pct"] for r in tmp])
+
+    result_rows: List[schemas.GetBlueRow] = []
+    by_quadrant: Dict[str, List[Dict[str, Any]]] = {
+        "star": [], "cash_cow": [], "question_mark": [], "dog": [],
+    }
+    for r in tmp:
+        high_v = r["velocity"] >= v_thr
+        high_m = r["margin_pct"] >= m_thr
+        if high_v and high_m:
+            q = "star"
+        elif high_v and not high_m:
+            q = "cash_cow"
+        elif not high_v and high_m:
+            q = "question_mark"
+        else:
+            q = "dog"
+        by_quadrant[q].append(r)
+        result_rows.append(schemas.GetBlueRow(
+            variant_id=r["variant_id"], sku=r["sku"],
+            product_name=r["product_name"], category=r["category"],
+            units_sold=r["units"], weekly_velocity=r["velocity"],
+            revenue=r["revenue"], cogs=r["cogs"],
+            margin=r["margin"], margin_pct=r["margin_pct"],
+            quadrant=q, is_must_have=r["is_must_have"],
+        ))
+
+    # Sort filas por revenue desc
+    result_rows.sort(key=lambda x: -x.revenue)
+
+    quadrant_meta = []
+    for key in ["star", "cash_cow", "question_mark", "dog"]:
+        rows_q = by_quadrant[key]
+        tr = sum(r["revenue"] for r in rows_q)
+        tm = sum(r["margin"] for r in rows_q)
+        avg_m = (sum(r["margin_pct"] for r in rows_q) / len(rows_q)) if rows_q else 0.0
+        avg_v = (sum(r["velocity"] for r in rows_q) / len(rows_q)) if rows_q else 0.0
+        meta = _QUADRANT_META[key]
+        quadrant_meta.append(schemas.GetBlueQuadrant(
+            key=key, label=meta["label"], action=meta["action"], color=meta["color"],
+            skus_count=len(rows_q),
+            total_revenue=round(tr, 2), total_margin=round(tm, 2),
+            avg_margin_pct=round(avg_m, 2), avg_velocity=round(avg_v, 3),
+        ))
+
+    return schemas.GetBlueResponse(
+        generated_at=datetime.now(timezone.utc), days=days,
+        channel_id=channel_id,
+        velocity_threshold=round(v_thr, 3), margin_threshold=round(m_thr, 2),
+        total_skus=len(tmp),
+        total_revenue=round(sum(r["revenue"] for r in tmp), 2),
+        total_margin=round(sum(r["margin"] for r in tmp), 2),
+        quadrants=quadrant_meta, rows=result_rows,
     )

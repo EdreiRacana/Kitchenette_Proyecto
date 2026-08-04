@@ -198,6 +198,29 @@ export const retailApi = {
     api.patch<import("./types").RetailReturn>(`/retail/returns/${id}`, data).then(r => r.data),
   deleteReturn: (id: number) => api.delete(`/retail/returns/${id}`),
 
+  // Category Management
+  listCategories: (active_only = false) =>
+    api.get<import("./types").RetailCategory[]>("/retail/categories", { params: { active_only } }).then(r => r.data),
+  categoryTree: (active_only = false) =>
+    api.get<import("./types").RetailCategoryTreeNode[]>("/retail/categories/tree", { params: { active_only } }).then(r => r.data),
+  categoriesDashboard: (opts?: { channel_id?: number; days?: number }) =>
+    api.get<import("./types").CategoryDashboardResponse>("/retail/categories/dashboard", { params: opts }).then(r => r.data),
+  createCategory: (data: import("./types").RetailCategoryCreate) =>
+    api.post<import("./types").RetailCategory>("/retail/categories", data).then(r => r.data),
+  updateCategory: (id: number, data: Partial<import("./types").RetailCategoryCreate>) =>
+    api.patch<import("./types").RetailCategory>(`/retail/categories/${id}`, data).then(r => r.data),
+  deleteCategory: (id: number) => api.delete(`/retail/categories/${id}`),
+
+  // Never Be Out (must-have)
+  mustHaves: (opts?: { channel_id?: number; window_days?: number }) =>
+    api.get<import("./types").MustHaveSummary>("/retail/must-haves", { params: opts }).then(r => r.data),
+  toggleMustHave: (variant_id: number, is_must_have: boolean) =>
+    api.post<{ variant_id: number; is_must_have: boolean }>("/retail/must-haves/toggle", { variant_id, is_must_have }).then(r => r.data),
+
+  // Matriz Get Blue
+  getBlueMatrix: (opts?: { channel_id?: number; days?: number; min_units?: number }) =>
+    api.get<import("./types").GetBlueResponse>("/retail/analytics/get-blue", { params: opts }).then(r => r.data),
+
   // Perfiles de importación
   listImportProfiles: (channel_id?: number) =>
     api.get<import("./types").RetailImportProfile[]>("/retail/import-profiles", { params: { channel_id } }).then(r => r.data),

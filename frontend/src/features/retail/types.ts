@@ -650,6 +650,155 @@ export interface RetailReturnsSummary {
   total_damaged_units: number;
 }
 
+// Category Management
+export type CategoryPriority = "A" | "B" | "C" | "N";
+
+export interface RetailCategory {
+  id: number;
+  code: string;
+  name: string;
+  parent_id?: number | null;
+  parent_name?: string | null;
+  priority: CategoryPriority;
+  color?: string | null;
+  foda_strengths?: string | null;
+  foda_weaknesses?: string | null;
+  foda_opportunities?: string | null;
+  foda_threats?: string | null;
+  target_margin_pct?: number | null;
+  target_wos_weeks?: number | null;
+  notes?: string | null;
+  is_active: boolean;
+  depth: number;
+  skus_count: number;
+  stores_count: number;
+  total_units_sold: number;
+  total_revenue: number;
+  total_returns_units: number;
+  avg_wos_weeks?: number | null;
+  return_rate_pct: number;
+  created_at?: string | null;
+}
+
+export interface RetailCategoryTreeNode extends RetailCategory {
+  children: RetailCategoryTreeNode[];
+}
+
+export interface RetailCategoryCreate {
+  code: string;
+  name: string;
+  parent_id?: number | null;
+  priority?: CategoryPriority;
+  color?: string | null;
+  foda_strengths?: string | null;
+  foda_weaknesses?: string | null;
+  foda_opportunities?: string | null;
+  foda_threats?: string | null;
+  target_margin_pct?: number | null;
+  target_wos_weeks?: number | null;
+  notes?: string | null;
+  is_active?: boolean;
+}
+
+export interface CategoryKPIs {
+  category_id: number;
+  code: string;
+  name: string;
+  priority: CategoryPriority;
+  skus_count: number;
+  stores_count: number;
+  total_units_sold: number;
+  total_revenue: number;
+  total_returns_units: number;
+  return_rate_pct: number;
+  avg_wos_weeks?: number | null;
+  top_skus: Array<{
+    variant_id: number;
+    sku?: string | null;
+    name?: string | null;
+    units: number;
+    revenue: number;
+  }>;
+}
+
+export interface CategoryDashboardResponse {
+  generated_at: string;
+  days: number;
+  total_categories: number;
+  total_revenue: number;
+  priorities: {
+    A: { revenue: number; units: number };
+    B: { revenue: number; units: number };
+    C: { revenue: number; units: number };
+    N: { revenue: number; units: number };
+  };
+  categories: CategoryKPIs[];
+}
+
+// Never Be Out (must-have)
+export interface MustHaveSKU {
+  variant_id: number;
+  sku?: string | null;
+  product_name?: string | null;
+  category?: string | null;
+  is_must_have: boolean;
+  stores_covered: number;
+  stores_stockout: number;
+  coverage_pct: number;
+  total_on_hand: number;
+  weekly_velocity: number;
+  wos_weeks: number;
+}
+export interface MustHaveSummary {
+  generated_at: string;
+  total_must_haves: number;
+  fully_covered: number;
+  partial_coverage: number;
+  stockout_critical: number;
+  avg_coverage_pct: number;
+  skus: MustHaveSKU[];
+}
+
+// Matriz Get Blue
+export type GetBlueQuadrantKey = "star" | "cash_cow" | "question_mark" | "dog";
+export interface GetBlueRow {
+  variant_id: number;
+  sku?: string | null;
+  product_name?: string | null;
+  category?: string | null;
+  units_sold: number;
+  weekly_velocity: number;
+  revenue: number;
+  cogs: number;
+  margin: number;
+  margin_pct: number;
+  quadrant: GetBlueQuadrantKey;
+  is_must_have: boolean;
+}
+export interface GetBlueQuadrant {
+  key: GetBlueQuadrantKey;
+  label: string;
+  action: string;
+  color: string;
+  skus_count: number;
+  total_revenue: number;
+  total_margin: number;
+  avg_margin_pct: number;
+  avg_velocity: number;
+}
+export interface GetBlueResponse {
+  generated_at: string;
+  days: number;
+  channel_id?: number | null;
+  velocity_threshold: number;
+  margin_threshold: number;
+  total_skus: number;
+  total_revenue: number;
+  total_margin: number;
+  quadrants: GetBlueQuadrant[];
+  rows: GetBlueRow[];
+}
+
 export interface RetailImportProfile {
   id: number;
   channel_id: number;
