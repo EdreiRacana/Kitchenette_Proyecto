@@ -799,6 +799,56 @@ export interface GetBlueResponse {
   rows: GetBlueRow[];
 }
 
+// Diagnóstico de costos
+export interface CostMovementRow {
+  movement_id: number;
+  warehouse_id: number;
+  warehouse_name?: string | null;
+  movement_type: string;
+  quantity: number;
+  unit_cost?: number | null;
+  reference?: string | null;
+  notes?: string | null;
+  created_at?: string | null;
+}
+export interface CostLotRow {
+  lot_id: number;
+  warehouse_id: number;
+  warehouse_name?: string | null;
+  quantity_received: number;
+  quantity_remaining: number;
+  unit_cost: number;
+  reference?: string | null;
+  received_at?: string | null;
+  weight_in_avg_pct: number;
+}
+export interface CostDiagnosticRow {
+  variant_id: number;
+  sku?: string | null;
+  product_name?: string | null;
+  category?: string | null;
+  current_cost_price: number;
+  manual_price: number;
+  units_sold: number;
+  total_revenue: number;
+  unit_price_reported: number;
+  margin_per_unit: number;
+  margin_pct: number;
+  flags: string[];
+  recent_ins: CostMovementRow[];
+  live_lots: CostLotRow[];
+}
+export interface CostDiagnosticResponse {
+  generated_at: string;
+  days: number;
+  channel_id?: number | null;
+  total_skus_analyzed: number;
+  skus_with_negative_margin: number;
+  skus_missing_cost: number;
+  skus_cost_higher_than_price: number;
+  rows: CostDiagnosticRow[];
+}
+
 export interface RetailImportProfile {
   id: number;
   channel_id: number;
