@@ -738,6 +738,61 @@ async def create_transfer(payload: schemas.TransferRequest,
         raise HTTPException(400, str(e))
 
 
+# ── Traslados tienda↔tienda ─────────────────────────────────────────────
+
+@router.get("/store-transfers/suggestions",
+             response_model=schemas.StoreTransferSuggestionsResponse)
+async def store_transfer_suggestions(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    window_days: int = Query(28, ge=7, le=180),
+    target_wos: Optional[float] = Query(None, ge=0.5, le=52),
+    critical_wos: Optional[float] = Query(None, ge=0, le=52),
+    overstock_wos: Optional[float] = Query(None, ge=1, le=104),
+    max_suggestions: int = Query(200, ge=1, le=1000),
+):
+    """Motor de sugerencias tienda↔tienda basado en WoS diferencial."""
+    return await service.suggest_store_transfers(
+        db, channel_id=channel_id, window_days=window_days,
+        target_wos=target_wos, critical_wos=critical_wos,
+        overstock_wos=overstock_wos, max_suggestions=max_suggestions,
+    )
+
+
+@router.post("/store-transfers", response_model=schemas.StoreTransferResponse)
+async def create_store_transfer(payload: schemas.StoreTransferRequest,
+                                  db: DB, current_user: CurrentUser):
+    """Ejecuta un lote de traslados tienda→tienda."""
+    return await service.create_store_transfer(
+        db, payload, user_id=current_user.id,
+    )
+
+
+@router.get("/store-transfers/template.xlsx")
+async def store_transfer_template(db: DB, _: CurrentUser):
+    """Descarga plantilla XLSX para carga masiva de traslados."""
+    content = await service.build_store_transfer_template_xlsx(db)
+    return StreamingResponse(
+        io.BytesIO(content), media_type=_XLSX_MIME,
+        headers={"Content-Disposition":
+                    'attachment; filename="plantilla_traslados_tiendas.xlsx"'},
+    )
+
+
+@router.post("/store-transfers/bulk-import",
+              response_model=schemas.StoreTransferBulkResponse)
+async def store_transfer_bulk_import(
+    db: DB, current_user: CurrentUser,
+    file: UploadFile = File(...),
+):
+    """Recibe plantilla llena (xlsx/csv), parsea y ejecuta los traslados."""
+    content = await file.read()
+    return await service.bulk_import_store_transfers(
+        db, content, file.filename or "traslados.xlsx",
+        user_id=current_user.id,
+    )
+
+
 # ── Perfiles de importación ─────────────────────────────────────────────
 
 @router.get("/import-profiles",

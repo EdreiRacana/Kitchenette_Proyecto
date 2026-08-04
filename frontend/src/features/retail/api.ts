@@ -157,6 +157,31 @@ export const retailApi = {
       source_warehouse_id, items,
     }).then(r => r.data),
 
+  // Traslados tienda↔tienda
+  storeTransferSuggestions: (opts?: {
+    channel_id?: number; window_days?: number;
+    target_wos?: number; critical_wos?: number; overstock_wos?: number;
+    max_suggestions?: number;
+  }) =>
+    api.get<import("./types").StoreTransferSuggestionsResponse>(
+      "/retail/store-transfers/suggestions", { params: opts },
+    ).then(r => r.data),
+  createStoreTransfer: (items: import("./types").StoreTransferItem[]) =>
+    api.post<import("./types").StoreTransferResponse>(
+      "/retail/store-transfers", { items },
+    ).then(r => r.data),
+  downloadStoreTransferTemplate: () =>
+    api.get(`/retail/store-transfers/template.xlsx`, { responseType: "blob" })
+      .then(r => r.data as Blob),
+  bulkImportStoreTransfers: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post<import("./types").StoreTransferBulkResponse>(
+      "/retail/store-transfers/bulk-import", form,
+      { headers: { "Content-Type": "multipart/form-data" } },
+    ).then(r => r.data);
+  },
+
   // Perfiles de importación
   listImportProfiles: (channel_id?: number) =>
     api.get<import("./types").RetailImportProfile[]>("/retail/import-profiles", { params: { channel_id } }).then(r => r.data),

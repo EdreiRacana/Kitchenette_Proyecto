@@ -487,7 +487,15 @@ export interface NotifyAlertsResponse {
 }
 
 // Transfer
-export interface SourceWarehouseOption { id: number; name: string; location?: string | null; type: string; }
+export interface SourceWarehouseOption {
+  id: number;
+  name: string;
+  location?: string | null;
+  type: string;
+  store_id?: number | null;
+  store_name?: string | null;
+  channel_name?: string | null;
+}
 export interface TransferItem { store_id: number; variant_id: number; units: number; notes?: string; }
 export interface TransferItemResult {
   store_id: number;
@@ -506,6 +514,76 @@ export interface TransferResponse {
   warnings: number;
   total_units: number;
   results: TransferItemResult[];
+}
+
+// Traslados tienda↔tienda
+export interface StoreTransferItem {
+  from_store_id: number;
+  to_store_id: number;
+  variant_id: number;
+  units: number;
+  notes?: string | null;
+}
+export interface StoreTransferItemResult {
+  from_store_id: number;
+  to_store_id: number;
+  variant_id: number;
+  units_requested: number;
+  units_transferred: number;
+  status: "transferred" | "insufficient_stock" | "no_consignment" | "error";
+  message?: string | null;
+  out_movement_id?: number | null;
+  in_movement_id?: number | null;
+}
+export interface StoreTransferResponse {
+  transferred_lines: number;
+  warnings: number;
+  total_units: number;
+  results: StoreTransferItemResult[];
+}
+export interface StoreTransferSuggestion {
+  from_store_id: number;
+  from_store_name: string;
+  from_channel_name?: string | null;
+  to_store_id: number;
+  to_store_name: string;
+  to_channel_name?: string | null;
+  variant_id: number;
+  sku?: string | null;
+  product_name?: string | null;
+  units_suggested: number;
+  from_wos: number;
+  from_on_hand: number;
+  from_velocity: number;
+  to_wos: number;
+  to_on_hand: number;
+  to_velocity: number;
+  priority: "urgent" | "high" | "normal";
+  reason: string;
+}
+export interface StoreTransferSuggestionsResponse {
+  suggestions: StoreTransferSuggestion[];
+  generated_at: string;
+  velocity_window_days: number;
+  target_wos_weeks: number;
+  critical_wos_weeks: number;
+  overstock_wos_weeks: number;
+}
+export interface StoreTransferBulkRow {
+  row_number: number;
+  status: string;
+  message?: string | null;
+  from_store?: string | null;
+  to_store?: string | null;
+  sku?: string | null;
+  units?: number | null;
+}
+export interface StoreTransferBulkResponse {
+  total_rows: number;
+  valid_rows: number;
+  error_rows: number;
+  transfer?: StoreTransferResponse | null;
+  rows: StoreTransferBulkRow[];
 }
 
 export interface RetailImportProfile {
