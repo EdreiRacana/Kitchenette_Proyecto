@@ -418,3 +418,60 @@ class RetailReturn(Base):
     store = relationship("RetailStore")
     variant = relationship("ProductVariant")
     source_sellout = relationship("SellOutReport")
+
+
+# ── Category Management ─────────────────────────────────────────────────
+
+CATEGORY_PRIORITIES = ("A", "B", "C", "N")   # A=estratégica, B=importante, C=complementaria, N=sin clasificar
+
+
+class RetailCategory(Base):
+    """Jerarquía formal de categorías para category management.
+
+    Se linkea a los variantes por `code` (que hace match con
+    Product.category en el módulo inventory). Permite jerarquía padre-hijo
+    (subcategorías) y clasificación estratégica (A/B/C) + FODA.
+
+    Uso típico:
+      - Bebidas (A, estratégica)
+        - Refrescos (A)
+        - Aguas (B)
+      - Snacks (B)
+        - Papas (B)
+        - Galletas (C)
+    """
+    __tablename__ = "retail_categories"
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_retail_cat_code"),
+        Index("ix_retail_cat_parent", "parent_id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, nullable=False, index=True)   # match con Product.category
+    name = Column(String, nullable=False)
+    parent_id = Column(
+        Integer, ForeignKey("retail_categories.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    priority = Column(String, default="N", nullable=False)  # A / B / C / N
+    color = Column(String, nullable=True)     # hex color para visualización
+
+    # FODA (SWOT) por categoría — se llena a mano por el analista
+    foda_strengths = Column(Text, nullable=True)
+    foda_weaknesses = Column(Text, nullable=True)
+    foda_opportunities = Column(Text, nullable=True)
+    foda_threats = Column(Text, nullable=True)
+
+    # Umbrales operativos específicos de la categoría (opcionales — si no,
+    # se heredan del canal)
+    target_margin_pct = Column(Float, nullable=True)     # margen objetivo
+    target_wos_weeks = Column(Float, nullable=True)      # WoS objetivo específico
+
+    notes = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # NOTA: la jerarquía se resuelve en el service (no usamos relationship
+    # self-referential para evitar complicaciones con async lazy loading)

@@ -1109,3 +1109,106 @@ async def dismiss_alert(alert_id: int, payload: schemas.AlertActionRequest,
     if a is None:
         raise HTTPException(404, "Alerta no encontrada")
     return await service._alert_to_schema(db, a)
+
+
+# ── Category Management ─────────────────────────────────────────────────
+
+@router.get("/categories", response_model=List[schemas.RetailCategoryOut])
+async def list_categories(db: DB, _: CurrentUser,
+                            active_only: bool = Query(False)):
+    return await service.list_categories(db, active_only=active_only)
+
+
+@router.get("/categories/tree",
+             response_model=List[schemas.RetailCategoryTreeNode])
+async def category_tree(db: DB, _: CurrentUser,
+                          active_only: bool = Query(False)):
+    return await service.get_category_tree(db, active_only=active_only)
+
+
+@router.get("/categories/dashboard",
+             response_model=schemas.CategoryDashboardResponse)
+async def categories_dashboard(db: DB, _: CurrentUser,
+                                 channel_id: Optional[int] = Query(None),
+                                 days: int = Query(28, ge=1, le=365)):
+    return await service.category_dashboard(
+        db, channel_id=channel_id, days=days,
+    )
+
+
+@router.post("/categories", response_model=schemas.RetailCategoryOut,
+              status_code=201)
+async def create_category(payload: schemas.RetailCategoryCreate,
+                            db: DB, _: CurrentUser):
+    try:
+        c = await service.create_category(db, payload)
+    except Exception as e:
+        raise HTTPException(400, f"No se pudo crear categoría: {e}")
+    return schemas.RetailCategoryOut(
+        id=c.id, code=c.code, name=c.name, parent_id=c.parent_id,
+        priority=c.priority, color=c.color,
+        foda_strengths=c.foda_strengths, foda_weaknesses=c.foda_weaknesses,
+        foda_opportunities=c.foda_opportunities, foda_threats=c.foda_threats,
+        target_margin_pct=c.target_margin_pct, target_wos_weeks=c.target_wos_weeks,
+        notes=c.notes, is_active=c.is_active, created_at=c.created_at,
+    )
+
+
+@router.patch("/categories/{cat_id}", response_model=schemas.RetailCategoryOut)
+async def update_category(cat_id: int, payload: schemas.RetailCategoryUpdate,
+                            db: DB, _: CurrentUser):
+    c = await service.update_category(db, cat_id, payload)
+    if c is None:
+        raise HTTPException(404, "Categoría no encontrada")
+    return schemas.RetailCategoryOut(
+        id=c.id, code=c.code, name=c.name, parent_id=c.parent_id,
+        priority=c.priority, color=c.color,
+        foda_strengths=c.foda_strengths, foda_weaknesses=c.foda_weaknesses,
+        foda_opportunities=c.foda_opportunities, foda_threats=c.foda_threats,
+        target_margin_pct=c.target_margin_pct, target_wos_weeks=c.target_wos_weeks,
+        notes=c.notes, is_active=c.is_active, created_at=c.created_at,
+    )
+
+
+@router.delete("/categories/{cat_id}")
+async def delete_category(cat_id: int, db: DB, _: CurrentUser):
+    ok = await service.delete_category(db, cat_id)
+    if not ok:
+        raise HTTPException(404, "Categoría no encontrada")
+    return {"deleted": True}
+
+
+# ── Never Be Out (must-have) ────────────────────────────────────────────
+
+@router.get("/must-haves", response_model=schemas.MustHaveSummary)
+async def list_must_haves(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    window_days: int = Query(28, ge=7, le=180),
+):
+    return await service.list_must_haves(
+        db, channel_id=channel_id, window_days=window_days,
+    )
+
+
+@router.post("/must-haves/toggle")
+async def toggle_must_have(payload: schemas.MustHaveToggle,
+                             db: DB, _: CurrentUser):
+    ok = await service.toggle_must_have(db, payload.variant_id, payload.is_must_have)
+    if not ok:
+        raise HTTPException(404, "Variante no encontrada")
+    return {"variant_id": payload.variant_id, "is_must_have": payload.is_must_have}
+
+
+# ── Matriz Get Blue ─────────────────────────────────────────────────────
+
+@router.get("/analytics/get-blue", response_model=schemas.GetBlueResponse)
+async def get_blue_matrix(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=7, le=365),
+    min_units: int = Query(1, ge=0, le=1000),
+):
+    return await service.get_blue_matrix(
+        db, channel_id=channel_id, days=days, min_units=min_units,
+    )

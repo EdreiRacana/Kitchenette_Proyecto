@@ -117,6 +117,11 @@ class ProductVariant(Base):
     lead_time_days = Column(Integer, nullable=True)     # tiempo de entrega del proveedor preferido (días)
     preferred_supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
 
+    # Never Be Out — SKU crítico que NUNCA debe faltar en tienda.
+    # El motor de reabasto lo marca urgente sin importar WoS
+    # y las alertas se generan con severidad forzada.
+    is_must_have = Column(Boolean, default=False, nullable=False)
+
     is_active = Column(Boolean, default=True)
 
     product = relationship("Product", back_populates="variants")

@@ -34,6 +34,9 @@ import type {
   StoreTransferSuggestion, StoreTransferSuggestionsResponse,
   StoreTransferResponse, StoreTransferBulkResponse, StoreTransferItem,
   RetailReturn, RetailReturnStatus, RetailReturnsSummary,
+  RetailCategory, RetailCategoryTreeNode, CategoryDashboardResponse,
+  CategoryKPIs, CategoryPriority, RetailCategoryCreate,
+  MustHaveSummary, MustHaveSKU, GetBlueResponse, GetBlueQuadrantKey,
 } from "./types";
 
 type Tokens = any;
@@ -74,7 +77,7 @@ function statusInfo(t: Tokens, status: WosStatus) {
   }
 }
 
-type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment" | "transfers" | "returns" | "alerts" | "promotions" | "consignment" | "analytics";
+type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment" | "transfers" | "returns" | "categories" | "strategy" | "alerts" | "promotions" | "consignment" | "analytics";
 
 export default function RetailModule({ t }: { t: Tokens }) {
   const [tab, setTab] = useState<TabId>("dashboard");
@@ -108,6 +111,8 @@ export default function RetailModule({ t }: { t: Tokens }) {
     { id: "replenishment", label: "Reabasto", icon: Truck },
     { id: "transfers", label: "Traslados", icon: ArrowLeftRight },
     { id: "returns", label: "Devoluciones", icon: TrendingDown },
+    { id: "categories", label: "Categorías", icon: Grid2x2 },
+    { id: "strategy", label: "Estrategia", icon: Zap },
     {
       id: "alerts", label: "Alertas", icon: Bell,
       badge: alertsSummary?.open,
@@ -190,6 +195,8 @@ export default function RetailModule({ t }: { t: Tokens }) {
             {tab === "replenishment" && <ReplenishmentView t={t} channelId={selectedChannel} />}
             {tab === "transfers" && <StoreTransfersView t={t} channels={channels} channelId={selectedChannel} />}
             {tab === "returns" && <ReturnsView t={t} channelId={selectedChannel} />}
+            {tab === "categories" && <CategoriesView t={t} channelId={selectedChannel} />}
+            {tab === "strategy" && <StrategyView t={t} channelId={selectedChannel} />}
             {tab === "alerts" && <AlertsView t={t} channelId={selectedChannel} onChanged={refreshAlertsSummary} />}
             {tab === "promotions" && <PromotionsView t={t} channels={channels} selectedChannel={selectedChannel} />}
             {tab === "consignment" && <ConsignmentView t={t} channelId={selectedChannel} />}
@@ -3754,6 +3761,707 @@ function ReceiveReturnModal({ t, ret, onClose, onSaved }: {
     </div>
   );
   return createPortal(modal, document.body);
+}
+
+
+// ── Category Management ─────────────────────────────────────────────────
+
+const PRIO_META = (t: Tokens) => ({
+  A: { label: "Estratégica", color: t.bad, desc: "Categoría clave — máxima atención" },
+  B: { label: "Importante", color: t.warn, desc: "Impacto medio — mantener saludable" },
+  C: { label: "Complementaria", color: t.nova, desc: "Bajo impacto — optimizar costo" },
+  N: { label: "Sin clasificar", color: t.textLo, desc: "Por definir prioridad" },
+} as Record<CategoryPriority, { label: string; color: string; desc: string }>);
+
+
+function CategoriesView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [categories, setCategories] = useState<RetailCategory[]>([]);
+  const [dashboard, setDashboard] = useState<CategoryDashboardResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(28);
+  const [editing, setEditing] = useState<RetailCategory | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [selectedCat, setSelectedCat] = useState<CategoryKPIs | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [cats, dash] = await Promise.all([
+        retailApi.listCategories(false),
+        retailApi.categoriesDashboard({ channel_id: channelId || undefined, days }),
+      ]);
+      setCategories(cats); setDashboard(dash);
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [channelId, days]);
+
+  const priorityMeta = PRIO_META(t);
+  const priorities: CategoryPriority[] = ["A", "B", "C", "N"];
+  const totalRev = dashboard?.total_revenue || 0;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 13, color: t.textLo }}>
+          Category Management — <b style={{ color: t.textHi }}>{categories.length}</b> categorías registradas
+          {dashboard && <> · última {dashboard.days} días · <b style={{ color: t.good }}>{mxn(totalRev)}</b> en ventas</>}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select value={days} onChange={e => setDays(Number(e.target.value))}
+            style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 12 }}>
+            <option value={7}>Últimos 7 días</option>
+            <option value={28}>Últimos 28 días</option>
+            <option value={90}>Últimos 90 días</option>
+            <option value={365}>Último año</option>
+          </select>
+          <button onClick={load} style={btnGhost(t)}>
+            <RefreshCw size={13} /> Actualizar
+          </button>
+          <button onClick={() => setCreating(true)} style={btnPrimary(t)}>
+            <Plus size={14} /> Nueva categoría
+          </button>
+        </div>
+      </div>
+
+      {/* Distribución por prioridad */}
+      {dashboard && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+          {priorities.map(p => {
+            const m = priorityMeta[p];
+            const data = dashboard.priorities[p];
+            const pct = totalRev > 0 ? (data.revenue / totalRev * 100) : 0;
+            return (
+              <div key={p} style={{ padding: 14, background: t.panel, border: `1px solid ${m.color}55`, borderRadius: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                  <span style={{ padding: "2px 8px", borderRadius: 10, background: m.color + "22", color: m.color, fontSize: 11, fontWeight: 800 }}>{p}</span>
+                  <span style={{ fontSize: 12, color: t.textHi, fontWeight: 600 }}>{m.label}</span>
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi }}>{mxn(data.revenue)}</div>
+                <div style={{ fontSize: 11, color: t.textLo, marginTop: 3 }}>
+                  {num(data.units)} unid. · {pct.toFixed(1)}% del total
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+
+      {!loading && categories.length === 0 && (
+        <div style={{ padding: 30, textAlign: "center", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, color: t.textLo }}>
+          <Grid2x2 size={28} style={{ opacity: 0.5 }} />
+          <div style={{ marginTop: 10, color: t.textHi }}>Aún no tienes categorías</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>
+            Empieza por crear tus categorías estratégicas (A), importantes (B) y complementarias (C).
+            El code debe coincidir con el <b>category</b> de tus productos en inventario para que se agreguen las ventas.
+          </div>
+        </div>
+      )}
+
+      {!loading && categories.length > 0 && (
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden", overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 1000 }}>
+            <thead>
+              <tr style={{ background: t.panel2 }}>
+                <th style={thStyle(t)}>Prioridad</th>
+                <th style={thStyle(t)}>Categoría</th>
+                <th style={thStyle(t)}>Code</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>SKUs</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Unidades</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Ingreso</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Devol. %</th>
+                <th style={thStyle(t)}>Estado</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {categories.map(cat => {
+                const m = priorityMeta[cat.priority];
+                const kpi = dashboard?.categories.find(k => k.category_id === cat.id);
+                const rev = kpi?.total_revenue || 0;
+                const units = kpi?.total_units_sold || 0;
+                const retPct = kpi?.return_rate_pct || 0;
+                const retColor = retPct >= 10 ? t.bad : retPct >= 5 ? t.warn : t.textMid;
+                return (
+                  <tr key={cat.id} style={{ borderTop: `1px solid ${t.border}55` }}>
+                    <td style={tdStyle(t)}>
+                      <span style={{ padding: "2px 10px", borderRadius: 10, background: m.color + "22", color: m.color, fontSize: 11, fontWeight: 800 }}>{cat.priority}</span>
+                    </td>
+                    <td style={{ ...tdStyle(t), paddingLeft: 12 + cat.depth * 20 }}>
+                      {cat.depth > 0 && <span style={{ color: t.textLo, marginRight: 4 }}>└</span>}
+                      <b style={{ color: t.textHi }}>{cat.name}</b>
+                      {cat.parent_name && <div style={{ fontSize: 10.5, color: t.textLo }}>en {cat.parent_name}</div>}
+                    </td>
+                    <td style={{ ...tdStyle(t), fontFamily: "monospace", color: t.textLo, fontSize: 11 }}>{cat.code}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{kpi?.skus_count || 0}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(units)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{mxn(rev)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: retColor }}>{retPct.toFixed(1)}%</td>
+                    <td style={tdStyle(t)}>
+                      <span style={{ padding: "2px 8px", borderRadius: 8, fontSize: 10.5, fontWeight: 700, background: cat.is_active ? t.good + "22" : t.textLo + "22", color: cat.is_active ? t.good : t.textLo }}>
+                        {cat.is_active ? "Activa" : "Inactiva"}
+                      </span>
+                    </td>
+                    <td style={{ ...tdStyle(t), textAlign: "right" }}>
+                      {kpi && kpi.top_skus.length > 0 && (
+                        <button onClick={() => setSelectedCat(kpi)} style={{ ...iconBtn(t), color: t.nova }} title="Ver top SKUs">
+                          <BarChart3 size={13} />
+                        </button>
+                      )}
+                      <button onClick={() => setEditing(cat)} style={iconBtn(t)}>
+                        <Pencil size={13} />
+                      </button>
+                      <button onClick={async () => {
+                        if (!confirm(`Eliminar categoría "${cat.name}"? Las subcategorías perderán su padre.`)) return;
+                        await retailApi.deleteCategory(cat.id); load();
+                      }} style={{ ...iconBtn(t), color: t.bad }}>
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {(creating || editing) && (
+        <CategoryFormModal t={t} category={editing} categories={categories}
+          onClose={() => { setCreating(false); setEditing(null); }}
+          onSaved={() => { setCreating(false); setEditing(null); load(); }} />
+      )}
+      {selectedCat && (
+        <CategoryKPIsModal t={t} kpi={selectedCat}
+          onClose={() => setSelectedCat(null)} />
+      )}
+    </div>
+  );
+}
+
+
+function CategoryFormModal({ t, category, categories, onClose, onSaved }: {
+  t: Tokens; category: RetailCategory | null; categories: RetailCategory[];
+  onClose: () => void; onSaved: () => void;
+}) {
+  const [form, setForm] = useState<Partial<RetailCategoryCreate>>(() => ({
+    code: category?.code || "",
+    name: category?.name || "",
+    parent_id: category?.parent_id ?? null,
+    priority: category?.priority || "N",
+    color: category?.color || "",
+    foda_strengths: category?.foda_strengths || "",
+    foda_weaknesses: category?.foda_weaknesses || "",
+    foda_opportunities: category?.foda_opportunities || "",
+    foda_threats: category?.foda_threats || "",
+    target_margin_pct: category?.target_margin_pct ?? null,
+    target_wos_weeks: category?.target_wos_weeks ?? null,
+    notes: category?.notes || "",
+    is_active: category?.is_active ?? true,
+  }));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!form.code || !form.name) { setErr("Code y nombre son obligatorios"); return; }
+    setSaving(true); setErr(null);
+    try {
+      if (category) {
+        await retailApi.updateCategory(category.id, form);
+      } else {
+        await retailApi.createCategory(form as RetailCategoryCreate);
+      }
+      onSaved();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al guardar");
+    } finally { setSaving(false); }
+  };
+
+  const modal = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 680, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>
+            {category ? "Editar categoría" : "Nueva categoría"}
+          </h3>
+          <button onClick={onClose} style={{ ...iconBtn(t), color: t.textMid }}><X size={16} /></button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "160px 1fr 140px", gap: 10, marginBottom: 12 }}>
+          <div>
+            <label style={labelStyle(t)}>Code (único)</label>
+            <input value={form.code || ""} onChange={e => setForm({ ...form, code: e.target.value })}
+              placeholder="ej. BEBIDAS"
+              style={{ ...inputStyle(t), fontFamily: "monospace", textTransform: "uppercase" }} />
+          </div>
+          <div>
+            <label style={labelStyle(t)}>Nombre</label>
+            <input value={form.name || ""} onChange={e => setForm({ ...form, name: e.target.value })}
+              placeholder="ej. Bebidas carbonatadas" style={inputStyle(t)} />
+          </div>
+          <div>
+            <label style={labelStyle(t)}>Prioridad</label>
+            <select value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value as any })}
+              style={inputStyle(t)}>
+              <option value="A">A · Estratégica</option>
+              <option value="B">B · Importante</option>
+              <option value="C">C · Complementaria</option>
+              <option value="N">Sin clasificar</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 10, marginBottom: 12 }}>
+          <div>
+            <label style={labelStyle(t)}>Categoría padre (opcional)</label>
+            <select value={form.parent_id ?? ""} onChange={e => setForm({ ...form, parent_id: e.target.value ? Number(e.target.value) : null })}
+              style={inputStyle(t)}>
+              <option value="">— raíz (sin padre) —</option>
+              {categories.filter(c => c.id !== category?.id).map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle(t)}>Color</label>
+            <input type="color" value={form.color || "#2e5cf6"}
+              onChange={e => setForm({ ...form, color: e.target.value })}
+              style={{ ...inputStyle(t), padding: 4, height: 36 }} />
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+          <div>
+            <label style={labelStyle(t)}>Margen objetivo (%)</label>
+            <input type="number" step={0.1} min={0} max={100} value={form.target_margin_pct ?? ""}
+              onChange={e => setForm({ ...form, target_margin_pct: e.target.value ? Number(e.target.value) : null })}
+              placeholder="ej. 35" style={inputStyle(t)} />
+          </div>
+          <div>
+            <label style={labelStyle(t)}>WoS objetivo (semanas)</label>
+            <input type="number" step={0.1} min={0} value={form.target_wos_weeks ?? ""}
+              onChange={e => setForm({ ...form, target_wos_weeks: e.target.value ? Number(e.target.value) : null })}
+              placeholder="ej. 4" style={inputStyle(t)} />
+          </div>
+        </div>
+
+        <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 12, marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: t.textHi, fontWeight: 700, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.4 }}>Análisis FODA</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={{ ...labelStyle(t), color: t.good }}>Fortalezas</label>
+              <textarea value={form.foda_strengths || ""} onChange={e => setForm({ ...form, foda_strengths: e.target.value })}
+                rows={3} placeholder="Qué te hace fuerte en esta categoría"
+                style={{ ...inputStyle(t), resize: "vertical" }} />
+            </div>
+            <div>
+              <label style={{ ...labelStyle(t), color: t.bad }}>Debilidades</label>
+              <textarea value={form.foda_weaknesses || ""} onChange={e => setForm({ ...form, foda_weaknesses: e.target.value })}
+                rows={3} placeholder="Áreas por mejorar"
+                style={{ ...inputStyle(t), resize: "vertical" }} />
+            </div>
+            <div>
+              <label style={{ ...labelStyle(t), color: t.nova }}>Oportunidades</label>
+              <textarea value={form.foda_opportunities || ""} onChange={e => setForm({ ...form, foda_opportunities: e.target.value })}
+                rows={3} placeholder="Espacio de crecimiento del mercado"
+                style={{ ...inputStyle(t), resize: "vertical" }} />
+            </div>
+            <div>
+              <label style={{ ...labelStyle(t), color: t.warn }}>Amenazas</label>
+              <textarea value={form.foda_threats || ""} onChange={e => setForm({ ...form, foda_threats: e.target.value })}
+                rows={3} placeholder="Competencia, cambios regulatorios"
+                style={{ ...inputStyle(t), resize: "vertical" }} />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle(t)}>Notas</label>
+          <textarea value={form.notes || ""} onChange={e => setForm({ ...form, notes: e.target.value })}
+            rows={2} style={{ ...inputStyle(t), resize: "vertical" }} />
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+          <input type="checkbox" checked={form.is_active ?? true}
+            onChange={e => setForm({ ...form, is_active: e.target.checked })}
+            id="cat_active" />
+          <label htmlFor="cat_active" style={{ color: t.textMid, fontSize: 12.5 }}>Categoría activa</label>
+        </div>
+
+        {err && <div style={errStyle(t)}>{err}</div>}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onClose} style={btnGhost(t)}>Cancelar</button>
+          <button disabled={saving} onClick={submit} style={btnPrimary(t)}>
+            {saving ? "Guardando…" : (category ? "Actualizar" : "Crear")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+  return createPortal(modal, document.body);
+}
+
+
+function CategoryKPIsModal({ t, kpi, onClose }: {
+  t: Tokens; kpi: CategoryKPIs; onClose: () => void;
+}) {
+  const m = PRIO_META(t)[kpi.priority];
+  const modal = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 640, maxWidth: "100%", maxHeight: "88vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <span style={{ padding: "2px 10px", borderRadius: 10, background: m.color + "22", color: m.color, fontSize: 11, fontWeight: 800 }}>{kpi.priority}</span>
+              <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>{kpi.name}</h3>
+            </div>
+            <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace" }}>{kpi.code}</div>
+          </div>
+          <button onClick={onClose} style={{ ...iconBtn(t), color: t.textMid }}><X size={16} /></button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 16 }}>
+          <StatMini t={t} label="SKUs" value={kpi.skus_count.toString()} />
+          <StatMini t={t} label="Unidades" value={num(kpi.total_units_sold)} />
+          <StatMini t={t} label="Ingreso" value={mxn(kpi.total_revenue)} color={t.good} />
+          <StatMini t={t} label="Devol. %" value={`${kpi.return_rate_pct.toFixed(1)}%`}
+            color={kpi.return_rate_pct >= 10 ? t.bad : kpi.return_rate_pct >= 5 ? t.warn : t.textMid} />
+        </div>
+
+        <div style={{ fontSize: 12, color: t.textHi, fontWeight: 700, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.4 }}>
+          Top 5 SKUs por ingreso
+        </div>
+        <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: t.panel }}>
+                <th style={thStyle(t)}>#</th>
+                <th style={thStyle(t)}>SKU</th>
+                <th style={thStyle(t)}>Producto</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Unid.</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Ingreso</th>
+              </tr>
+            </thead>
+            <tbody>
+              {kpi.top_skus.length === 0 && (
+                <tr><td colSpan={5} style={{ padding: 20, textAlign: "center", color: t.textLo }}>Sin ventas en el periodo</td></tr>
+              )}
+              {kpi.top_skus.map((s, i) => (
+                <tr key={i} style={{ borderTop: `1px solid ${t.border}55` }}>
+                  <td style={tdStyle(t)}>{i + 1}</td>
+                  <td style={{ ...tdStyle(t), fontFamily: "monospace", fontSize: 11 }}>{s.sku}</td>
+                  <td style={tdStyle(t)}>{s.name}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(s.units)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.good }}>{mxn(s.revenue)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+  return createPortal(modal, document.body);
+}
+
+
+// ── Estrategia (Must-Haves + Matriz Get Blue) ──────────────────────────
+
+function StrategyView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [sub, setSub] = useState<"must_haves" | "get_blue">("must_haves");
+
+  const tabs = [
+    { id: "must_haves" as const, label: "Never Be Out (Must-Haves)", icon: Zap,
+      desc: "SKUs críticos que NUNCA pueden faltar. El motor de reabasto los prioriza siempre urgente." },
+    { id: "get_blue" as const, label: "Matriz Get Blue", icon: Grid2x2,
+      desc: "Cruce de velocity × margen. 4 cuadrantes: Estrellas, Vacas, Incógnitas, Perros. Decisión estratégica de qué SKU proteger, promover o descontinuar." },
+  ];
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+        {tabs.map(m => {
+          const active = sub === m.id;
+          const Icon = m.icon;
+          return (
+            <button key={m.id} onClick={() => setSub(m.id)}
+              style={{
+                padding: "12px 16px", borderRadius: 10,
+                border: `1px solid ${active ? t.nova : t.border}`,
+                background: active ? t.nova + "18" : t.panel,
+                color: active ? t.nova : t.textMid,
+                cursor: "pointer", fontSize: 13,
+                fontWeight: active ? 700 : 500,
+                display: "inline-flex", alignItems: "center", gap: 8,
+              }}>
+              <Icon size={15} /> {m.label}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ marginBottom: 14, padding: "10px 14px",
+                     background: t.panel2, borderRadius: 8,
+                     borderLeft: `3px solid ${t.nova}`,
+                     color: t.textMid, fontSize: 12 }}>
+        {tabs.find(m => m.id === sub)?.desc}
+      </div>
+      {sub === "must_haves" && <MustHavesPanel t={t} channelId={channelId} />}
+      {sub === "get_blue" && <GetBluePanel t={t} channelId={channelId} />}
+    </div>
+  );
+}
+
+
+function MustHavesPanel({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<MustHaveSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [allVariants, setAllVariants] = useState<VariantOption[]>([]);
+  const [q, setQ] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await retailApi.mustHaves({ channel_id: channelId || undefined });
+      setData(r);
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [channelId]);
+  useEffect(() => { salesApi.variantOptions().then(setAllVariants).catch(() => {}); }, []);
+
+  const marked = new Set((data?.skus || []).map(s => s.variant_id));
+  const candidates = useMemo(() => {
+    if (q.length < 2) return [];
+    const needle = q.trim().toLowerCase();
+    return allVariants
+      .filter(v => !marked.has(v.variant_id))
+      .filter(v => (v.sku || "").toLowerCase().includes(needle)
+                    || (v.label || "").toLowerCase().includes(needle))
+      .slice(0, 20);
+  }, [q, allVariants, marked]);
+
+  const addMustHave = async (vid: number) => {
+    setSaving(true);
+    try { await retailApi.toggleMustHave(vid, true); setQ(""); await load(); }
+    finally { setSaving(false); }
+  };
+  const removeMustHave = async (vid: number) => {
+    if (!confirm("¿Quitar de Never Be Out?")) return;
+    setSaving(true);
+    try { await retailApi.toggleMustHave(vid, false); await load(); }
+    finally { setSaving(false); }
+  };
+
+  if (loading) return <div style={{ padding: 40, color: t.textLo, textAlign: "center" }}>Cargando must-haves…</div>;
+  if (!data) return null;
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}>
+        <StatMini t={t} label="Total must-haves" value={data.total_must_haves.toString()} color={t.nova} />
+        <StatMini t={t} label="100% cubiertos" value={data.fully_covered.toString()} color={t.good} />
+        <StatMini t={t} label="Cobertura parcial" value={data.partial_coverage.toString()} color={t.warn} />
+        <StatMini t={t} label="Stockout crítico" value={data.stockout_critical.toString()} color={t.bad} />
+        <StatMini t={t} label="Cobertura promedio" value={`${data.avg_coverage_pct.toFixed(1)}%`} />
+      </div>
+
+      <div style={{ padding: 14, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, marginBottom: 14 }}>
+        <label style={labelStyle(t)}>Marcar SKU como Never Be Out</label>
+        <input value={q} onChange={e => setQ(e.target.value)}
+          placeholder="Buscar SKU o nombre para agregar…"
+          style={{ ...inputStyle(t), marginTop: 4 }} />
+        {candidates.length > 0 && (
+          <div style={{ marginTop: 6, maxHeight: 220, overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: 6, background: t.inputBg }}>
+            {candidates.map(v => (
+              <div key={v.variant_id} onClick={() => !saving && addMustHave(v.variant_id)}
+                style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}55`, cursor: saving ? "wait" : "pointer", fontSize: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span><b style={{ color: t.textHi, fontFamily: "monospace" }}>{v.sku}</b> <span style={{ color: t.textMid }}>{v.label}</span></span>
+                <Zap size={13} color={t.nova} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden", overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 1000 }}>
+          <thead>
+            <tr style={{ background: t.panel2 }}>
+              <th style={thStyle(t)}>SKU</th>
+              <th style={thStyle(t)}>Producto</th>
+              <th style={thStyle(t)}>Categoría</th>
+              <th style={{ ...thStyle(t), textAlign: "right" }}>Cobertura</th>
+              <th style={{ ...thStyle(t), textAlign: "right" }}>Stockouts</th>
+              <th style={{ ...thStyle(t), textAlign: "right" }}>Stock total</th>
+              <th style={{ ...thStyle(t), textAlign: "right" }}>Vel. sem</th>
+              <th style={{ ...thStyle(t), textAlign: "right" }}>WoS</th>
+              <th style={thStyle(t)}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.skus.length === 0 && (
+              <tr><td colSpan={9} style={{ padding: 30, textAlign: "center", color: t.textLo }}>
+                Aún no tienes SKUs marcados como Never Be Out. Empieza marcando los ~20% de SKUs que generan 80% de tu margen.
+              </td></tr>
+            )}
+            {data.skus.map(s => {
+              const covColor = s.coverage_pct >= 90 ? t.good : s.coverage_pct >= 60 ? t.warn : t.bad;
+              return (
+                <tr key={s.variant_id} style={{ borderTop: `1px solid ${t.border}55` }}>
+                  <td style={{ ...tdStyle(t), fontFamily: "monospace", fontSize: 11 }}>
+                    <Zap size={11} color={t.nova} style={{ marginRight: 4, verticalAlign: "middle" }} />
+                    {s.sku}
+                  </td>
+                  <td style={{ ...tdStyle(t), color: t.textHi }}>{s.product_name}</td>
+                  <td style={{ ...tdStyle(t), color: t.textLo }}>{s.category || "—"}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", color: covColor, fontWeight: 700 }}>
+                    {s.coverage_pct.toFixed(0)}%
+                    <div style={{ fontSize: 10, color: t.textLo, fontWeight: 400 }}>{s.stores_covered} tiendas</div>
+                  </td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", color: s.stores_stockout > 0 ? t.bad : t.textMid }}>{s.stores_stockout}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(s.total_on_hand)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{s.weekly_velocity.toFixed(1)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", color: s.wos_weeks < 2 ? t.bad : s.wos_weeks < 4 ? t.warn : t.good, fontWeight: 700 }}>{s.wos_weeks.toFixed(1)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>
+                    <button onClick={() => removeMustHave(s.variant_id)}
+                      style={{ ...iconBtn(t), color: t.bad }} title="Quitar de must-haves">
+                      <X size={13} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+
+function GetBluePanel({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [data, setData] = useState<GetBlueResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(90);
+  const [selectedQuadrant, setSelectedQuadrant] = useState<GetBlueQuadrantKey | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await retailApi.getBlueMatrix({ channel_id: channelId || undefined, days });
+      setData(r);
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [channelId, days]);
+
+  if (loading) return <div style={{ padding: 40, color: t.textLo, textAlign: "center" }}>Calculando matriz…</div>;
+  if (!data) return null;
+
+  const rowsFiltered = selectedQuadrant
+    ? data.rows.filter(r => r.quadrant === selectedQuadrant)
+    : data.rows;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 13, color: t.textLo }}>
+          <b style={{ color: t.textHi }}>{data.total_skus}</b> SKUs analizados · umbral velocity <b>{data.velocity_threshold.toFixed(1)}</b> u/sem · umbral margen <b>{data.margin_threshold.toFixed(1)}%</b>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select value={days} onChange={e => setDays(Number(e.target.value))}
+            style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 12 }}>
+            <option value={30}>Últimos 30 días</option>
+            <option value={90}>Últimos 90 días</option>
+            <option value={180}>Últimos 180 días</option>
+            <option value={365}>Último año</option>
+          </select>
+          <button onClick={load} style={btnGhost(t)}><RefreshCw size={13} /> Recalcular</button>
+        </div>
+      </div>
+
+      {/* Cuadrantes clickeables */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+        {data.quadrants.map(q => {
+          const active = selectedQuadrant === q.key;
+          return (
+            <div key={q.key} onClick={() => setSelectedQuadrant(active ? null : q.key)}
+              style={{ padding: 14, background: t.panel,
+                        border: `2px solid ${active ? q.color : q.color + "55"}`,
+                        borderRadius: 10, cursor: "pointer",
+                        boxShadow: active ? `0 0 0 3px ${q.color}22` : "none" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <div style={{ width: 10, height: 10, borderRadius: "50%", background: q.color }} />
+                <b style={{ color: t.textHi, fontSize: 13 }}>{q.label}</b>
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: t.textHi }}>{q.skus_count}</div>
+              <div style={{ fontSize: 11, color: t.textLo, marginTop: 2 }}>
+                {mxn(q.total_revenue)} · margen {q.avg_margin_pct.toFixed(1)}%
+              </div>
+              <div style={{ marginTop: 8, fontSize: 10.5, color: t.textMid, lineHeight: 1.4 }}>
+                {q.action}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {selectedQuadrant && (
+        <div style={{ padding: "8px 12px", background: t.nova + "18", borderRadius: 6, fontSize: 12, color: t.textMid, marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          Filtrando por <b style={{ color: t.textHi, marginLeft: 4 }}>{data.quadrants.find(q => q.key === selectedQuadrant)?.label}</b>
+          <button onClick={() => setSelectedQuadrant(null)} style={{ ...iconBtn(t), color: t.bad }}><X size={12} /> Limpiar</button>
+        </div>
+      )}
+
+      <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden", overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 1100 }}>
+          <thead>
+            <tr style={{ background: t.panel2 }}>
+              <th style={thStyle(t)}>Cuadrante</th>
+              <th style={thStyle(t)}>SKU</th>
+              <th style={thStyle(t)}>Producto</th>
+              <th style={thStyle(t)}>Categoría</th>
+              <th style={{ ...thStyle(t), textAlign: "right" }}>Unidades</th>
+              <th style={{ ...thStyle(t), textAlign: "right" }}>Vel. sem</th>
+              <th style={{ ...thStyle(t), textAlign: "right" }}>Ingreso</th>
+              <th style={{ ...thStyle(t), textAlign: "right" }}>Margen $</th>
+              <th style={{ ...thStyle(t), textAlign: "right" }}>Margen %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rowsFiltered.length === 0 && (
+              <tr><td colSpan={9} style={{ padding: 30, textAlign: "center", color: t.textLo }}>
+                Sin datos. Necesitas sell-out y cost_price capturado en variantes.
+              </td></tr>
+            )}
+            {rowsFiltered.slice(0, 500).map(r => {
+              const qmeta = data.quadrants.find(q => q.key === r.quadrant);
+              const c = qmeta?.color || t.textLo;
+              return (
+                <tr key={r.variant_id} style={{ borderTop: `1px solid ${t.border}55` }}>
+                  <td style={tdStyle(t)}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 10, background: c + "22", color: c, fontSize: 10.5, fontWeight: 700 }}>
+                      <div style={{ width: 6, height: 6, borderRadius: "50%", background: c }} /> {qmeta?.label}
+                    </span>
+                    {r.is_must_have && <Zap size={11} color={t.nova} style={{ marginLeft: 4, verticalAlign: "middle" }} />}
+                  </td>
+                  <td style={{ ...tdStyle(t), fontFamily: "monospace", fontSize: 11 }}>{r.sku}</td>
+                  <td style={{ ...tdStyle(t), color: t.textHi }}>{r.product_name}</td>
+                  <td style={{ ...tdStyle(t), color: t.textLo }}>{r.category || "—"}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.units_sold)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right" }}>{r.weekly_velocity.toFixed(1)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{mxn(r.revenue)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", color: r.margin > 0 ? t.good : t.bad }}>{mxn(r.margin)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: r.margin_pct >= data.margin_threshold ? t.good : t.textLo }}>{r.margin_pct.toFixed(1)}%</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 
