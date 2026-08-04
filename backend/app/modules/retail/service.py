@@ -6151,23 +6151,23 @@ async def toggle_must_have(
 
 _QUADRANT_META = {
     "star": {
-        "label": "Estrellas",
-        "action": "Proteger, invertir, dar más facing en anaquel. No dejar caer.",
+        "label": "Alto rendimiento",
+        "action": "Alta rotación + alto margen. Proteger, dar más facing en anaquel, invertir en promoción.",
         "color": "#22c55e",
     },
     "cash_cow": {
-        "label": "Vacas lecheras",
-        "action": "Mantener eficiente. Negociar mejor con proveedor para subir margen.",
+        "label": "Alto volumen",
+        "action": "Alta rotación pero margen bajo. Mantener disponibilidad y negociar mejor con proveedor para subir margen.",
         "color": "#3b82f6",
     },
     "question_mark": {
-        "label": "Incógnitas",
-        "action": "Probar promo, mejor ubicación o descontinuar si no reaccionan.",
+        "label": "Alto margen",
+        "action": "Buen margen pero baja rotación. Probar promoción, mejor ubicación o mejor precio para aumentar volumen.",
         "color": "#f59e0b",
     },
     "dog": {
-        "label": "Perros",
-        "action": "Candidatos a descontinuar. Liberar espacio de anaquel.",
+        "label": "Bajo desempeño",
+        "action": "Baja rotación y bajo margen. Candidatos a descontinuar y liberar espacio de anaquel.",
         "color": "#ef4444",
     },
 }
