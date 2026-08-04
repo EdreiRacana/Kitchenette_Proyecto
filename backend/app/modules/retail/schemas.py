@@ -1265,3 +1265,62 @@ class GetBlueResponse(BaseModel):
     total_margin: float
     quadrants: List[GetBlueQuadrant]
     rows: List[GetBlueRow]
+
+
+# ── Diagnóstico de costos (Get Blue) ────────────────────────────────────
+
+class CostMovementRow(BaseModel):
+    movement_id: int
+    warehouse_id: int
+    warehouse_name: Optional[str] = None
+    movement_type: str
+    quantity: int
+    unit_cost: Optional[float] = None
+    reference: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class CostLotRow(BaseModel):
+    lot_id: int
+    warehouse_id: int
+    warehouse_name: Optional[str] = None
+    quantity_received: int
+    quantity_remaining: int
+    unit_cost: float
+    reference: Optional[str] = None
+    received_at: Optional[datetime] = None
+    weight_in_avg_pct: float     # cuánto pesa este lote en el promedio actual
+
+
+class CostDiagnosticRow(BaseModel):
+    variant_id: int
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    category: Optional[str] = None
+    # Datos del catálogo
+    current_cost_price: float
+    manual_price: float           # precio de venta manual del variant
+    # Datos del sell-out (agregado ventana)
+    units_sold: int
+    total_revenue: float
+    unit_price_reported: float   # revenue / units_sold
+    # Márgenes calculados
+    margin_per_unit: float       # unit_price_reported - current_cost_price
+    margin_pct: float
+    # Suspechas identificadas automáticamente
+    flags: List[str] = Field(default_factory=list)
+    # Detalle para auditoría
+    recent_ins: List[CostMovementRow] = Field(default_factory=list)
+    live_lots: List[CostLotRow] = Field(default_factory=list)
+
+
+class CostDiagnosticResponse(BaseModel):
+    generated_at: datetime
+    days: int
+    channel_id: Optional[int] = None
+    total_skus_analyzed: int
+    skus_with_negative_margin: int
+    skus_missing_cost: int
+    skus_cost_higher_than_price: int
+    rows: List[CostDiagnosticRow]

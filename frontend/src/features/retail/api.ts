@@ -220,6 +220,8 @@ export const retailApi = {
   // Matriz Get Blue
   getBlueMatrix: (opts?: { channel_id?: number; days?: number; min_units?: number }) =>
     api.get<import("./types").GetBlueResponse>("/retail/analytics/get-blue", { params: opts }).then(r => r.data),
+  costDiagnostic: (opts?: { channel_id?: number; days?: number; limit?: number; only_problems?: boolean }) =>
+    api.get<import("./types").CostDiagnosticResponse>("/retail/analytics/cost-diagnostic", { params: opts }).then(r => r.data),
 
   // Perfiles de importación
   listImportProfiles: (channel_id?: number) =>

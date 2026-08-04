@@ -6320,3 +6320,171 @@ async def get_blue_matrix(
         total_margin=round(sum(r["margin"] for r in tmp), 2),
         quadrants=quadrant_meta, rows=result_rows,
     )
+
+
+# ── Diagnóstico de costos ───────────────────────────────────────────────
+
+async def cost_diagnostic(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    days: int = 90, limit: int = 100,
+    only_problems: bool = True,
+) -> schemas.CostDiagnosticResponse:
+    """Detalla por SKU: cost_price actual, precio unitario reportado en
+    sell-out, márgenes, lotes vivos y últimos IN movements para diagnosticar
+    de dónde viene un cost_price inflado o mal.
+    """
+    from app.modules.inventory import models as inv_m
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Agregación por variante
+    stmt = (
+        select(
+            models.SellOutReport.variant_id,
+            inv_m.ProductVariant.sku,
+            inv_m.Product.name.label("product_name"),
+            inv_m.Product.category,
+            inv_m.ProductVariant.cost_price,
+            inv_m.ProductVariant.price,
+            func.sum(models.SellOutReport.units_sold).label("units"),
+            func.sum(models.SellOutReport.revenue).label("revenue"),
+        )
+        .join(inv_m.ProductVariant,
+              models.SellOutReport.variant_id == inv_m.ProductVariant.id)
+        .join(inv_m.Product,
+              inv_m.ProductVariant.product_id == inv_m.Product.id)
+        .join(models.RetailStore,
+              models.SellOutReport.store_id == models.RetailStore.id)
+        .where(
+            models.SellOutReport.period_start >= since,
+            models.SellOutReport.variant_id.is_not(None),
+        )
+        .group_by(models.SellOutReport.variant_id, inv_m.ProductVariant.sku,
+                   inv_m.Product.name, inv_m.Product.category,
+                   inv_m.ProductVariant.cost_price, inv_m.ProductVariant.price)
+    )
+    if channel_id is not None:
+        stmt = stmt.where(models.RetailStore.channel_id == channel_id)
+
+    rows = (await db.execute(stmt)).all()
+
+    total = len(rows)
+    problems: List[Dict[str, Any]] = []
+    negative_ct = 0
+    missing_ct = 0
+    higher_than_price_ct = 0
+
+    for r in rows:
+        units = int(r.units or 0)
+        if units <= 0:
+            continue
+        revenue = float(r.revenue or 0.0)
+        cost = float(r.cost_price or 0.0)
+        unit_price = revenue / units if units > 0 else 0.0
+        margin_per_unit = unit_price - cost
+        margin_pct = (margin_per_unit / unit_price * 100.0) if unit_price > 0 else 0.0
+
+        flags: List[str] = []
+        if cost == 0:
+            flags.append("SIN_COSTO_CAPTURADO")
+            missing_ct += 1
+        if cost > 0 and cost > unit_price:
+            flags.append("COSTO_MAYOR_QUE_PRECIO")
+            higher_than_price_ct += 1
+        if cost > 0 and r.price and cost > float(r.price) * 1.5:
+            flags.append("COSTO_MAYOR_QUE_PRECIO_MANUAL")
+        if margin_per_unit < 0:
+            negative_ct += 1
+        if unit_price > 0 and cost > 0 and cost / unit_price > 5:
+            flags.append("COSTO_ANORMALMENTE_ALTO")
+        if unit_price < 1 and revenue > 100:
+            flags.append("REVENUE_UNITARIO_MUY_BAJO_SOSPECHOSO")
+
+        is_problem = margin_per_unit < 0 or cost == 0 or "COSTO_ANORMALMENTE_ALTO" in flags
+
+        problems.append({
+            "row": r, "units": units, "revenue": revenue, "cost": cost,
+            "unit_price": unit_price, "margin_per_unit": margin_per_unit,
+            "margin_pct": margin_pct, "flags": flags, "is_problem": is_problem,
+        })
+
+    if only_problems:
+        problems = [p for p in problems if p["is_problem"]]
+
+    # Ordenar por más problemáticos primero (margen más negativo)
+    problems.sort(key=lambda p: (p["margin_per_unit"]))
+    problems = problems[:limit]
+
+    # Para cada uno traer los últimos IN movements + lots vivos
+    diag_rows: List[schemas.CostDiagnosticRow] = []
+    for p in problems:
+        r = p["row"]
+        vid = r.variant_id
+
+        # Últimos 5 movimientos IN
+        mv_rows = (await db.execute(
+            select(inv_m.StockMovement, inv_m.Warehouse.name)
+            .join(inv_m.Warehouse,
+                  inv_m.StockMovement.warehouse_id == inv_m.Warehouse.id)
+            .where(inv_m.StockMovement.variant_id == vid,
+                    inv_m.StockMovement.movement_type == "in")
+            .order_by(inv_m.StockMovement.created_at.desc())
+            .limit(5)
+        )).all()
+        recent_ins = [
+            schemas.CostMovementRow(
+                movement_id=m.id, warehouse_id=m.warehouse_id,
+                warehouse_name=wh_name, movement_type=m.movement_type,
+                quantity=m.quantity, unit_cost=m.unit_cost,
+                reference=m.reference, notes=m.notes,
+                created_at=m.created_at,
+            )
+            for m, wh_name in mv_rows
+        ]
+
+        # Lots vivos
+        lot_rows = (await db.execute(
+            select(inv_m.StockLot, inv_m.Warehouse.name)
+            .join(inv_m.Warehouse,
+                  inv_m.StockLot.warehouse_id == inv_m.Warehouse.id)
+            .where(inv_m.StockLot.variant_id == vid,
+                    inv_m.StockLot.quantity_remaining > 0)
+            .order_by(inv_m.StockLot.received_at.desc())
+        )).all()
+        total_qty_lots = sum(l.quantity_remaining for l, _ in lot_rows) or 1
+        live_lots = [
+            schemas.CostLotRow(
+                lot_id=l.id, warehouse_id=l.warehouse_id, warehouse_name=wh_name,
+                quantity_received=l.quantity_received,
+                quantity_remaining=l.quantity_remaining,
+                unit_cost=l.unit_cost, reference=l.reference,
+                received_at=l.received_at,
+                weight_in_avg_pct=round(l.quantity_remaining / total_qty_lots * 100, 1),
+            )
+            for l, wh_name in lot_rows
+        ]
+
+        diag_rows.append(schemas.CostDiagnosticRow(
+            variant_id=vid, sku=r.sku, product_name=r.product_name,
+            category=r.category,
+            current_cost_price=round(p["cost"], 4),
+            manual_price=float(r.price or 0.0),
+            units_sold=p["units"],
+            total_revenue=round(p["revenue"], 2),
+            unit_price_reported=round(p["unit_price"], 4),
+            margin_per_unit=round(p["margin_per_unit"], 4),
+            margin_pct=round(p["margin_pct"], 2),
+            flags=p["flags"],
+            recent_ins=recent_ins,
+            live_lots=live_lots,
+        ))
+
+    return schemas.CostDiagnosticResponse(
+        generated_at=datetime.now(timezone.utc), days=days,
+        channel_id=channel_id,
+        total_skus_analyzed=total,
+        skus_with_negative_margin=negative_ct,
+        skus_missing_cost=missing_ct,
+        skus_cost_higher_than_price=higher_than_price_ct,
+        rows=diag_rows,
+    )

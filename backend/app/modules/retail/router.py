@@ -1212,3 +1212,18 @@ async def get_blue_matrix(
     return await service.get_blue_matrix(
         db, channel_id=channel_id, days=days, min_units=min_units,
     )
+
+
+@router.get("/analytics/cost-diagnostic",
+             response_model=schemas.CostDiagnosticResponse)
+async def cost_diagnostic(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=7, le=365),
+    limit: int = Query(100, ge=1, le=500),
+    only_problems: bool = Query(True),
+):
+    return await service.cost_diagnostic(
+        db, channel_id=channel_id, days=days, limit=limit,
+        only_problems=only_problems,
+    )

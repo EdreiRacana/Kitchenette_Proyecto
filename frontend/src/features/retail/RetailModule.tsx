@@ -3,7 +3,7 @@
 // KPIs: sell-through %, WOS ponderado, alertas de stock-out y sobreinventario,
 // panel de reabasto con sugerencias por tienda × SKU.
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { ReactNode, CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -37,6 +37,7 @@ import type {
   RetailCategory, RetailCategoryTreeNode, CategoryDashboardResponse,
   CategoryKPIs, CategoryPriority, RetailCategoryCreate,
   MustHaveSummary, MustHaveSKU, GetBlueResponse, GetBlueQuadrantKey,
+  CostDiagnosticResponse, CostDiagnosticRow,
 } from "./types";
 
 type Tokens = any;
@@ -4346,6 +4347,7 @@ function GetBluePanel({ t, channelId }: { t: Tokens; channelId: number | null })
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(90);
   const [selectedQuadrant, setSelectedQuadrant] = useState<GetBlueQuadrantKey | null>(null);
+  const [showDiag, setShowDiag] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -4377,6 +4379,9 @@ function GetBluePanel({ t, channelId }: { t: Tokens; channelId: number | null })
             <option value={180}>Últimos 180 días</option>
             <option value={365}>Último año</option>
           </select>
+          <button onClick={() => setShowDiag(true)} style={{ ...btnGhost(t), background: t.warn + "18", borderColor: t.warn + "55", color: t.warn }}>
+            <AlertTriangle size={13} /> Diagnóstico de costos
+          </button>
           <button onClick={load} style={btnGhost(t)}><RefreshCw size={13} /> Recalcular</button>
         </div>
       </div>
@@ -4460,8 +4465,201 @@ function GetBluePanel({ t, channelId }: { t: Tokens; channelId: number | null })
           </tbody>
         </table>
       </div>
+      {showDiag && (
+        <CostDiagnosticModal t={t} channelId={channelId} days={days}
+          onClose={() => setShowDiag(false)} />
+      )}
     </div>
   );
+}
+
+
+function CostDiagnosticModal({ t, channelId, days, onClose }: {
+  t: Tokens; channelId: number | null; days: number; onClose: () => void;
+}) {
+  const [data, setData] = useState<CostDiagnosticResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [onlyProblems, setOnlyProblems] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await retailApi.costDiagnostic({
+        channel_id: channelId || undefined, days,
+        limit: 200, only_problems: onlyProblems,
+      });
+      setData(r);
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [channelId, days, onlyProblems]);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const flagMeta = (f: string) => ({
+    SIN_COSTO_CAPTURADO: { label: "Sin costo", color: t.textLo },
+    COSTO_MAYOR_QUE_PRECIO: { label: "Costo > precio venta", color: t.bad },
+    COSTO_MAYOR_QUE_PRECIO_MANUAL: { label: "Costo > precio lista", color: t.warn },
+    COSTO_ANORMALMENTE_ALTO: { label: "Costo 5x precio", color: t.bad },
+    REVENUE_UNITARIO_MUY_BAJO_SOSPECHOSO: { label: "Precio unitario sospechoso", color: t.warn },
+  } as any)[f] || { label: f, color: t.textLo };
+
+  const modal = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 1200, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 18, color: t.textHi }}>Diagnóstico de costos</h3>
+            <div style={{ fontSize: 12, color: t.textLo, marginTop: 4 }}>
+              Compara el <b>costo actual</b> (product_variants.cost_price) contra el <b>precio unitario reportado</b> (revenue/units del sell-out) por cada SKU. Los flags indican problemas detectados.
+            </div>
+          </div>
+          <button onClick={onClose} style={{ ...iconBtn(t), color: t.textMid }}><X size={18} /></button>
+        </div>
+
+        {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Analizando…</div>}
+
+        {!loading && data && (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 14 }}>
+              <StatMini t={t} label="SKUs analizados" value={data.total_skus_analyzed.toString()} />
+              <StatMini t={t} label="Margen negativo" value={data.skus_with_negative_margin.toString()} color={t.bad} />
+              <StatMini t={t} label="Sin costo" value={data.skus_missing_cost.toString()} color={t.warn} />
+              <StatMini t={t} label="Costo > precio" value={data.skus_cost_higher_than_price.toString()} color={t.bad} />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontSize: 13, color: t.textMid }}>
+                Mostrando {data.rows.length} SKUs
+              </div>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: t.textMid, cursor: "pointer" }}>
+                <input type="checkbox" checked={onlyProblems}
+                  onChange={e => setOnlyProblems(e.target.checked)} />
+                Solo con problemas
+              </label>
+            </div>
+
+            <div style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 8, overflow: "hidden", overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 1100 }}>
+                <thead>
+                  <tr style={{ background: t.panel }}>
+                    <th style={{ ...thStyle(t), width: 24 }}></th>
+                    <th style={thStyle(t)}>SKU</th>
+                    <th style={thStyle(t)}>Producto</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>Unid.</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>Precio unit. reportado</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>Costo actual</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>Precio lista</th>
+                    <th style={{ ...thStyle(t), textAlign: "right" }}>Margen/unid</th>
+                    <th style={thStyle(t)}>Flags</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.length === 0 && (
+                    <tr><td colSpan={9} style={{ padding: 20, textAlign: "center", color: t.textLo }}>
+                      Sin SKUs problemáticos.
+                    </td></tr>
+                  )}
+                  {data.rows.map(r => (
+                    <React.Fragment key={r.variant_id}>
+                      <tr style={{ borderTop: `1px solid ${t.border}55`, cursor: "pointer" }}
+                        onClick={() => setExpanded(expanded === r.variant_id ? null : r.variant_id)}>
+                        <td style={tdStyle(t)}>
+                          <ChevronRight size={12} style={{ transform: expanded === r.variant_id ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+                        </td>
+                        <td style={{ ...tdStyle(t), fontFamily: "monospace", fontSize: 11 }}>{r.sku}</td>
+                        <td style={{ ...tdStyle(t), color: t.textHi }}>{r.product_name}</td>
+                        <td style={{ ...tdStyle(t), textAlign: "right" }}>{num(r.units_sold)}</td>
+                        <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700 }}>{mxn(r.unit_price_reported)}</td>
+                        <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: r.current_cost_price > r.unit_price_reported ? t.bad : t.textHi }}>{mxn(r.current_cost_price)}</td>
+                        <td style={{ ...tdStyle(t), textAlign: "right", color: t.textLo }}>{mxn(r.manual_price)}</td>
+                        <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: r.margin_per_unit >= 0 ? t.good : t.bad }}>{mxn(r.margin_per_unit)}</td>
+                        <td style={tdStyle(t)}>
+                          <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+                            {r.flags.map(f => {
+                              const m = flagMeta(f);
+                              return <span key={f} style={{ padding: "1px 6px", borderRadius: 8, fontSize: 10, background: m.color + "22", color: m.color, fontWeight: 700 }}>{m.label}</span>;
+                            })}
+                          </div>
+                        </td>
+                      </tr>
+                      {expanded === r.variant_id && (
+                        <tr>
+                          <td colSpan={9} style={{ padding: 14, background: t.panel, borderTop: `1px solid ${t.border}` }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                              {/* Últimos IN */}
+                              <div>
+                                <div style={{ fontSize: 12, color: t.textHi, fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4 }}>Últimas 5 entradas de stock (IN)</div>
+                                {r.recent_ins.length === 0 && <div style={{ color: t.textLo, fontSize: 12 }}>Sin entradas registradas.</div>}
+                                {r.recent_ins.length > 0 && (
+                                  <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+                                    <thead><tr style={{ background: t.panel2 }}>
+                                      <th style={thStyle(t)}>Fecha</th>
+                                      <th style={thStyle(t)}>Almacén</th>
+                                      <th style={{ ...thStyle(t), textAlign: "right" }}>Cant.</th>
+                                      <th style={{ ...thStyle(t), textAlign: "right" }}>Costo unit.</th>
+                                      <th style={thStyle(t)}>Ref/Notas</th>
+                                    </tr></thead>
+                                    <tbody>
+                                      {r.recent_ins.map(m => (
+                                        <tr key={m.movement_id} style={{ borderTop: `1px solid ${t.border}55` }}>
+                                          <td style={tdStyle(t)}>{m.created_at ? new Date(m.created_at).toLocaleDateString("es-MX") : "—"}</td>
+                                          <td style={tdStyle(t)}>{m.warehouse_name || "—"}</td>
+                                          <td style={{ ...tdStyle(t), textAlign: "right" }}>{m.quantity}</td>
+                                          <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: (m.unit_cost || 0) === 0 ? t.warn : t.textHi }}>{mxn(m.unit_cost || 0)}</td>
+                                          <td style={{ ...tdStyle(t), fontSize: 10, color: t.textLo }}>{m.reference || m.notes || "—"}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </div>
+                              {/* Lots vivos */}
+                              <div>
+                                <div style={{ fontSize: 12, color: t.textHi, fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4 }}>Lotes vivos (fuente del promedio)</div>
+                                {r.live_lots.length === 0 && <div style={{ color: t.textLo, fontSize: 12 }}>Sin lotes vivos.</div>}
+                                {r.live_lots.length > 0 && (
+                                  <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+                                    <thead><tr style={{ background: t.panel2 }}>
+                                      <th style={thStyle(t)}>Fecha</th>
+                                      <th style={thStyle(t)}>Almacén</th>
+                                      <th style={{ ...thStyle(t), textAlign: "right" }}>Cant. queda</th>
+                                      <th style={{ ...thStyle(t), textAlign: "right" }}>Costo</th>
+                                      <th style={{ ...thStyle(t), textAlign: "right" }}>% peso</th>
+                                    </tr></thead>
+                                    <tbody>
+                                      {r.live_lots.map(l => (
+                                        <tr key={l.lot_id} style={{ borderTop: `1px solid ${t.border}55` }}>
+                                          <td style={tdStyle(t)}>{l.received_at ? new Date(l.received_at).toLocaleDateString("es-MX") : "—"}</td>
+                                          <td style={tdStyle(t)}>{l.warehouse_name || "—"}</td>
+                                          <td style={{ ...tdStyle(t), textAlign: "right" }}>{l.quantity_remaining} / {l.quantity_received}</td>
+                                          <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700 }}>{mxn(l.unit_cost)}</td>
+                                          <td style={{ ...tdStyle(t), textAlign: "right", color: l.weight_in_avg_pct > 50 ? t.warn : t.textLo }}>{l.weight_in_avg_pct.toFixed(0)}%</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+  return createPortal(modal, document.body);
 }
 
 
