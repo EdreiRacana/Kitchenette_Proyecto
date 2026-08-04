@@ -86,6 +86,54 @@ frontend/src/
 - **create_all no altera tablas** — para nuevas columnas usa migrations.py.
 - **Employee `sbc`** es diario, no mensual. Existe `POST /hr/employees/fix-sbc` para auto-corregir capturas viejas.
 
+## Mapeo del módulo Retail (referencia formal)
+
+**Flujos físicos de mercancía:**
+
+1. **Sell-in** — mercancía que tú vendes/facturas al customer de la cadena.
+   Se registra vía `Orders` en el módulo Sales (con `customer_id` = customer
+   vinculado a la cadena vía `RetailChannel.customer_id`). Sale de tu almacén
+   central (`Warehouse.type=own`) y entra al almacén de consignación de la
+   tienda (`RetailStore.consignment_warehouse_id`).
+
+2. **Sell-out** — la cadena reporta lo que vendió al consumidor final por
+   (tienda × SKU × periodo). Se guarda en `SellOutReport`. Cuando la tienda
+   tiene `consignment_warehouse_id`, el sell-out descuenta stock físico del
+   consignment (tracking en `SellOutReport.stock_consumed`).
+
+3. **Traslados tienda↔tienda** — mueve stock de la consignación de una tienda
+   a la de otra. Backend: `POST /retail/store-transfers`. Motor de sugerencias:
+   `GET /retail/store-transfers/suggestions` (WoS diferencial con ventana de
+   4 sem por defecto).
+
+4. **Resurtido manual** — atajo desde Reabasto para mandar de un central a
+   una tienda sin esperar sugerencia automática (modal `ManualResurtidoModal`).
+
+5. **Devoluciones físicas** — tabla `retail_returns` con ciclo de vida:
+   `pending → in_transit → received → cancelled`. Al recibir, se separa en:
+     - `units_good` → entra al warehouse "Retornos · Buen estado" (vendible)
+     - `units_damaged` → entra al warehouse "Merma · Devoluciones dañadas"
+   Ambos warehouses se auto-crean al primer uso (`_ensure_returns_warehouse`).
+   Cada recepción genera un `StockMovement` con reference `retail_return:{id}`.
+
+**Métricas derivadas** (en `service.py`):
+
+- **WoS (Weeks of Supply)** = on_hand ÷ velocity_semanal — ventana 4 sem.
+- **Sell-through %** = sell_out / sell_in × 100 (rota lo que le mandas)
+- **Return rate %** = devoluciones / venta bruta × 100
+- **Fill rate %** = demanda satisfecha estimada (nivel de servicio)
+
+**Umbrales por cadena** (política comercial editable en `RetailChannel`):
+- `target_wos_weeks` (default 4) — meta operativa
+- `critical_wos_weeks` (default 2) — dispara alerta rojo/reabasto urgente
+- `overstock_wos_weeks` (default 12 → recomendado 8 para sugerencias) — dispara alerta amarilla
+- `no_movement_days` (default 21) — sin ventas = alerta
+- `return_rate_max_pct` (default 5) — umbral de tasa de devoluciones
+
+**Auto-provisión de consignaciones**: `POST /retail/stores/{id}/ensure-consignment`
+y también sucede transparentemente al ejecutar cualquier traslado si la
+tienda destino no tiene consignation. Nunca falla el flujo por eso.
+
 ## Cumplimiento fiscal MX
 
 - **ISR**: tabla mensual Anexo 8 RMF (en `hr/service.py`), se prorratea por frecuencia

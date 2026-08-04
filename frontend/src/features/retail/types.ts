@@ -586,6 +586,70 @@ export interface StoreTransferBulkResponse {
   rows: StoreTransferBulkRow[];
 }
 
+// Devoluciones físicas
+export type RetailReturnStatus = "pending" | "in_transit" | "received" | "cancelled";
+export type RetailReturnCondition = "good" | "damaged" | "expired" | "mixed";
+
+export interface RetailReturn {
+  id: number;
+  store_id: number;
+  store_name?: string | null;
+  channel_id?: number | null;
+  channel_name?: string | null;
+  variant_id?: number | null;
+  product_name?: string | null;
+  sku?: string | null;
+  units_returned: number;
+  units_good: number;
+  units_damaged: number;
+  unit_cost?: number | null;
+  reason?: string | null;
+  condition?: RetailReturnCondition | null;
+  status: RetailReturnStatus;
+  source_sellout_id?: number | null;
+  received_good_warehouse_id?: number | null;
+  received_good_warehouse_name?: string | null;
+  received_damaged_warehouse_id?: number | null;
+  received_damaged_warehouse_name?: string | null;
+  good_movement_id?: number | null;
+  damaged_movement_id?: number | null;
+  reported_at?: string | null;
+  received_at?: string | null;
+  notes?: string | null;
+  created_at?: string | null;
+}
+
+export interface RetailReturnCreate {
+  store_id: number;
+  variant_id?: number | null;
+  product_name?: string | null;
+  sku?: string | null;
+  units_returned: number;
+  reason?: string | null;
+  condition?: RetailReturnCondition | null;
+  notes?: string | null;
+  source_sellout_id?: number | null;
+  status?: RetailReturnStatus;
+}
+
+export interface RetailReturnReceive {
+  units_good: number;
+  units_damaged: number;
+  good_warehouse_id?: number | null;
+  damaged_warehouse_id?: number | null;
+  unit_cost?: number | null;
+  notes?: string | null;
+}
+
+export interface RetailReturnsSummary {
+  pending: number;
+  in_transit: number;
+  received: number;
+  total_pending_units: number;
+  total_good_units: number;
+  total_damaged_units: number;
+}
+
 export interface RetailImportProfile {
   id: number;
   channel_id: number;

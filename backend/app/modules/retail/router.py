@@ -768,6 +768,96 @@ async def create_store_transfer(payload: schemas.StoreTransferRequest,
     )
 
 
+@router.post("/stores/{store_id}/ensure-consignment",
+              response_model=schemas.RetailStoreOut)
+async def ensure_store_consignment(store_id: int, db: DB, _: CurrentUser):
+    """Garantiza que la tienda tenga un almacén de consignación —
+    lo crea si no existe. Idempotente."""
+    try:
+        store = await service.ensure_store_consignment(db, store_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    # Devolver la tienda con nombre del warehouse enriquecido (patrón list_stores)
+    stores = await service.list_stores(db, channel_id=store.channel_id)
+    match = next((s for s in stores if s.id == store.id), None)
+    if match is None:
+        raise HTTPException(500, "Store missing after provision")
+    return match
+
+
+# ── Devoluciones físicas ────────────────────────────────────────────────
+
+@router.get("/returns", response_model=List[schemas.RetailReturnOut])
+async def list_returns(
+    db: DB, _: CurrentUser,
+    channel_id: Optional[int] = Query(None),
+    store_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None),
+    limit: int = Query(500, ge=1, le=5000),
+):
+    return await service.list_returns(
+        db, channel_id=channel_id, store_id=store_id,
+        status=status, limit=limit,
+    )
+
+
+@router.get("/returns/summary", response_model=schemas.RetailReturnsSummary)
+async def returns_summary(db: DB, _: CurrentUser,
+                            channel_id: Optional[int] = Query(None)):
+    return await service.returns_summary(db, channel_id=channel_id)
+
+
+@router.post("/returns", response_model=schemas.RetailReturnOut, status_code=201)
+async def create_return(payload: schemas.RetailReturnCreate,
+                          db: DB, current_user: CurrentUser):
+    r = await service.create_return(db, payload, user_id=current_user.id)
+    out = await service.list_returns(db, store_id=r.store_id, limit=500)
+    match = next((x for x in out if x.id == r.id), None)
+    if match is None:
+        raise HTTPException(500, "Return created but not returned")
+    return match
+
+
+@router.post("/returns/{return_id}/receive", response_model=schemas.RetailReturnOut)
+async def receive_return(return_id: int, payload: schemas.RetailReturnReceive,
+                           db: DB, current_user: CurrentUser):
+    try:
+        r = await service.receive_return(
+            db, return_id, payload, user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    out = await service.list_returns(db, store_id=r.store_id, limit=500)
+    match = next((x for x in out if x.id == r.id), None)
+    if match is None:
+        raise HTTPException(500, "Return received but not returned")
+    return match
+
+
+@router.patch("/returns/{return_id}", response_model=schemas.RetailReturnOut)
+async def update_return(return_id: int, payload: schemas.RetailReturnUpdate,
+                          db: DB, _: CurrentUser):
+    try:
+        r = await service.update_return(db, return_id, payload)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if r is None:
+        raise HTTPException(404, "Devolución no encontrada")
+    out = await service.list_returns(db, store_id=r.store_id, limit=500)
+    match = next((x for x in out if x.id == r.id), None)
+    if match is None:
+        raise HTTPException(500, "Return updated but not returned")
+    return match
+
+
+@router.delete("/returns/{return_id}")
+async def delete_return(return_id: int, db: DB, _: CurrentUser):
+    ok = await service.delete_return(db, return_id)
+    if not ok:
+        raise HTTPException(404, "Devolución no encontrada")
+    return {"deleted": True}
+
+
 @router.get("/store-transfers/template.xlsx")
 async def store_transfer_template(db: DB, _: CurrentUser):
     """Descarga plantilla XLSX para carga masiva de traslados."""

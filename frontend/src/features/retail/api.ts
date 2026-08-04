@@ -20,6 +20,8 @@ export const retailApi = {
   // Stores
   listStores: (opts?: { channel_id?: number; active_only?: boolean }) =>
     api.get<RetailStore[]>("/retail/stores", { params: opts }).then(r => r.data),
+  ensureStoreConsignment: (id: number) =>
+    api.post<RetailStore>(`/retail/stores/${id}/ensure-consignment`).then(r => r.data),
   createStore: (data: Partial<RetailStoreCreate> & { channel_id: number; name: string }) =>
     api.post<RetailStore>("/retail/stores", data).then(r => r.data),
   bulkCreateStores: (channel_id: number, stores: Array<Partial<RetailStoreCreate>>) =>
@@ -181,6 +183,20 @@ export const retailApi = {
       { headers: { "Content-Type": "multipart/form-data" } },
     ).then(r => r.data);
   },
+
+  // Devoluciones físicas
+  listReturns: (opts?: { channel_id?: number; store_id?: number;
+                          status?: string; limit?: number }) =>
+    api.get<import("./types").RetailReturn[]>("/retail/returns", { params: opts }).then(r => r.data),
+  returnsSummary: (channel_id?: number) =>
+    api.get<import("./types").RetailReturnsSummary>("/retail/returns/summary", { params: { channel_id } }).then(r => r.data),
+  createReturn: (data: import("./types").RetailReturnCreate) =>
+    api.post<import("./types").RetailReturn>("/retail/returns", data).then(r => r.data),
+  receiveReturn: (id: number, data: import("./types").RetailReturnReceive) =>
+    api.post<import("./types").RetailReturn>(`/retail/returns/${id}/receive`, data).then(r => r.data),
+  updateReturn: (id: number, data: Partial<import("./types").RetailReturn>) =>
+    api.patch<import("./types").RetailReturn>(`/retail/returns/${id}`, data).then(r => r.data),
+  deleteReturn: (id: number) => api.delete(`/retail/returns/${id}`),
 
   // Perfiles de importación
   listImportProfiles: (channel_id?: number) =>
