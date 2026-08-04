@@ -148,11 +148,17 @@ async def list_sellout(db: DB, _: CurrentUser,
                         period_start_gte: Optional[datetime] = Query(None),
                         period_start_lt: Optional[datetime] = Query(None),
                         limit: int = Query(500, ge=1, le=5000)):
-    return await service.list_sellout(
-        db, channel_id=channel_id, store_id=store_id, variant_id=variant_id,
-        period_start_gte=period_start_gte, period_start_lt=period_start_lt,
-        limit=limit,
-    )
+    import logging as _log
+    try:
+        return await service.list_sellout(
+            db, channel_id=channel_id, store_id=store_id, variant_id=variant_id,
+            period_start_gte=period_start_gte, period_start_lt=period_start_lt,
+            limit=limit,
+        )
+    except Exception as e:
+        _log.exception("list_sellout crash channel=%s store=%s from=%s to=%s",
+                        channel_id, store_id, period_start_gte, period_start_lt)
+        raise HTTPException(500, f"list_sellout: {type(e).__name__}: {e}")
 
 
 @router.post("/sellout", response_model=schemas.SellOutReportOut, status_code=201)
