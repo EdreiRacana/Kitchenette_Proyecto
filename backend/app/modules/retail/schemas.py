@@ -1028,3 +1028,70 @@ class PromotionEffectiveness(BaseModel):
     promo_cost: Optional[float] = None   # margen/descuento sacrificado
     roi_pct: Optional[float] = None      # margen incremental / costo promo
     verdict: str                        # winner | neutral | loser | n/a
+
+
+# ── Devoluciones físicas ────────────────────────────────────────────────
+
+class RetailReturnBase(BaseModel):
+    store_id: int
+    variant_id: Optional[int] = None
+    product_name: Optional[str] = None
+    sku: Optional[str] = None
+    units_returned: int = Field(ge=1)
+    reason: Optional[str] = None
+    condition: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class RetailReturnCreate(RetailReturnBase):
+    source_sellout_id: Optional[int] = None
+    status: str = "pending"
+
+
+class RetailReturnReceive(BaseModel):
+    """Marca la devolución como recibida y separa buen/mal estado."""
+    units_good: int = Field(ge=0)
+    units_damaged: int = Field(ge=0)
+    good_warehouse_id: Optional[int] = None
+    damaged_warehouse_id: Optional[int] = None
+    unit_cost: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class RetailReturnOut(RetailReturnBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    store_name: Optional[str] = None
+    channel_id: Optional[int] = None
+    channel_name: Optional[str] = None
+    units_good: int
+    units_damaged: int
+    unit_cost: Optional[float] = None
+    status: str
+    source_sellout_id: Optional[int] = None
+    received_good_warehouse_id: Optional[int] = None
+    received_good_warehouse_name: Optional[str] = None
+    received_damaged_warehouse_id: Optional[int] = None
+    received_damaged_warehouse_name: Optional[str] = None
+    good_movement_id: Optional[int] = None
+    damaged_movement_id: Optional[int] = None
+    reported_at: Optional[datetime] = None
+    received_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class RetailReturnUpdate(BaseModel):
+    status: Optional[str] = None
+    reason: Optional[str] = None
+    condition: Optional[str] = None
+    notes: Optional[str] = None
+    units_returned: Optional[int] = None
+
+
+class RetailReturnsSummary(BaseModel):
+    pending: int
+    in_transit: int
+    received: int
+    total_pending_units: int
+    total_good_units: int
+    total_damaged_units: int

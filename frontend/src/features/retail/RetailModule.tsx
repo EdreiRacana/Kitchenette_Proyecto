@@ -33,6 +33,7 @@ import type {
   RetailPromotion, PromotionEffectiveness, PromoMechanic,
   StoreTransferSuggestion, StoreTransferSuggestionsResponse,
   StoreTransferResponse, StoreTransferBulkResponse, StoreTransferItem,
+  RetailReturn, RetailReturnStatus, RetailReturnsSummary,
 } from "./types";
 
 type Tokens = any;
@@ -73,7 +74,7 @@ function statusInfo(t: Tokens, status: WosStatus) {
   }
 }
 
-type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment" | "transfers" | "alerts" | "promotions" | "consignment" | "analytics";
+type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment" | "transfers" | "returns" | "alerts" | "promotions" | "consignment" | "analytics";
 
 export default function RetailModule({ t }: { t: Tokens }) {
   const [tab, setTab] = useState<TabId>("dashboard");
@@ -106,6 +107,7 @@ export default function RetailModule({ t }: { t: Tokens }) {
     { id: "sellout", label: "Sell-out", icon: ShoppingBag },
     { id: "replenishment", label: "Reabasto", icon: Truck },
     { id: "transfers", label: "Traslados", icon: ArrowLeftRight },
+    { id: "returns", label: "Devoluciones", icon: TrendingDown },
     {
       id: "alerts", label: "Alertas", icon: Bell,
       badge: alertsSummary?.open,
@@ -187,6 +189,7 @@ export default function RetailModule({ t }: { t: Tokens }) {
             {tab === "sellout" && <SellOutView t={t} channels={channels} selectedChannel={selectedChannel} onChanged={refreshAlertsSummary} />}
             {tab === "replenishment" && <ReplenishmentView t={t} channelId={selectedChannel} />}
             {tab === "transfers" && <StoreTransfersView t={t} channels={channels} channelId={selectedChannel} />}
+            {tab === "returns" && <ReturnsView t={t} channelId={selectedChannel} />}
             {tab === "alerts" && <AlertsView t={t} channelId={selectedChannel} onChanged={refreshAlertsSummary} />}
             {tab === "promotions" && <PromotionsView t={t} channels={channels} selectedChannel={selectedChannel} />}
             {tab === "consignment" && <ConsignmentView t={t} channelId={selectedChannel} />}
@@ -828,22 +831,51 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
   onChanged?: () => void;
 }) {
   const [reports, setReports] = useState<SellOutReport[]>([]);
+  const [stores, setStores] = useState<RetailStore[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const [downloading, setDownloading] = useState(false);
+
+  // Filtros
+  const [storeFilter, setStoreFilter] = useState<number | null>(null);
+  const [dateFrom, setDateFrom] = useState<string>("");
+  const [dateTo, setDateTo] = useState<string>("");
+  const [textFilter, setTextFilter] = useState<string>("");
+  const [limit, setLimit] = useState<number>(500);
 
   const load = async () => {
     setLoading(true);
     try {
       const r = await retailApi.listSellOut({
         channel_id: selectedChannel || undefined,
-        limit: 500,
+        store_id: storeFilter || undefined,
+        period_start_gte: dateFrom ? new Date(dateFrom + "T00:00:00").toISOString() : undefined,
+        period_start_lt: dateTo ? new Date(dateTo + "T23:59:59").toISOString() : undefined,
+        limit,
       });
       setReports(r);
     } finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, [selectedChannel]);
+  useEffect(() => { load(); }, [selectedChannel, storeFilter, dateFrom, dateTo, limit]);
+
+  // Cargar tiendas para el filtro
+  useEffect(() => {
+    retailApi.listStores({ channel_id: selectedChannel || undefined, active_only: true })
+      .then(setStores).catch(() => setStores([]));
+    setStoreFilter(null);   // reset al cambiar canal
+  }, [selectedChannel]);
+
+  // Búsqueda por texto (client-side sobre lo cargado)
+  const filteredReports = useMemo(() => {
+    if (!textFilter.trim()) return reports;
+    const needle = textFilter.trim().toLowerCase();
+    return reports.filter(r =>
+      (r.sku || "").toLowerCase().includes(needle) ||
+      (r.product_name || "").toLowerCase().includes(needle) ||
+      (r.store_name || "").toLowerCase().includes(needle),
+    );
+  }, [reports, textFilter]);
 
   const reload = () => { load(); onChanged?.(); };
 
@@ -868,10 +900,17 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
     } finally { setDownloading(false); }
   };
 
+  const clearFilters = () => {
+    setStoreFilter(null); setDateFrom(""); setDateTo(""); setTextFilter("");
+  };
+  const activeFilters = !!(storeFilter || dateFrom || dateTo || textFilter);
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10, flexWrap: "wrap" }}>
-        <div style={{ color: t.textLo, fontSize: 13 }}>{reports.length} reportes de sell-out</div>
+        <div style={{ color: t.textLo, fontSize: 13 }}>
+          {filteredReports.length} reportes {activeFilters && `(filtrados de ${reports.length})`}
+        </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button disabled={downloading} onClick={() => downloadTemplate("xlsx")} style={btnGhost(t)} title="Descargar plantilla Excel con hojas de referencia">
             <FileText size={13} /> {downloading ? "…" : "Plantilla Excel"}
@@ -894,10 +933,49 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
         </div>
       </div>
 
+      {/* Barra de filtros */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 140px 140px 200px auto", gap: 8, marginBottom: 14, alignItems: "end", padding: "10px 12px", background: t.panel2, borderRadius: 8, border: `1px solid ${t.border}` }}>
+        <div>
+          <label style={labelStyle(t)}>Tienda</label>
+          <select value={storeFilter ?? ""} onChange={e => setStoreFilter(e.target.value ? Number(e.target.value) : null)}
+            style={{ ...inputStyle(t), marginTop: 2 }}>
+            <option value="">Todas</option>
+            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle(t)}>Desde</label>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            style={{ ...inputStyle(t), marginTop: 2 }} />
+        </div>
+        <div>
+          <label style={labelStyle(t)}>Hasta</label>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            style={{ ...inputStyle(t), marginTop: 2 }} />
+        </div>
+        <div>
+          <label style={labelStyle(t)}>Buscar (SKU / producto)</label>
+          <input value={textFilter} onChange={e => setTextFilter(e.target.value)} placeholder="Ej. SKU-001 o Camisa…"
+            style={{ ...inputStyle(t), marginTop: 2 }} />
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {activeFilters && (
+            <button onClick={clearFilters} style={btnGhost(t)}><X size={12} /> Limpiar</button>
+          )}
+          <select value={limit} onChange={e => setLimit(Number(e.target.value))}
+            style={{ ...inputStyle(t), width: 100, marginTop: 0 }}>
+            <option value={100}>100</option>
+            <option value={500}>500</option>
+            <option value={2000}>2000</option>
+            <option value={5000}>5000</option>
+          </select>
+        </div>
+      </div>
+
       {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
       {!loading && (
-        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden", overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 1000 }}>
             <thead>
               <tr style={{ background: t.panel2 }}>
                 <th style={thStyle(t)}>Periodo</th>
@@ -916,12 +994,12 @@ function SellOutView({ t, channels, selectedChannel, onChanged }: {
               </tr>
             </thead>
             <tbody>
-              {reports.length === 0 && (
+              {filteredReports.length === 0 && (
                 <tr><td colSpan={13} style={{ padding: 30, textAlign: "center", color: t.textLo }}>
-                  Sin reportes aún. Registra el primer sell-out.
+                  {activeFilters ? "No hay resultados con los filtros actuales." : "Sin reportes aún. Registra el primer sell-out."}
                 </td></tr>
               )}
-              {reports.map(r => {
+              {filteredReports.map(r => {
                 const ret = r.units_returned || 0;
                 const retAmt = r.returns_amount || 0;
                 const netU = Math.max((r.units_sold || 0) - ret, 0);
@@ -2092,6 +2170,7 @@ function ReplenishmentView({ t, channelId }: { t: Tokens; channelId: number | nu
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [showTransfer, setShowTransfer] = useState(false);
+  const [showManualResurtido, setShowManualResurtido] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -2130,6 +2209,10 @@ function ReplenishmentView({ t, channelId }: { t: Tokens; channelId: number | nu
           Generado {new Date(data.generated_at).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={() => setShowManualResurtido(true)} style={btnGhost(t)}
+            title="Crear un resurtido manual desde un almacén central hacia una tienda">
+            <Plus size={13} /> Resurtido manual
+          </button>
           <button disabled={selectedItems.length === 0} onClick={() => setShowTransfer(true)}
             style={{ ...btnPrimary(t), opacity: selectedItems.length === 0 ? 0.5 : 1 }}
             title="Crea el movimiento de inventario del almacén origen al de consignación de cada tienda">
@@ -2234,8 +2317,199 @@ function ReplenishmentView({ t, channelId }: { t: Tokens; channelId: number | nu
           onDone={() => { setShowTransfer(false); load(); }}
         />
       )}
+      {showManualResurtido && (
+        <ManualResurtidoModal t={t} channelId={channelId}
+          onClose={() => setShowManualResurtido(false)}
+          onDone={() => { setShowManualResurtido(false); load(); }} />
+      )}
     </div>
   );
+}
+
+
+function ManualResurtidoModal({ t, channelId, onClose, onDone }: {
+  t: Tokens; channelId: number | null; onClose: () => void; onDone: () => void;
+}) {
+  const [warehouses, setWarehouses] = useState<SourceWarehouseOption[]>([]);
+  const [stores, setStores] = useState<RetailStore[]>([]);
+  const [allVariants, setAllVariants] = useState<VariantOption[]>([]);
+  const [sourceId, setSourceId] = useState<number | null>(null);
+  const [storeId, setStoreId] = useState<number | null>(null);
+  const [variantId, setVariantId] = useState<number | null>(null);
+  const [units, setUnits] = useState(1);
+  const [notes, setNotes] = useState("");
+  const [q, setQ] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [result, setResult] = useState<TransferResponse | null>(null);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const [ws, ss, vs] = await Promise.all([
+          retailApi.listSourceWarehouses(),
+          retailApi.listStores({ channel_id: channelId || undefined, active_only: true }),
+          salesApi.variantOptions(),
+        ]);
+        // Solo warehouses centrales (no consignations de tienda) para resurtido
+        setWarehouses(ws.filter(w => !w.store_id));
+        setStores(ss); setAllVariants(vs);
+        const central = ws.find(w => !w.store_id);
+        if (central) setSourceId(central.id);
+      } catch { setErr("No pude cargar catálogos"); }
+      finally { setLoading(false); }
+    })();
+  }, [channelId]);
+
+  const variants = useMemo(() => {
+    if (q.length < 2) return [];
+    const needle = q.trim().toLowerCase();
+    return allVariants.filter(v =>
+      (v.sku || "").toLowerCase().includes(needle) ||
+      (v.label || "").toLowerCase().includes(needle),
+    ).slice(0, 30);
+  }, [q, allVariants]);
+  const selectedVariant = allVariants.find(v => v.variant_id === variantId);
+
+  const canSubmit = sourceId && storeId && variantId && units >= 1;
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setSaving(true); setErr(null);
+    try {
+      // Auto-crear consignation si la tienda no tiene
+      const st = stores.find(s => s.id === storeId);
+      if (st && !st.consignment_warehouse_id) {
+        await retailApi.ensureStoreConsignment(st.id);
+      }
+      const r = await retailApi.createTransfer(sourceId!, [{
+        store_id: storeId!, variant_id: variantId!, units,
+        notes: notes || undefined,
+      }]);
+      setResult(r);
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al ejecutar resurtido");
+    } finally { setSaving(false); }
+  };
+
+  const modal = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 640, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>Resurtido manual a tienda</h3>
+          <button onClick={onClose} style={{ ...iconBtn(t), color: t.textMid }}><X size={16} /></button>
+        </div>
+        <p style={{ color: t.textLo, fontSize: 12, marginTop: 0 }}>
+          Envía mercancía de un almacén central a la consignación de una tienda. Ideal cuando la tienda pide algo específico o cuando quieres surtir sin esperar la sugerencia automática.
+        </p>
+
+        {loading ? (
+          <div style={{ padding: 30, textAlign: "center", color: t.textLo }}>Cargando…</div>
+        ) : result ? (
+          <div>
+            <div style={{ padding: 14, background: t.good + "18", border: `1px solid ${t.good}55`, borderRadius: 8, marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <Check size={18} color={t.good} />
+                <b style={{ color: t.textHi }}>Resurtido ejecutado</b>
+              </div>
+              <div style={{ color: t.textMid, fontSize: 12 }}>
+                {result.transferred_lines} línea · {num(result.total_units)} unidades desde {result.source_warehouse_name}
+              </div>
+              {result.warnings > 0 && result.results.filter(r => r.status !== "transferred").map((r, i) => (
+                <div key={i} style={{ marginTop: 8, padding: 8, background: t.warn + "18", borderRadius: 6, fontSize: 11, color: t.warn }}>
+                  {r.status}: {r.message}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button onClick={onDone} style={btnPrimary(t)}>Listo</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+              <div>
+                <label style={labelStyle(t)}>Almacén origen</label>
+                <select value={sourceId ?? ""} onChange={e => setSourceId(e.target.value ? Number(e.target.value) : null)}
+                  style={inputStyle(t)}>
+                  <option value="">Selecciona…</option>
+                  {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}{w.location ? ` · ${w.location}` : ""}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle(t)}>Tienda destino</label>
+                <select value={storeId ?? ""} onChange={e => setStoreId(e.target.value ? Number(e.target.value) : null)}
+                  style={inputStyle(t)}>
+                  <option value="">Selecciona…</option>
+                  {stores.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}{!s.consignment_warehouse_id ? "  (sin consignación)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={labelStyle(t)}>Producto (SKU o nombre)</label>
+              <input placeholder="Buscar…" value={q} onChange={e => setQ(e.target.value)}
+                style={inputStyle(t)} />
+              {selectedVariant && (
+                <div style={{ marginTop: 6, padding: "6px 10px", background: t.nova + "18", borderRadius: 6, fontSize: 12, color: t.textHi }}>
+                  <b style={{ fontFamily: "monospace" }}>{selectedVariant.sku}</b> — {selectedVariant.label}
+                  <button onClick={() => setVariantId(null)} style={{ ...iconBtn(t), color: t.bad, marginLeft: 8 }}><X size={12} /></button>
+                </div>
+              )}
+              {!variantId && q.length >= 2 && (
+                <div style={{ marginTop: 4, maxHeight: 200, overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: 6, background: t.inputBg }}>
+                  {variants.map(v => (
+                    <div key={v.variant_id} onClick={() => setVariantId(v.variant_id)}
+                      style={{ padding: "7px 10px", borderBottom: `1px solid ${t.border}55`, cursor: "pointer", fontSize: 12 }}>
+                      <b style={{ color: t.textHi, fontFamily: "monospace" }}>{v.sku}</b> <span style={{ color: t.textMid }}>{v.label}</span>
+                    </div>
+                  ))}
+                  {variants.length === 0 && <div style={{ padding: 10, color: t.textLo, fontSize: 12 }}>Sin resultados</div>}
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "150px 1fr", gap: 10, marginBottom: 12 }}>
+              <div>
+                <label style={labelStyle(t)}>Unidades</label>
+                <input type="number" min={1} value={units}
+                  onChange={e => setUnits(Math.max(1, parseInt(e.target.value || "0", 10)))}
+                  style={inputStyle(t)} />
+              </div>
+              <div>
+                <label style={labelStyle(t)}>Notas</label>
+                <input value={notes} onChange={e => setNotes(e.target.value)}
+                  placeholder="Ej. pedido urgente por promoción" style={inputStyle(t)} />
+              </div>
+            </div>
+
+            {err && <div style={errStyle(t)}>{err}</div>}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={onClose} style={btnGhost(t)}>Cancelar</button>
+              <button disabled={!canSubmit || saving} onClick={submit}
+                style={{ ...btnPrimary(t), opacity: (!canSubmit || saving) ? 0.5 : 1 }}>
+                {saving ? "Enviando…" : <><ArrowRight size={13} /> Ejecutar resurtido</>}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+  return createPortal(modal, document.body);
 }
 
 
@@ -2765,20 +3039,45 @@ function ManualTransferPanel({ t, channels, channelId }: {
     );
   }
 
+  const provisionMissing = async () => {
+    if (fromStoreObj && !fromStoreObj.consignment_warehouse_id) {
+      const upd = await retailApi.ensureStoreConsignment(fromStoreObj.id);
+      setStores(prev => prev.map(s => s.id === upd.id ? upd : s));
+    }
+    if (toStoreObj && !toStoreObj.consignment_warehouse_id) {
+      const upd = await retailApi.ensureStoreConsignment(toStoreObj.id);
+      setStores(prev => prev.map(s => s.id === upd.id ? upd : s));
+    }
+  };
+
+  const missingConsignment = (
+    (fromStoreObj && !fromStoreObj.consignment_warehouse_id) ||
+    (toStoreObj && !toStoreObj.consignment_warehouse_id)
+  );
+
   return (
     <div style={{ padding: 22, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12 }}>
+      {stores.length === 0 && (
+        <div style={{ padding: 16, background: t.warn + "18", borderRadius: 8, marginBottom: 14, color: t.textMid }}>
+          No hay tiendas activas. Ve a la tab <b>Tiendas</b> para dar de alta la primera.
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 40px 1fr", gap: 14, alignItems: "start" }}>
         <div>
           <label style={labelStyle(t)}>Tienda origen</label>
           <select value={fromStore ?? ""} onChange={e => setFromStore(e.target.value ? Number(e.target.value) : null)}
             style={inputStyle(t)}>
             <option value="">Selecciona…</option>
-            {stores.filter(s => s.consignment_warehouse_id).map(s => (
-              <option key={s.id} value={s.id}>{chOfStore(s)} — {s.name}</option>
+            {stores.map(s => (
+              <option key={s.id} value={s.id}>
+                {chOfStore(s)} — {s.name}{!s.consignment_warehouse_id ? "  (sin consignación)" : ""}
+              </option>
             ))}
           </select>
           {fromStoreObj && !fromStoreObj.consignment_warehouse_id && (
-            <div style={{ marginTop: 6, fontSize: 11, color: t.bad }}>Esta tienda no tiene almacén de consignación</div>
+            <div style={{ marginTop: 6, fontSize: 11, color: t.warn }}>
+              Sin almacén de consignación — se creará automáticamente al ejecutar
+            </div>
           )}
         </div>
         <div style={{ paddingTop: 26, textAlign: "center", color: t.textLo }}>
@@ -2789,12 +3088,16 @@ function ManualTransferPanel({ t, channels, channelId }: {
           <select value={toStore ?? ""} onChange={e => setToStore(e.target.value ? Number(e.target.value) : null)}
             style={inputStyle(t)}>
             <option value="">Selecciona…</option>
-            {stores.filter(s => s.consignment_warehouse_id && s.id !== fromStore).map(s => (
-              <option key={s.id} value={s.id}>{chOfStore(s)} — {s.name}</option>
+            {stores.filter(s => s.id !== fromStore).map(s => (
+              <option key={s.id} value={s.id}>
+                {chOfStore(s)} — {s.name}{!s.consignment_warehouse_id ? "  (sin consignación)" : ""}
+              </option>
             ))}
           </select>
           {toStoreObj && !toStoreObj.consignment_warehouse_id && (
-            <div style={{ marginTop: 6, fontSize: 11, color: t.bad }}>Esta tienda no tiene almacén de consignación</div>
+            <div style={{ marginTop: 6, fontSize: 11, color: t.warn }}>
+              Sin almacén de consignación — se creará automáticamente al ejecutar
+            </div>
           )}
         </div>
       </div>
@@ -3006,6 +3309,432 @@ function BulkTransferPanel({ t }: { t: Tokens }) {
       </div>
     </div>
   );
+}
+
+
+// ── Devoluciones físicas ────────────────────────────────────────────────
+
+function ReturnsView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+  const [returns, setReturns] = useState<RetailReturn[]>([]);
+  const [summary, setSummary] = useState<RetailReturnsSummary | null>(null);
+  const [stores, setStores] = useState<RetailStore[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<RetailReturnStatus | "">("");
+  const [storeFilter, setStoreFilter] = useState<number | null>(null);
+  const [textFilter, setTextFilter] = useState<string>("");
+  const [creating, setCreating] = useState(false);
+  const [receiving, setReceiving] = useState<RetailReturn | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [rs, sm, ss] = await Promise.all([
+        retailApi.listReturns({
+          channel_id: channelId || undefined,
+          store_id: storeFilter || undefined,
+          status: statusFilter || undefined,
+          limit: 1000,
+        }),
+        retailApi.returnsSummary(channelId || undefined),
+        stores.length === 0
+          ? retailApi.listStores({ channel_id: channelId || undefined, active_only: true })
+          : Promise.resolve(stores),
+      ]);
+      setReturns(rs); setSummary(sm); setStores(ss);
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [channelId, statusFilter, storeFilter]);
+
+  const filtered = useMemo(() => {
+    if (!textFilter.trim()) return returns;
+    const needle = textFilter.trim().toLowerCase();
+    return returns.filter(r =>
+      (r.sku || "").toLowerCase().includes(needle) ||
+      (r.product_name || "").toLowerCase().includes(needle) ||
+      (r.store_name || "").toLowerCase().includes(needle),
+    );
+  }, [returns, textFilter]);
+
+  const statusMeta = (s: string) => ({
+    pending: { label: "Pendiente", color: t.warn },
+    in_transit: { label: "En tránsito", color: t.nova },
+    received: { label: "Recibida", color: t.good },
+    cancelled: { label: "Cancelada", color: t.textLo },
+  } as any)[s] || { label: s, color: t.textLo };
+
+  const condMeta = (c?: string | null) => {
+    if (!c) return null;
+    return ({
+      good: { label: "Buen estado", color: t.good },
+      damaged: { label: "Dañado", color: t.bad },
+      expired: { label: "Caducado", color: t.bad },
+      mixed: { label: "Mixto", color: t.warn },
+    } as any)[c] || null;
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 13, color: t.textLo }}>
+          Ciclo físico de devoluciones — <b style={{ color: t.textHi }}>{filtered.length}</b> registros
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button onClick={load} style={btnGhost(t)}>
+            <RefreshCw size={13} /> Actualizar
+          </button>
+          <button onClick={() => setCreating(true)} style={btnPrimary(t)}>
+            <Plus size={14} /> Registrar devolución
+          </button>
+        </div>
+      </div>
+
+      {summary && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 14 }}>
+          <StatMini t={t} label="Pendientes" value={summary.pending.toString()} color={t.warn} />
+          <StatMini t={t} label="En tránsito" value={summary.in_transit.toString()} color={t.nova} />
+          <StatMini t={t} label="Recibidas" value={summary.received.toString()} color={t.good} />
+          <StatMini t={t} label="Unid. buen estado" value={num(summary.total_good_units)} color={t.good} />
+          <StatMini t={t} label="Unid. merma" value={num(summary.total_damaged_units)} color={t.bad} />
+        </div>
+      )}
+
+      {/* Filtros */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr auto", gap: 8, marginBottom: 14, alignItems: "end", padding: "10px 12px", background: t.panel2, borderRadius: 8, border: `1px solid ${t.border}` }}>
+        <div>
+          <label style={labelStyle(t)}>Estado</label>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as any)}
+            style={{ ...inputStyle(t), marginTop: 2 }}>
+            <option value="">Todos</option>
+            <option value="pending">Pendientes</option>
+            <option value="in_transit">En tránsito</option>
+            <option value="received">Recibidas</option>
+            <option value="cancelled">Canceladas</option>
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle(t)}>Tienda</label>
+          <select value={storeFilter ?? ""} onChange={e => setStoreFilter(e.target.value ? Number(e.target.value) : null)}
+            style={{ ...inputStyle(t), marginTop: 2 }}>
+            <option value="">Todas</option>
+            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle(t)}>Buscar</label>
+          <input value={textFilter} onChange={e => setTextFilter(e.target.value)}
+            placeholder="SKU, producto o tienda…"
+            style={{ ...inputStyle(t), marginTop: 2 }} />
+        </div>
+        <button onClick={() => { setStatusFilter(""); setStoreFilter(null); setTextFilter(""); }}
+          style={btnGhost(t)}>
+          <X size={12} /> Limpiar
+        </button>
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+
+      {!loading && (
+        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden", overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 1100 }}>
+            <thead>
+              <tr style={{ background: t.panel2 }}>
+                <th style={thStyle(t)}>Fecha</th>
+                <th style={thStyle(t)}>Estado</th>
+                <th style={thStyle(t)}>Tienda</th>
+                <th style={thStyle(t)}>Producto</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Unid. dev.</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Buen estado</th>
+                <th style={{ ...thStyle(t), textAlign: "right" }}>Merma</th>
+                <th style={thStyle(t)}>Destino</th>
+                <th style={thStyle(t)}>Motivo</th>
+                <th style={thStyle(t)}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr><td colSpan={10} style={{ padding: 30, textAlign: "center", color: t.textLo }}>
+                  Sin devoluciones. Registra la primera cuando la tienda te avise que va a regresar mercancía.
+                </td></tr>
+              )}
+              {filtered.map(r => {
+                const sm = statusMeta(r.status);
+                const cm = condMeta(r.condition);
+                return (
+                  <tr key={r.id} style={{ borderTop: `1px solid ${t.border}55` }}>
+                    <td style={tdStyle(t)}>
+                      {r.reported_at ? new Date(r.reported_at).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "2-digit" }) : "—"}
+                    </td>
+                    <td style={tdStyle(t)}>
+                      <span style={{ display: "inline-flex", padding: "2px 8px", borderRadius: 10, fontSize: 10.5, fontWeight: 700, color: sm.color, background: sm.color + "22" }}>
+                        {sm.label}
+                      </span>
+                      {cm && (
+                        <div style={{ fontSize: 10, color: cm.color, marginTop: 3 }}>{cm.label}</div>
+                      )}
+                    </td>
+                    <td style={tdStyle(t)}>
+                      <b style={{ color: t.textHi }}>{r.store_name}</b>
+                      <div style={{ fontSize: 10.5, color: t.textLo }}>{r.channel_name}</div>
+                    </td>
+                    <td style={tdStyle(t)}>
+                      <div style={{ color: t.textHi }}>{r.product_name || "—"}</div>
+                      <div style={{ fontSize: 10.5, color: t.textLo, fontFamily: "monospace" }}>{r.sku || ""}</div>
+                    </td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi }}>{num(r.units_returned)}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: t.good }}>{r.units_good > 0 ? num(r.units_good) : "—"}</td>
+                    <td style={{ ...tdStyle(t), textAlign: "right", color: t.bad }}>{r.units_damaged > 0 ? num(r.units_damaged) : "—"}</td>
+                    <td style={{ ...tdStyle(t), fontSize: 11, color: t.textLo }}>
+                      {r.received_good_warehouse_name && <div>OK → {r.received_good_warehouse_name}</div>}
+                      {r.received_damaged_warehouse_name && <div>Merma → {r.received_damaged_warehouse_name}</div>}
+                      {!r.received_good_warehouse_name && !r.received_damaged_warehouse_name && <span>—</span>}
+                    </td>
+                    <td style={{ ...tdStyle(t), fontSize: 11, color: t.textLo }}>{r.reason || "—"}</td>
+                    <td style={tdStyle(t)}>
+                      {r.status !== "received" && r.status !== "cancelled" && (
+                        <button onClick={() => setReceiving(r)} style={{ ...btnGhost(t), padding: "4px 8px", fontSize: 11 }}>
+                          <Check size={11} /> Recibir
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {creating && (
+        <CreateReturnModal t={t} stores={stores}
+          onClose={() => setCreating(false)}
+          onSaved={() => { setCreating(false); load(); }} />
+      )}
+      {receiving && (
+        <ReceiveReturnModal t={t} ret={receiving}
+          onClose={() => setReceiving(null)}
+          onSaved={() => { setReceiving(null); load(); }} />
+      )}
+    </div>
+  );
+}
+
+
+function CreateReturnModal({ t, stores, onClose, onSaved }: {
+  t: Tokens; stores: RetailStore[]; onClose: () => void; onSaved: () => void;
+}) {
+  const [storeId, setStoreId] = useState<number | null>(null);
+  const [variantId, setVariantId] = useState<number | null>(null);
+  const [units, setUnits] = useState(1);
+  const [reason, setReason] = useState("");
+  const [notes, setNotes] = useState("");
+  const [q, setQ] = useState("");
+  const [allVariants, setAllVariants] = useState<VariantOption[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    salesApi.variantOptions().then(setAllVariants).catch(() => {});
+  }, []);
+
+  const variants = useMemo(() => {
+    if (q.length < 2) return [];
+    const needle = q.trim().toLowerCase();
+    return allVariants.filter(v =>
+      (v.sku || "").toLowerCase().includes(needle) ||
+      (v.label || "").toLowerCase().includes(needle),
+    ).slice(0, 30);
+  }, [q, allVariants]);
+  const selectedVariant = allVariants.find(v => v.variant_id === variantId);
+
+  const canSubmit = storeId && variantId && units >= 1;
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setSaving(true); setErr(null);
+    try {
+      await retailApi.createReturn({
+        store_id: storeId!, variant_id: variantId!,
+        product_name: selectedVariant?.label, sku: selectedVariant?.sku,
+        units_returned: units, reason: reason || undefined,
+        notes: notes || undefined,
+      });
+      onSaved();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al registrar devolución");
+    } finally { setSaving(false); }
+  };
+
+  const modal = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 620, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>Registrar devolución</h3>
+          <button onClick={onClose} style={{ ...iconBtn(t), color: t.textMid }}><X size={16} /></button>
+        </div>
+        <p style={{ color: t.textLo, fontSize: 12, marginTop: 0 }}>
+          Registra que una tienda va a regresar mercancía. Empieza en <b>pendiente</b>. Cuando llegue físicamente, la marcas como recibida y clasificas cuánto está en buen estado y cuánto es merma.
+        </p>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle(t)}>Tienda</label>
+          <select value={storeId ?? ""} onChange={e => setStoreId(e.target.value ? Number(e.target.value) : null)}
+            style={inputStyle(t)}>
+            <option value="">Selecciona…</option>
+            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle(t)}>Producto (SKU o nombre)</label>
+          <input placeholder="Buscar…" value={q} onChange={e => setQ(e.target.value)}
+            style={inputStyle(t)} />
+          {selectedVariant && (
+            <div style={{ marginTop: 6, padding: "6px 10px", background: t.nova + "18", borderRadius: 6, fontSize: 12, color: t.textHi }}>
+              <b style={{ fontFamily: "monospace" }}>{selectedVariant.sku}</b> — {selectedVariant.label}
+              <button onClick={() => setVariantId(null)} style={{ ...iconBtn(t), color: t.bad, marginLeft: 8 }}><X size={12} /></button>
+            </div>
+          )}
+          {!variantId && q.length >= 2 && (
+            <div style={{ marginTop: 4, maxHeight: 200, overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: 6, background: t.inputBg }}>
+              {variants.map(v => (
+                <div key={v.variant_id} onClick={() => setVariantId(v.variant_id)}
+                  style={{ padding: "7px 10px", borderBottom: `1px solid ${t.border}55`, cursor: "pointer", fontSize: 12 }}>
+                  <b style={{ color: t.textHi, fontFamily: "monospace" }}>{v.sku}</b> <span style={{ color: t.textMid }}>{v.label}</span>
+                </div>
+              ))}
+              {variants.length === 0 && <div style={{ padding: 10, color: t.textLo, fontSize: 12 }}>Sin resultados</div>}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "150px 1fr", gap: 10, marginBottom: 12 }}>
+          <div>
+            <label style={labelStyle(t)}>Unidades</label>
+            <input type="number" min={1} value={units}
+              onChange={e => setUnits(Math.max(1, parseInt(e.target.value || "0", 10)))}
+              style={inputStyle(t)} />
+          </div>
+          <div>
+            <label style={labelStyle(t)}>Motivo</label>
+            <input value={reason} onChange={e => setReason(e.target.value)}
+              placeholder="Ej. no vendido, defectuoso, temporada cerrada…"
+              style={inputStyle(t)} />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle(t)}>Notas</label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)}
+            rows={2} style={{ ...inputStyle(t), resize: "vertical" }} />
+        </div>
+
+        {err && <div style={errStyle(t)}>{err}</div>}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onClose} style={btnGhost(t)}>Cancelar</button>
+          <button disabled={!canSubmit || saving} onClick={submit}
+            style={{ ...btnPrimary(t), opacity: (!canSubmit || saving) ? 0.5 : 1 }}>
+            {saving ? "Guardando…" : "Registrar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+  return createPortal(modal, document.body);
+}
+
+
+function ReceiveReturnModal({ t, ret, onClose, onSaved }: {
+  t: Tokens; ret: RetailReturn; onClose: () => void; onSaved: () => void;
+}) {
+  const [good, setGood] = useState<number>(ret.units_returned);
+  const [damaged, setDamaged] = useState<number>(0);
+  const [unitCost, setUnitCost] = useState<number>(ret.unit_cost || 0);
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const total = good + damaged;
+  const ok = total === ret.units_returned;
+
+  const submit = async () => {
+    if (!ok) { setErr(`Buen estado + merma debe sumar ${ret.units_returned}`); return; }
+    setSaving(true); setErr(null);
+    try {
+      await retailApi.receiveReturn(ret.id, {
+        units_good: good, units_damaged: damaged,
+        unit_cost: unitCost || undefined, notes: notes || undefined,
+      });
+      onSaved();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al recibir");
+    } finally { setSaving(false); }
+  };
+
+  const modal = (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 580, maxWidth: "100%", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ margin: 0, fontSize: 16, color: t.textHi }}>Recibir devolución física</h3>
+          <button onClick={onClose} style={{ ...iconBtn(t), color: t.textMid }}><X size={16} /></button>
+        </div>
+        <div style={{ padding: 12, background: t.panel2, borderRadius: 8, marginBottom: 14, fontSize: 12.5 }}>
+          <div><b style={{ color: t.textHi }}>{ret.product_name}</b> <span style={{ color: t.textLo, fontFamily: "monospace" }}>· {ret.sku}</span></div>
+          <div style={{ color: t.textMid, marginTop: 4 }}>Tienda: <b>{ret.store_name}</b> · Total reportado: <b>{num(ret.units_returned)} unid.</b></div>
+        </div>
+
+        <p style={{ color: t.textLo, fontSize: 12, marginTop: 0 }}>
+          Clasifica lo que llegó: <b style={{ color: t.good }}>Buen estado</b> vuelve a stock vendible.
+          <b style={{ color: t.bad }}> Merma</b> va al almacén de dañados. Cada uno genera una entrada de inventario con auditoría.
+        </p>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+          <div>
+            <label style={{ ...labelStyle(t), color: t.good }}>Unidades en buen estado</label>
+            <input type="number" min={0} max={ret.units_returned} value={good}
+              onChange={e => setGood(Math.max(0, parseInt(e.target.value || "0", 10)))}
+              style={{ ...inputStyle(t), color: t.good, fontWeight: 700 }} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle(t), color: t.bad }}>Unidades merma / dañadas</label>
+            <input type="number" min={0} max={ret.units_returned} value={damaged}
+              onChange={e => setDamaged(Math.max(0, parseInt(e.target.value || "0", 10)))}
+              style={{ ...inputStyle(t), color: t.bad, fontWeight: 700 }} />
+          </div>
+        </div>
+
+        <div style={{ padding: 10, background: ok ? t.good + "18" : t.warn + "18", borderRadius: 6, fontSize: 12, color: ok ? t.good : t.warn, marginBottom: 12 }}>
+          Suma: <b>{total}</b> de <b>{ret.units_returned}</b> {ok ? "✓" : "— debe cuadrar"}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "150px 1fr", gap: 10, marginBottom: 12 }}>
+          <div>
+            <label style={labelStyle(t)}>Costo unitario (opc.)</label>
+            <input type="number" step={0.01} min={0} value={unitCost || ""}
+              onChange={e => setUnitCost(Number(e.target.value) || 0)}
+              style={inputStyle(t)} />
+          </div>
+          <div>
+            <label style={labelStyle(t)}>Notas de recepción</label>
+            <input value={notes} onChange={e => setNotes(e.target.value)}
+              placeholder="Ej. cajas maltratadas, empaque abierto…"
+              style={inputStyle(t)} />
+          </div>
+        </div>
+
+        {err && <div style={errStyle(t)}>{err}</div>}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onClose} style={btnGhost(t)}>Cancelar</button>
+          <button disabled={!ok || saving} onClick={submit}
+            style={{ ...btnPrimary(t), opacity: (!ok || saving) ? 0.5 : 1 }}>
+            {saving ? "Recibiendo…" : <><Check size={13} /> Confirmar recepción</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+  return createPortal(modal, document.body);
 }
 
 

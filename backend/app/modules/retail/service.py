@@ -4189,11 +4189,12 @@ async def suggest_store_transfers(
     }
     variant_info: Dict[int, Tuple[Optional[str], Optional[str]]] = {}
     if variant_ids:
-        # Import perezoso para no crear dependencia circular a nivel módulo
+        # Nombre del producto vive en Product, no en ProductVariant
         from app.modules.inventory import models as inv_m
         vrows = (await db.execute(
             select(inv_m.ProductVariant.id, inv_m.ProductVariant.sku,
-                    inv_m.ProductVariant.name)
+                    inv_m.Product.name)
+            .join(inv_m.Product, inv_m.ProductVariant.product_id == inv_m.Product.id)
             .where(inv_m.ProductVariant.id.in_(variant_ids))
         )).all()
         variant_info = {vid: (sku, name) for vid, sku, name in vrows}
@@ -4313,12 +4314,56 @@ async def suggest_store_transfers(
     )
 
 
+async def ensure_store_consignment(
+    db: AsyncSession, store_id: int,
+) -> models.RetailStore:
+    """Garantiza que la tienda tenga un almacén de consignación.
+    Si no lo tiene, lo crea con nombre "Consignación · {tienda}" y lo
+    asigna. Idempotente: si ya existe, no hace nada.
+    """
+    store = await db.get(models.RetailStore, store_id)
+    if store is None:
+        raise ValueError(f"Tienda {store_id} no encontrada")
+    if store.consignment_warehouse_id:
+        return store
+
+    # Nombre único (agrega sufijo -N si ya existe)
+    base_name = f"Consignación · {store.name}"
+    name = base_name
+    n = 1
+    while True:
+        exists = await db.execute(
+            select(inv_models.Warehouse.id).where(inv_models.Warehouse.name == name)
+        )
+        if exists.scalar_one_or_none() is None:
+            break
+        n += 1
+        name = f"{base_name} #{n}"
+
+    wh = inv_models.Warehouse(
+        name=name,
+        location=f"{store.city or ''} {store.state or ''}".strip() or None,
+        type=inv_models.WarehouseType.CONSIGNMENT.value,
+        is_active=True,
+    )
+    db.add(wh)
+    await db.flush()
+    store.consignment_warehouse_id = wh.id
+    await db.commit()
+    await db.refresh(store)
+    return store
+
+
 async def create_store_transfer(
     db: AsyncSession, req: schemas.StoreTransferRequest,
     user_id: Optional[int] = None,
+    auto_provision: bool = True,
 ) -> schemas.StoreTransferResponse:
     """Ejecuta traslados tienda→tienda. Un OUT+IN par por item entre las
     consignaciones. Igual manejo de rollback que create_transfer.
+    Si auto_provision=True y la tienda destino no tiene consignation,
+    se le crea uno automáticamente (evita fricción — no bloquea el flujo
+    solo porque el usuario no la asignó explícitamente).
     """
     from app.modules.inventory import schemas as inv_schemas, service as inv_service
 
@@ -4333,6 +4378,18 @@ async def create_store_transfer(
         select(models.RetailStore).where(models.RetailStore.id.in_(store_ids))
     )).scalars().all()
     stores = {s.id: s for s in st_rows}
+
+    # Auto-provision consignations que falten (tanto en destino como en
+    # origen — si el origen no tiene, el traslado no tendría sentido
+    # porque no habría de dónde sacar, pero al menos se provisiona)
+    if auto_provision:
+        for sid in list(stores.keys()):
+            s = stores[sid]
+            if s.consignment_warehouse_id is None:
+                try:
+                    stores[sid] = await ensure_store_consignment(db, sid)
+                except Exception as e:
+                    log.warning("no pude auto-provisionar consignation store=%s: %s", sid, e)
 
     for item in req.items:
         src_store = stores.get(item.from_store_id)
@@ -4500,7 +4557,8 @@ async def build_store_transfer_template_xlsx(db: AsyncSession) -> bytes:
 
     from app.modules.inventory import models as inv_m
     prod_rows = (await db.execute(
-        select(inv_m.ProductVariant.sku, inv_m.ProductVariant.name)
+        select(inv_m.ProductVariant.sku, inv_m.Product.name)
+        .join(inv_m.Product, inv_m.ProductVariant.product_id == inv_m.Product.id)
         .where(inv_m.ProductVariant.sku.is_not(None))
         .order_by(inv_m.ProductVariant.sku).limit(500)
     )).all()
@@ -5485,3 +5543,263 @@ async def promotion_effectiveness(db: AsyncSession, promo_id: int
     if act_units == 0:
         base.reason = "Sin ventas registradas del SKU durante la ventana de la promo."
     return base
+
+
+# ── Devoluciones físicas ────────────────────────────────────────────────
+
+# Nombres estándar para los almacenes de retorno (auto-creables)
+RETURNS_OK_WAREHOUSE = "Retornos · Buen estado"
+RETURNS_DAMAGED_WAREHOUSE = "Merma · Devoluciones dañadas"
+
+
+async def _ensure_returns_warehouse(
+    db: AsyncSession, name: str,
+) -> inv_models.Warehouse:
+    """Devuelve el warehouse con ese nombre o lo crea (idempotente)."""
+    res = await db.execute(
+        select(inv_models.Warehouse).where(inv_models.Warehouse.name == name)
+    )
+    wh = res.scalar_one_or_none()
+    if wh is not None:
+        return wh
+    wh = inv_models.Warehouse(
+        name=name, type=inv_models.WarehouseType.OWN.value, is_active=True,
+    )
+    db.add(wh); await db.flush()
+    return wh
+
+
+async def list_returns(
+    db: AsyncSession, channel_id: Optional[int] = None,
+    store_id: Optional[int] = None, status: Optional[str] = None,
+    limit: int = 500,
+) -> List[schemas.RetailReturnOut]:
+    stmt = (
+        select(
+            models.RetailReturn,
+            models.RetailStore.name.label("store_name"),
+            models.RetailStore.channel_id.label("ch_id"),
+            models.RetailChannel.name.label("ch_name"),
+        )
+        .join(models.RetailStore,
+              models.RetailReturn.store_id == models.RetailStore.id)
+        .join(models.RetailChannel,
+              models.RetailStore.channel_id == models.RetailChannel.id)
+    )
+    conds = []
+    if channel_id is not None:
+        conds.append(models.RetailStore.channel_id == channel_id)
+    if store_id is not None:
+        conds.append(models.RetailReturn.store_id == store_id)
+    if status:
+        conds.append(models.RetailReturn.status == status)
+    if conds:
+        stmt = stmt.where(and_(*conds))
+    stmt = stmt.order_by(
+        models.RetailReturn.reported_at.desc(),
+        models.RetailReturn.id.desc(),
+    ).limit(limit)
+
+    rows = (await db.execute(stmt)).all()
+    # Enrich warehouse names
+    wh_ids = set()
+    for r, *_ in rows:
+        if r.received_good_warehouse_id: wh_ids.add(r.received_good_warehouse_id)
+        if r.received_damaged_warehouse_id: wh_ids.add(r.received_damaged_warehouse_id)
+    wh_names: Dict[int, str] = {}
+    if wh_ids:
+        w_res = await db.execute(
+            select(inv_models.Warehouse.id, inv_models.Warehouse.name)
+            .where(inv_models.Warehouse.id.in_(wh_ids))
+        )
+        wh_names = {i: n for i, n in w_res}
+
+    out = []
+    for r, store_name, ch_id, ch_name in rows:
+        out.append(schemas.RetailReturnOut(
+            id=r.id, store_id=r.store_id, store_name=store_name,
+            channel_id=ch_id, channel_name=ch_name,
+            variant_id=r.variant_id, product_name=r.product_name, sku=r.sku,
+            units_returned=r.units_returned, units_good=r.units_good,
+            units_damaged=r.units_damaged, unit_cost=r.unit_cost,
+            reason=r.reason, condition=r.condition, status=r.status,
+            source_sellout_id=r.source_sellout_id,
+            received_good_warehouse_id=r.received_good_warehouse_id,
+            received_good_warehouse_name=wh_names.get(r.received_good_warehouse_id or -1),
+            received_damaged_warehouse_id=r.received_damaged_warehouse_id,
+            received_damaged_warehouse_name=wh_names.get(r.received_damaged_warehouse_id or -1),
+            good_movement_id=r.good_movement_id,
+            damaged_movement_id=r.damaged_movement_id,
+            reported_at=r.reported_at, received_at=r.received_at,
+            notes=r.notes, created_at=r.created_at,
+        ))
+    return out
+
+
+async def create_return(
+    db: AsyncSession, data: schemas.RetailReturnCreate,
+    user_id: Optional[int] = None,
+) -> models.RetailReturn:
+    """Crea una devolución en estado pending."""
+    # Enriquecer snapshot desde variant si viene
+    prod_name = data.product_name
+    sku = data.sku
+    if data.variant_id and not (prod_name and sku):
+        from app.modules.inventory import models as inv_m
+        vr = (await db.execute(
+            select(inv_m.ProductVariant.sku, inv_m.Product.name)
+            .join(inv_m.Product, inv_m.ProductVariant.product_id == inv_m.Product.id)
+            .where(inv_m.ProductVariant.id == data.variant_id)
+        )).first()
+        if vr:
+            sku = sku or vr[0]
+            prod_name = prod_name or vr[1]
+
+    r = models.RetailReturn(
+        store_id=data.store_id, variant_id=data.variant_id,
+        product_name=prod_name, sku=sku,
+        units_returned=data.units_returned,
+        units_good=0, units_damaged=0,
+        reason=data.reason, condition=data.condition, notes=data.notes,
+        source_sellout_id=data.source_sellout_id,
+        status=data.status or "pending",
+    )
+    db.add(r); await db.commit(); await db.refresh(r)
+    return r
+
+
+async def receive_return(
+    db: AsyncSession, return_id: int, data: schemas.RetailReturnReceive,
+    user_id: Optional[int] = None,
+) -> models.RetailReturn:
+    """Recibe físicamente la devolución. Genera StockMovements de entrada
+    a los warehouses de retornos (buen estado) y merma (dañado).
+    """
+    from app.modules.inventory import schemas as inv_schemas, service as inv_service
+
+    r = await db.get(models.RetailReturn, return_id)
+    if r is None:
+        raise ValueError("Devolución no encontrada")
+    if r.status == "received":
+        raise ValueError("Esta devolución ya fue recibida")
+    if data.units_good + data.units_damaged != r.units_returned:
+        raise ValueError(
+            f"Unidades buenas ({data.units_good}) + dañadas ({data.units_damaged}) "
+            f"deben sumar {r.units_returned}"
+        )
+
+    # Warehouses destino (auto-provisiona si no vienen)
+    good_wh_id = data.good_warehouse_id
+    if good_wh_id is None and data.units_good > 0:
+        good_wh_id = (await _ensure_returns_warehouse(db, RETURNS_OK_WAREHOUSE)).id
+    damaged_wh_id = data.damaged_warehouse_id
+    if damaged_wh_id is None and data.units_damaged > 0:
+        damaged_wh_id = (await _ensure_returns_warehouse(db, RETURNS_DAMAGED_WAREHOUSE)).id
+
+    ref = f"retail_return:{r.id}"
+    good_mv_id = None
+    dmg_mv_id = None
+
+    if data.units_good > 0 and r.variant_id:
+        mv = await inv_service.adjust_stock(db, inv_schemas.StockMovementCreate(
+            variant_id=r.variant_id, warehouse_id=good_wh_id,
+            quantity=data.units_good, movement_type="in",
+            unit_cost=data.unit_cost or 0.0,
+            reference=ref,
+            notes=f"Devolución tienda #{r.store_id} · Buen estado"
+                   + (f" · {data.notes}" if data.notes else ""),
+        ), user_id=user_id)
+        good_mv_id = mv.id
+    if data.units_damaged > 0 and r.variant_id:
+        mv = await inv_service.adjust_stock(db, inv_schemas.StockMovementCreate(
+            variant_id=r.variant_id, warehouse_id=damaged_wh_id,
+            quantity=data.units_damaged, movement_type="in",
+            unit_cost=data.unit_cost or 0.0,
+            reference=ref,
+            notes=f"Devolución tienda #{r.store_id} · Merma/dañado"
+                   + (f" · {data.notes}" if data.notes else ""),
+        ), user_id=user_id)
+        dmg_mv_id = mv.id
+
+    r.units_good = data.units_good
+    r.units_damaged = data.units_damaged
+    r.unit_cost = data.unit_cost if data.unit_cost is not None else r.unit_cost
+    r.received_good_warehouse_id = good_wh_id if data.units_good > 0 else None
+    r.received_damaged_warehouse_id = damaged_wh_id if data.units_damaged > 0 else None
+    r.good_movement_id = good_mv_id
+    r.damaged_movement_id = dmg_mv_id
+    r.status = "received"
+    r.received_at = datetime.now(timezone.utc)
+    r.received_by_user_id = user_id
+    if data.units_good > 0 and data.units_damaged > 0:
+        r.condition = "mixed"
+    elif data.units_good > 0:
+        r.condition = "good"
+    elif data.units_damaged > 0:
+        r.condition = "damaged"
+    if data.notes:
+        r.notes = (r.notes + "\n" if r.notes else "") + f"[Recepción] {data.notes}"
+
+    await db.commit()
+    await db.refresh(r)
+    return r
+
+
+async def update_return(
+    db: AsyncSession, return_id: int, data: schemas.RetailReturnUpdate,
+) -> Optional[models.RetailReturn]:
+    r = await db.get(models.RetailReturn, return_id)
+    if r is None:
+        return None
+    payload = data.model_dump(exclude_unset=True)
+    if r.status == "received" and "units_returned" in payload:
+        raise ValueError("No se pueden cambiar unidades de una devolución ya recibida")
+    for k, v in payload.items():
+        setattr(r, k, v)
+    await db.commit(); await db.refresh(r)
+    return r
+
+
+async def delete_return(db: AsyncSession, return_id: int) -> bool:
+    r = await db.get(models.RetailReturn, return_id)
+    if r is None:
+        return False
+    if r.status == "received":
+        # No borrar movimientos ya aplicados — solo cancelar
+        r.status = "cancelled"
+        await db.commit()
+        return True
+    await db.delete(r); await db.commit()
+    return True
+
+
+async def returns_summary(
+    db: AsyncSession, channel_id: Optional[int] = None,
+) -> schemas.RetailReturnsSummary:
+    q = (
+        select(
+            models.RetailReturn.status,
+            func.count(models.RetailReturn.id).label("cnt"),
+            func.coalesce(func.sum(models.RetailReturn.units_returned), 0).label("units"),
+            func.coalesce(func.sum(models.RetailReturn.units_good), 0).label("good"),
+            func.coalesce(func.sum(models.RetailReturn.units_damaged), 0).label("dmg"),
+        )
+        .join(models.RetailStore,
+              models.RetailReturn.store_id == models.RetailStore.id)
+        .group_by(models.RetailReturn.status)
+    )
+    if channel_id is not None:
+        q = q.where(models.RetailStore.channel_id == channel_id)
+    rows = (await db.execute(q)).all()
+    by_st = {r.status: r for r in rows}
+    pending = int((by_st.get("pending").cnt if "pending" in by_st else 0))
+    intr = int((by_st.get("in_transit").cnt if "in_transit" in by_st else 0))
+    recv = int((by_st.get("received").cnt if "received" in by_st else 0))
+    return schemas.RetailReturnsSummary(
+        pending=pending, in_transit=intr, received=recv,
+        total_pending_units=int(sum(
+            (r.units or 0) for r in rows if r.status in ("pending", "in_transit")
+        )),
+        total_good_units=int(sum((r.good or 0) for r in rows)),
+        total_damaged_units=int(sum((r.dmg or 0) for r in rows)),
+    )

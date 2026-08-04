@@ -340,3 +340,81 @@ class RetailPromotion(Base):
     channel = relationship("RetailChannel")
     store = relationship("RetailStore")
     variant = relationship("ProductVariant")
+
+
+# ── Devoluciones físicas de tienda ───────────────────────────────────────
+
+RETURN_STATUSES = ("pending", "in_transit", "received", "cancelled")
+RETURN_CONDITIONS = ("good", "damaged", "expired", "mixed")
+
+
+class RetailReturn(Base):
+    """Devolución física de mercancía de una tienda a nuestro almacén.
+
+    Ciclo de vida:
+      1. pending — la cadena reportó la devolución (via sell-out o carga
+         manual) pero aún no la vemos físicamente.
+      2. in_transit — mercancía en camino a nuestro almacén.
+      3. received — recibida y clasificada:
+           - condition=good → reingresa al warehouse "retornos_ok"
+           - condition=damaged/expired → va al warehouse "merma"
+           - condition=mixed → se separa (units_good + units_damaged)
+      4. cancelled — se anuló la devolución (nunca llegó, error de captura).
+
+    Cada RetailReturn genera StockMovements cuando pasa a received.
+    """
+    __tablename__ = "retail_returns"
+    __table_args__ = (
+        Index("ix_retail_returns_store", "store_id"),
+        Index("ix_retail_returns_variant", "variant_id"),
+        Index("ix_retail_returns_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    store_id = Column(
+        Integer, ForeignKey("retail_stores.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    variant_id = Column(
+        Integer, ForeignKey("product_variants.id"), nullable=True, index=True,
+    )
+    product_name = Column(String, nullable=True)
+    sku = Column(String, nullable=True)
+
+    units_returned = Column(Integer, nullable=False)
+    units_good = Column(Integer, default=0, nullable=False)
+    units_damaged = Column(Integer, default=0, nullable=False)
+    unit_cost = Column(Float, nullable=True)
+
+    reason = Column(String, nullable=True)
+    condition = Column(String, nullable=True)
+    status = Column(String, default="pending", nullable=False)
+
+    source_sellout_id = Column(
+        Integer, ForeignKey("retail_sellout_reports.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    received_good_warehouse_id = Column(
+        Integer, ForeignKey("warehouses.id"), nullable=True,
+    )
+    received_damaged_warehouse_id = Column(
+        Integer, ForeignKey("warehouses.id"), nullable=True,
+    )
+    good_movement_id = Column(
+        Integer, ForeignKey("stock_movements.id"), nullable=True,
+    )
+    damaged_movement_id = Column(
+        Integer, ForeignKey("stock_movements.id"), nullable=True,
+    )
+
+    reported_at = Column(DateTime(timezone=True), server_default=func.now())
+    received_at = Column(DateTime(timezone=True), nullable=True)
+    received_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    store = relationship("RetailStore")
+    variant = relationship("ProductVariant")
+    source_sellout = relationship("SellOutReport")
