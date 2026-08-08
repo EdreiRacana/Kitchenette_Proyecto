@@ -13,6 +13,7 @@ export interface MetaVsRealPoint {
   goal: number;
   real: number;
   achieved_pct: number;
+  basis?: "forecast" | "previous_period" | "none";
 }
 
 export interface TrendPoint {

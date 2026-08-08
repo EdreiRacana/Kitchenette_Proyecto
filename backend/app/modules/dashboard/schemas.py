@@ -20,9 +20,11 @@ class ExecKPI(BaseModel):
 
 class MetaVsRealPoint(BaseModel):
     period: str      # "2025-08"
-    goal: float      # forecast del mes
+    goal: float      # forecast del mes (o mes anterior si no hay forecast)
     real: float      # ventas cargadas del mes
     achieved_pct: float
+    # forecast | previous_period | none — el frontend lo usa para el subtítulo
+    basis: str = "forecast"
 
 
 class TrendPoint(BaseModel):

@@ -65,15 +65,19 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
 
   // Nunca usar t.panel2 aquí — es el mismo color del contenedor (invisible).
   // Los estados sin venta se pintan con un gris tenue independiente del theme.
+  // Nunca usar t.panel2 aquí — coincide con el fondo del contenedor y hace
+  // invisibles los estados. Sin dato: gris tenue pero legible.
   const fillFor = (stateName: string): string => {
     const norm = normalizeStateName(stateName).toLowerCase();
     const s = salesByName[norm];
-    if (!s || s.revenue <= 0) return "rgba(255,255,255,0.06)";
+    if (!s || s.revenue <= 0) return "rgba(255,255,255,0.14)";
     const ratio = Math.min(1, s.revenue / maxRevenue);
-    const alpha = 0.22 + ratio * 0.65;
+    const alpha = 0.28 + ratio * 0.62;
     const rgb = hexToRgb(t.nova || "#33B2F5");
     return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha.toFixed(2)})`;
   };
+
+  const hasAnyData = data && data.length > 0;
 
   const hoveredNorm = hoveredState ? normalizeStateName(hoveredState).toLowerCase() : "";
   const hoveredRow = hoveredState ? salesByName[hoveredNorm] : null;
@@ -110,12 +114,12 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
               isSelected ? (t.nova || "#33B2F5") + "aa"
               : isHovered ? (t.nova || "#33B2F5") + "77"
               : fillFor(p.name);
-            // Borde siempre visible: verde neón tenue (marca STHENOVA),
+            // Borde siempre visible: verde neón (marca STHENOVA),
             // se refuerza en selección/hover con el azul nova.
             const stroke =
               isSelected || isHovered
                 ? (t.nova || "#33B2F5")
-                : "rgba(0,255,156,0.45)";
+                : "rgba(0,255,156,0.55)";
             return (
               <path
                 key={p.name || i}
@@ -138,6 +142,24 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
           })}
         </g>
       </svg>
+
+      {!hasAnyData && (
+        <div style={{
+          position: "absolute", top: "50%", left: "50%",
+          transform: "translate(-50%, -50%)",
+          padding: "8px 14px",
+          background: "rgba(15,20,30,0.78)",
+          border: `1px solid ${t.border || "rgba(0,255,156,0.35)"}`,
+          borderRadius: 8,
+          color: t.textMid || "#aaa",
+          fontSize: 11.5,
+          textAlign: "center",
+          maxWidth: 220,
+          pointerEvents: "none",
+        }}>
+          Sin ventas geolocalizadas — captura <b style={{ color: t.textHi }}>estado</b> del cliente para verlas aquí.
+        </div>
+      )}
 
       {hoveredState && (
         <div style={{
