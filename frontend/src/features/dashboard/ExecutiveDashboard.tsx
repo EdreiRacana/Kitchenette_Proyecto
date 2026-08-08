@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { dashboardApi } from "./api";
 import MexicoMap from "./MexicoMap";
+import LiquidCore from "../../components/LiquidCore";
 import type {
   ExecutiveDashboardResponse, ExecKPI, TopCustomerRow,
   ChannelSalesRow, AlertRow, OperationalKPIRow, FinancialKPIRow,
@@ -30,8 +31,51 @@ const num = (n: number) => (n || 0).toLocaleString("es-MX");
 
 interface Props {
   t: Tokens;
+  lang?: "es" | "en";
   setPage?: (page: string) => void;
 }
+
+// Diccionario mínimo para los strings visibles del dashboard.
+// El resto del app ya se traduce por su cuenta; aquí sólo cubrimos textos
+// hard-coded en este archivo para que el toggle idioma tenga efecto visible.
+const I18N = {
+  es: {
+    title: "Tablero Ejecutivo", from: "Del", to: "al",
+    refresh: "Actualizar", loading: "Calculando dashboard ejecutivo…",
+    error: "Error", retry: "Reintentar", year: "1 año",
+    salesPeriod: "Ventas del período", vsPrev: "Actual vs anterior",
+    metaVsReal: "Meta vs Real", monthLabel: "Mes",
+    top5Cust: "Top 5 Clientes", ofPeriod: "del período",
+    incomeExpenses: "Tendencia Ingresos vs Gastos", income: "Ingresos", expenses: "Gastos",
+    geoDist: "Distribución Geográfica", salesByState: "Ventas por estado",
+    opKpis: "KPIs Operativos", channels: "Ventas por Canal",
+    alerts: "Alertas Tempranas", top5: "Top 5", finKpis: "KPIs Financieros",
+    ofGoal: "DE LA META", current: "Actual", previous: "Anterior",
+    top5states: "Top 5 estados", noGeo: "Sin ventas geolocalizadas",
+    noChannel: "Sin ventas por canal", noAlerts: "Sin alertas activas ✓",
+    noSalesPeriod: "Sin ventas en el período",
+    ordersW: (n:number) => `${n} pedido${n!==1?"s":""}`,
+    statesWithSales: (n:number) => `México · ${n} estados con venta`,
+  },
+  en: {
+    title: "Executive Dashboard", from: "From", to: "to",
+    refresh: "Refresh", loading: "Computing executive dashboard…",
+    error: "Error", retry: "Retry", year: "1 year",
+    salesPeriod: "Sales in period", vsPrev: "Current vs previous",
+    metaVsReal: "Target vs Actual", monthLabel: "Month",
+    top5Cust: "Top 5 Customers", ofPeriod: "of the period",
+    incomeExpenses: "Income vs Expenses", income: "Income", expenses: "Expenses",
+    geoDist: "Geographic Distribution", salesByState: "Sales by state",
+    opKpis: "Operational KPIs", channels: "Sales by Channel",
+    alerts: "Early Alerts", top5: "Top 5", finKpis: "Financial KPIs",
+    ofGoal: "OF TARGET", current: "Current", previous: "Previous",
+    top5states: "Top 5 states", noGeo: "No geolocated sales",
+    noChannel: "No channel sales", noAlerts: "No active alerts ✓",
+    noSalesPeriod: "No sales in the period",
+    ordersW: (n:number) => `${n} order${n!==1?"s":""}`,
+    statesWithSales: (n:number) => `Mexico · ${n} states with sales`,
+  },
+} as const;
 
 const KPI_ICON: Record<string, any> = {
   income_total: DollarSign,
@@ -60,11 +104,13 @@ function colorForHint(t: Tokens, hint?: string | null): string {
   }
 }
 
-export default function ExecutiveDashboard({ t, setPage }: Props) {
+export default function ExecutiveDashboard({ t, lang = "es", setPage }: Props) {
   const [data, setData] = useState<ExecutiveDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState(30);
+  const L = I18N[lang] || I18N.es;
+  const locale = lang === "en" ? "en-US" : "es-MX";
 
   const load = async () => {
     setLoading(true); setError(null);
@@ -82,13 +128,13 @@ export default function ExecutiveDashboard({ t, setPage }: Props) {
 
   const nav = (page?: string) => { if (page && setPage) setPage(page); };
 
-  if (loading) return <div style={{ padding: 40, color: t.textLo, textAlign: "center" }}>Calculando dashboard ejecutivo…</div>;
+  if (loading) return <div style={{ padding: 40, color: t.textLo, textAlign: "center" }}>{L.loading}</div>;
   if (error) {
     return (
       <div style={{ padding: 20, color: t.bad, background: t.bad + "18", borderRadius: 10, textAlign: "center" }}>
         <AlertTriangle size={24} />
-        <div style={{ marginTop: 8, fontSize: 14 }}>Error: {error}</div>
-        <button onClick={load} style={{ marginTop: 12, padding: "6px 14px", background: t.nova, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>Reintentar</button>
+        <div style={{ marginTop: 8, fontSize: 14 }}>{L.error}: {error}</div>
+        <button onClick={load} style={{ marginTop: 12, padding: "6px 14px", background: t.nova, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>{L.retry}</button>
       </div>
     );
   }
@@ -99,11 +145,11 @@ export default function ExecutiveDashboard({ t, setPage }: Props) {
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 24, color: t.textHi }}>Tablero Ejecutivo</h1>
+          <h1 style={{ margin: 0, fontSize: 24, color: t.textHi }}>{L.title}</h1>
           <div style={{ fontSize: 12, color: t.textLo, marginTop: 3 }}>
-            Del {new Date(data.period_start).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" })}
-            {" al "}
-            {new Date(data.period_end).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" })}
+            {L.from} {new Date(data.period_start).toLocaleDateString(locale, { day: "2-digit", month: "short", year: "numeric" })}
+            {" "}{L.to}{" "}
+            {new Date(data.period_end).toLocaleDateString(locale, { day: "2-digit", month: "short", year: "numeric" })}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
@@ -113,11 +159,11 @@ export default function ExecutiveDashboard({ t, setPage }: Props) {
                         background: days === d ? t.nova : "transparent",
                         color: days === d ? "#fff" : t.textMid,
                         cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-              {d === 7 ? "7d" : d === 30 ? "30d" : d === 90 ? "90d" : "1 año"}
+              {d === 7 ? "7d" : d === 30 ? "30d" : d === 90 ? "90d" : L.year}
             </button>
           ))}
           <button onClick={load} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}>
-            <RefreshCw size={12} /> Actualizar
+            <RefreshCw size={12} /> {L.refresh}
           </button>
         </div>
       </div>
@@ -129,39 +175,49 @@ export default function ExecutiveDashboard({ t, setPage }: Props) {
 
       {/* Fila 2: Ventas del período + Meta vs Real + Top 5 Clientes */}
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
-        <PanelCard t={t} title="Ventas del período" subtitle="Actual vs anterior">
-          <SalesTrendChart data={data.trend_sales} t={t} />
+        <PanelCard t={t} title={L.salesPeriod} subtitle={L.vsPrev}>
+          <SalesTrendChart data={data.trend_sales} t={t} L={L} />
         </PanelCard>
-        <PanelCard t={t} title="Meta vs Real" subtitle={`Mes ${data.meta_vs_real.period}`}>
-          <MetaGauge meta={data.meta_vs_real} t={t} />
+        <PanelCard t={t} title={L.metaVsReal} subtitle={`${L.monthLabel} ${data.meta_vs_real.period}`}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 8 }}>
+            <LiquidCore
+              pct={data.meta_vs_real.achieved_pct}
+              t={t}
+              sub={L.ofGoal}
+              hue={data.meta_vs_real.achieved_pct >= 60 ? "green" : "blue"}
+            />
+            <div style={{ fontSize: 11, color: t.textLo, textAlign: "center" }}>
+              <b style={{ color: t.textHi }}>{mxn(data.meta_vs_real.real)}</b> / {mxn(data.meta_vs_real.goal)}
+            </div>
+          </div>
         </PanelCard>
-        <PanelCard t={t} title="Top 5 Clientes" subtitle="del período">
-          <TopCustomers rows={data.top_customers} t={t} onSelect={(id) => id && nav("clientes")} />
+        <PanelCard t={t} title={L.top5Cust} subtitle={L.ofPeriod}>
+          <TopCustomers rows={data.top_customers} t={t} L={L} onSelect={(id) => id && nav("clientes")} />
         </PanelCard>
       </div>
 
       {/* Fila 3: Ingresos vs Gastos + Mapa MX + KPIs Operativos */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr 1fr", gap: 12, marginBottom: 14 }}>
-        <PanelCard t={t} title="Tendencia Ingresos vs Gastos">
-          <IncomeExpensesChart data={data.trend_income_expenses} t={t} />
+        <PanelCard t={t} title={L.incomeExpenses}>
+          <IncomeExpensesChart data={data.trend_income_expenses} t={t} L={L} />
         </PanelCard>
-        <PanelCard t={t} title="Distribución Geográfica" subtitle="Ventas por estado">
-          <GeoMap geo={data.geographic} t={t} />
+        <PanelCard t={t} title={L.geoDist} subtitle={L.salesByState}>
+          <GeoMap geo={data.geographic} t={t} L={L} />
         </PanelCard>
-        <PanelCard t={t} title="KPIs Operativos">
+        <PanelCard t={t} title={L.opKpis}>
           <OperationalBars kpis={data.operational_kpis} t={t} />
         </PanelCard>
       </div>
 
       {/* Fila 4: Canales + Alertas + Financieros */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr 1fr", gap: 12 }}>
-        <PanelCard t={t} title="Ventas por Canal">
-          <ChannelDonut data={data.channel_sales.channels} total={data.channel_sales.total_revenue} t={t} />
+        <PanelCard t={t} title={L.channels}>
+          <ChannelDonut data={data.channel_sales.channels} total={data.channel_sales.total_revenue} t={t} L={L} />
         </PanelCard>
-        <PanelCard t={t} title="Alertas Tempranas" subtitle="Top 5">
-          <AlertList alerts={data.alerts} t={t} onClick={(a) => nav(a.module === "finance" ? "finanzas" : a.module === "retail" ? "retail" : "inventario")} />
+        <PanelCard t={t} title={L.alerts} subtitle={L.top5}>
+          <AlertList alerts={data.alerts} t={t} L={L} onClick={(a) => nav(a.module === "finance" ? "finanzas" : a.module === "retail" ? "retail" : "inventario")} />
         </PanelCard>
-        <PanelCard t={t} title="KPIs Financieros">
+        <PanelCard t={t} title={L.finKpis}>
           <FinancialKPIs kpis={data.financial_kpis} t={t} />
         </PanelCard>
       </div>
@@ -245,7 +301,7 @@ function MiniGauge({ value_pct, color, t, display }: { value_pct: number; color:
 }
 
 
-function SalesTrendChart({ data, t }: { data: TrendPoint[]; t: Tokens }) {
+function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any }) {
   const maxVal = Math.max(1, ...data.map(d => Math.max(d.revenue, d.prev_revenue)));
   const W = 100, H = 60;   // viewbox virtual
   const step = data.length > 1 ? W / (data.length - 1) : W;
@@ -257,8 +313,8 @@ function SalesTrendChart({ data, t }: { data: TrendPoint[]; t: Tokens }) {
   return (
     <div style={{ width: "100%", height: 180, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", gap: 10, fontSize: 11, color: t.textLo, marginBottom: 6 }}>
-        <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.nova, marginRight: 4 }} /> Actual</span>
-        <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.textLo, opacity: 0.5, marginRight: 4 }} /> Anterior</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.nova, marginRight: 4 }} /> {L.current}</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.textLo, opacity: 0.5, marginRight: 4 }} /> {L.previous}</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", flex: 1 }}>
         <path d={linePrev} stroke={t.textLo} strokeWidth="0.5" fill="none" strokeDasharray="1.5,1.5" opacity="0.6" />
@@ -272,7 +328,7 @@ function SalesTrendChart({ data, t }: { data: TrendPoint[]; t: Tokens }) {
 }
 
 
-function IncomeExpensesChart({ data, t }: { data: TrendPoint[]; t: Tokens }) {
+function IncomeExpensesChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any }) {
   const maxVal = Math.max(1, ...data.map(d => Math.max(d.revenue, d.expenses)));
   const W = 100, H = 60;
   const step = data.length > 1 ? W / (data.length - 1) : W;
@@ -283,8 +339,8 @@ function IncomeExpensesChart({ data, t }: { data: TrendPoint[]; t: Tokens }) {
   return (
     <div style={{ width: "100%", height: 180, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", gap: 10, fontSize: 11, color: t.textLo, marginBottom: 6 }}>
-        <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.good, marginRight: 4 }} /> Ingresos</span>
-        <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.bad, marginRight: 4 }} /> Gastos</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.good, marginRight: 4 }} /> {L.income}</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.bad, marginRight: 4 }} /> {L.expenses}</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", flex: 1 }}>
         <path d={areaRev} fill={t.good} opacity="0.15" />
@@ -296,32 +352,8 @@ function IncomeExpensesChart({ data, t }: { data: TrendPoint[]; t: Tokens }) {
 }
 
 
-function MetaGauge({ meta, t }: { meta: { goal: number; real: number; achieved_pct: number }; t: Tokens }) {
-  const pct = Math.max(0, Math.min(100, meta.achieved_pct));
-  const size = 160;
-  const cx = size / 2, cy = size / 2;
-  const r = 65;
-  const circ = 2 * Math.PI * r;
-  const arc = (pct / 100) * circ;
-  const color = pct >= 90 ? (t.good || "#22c55e") : pct >= 60 ? (t.warn || "#f59e0b") : (t.bad || "#ef4444");
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 180 }}>
-      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke={t.border} strokeWidth="14" />
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="14"
-          strokeDasharray={`${arc} ${circ}`} strokeLinecap="round" />
-      </svg>
-      <div style={{ marginTop: -110, fontSize: 32, fontWeight: 800, color: t.textHi }}>{pct.toFixed(0)}%</div>
-      <div style={{ marginTop: 70, textAlign: "center", fontSize: 11, color: t.textLo }}>
-        <b style={{ color: t.textHi }}>{mxn(meta.real)}</b> de {mxn(meta.goal)}
-      </div>
-    </div>
-  );
-}
-
-
-function TopCustomers({ rows, t, onSelect }: { rows: TopCustomerRow[]; t: Tokens; onSelect?: (id?: number | null) => void }) {
-  if (!rows.length) return <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>Sin ventas en el período</div>;
+function TopCustomers({ rows, t, L, onSelect }: { rows: TopCustomerRow[]; t: Tokens; L: any; onSelect?: (id?: number | null) => void }) {
+  if (!rows.length) return <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noSalesPeriod}</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {rows.map((c, i) => (
@@ -331,7 +363,7 @@ function TopCustomers({ rows, t, onSelect }: { rows: TopCustomerRow[]; t: Tokens
             <span style={{ width: 22, height: 22, borderRadius: "50%", background: t.nova + "22", color: t.nova, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 12, color: t.textHi, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</div>
-              <div style={{ fontSize: 10.5, color: t.textLo }}>{c.orders} pedido{c.orders !== 1 ? "s" : ""}</div>
+              <div style={{ fontSize: 10.5, color: t.textLo }}>{L.ordersW(c.orders)}</div>
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
@@ -349,18 +381,18 @@ function TopCustomers({ rows, t, onSelect }: { rows: TopCustomerRow[]; t: Tokens
 }
 
 
-function GeoMap({ geo, t }: { geo: { by_state: GeoStateRow[]; top5: GeoStateRow[]; total_revenue: number }; t: Tokens }) {
+function GeoMap({ geo, t, L }: { geo: { by_state: GeoStateRow[]; top5: GeoStateRow[]; total_revenue: number }; t: Tokens; L: any }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, height: 260 }}>
       <div style={{ position: "relative", background: t.panel2, borderRadius: 8, overflow: "hidden", minHeight: 240 }}>
         <MexicoMap t={t} data={geo.by_state} />
         <div style={{ position: "absolute", bottom: 6, left: 8, fontSize: 9, color: t.textLo, pointerEvents: "none" }}>
-          México · {geo.by_state.length} estados con venta
+          {L.statesWithSales(geo.by_state.length)}
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}>
-        <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>Top 5 estados</div>
-        {geo.top5.length === 0 && <div style={{ color: t.textLo, fontSize: 11 }}>Sin ventas geolocalizadas</div>}
+        <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>{L.top5states}</div>
+        {geo.top5.length === 0 && <div style={{ color: t.textLo, fontSize: 11 }}>{L.noGeo}</div>}
         {geo.top5.map((s, i) => (
           <div key={s.state_code} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px", background: t.panel2, borderRadius: 6 }}>
             <div style={{ minWidth: 0, flex: 1 }}>
@@ -402,9 +434,9 @@ function OperationalBars({ kpis, t }: { kpis: OperationalKPIRow[]; t: Tokens }) 
 }
 
 
-function ChannelDonut({ data, total, t }: { data: ChannelSalesRow[]; total: number; t: Tokens }) {
+function ChannelDonut({ data, total, t, L }: { data: ChannelSalesRow[]; total: number; t: Tokens; L: any }) {
   const palette = [t.nova || "#33B2F5", t.good || "#22c55e", t.warn || "#f59e0b", "#a855f7", "#ec4899", t.textLo];
-  if (total === 0) return <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>Sin ventas por canal</div>;
+  if (total === 0) return <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noChannel}</div>;
   // Donut SVG con arcs
   const cx = 50, cy = 50, r = 34, w = 12;
   let accum = 0;
@@ -445,8 +477,8 @@ function ChannelDonut({ data, total, t }: { data: ChannelSalesRow[]; total: numb
 }
 
 
-function AlertList({ alerts, t, onClick }: { alerts: AlertRow[]; t: Tokens; onClick?: (a: AlertRow) => void }) {
-  if (!alerts.length) return <div style={{ color: t.good, fontSize: 12, textAlign: "center", padding: 20 }}>Sin alertas activas ✓</div>;
+function AlertList({ alerts, t, L, onClick }: { alerts: AlertRow[]; t: Tokens; L: any; onClick?: (a: AlertRow) => void }) {
+  if (!alerts.length) return <div style={{ color: t.good, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noAlerts}</div>;
   const sevColor = (s: string) => s === "urgent" ? (t.bad || "#ef4444") : s === "high" ? (t.warn || "#f59e0b") : t.nova;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
