@@ -12,6 +12,7 @@ import {
   Truck, ClipboardList, BookText, Store, HelpCircle, Sparkles, Building2,
 } from "lucide-react";
 import SalesCRM from "./features/sales/SalesCRM";
+import ExecutiveDashboard from "./features/dashboard/ExecutiveDashboard";
 import CustomersModule from "./features/customers/CustomersModule";
 import InventoryModule from "./features/inventory/InventoryModule";
 import FinanceModule from "./features/finance/FinanceModule";
@@ -3070,7 +3071,7 @@ export default function App() {
   const qFor = (id) => (searchNav && searchNav.page === id ? searchNav.query : undefined);
 
   const PAGES = {
-    dashboard: <Dashboard t={t} s={s} lang={lang} setPage={setPage} isMobile={isMobile} />,
+    dashboard: <ExecutiveDashboard t={t} setPage={setPage} />,
     inventario: <InventoryModule t={t} s={s} initialQuery={qFor("inventario")} />,
     ventas: <SalesCRM t={t} s={s} initialQuery={qFor("ventas")} />,
     pos: <POSModule t={t} />,
