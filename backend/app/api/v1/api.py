@@ -23,6 +23,7 @@ from app.modules.retail.router import router as retail_router
 from app.modules.bi.router import router as bi_router
 from app.modules.promotions.router import router as promotions_router
 from app.modules.marketplaces.router import router as marketplaces_router
+from app.modules.dashboard.router import router as dashboard_router
 from app.api.v1.endpoints.system import router as system_router
 
 # Defensa en profundidad: las escrituras (POST/PUT/PATCH/DELETE) a cada módulo
@@ -49,6 +50,7 @@ api_router.include_router(notifications_router, prefix="/notifications", tags=["
 api_router.include_router(bi_router,        prefix="/bi",         tags=["bi"])
 api_router.include_router(promotions_router, prefix="/promotions", tags=["promotions"], dependencies=[Depends(module_write_guard("inventory"))])
 api_router.include_router(marketplaces_router, prefix="/marketplaces", tags=["marketplaces"], dependencies=[Depends(module_write_guard("sales"))])
+api_router.include_router(dashboard_router, prefix="/dashboard",  tags=["dashboard"])
 api_router.include_router(system_router,    prefix="/system",     tags=["system"])
 
 @api_router.get("/")
