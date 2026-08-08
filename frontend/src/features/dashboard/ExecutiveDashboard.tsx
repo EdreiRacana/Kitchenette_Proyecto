@@ -16,7 +16,7 @@ import {
   DollarSign, RefreshCw, Building2, AlertTriangle, MapPin,
 } from "lucide-react";
 import { dashboardApi } from "./api";
-import { MX_STATE_COORDS } from "./mxStateCoords";
+import MexicoMap from "./MexicoMap";
 import type {
   ExecutiveDashboardResponse, ExecKPI, TopCustomerRow,
   ChannelSalesRow, AlertRow, OperationalKPIRow, FinancialKPIRow,
@@ -350,30 +350,11 @@ function TopCustomers({ rows, t, onSelect }: { rows: TopCustomerRow[]; t: Tokens
 
 
 function GeoMap({ geo, t }: { geo: { by_state: GeoStateRow[]; top5: GeoStateRow[]; total_revenue: number }; t: Tokens }) {
-  const maxRev = Math.max(1, ...geo.by_state.map(s => s.revenue));
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, height: 220 }}>
-      <div style={{ position: "relative", background: t.panel2, borderRadius: 8, overflow: "hidden" }}>
-        <svg viewBox="0 0 100 60" preserveAspectRatio="none" style={{ width: "100%", height: "100%" }}>
-          {/* Puntos de estados con ventas — radio y opacidad proporcional al volumen */}
-          {Object.entries(MX_STATE_COORDS).map(([code, coord]) => {
-            const s = geo.by_state.find(x => x.state_code === code);
-            const rev = s?.revenue || 0;
-            const ratio = rev / maxRev;
-            const radius = rev > 0 ? 1.2 + ratio * 3.5 : 0.8;
-            const opacity = rev > 0 ? 0.5 + ratio * 0.5 : 0.15;
-            const color = rev > 0 ? (t.nova || "#33B2F5") : t.textLo;
-            return (
-              <g key={code}>
-                <circle cx={coord.x} cy={coord.y} r={radius} fill={color} opacity={opacity} />
-                {rev > 0 && (
-                  <circle cx={coord.x} cy={coord.y} r={radius * 1.6} fill={color} opacity={opacity * 0.3} />
-                )}
-              </g>
-            );
-          })}
-        </svg>
-        <div style={{ position: "absolute", bottom: 6, left: 8, fontSize: 9, color: t.textLo }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, height: 260 }}>
+      <div style={{ position: "relative", background: t.panel2, borderRadius: 8, overflow: "hidden", minHeight: 240 }}>
+        <MexicoMap t={t} data={geo.by_state} />
+        <div style={{ position: "absolute", bottom: 6, left: 8, fontSize: 9, color: t.textLo, pointerEvents: "none" }}>
           México · {geo.by_state.length} estados con venta
         </div>
       </div>
