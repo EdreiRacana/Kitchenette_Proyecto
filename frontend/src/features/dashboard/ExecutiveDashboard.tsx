@@ -40,11 +40,13 @@ interface Props {
 // hard-coded en este archivo para que el toggle idioma tenga efecto visible.
 const I18N = {
   es: {
-    title: "Tablero Ejecutivo", from: "Del", to: "al",
-    refresh: "Actualizar", loading: "Calculando dashboard ejecutivo…",
+    title: "Matriz de Indicadores", from: "Del", to: "al",
+    refresh: "Actualizar", loading: "Calculando indicadores…",
     error: "Error", retry: "Reintentar", year: "1 año",
     salesPeriod: "Ventas del período", vsPrev: "Actual vs anterior",
     metaVsReal: "Meta vs Real", monthLabel: "Mes",
+    basisForecast: "Contra forecast", basisPrev: "Contra mes anterior", basisNone: "Sin referencia",
+    noMeta: "Sin meta ni ventas del mes anterior para comparar",
     top5Cust: "Top 5 Clientes", ofPeriod: "del período",
     incomeExpenses: "Tendencia Ingresos vs Gastos", income: "Ingresos", expenses: "Gastos",
     geoDist: "Distribución Geográfica", salesByState: "Ventas por estado",
@@ -58,11 +60,13 @@ const I18N = {
     statesWithSales: (n:number) => `México · ${n} estados con venta`,
   },
   en: {
-    title: "Executive Dashboard", from: "From", to: "to",
-    refresh: "Refresh", loading: "Computing executive dashboard…",
+    title: "Dashboard", from: "From", to: "to",
+    refresh: "Refresh", loading: "Computing dashboard…",
     error: "Error", retry: "Retry", year: "1 year",
     salesPeriod: "Sales in period", vsPrev: "Current vs previous",
     metaVsReal: "Target vs Actual", monthLabel: "Month",
+    basisForecast: "vs forecast", basisPrev: "vs previous month", basisNone: "No reference",
+    noMeta: "No target nor previous-month sales to compare",
     top5Cust: "Top 5 Customers", ofPeriod: "of the period",
     incomeExpenses: "Income vs Expenses", income: "Income", expenses: "Expenses",
     geoDist: "Geographic Distribution", salesByState: "Sales by state",
@@ -178,17 +182,39 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage }: Props) {
         <PanelCard t={t} title={L.salesPeriod} subtitle={L.vsPrev}>
           <SalesTrendChart data={data.trend_sales} t={t} L={L} />
         </PanelCard>
-        <PanelCard t={t} title={L.metaVsReal} subtitle={`${L.monthLabel} ${data.meta_vs_real.period}`}>
+        <PanelCard
+          t={t}
+          title={L.metaVsReal}
+          subtitle={
+            data.meta_vs_real.basis === "previous_period" ? L.basisPrev
+            : data.meta_vs_real.basis === "none" ? L.basisNone
+            : L.basisForecast
+          }
+        >
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 8 }}>
-            <LiquidCore
-              pct={data.meta_vs_real.achieved_pct}
-              t={t}
-              sub={L.ofGoal}
-              hue={data.meta_vs_real.achieved_pct >= 60 ? "green" : "blue"}
-            />
-            <div style={{ fontSize: 11, color: t.textLo, textAlign: "center" }}>
-              <b style={{ color: t.textHi }}>{mxn(data.meta_vs_real.real)}</b> / {mxn(data.meta_vs_real.goal)}
-            </div>
+            {data.meta_vs_real.goal > 0 ? (
+              <>
+                <LiquidCore
+                  pct={data.meta_vs_real.achieved_pct}
+                  t={t}
+                  sub={L.ofGoal}
+                  hue={data.meta_vs_real.achieved_pct >= 60 ? "green" : "blue"}
+                />
+                <div style={{ fontSize: 11, color: t.textLo, textAlign: "center" }}>
+                  <b style={{ color: t.textHi }}>{mxn(data.meta_vs_real.real)}</b>
+                  {" / "}{mxn(data.meta_vs_real.goal)}
+                </div>
+              </>
+            ) : (
+              <div style={{ textAlign: "center", padding: 20 }}>
+                <div style={{ fontSize: 28, color: t.textHi, fontWeight: 800 }}>
+                  {mxn(data.meta_vs_real.real)}
+                </div>
+                <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4, maxWidth: 220 }}>
+                  {L.noMeta}
+                </div>
+              </div>
+            )}
           </div>
         </PanelCard>
         <PanelCard t={t} title={L.top5Cust} subtitle={L.ofPeriod}>

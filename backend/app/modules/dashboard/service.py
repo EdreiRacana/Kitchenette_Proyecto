@@ -595,9 +595,20 @@ async def executive_dashboard(
 
     # 2) Meta (forecast del mes actual)
     goal_month = await _forecast_month_target(db, end)
-    # Real del mes (para el gauge Meta vs Real, usamos el mes calendario del end date)
     m_first, m_last = _month_bounds(end)
     real_month, _, _ = await _sales_totals(db, m_first, m_last)
+    meta_basis = "forecast" if goal_month > 0 else "none"
+
+    # Fallback: si no hay forecast, referenciar contra ventas del mes anterior
+    # para que el indicador nunca quede en 0 cuando sí hay actividad.
+    if goal_month <= 0:
+        prev_m_end = m_first - timedelta(days=1)
+        prev_m_start = prev_m_end.replace(day=1)
+        prev_month_rev, _, _ = await _sales_totals(db, prev_m_start, prev_m_end)
+        if prev_month_rev > 0:
+            goal_month = prev_month_rev
+            meta_basis = "previous_period"
+
     achieved_pct = (real_month / goal_month * 100.0) if goal_month > 0 else 0.0
 
     # 3) 6 KPIs principales
@@ -644,11 +655,15 @@ async def executive_dashboard(
                         else "warn" if margin_pct_cur >= 10 else "bad",
         ),
         schemas.ExecKPI(
-            key="revenue_target", label="Meta de Ingresos",
+            key="revenue_target",
+            label="Meta de Ingresos" if meta_basis == "forecast"
+                    else "Ingresos vs mes anterior",
             value=round(achieved_pct, 2),
             display=f"{achieved_pct:.1f}%" if goal_month > 0 else "—",
-            sub=(f"Real {_format_money(real_month)} / Meta {_format_money(goal_month)}"
-                 if goal_month > 0 else "Sin forecast para el mes"),
+            sub=(f"Real {_format_money(real_month)} / "
+                 f"{'Meta' if meta_basis == 'forecast' else 'Mes ant.'} "
+                 f"{_format_money(goal_month)}"
+                 if goal_month > 0 else "Sin forecast ni mes de referencia"),
             delta_pct=None,
             color_hint=("good" if achieved_pct >= 90 else "warn"
                         if achieved_pct >= 60 else "bad") if goal_month > 0 else "neutral",
@@ -783,6 +798,7 @@ async def executive_dashboard(
             period=end.strftime("%Y-%m"),
             goal=round(goal_month, 2), real=round(real_month, 2),
             achieved_pct=round(achieved_pct, 2),
+            basis=meta_basis,
         ),
         trend_sales=trend_sales,
         trend_income_expenses=trend_ie,
