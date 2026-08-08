@@ -4,6 +4,7 @@ export interface RetailChannel {
   code?: string | null;
   customer_id?: number | null;
   customer_name?: string | null;
+  customer_logo_base64?: string | null;
   target_wos_weeks: number;
   critical_wos_weeks: number;
   overstock_wos_weeks: number;
@@ -960,6 +961,31 @@ export interface RetailKPIs {
   overstock_stores_count: number;
   stores_active_count: number;
   skus_active_count: number;
+  // v3
+  channels_count?: number;
+  stores_total_count?: number;
+  channel_logo_url?: string | null;   // base64 (sin prefijo data:image)
+}
+
+export interface StoreDashboardRow {
+  store_id: number;
+  store_name: string;
+  channel_id: number;
+  channel_name?: string | null;
+  city?: string | null;
+  on_hand_units: number;
+  on_hand_value: number;
+  wos_weeks: number;
+  status: WosStatus;
+  days_window: number;
+  units_sold: number;
+  revenue: number;
+  top_sku?: string | null;
+  top_sku_name?: string | null;
+  top_sku_units: number;
+  bottom_sku?: string | null;
+  bottom_sku_name?: string | null;
+  bottom_sku_units: number;
 }
 
 export type WosStatus = "critical" | "replenish" | "healthy" | "overstock" | "no_data";

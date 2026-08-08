@@ -73,6 +73,9 @@ export interface Customer {
   marketplace_platform?: string | null;
   seller_id_external?: string | null;
   consignment_settlement_days?: number | null;
+
+  // Logo (base64 sin prefijo data:image)
+  logo_base64?: string | null;
 }
 
 export const WITHHOLDING_SCHEMES = [

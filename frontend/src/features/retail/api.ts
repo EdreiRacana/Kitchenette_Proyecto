@@ -49,6 +49,8 @@ export const retailApi = {
   // Dashboard / analíticas
   dashboard: (opts?: { channel_id?: number; days?: number }) =>
     api.get<RetailKPIs>("/retail/dashboard", { params: opts }).then(r => r.data),
+  dashboardStoresSummary: (opts?: { channel_id?: number; days?: number }) =>
+    api.get<import("./types").StoreDashboardRow[]>("/retail/dashboard/stores-summary", { params: opts }).then(r => r.data),
   storesVelocity: (channel_id?: number) =>
     api.get<StoreVelocityRow[]>("/retail/stores-velocity", { params: { channel_id } }).then(r => r.data),
   skusVelocity: (opts?: { channel_id?: number; limit?: number }) =>

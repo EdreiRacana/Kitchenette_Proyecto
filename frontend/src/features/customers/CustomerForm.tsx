@@ -39,6 +39,58 @@ function Section({ tk, icon, title, children }: {
   );
 }
 
+// Uploader del logo del cliente. Guarda base64 puro (sin el prefijo
+// data:image) en el campo logo_base64 del CustomerDraft.
+function CustomerLogoUploader({ tk, value, onChange }: {
+  tk: Tokens; value: string | null; onChange: (v: string | null) => void;
+}) {
+  const preview = value ? (value.startsWith("data:") ? value : `data:image/png;base64,${value}`) : null;
+  const inputId = "customer-logo-input";
+  const handle = (f: File | null) => {
+    if (!f) return;
+    if (f.size > 400_000) { alert("La imagen es muy grande (máx ~400 KB)."); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const s = String(reader.result || "");
+      // Remove data:image/...;base64, prefix — guardamos base64 puro
+      const cleaned = s.replace(/^data:[^;]+;base64,/, "");
+      onChange(cleaned);
+    };
+    reader.readAsDataURL(f);
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{
+        width: 64, height: 64, borderRadius: 10,
+        border: `1px solid ${tk.border}`, background: tk.panel,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        overflow: "hidden", flexShrink: 0,
+      }}>
+        {preview ? (
+          <img src={preview} alt="logo" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+        ) : (
+          <span style={{ fontSize: 10.5, color: tk.textLo }}>sin logo</span>
+        )}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <input id={inputId} type="file" accept="image/*" style={{ display: "none" }}
+          onChange={(e) => handle(e.target.files?.[0] || null)} />
+        <button type="button" onClick={() => document.getElementById(inputId)?.click()}
+          style={{ padding: "6px 12px", background: tk.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+          {value ? "Cambiar logo" : "Subir logo"}
+        </button>
+        {value && (
+          <button type="button" onClick={() => onChange(null)}
+            style={{ padding: "4px 10px", background: "transparent", color: tk.bad, border: `1px solid ${tk.bad}55`, borderRadius: 6, cursor: "pointer", fontSize: 11 }}>
+            Quitar
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 function emptyDraft(): CustomerDraft {
   return {
     razon_social: "", nombre_comercial: "", name: "", client_type: "",
@@ -55,6 +107,7 @@ function emptyDraft(): CustomerDraft {
     withholding_scheme: "none", withholding_isr_pct: 0, withholding_iva_pct: 0,
     commercial_discount_pct: 0, marketplace_platform: "", seller_id_external: "",
     consignment_settlement_days: 30,
+    logo_base64: null,
     date_of_birth: null, sex: null, accepts_marketing: false, privacy_accepted_at: null,
     tier_id: null, loyalty_code: null, loyalty_since: null, loyalty_expires_at: null,
     total_spent_lifetime: 0, total_orders_lifetime: 0, last_order_at: null,
@@ -213,6 +266,9 @@ export function CustomerForm({ tk, tr, open, onClose, onSubmit, editing, saving 
       </div>
 
       <Section tk={tk} icon={<Building2 size={16} />} title={tr("cust_sec_identity", "Identificación")}>
+        <Field tk={tk} label="Logo del cliente" hint="Aparece en el módulo Retail y encabezados. PNG/JPG hasta ~200 KB.">
+          <CustomerLogoUploader tk={tk} value={d.logo_base64 || null} onChange={(v) => set("logo_base64" as any, v)} />
+        </Field>
         <Field tk={tk} label={tr("cust_razon", "Razón Social")}>
           <TextInput tk={tk} value={d.razon_social || ""} onChange={(v) => set("razon_social", v)} placeholder="Comercializadora …  S.A. de C.V." />
         </Field>

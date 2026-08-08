@@ -46,6 +46,7 @@ class RetailChannelUpdate(BaseModel):
 class RetailChannelOut(RetailChannelBase):
     id: int
     customer_name: Optional[str] = None
+    customer_logo_base64: Optional[str] = None
     stores_count: int = 0
     created_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
@@ -186,6 +187,35 @@ class RetailKPIs(BaseModel):
     overstock_stores_count: int       # tiendas con al menos 1 SKU en WOS > overstock
     stores_active_count: int
     skus_active_count: int
+    # v3: contadores adicionales para el dashboard rediseñado
+    channels_count: int = 0
+    stores_total_count: int = 0
+    channel_logo_url: Optional[str] = None    # logo del cliente vinculado a la cadena
+
+
+class StoreDashboardRow(BaseModel):
+    """Una fila = una tienda con toda su info de un vistazo (v3)."""
+    store_id: int
+    store_name: str
+    channel_id: int
+    channel_name: Optional[str] = None
+    city: Optional[str] = None
+    # Inventario
+    on_hand_units: int
+    on_hand_value: float          # units × cost_price
+    wos_weeks: float
+    status: str                    # critical | replenish | healthy | overstock | no_data
+    # Ventas en la ventana
+    days_window: int
+    units_sold: int
+    revenue: float
+    # Top / bottom SKU
+    top_sku: Optional[str] = None
+    top_sku_name: Optional[str] = None
+    top_sku_units: int = 0
+    bottom_sku: Optional[str] = None
+    bottom_sku_name: Optional[str] = None
+    bottom_sku_units: int = 0
 
 
 class StoreVelocityRow(BaseModel):

@@ -64,13 +64,14 @@ async def list_channels(db: AsyncSession) -> List[schemas.RetailChannelOut]:
     rows = list((await db.execute(stmt)).scalars().all())
     # Enriquecer con nombre de customer y count de stores
     cust_ids = {r.customer_id for r in rows if r.customer_id}
-    cust_names: Dict[int, str] = {}
+    cust_info: Dict[int, Tuple[str, Optional[str]]] = {}
     if cust_ids:
         cres = await db.execute(
-            select(cust_models.Customer.id, cust_models.Customer.name)
+            select(cust_models.Customer.id, cust_models.Customer.name,
+                    cust_models.Customer.logo_base64)
             .where(cust_models.Customer.id.in_(cust_ids))
         )
-        cust_names = {r.id: r.name for r in cres}
+        cust_info = {r.id: (r.name, r.logo_base64) for r in cres}
     counts_stmt = (
         select(models.RetailStore.channel_id, func.count(models.RetailStore.id))
         .group_by(models.RetailStore.channel_id)
@@ -78,13 +79,15 @@ async def list_channels(db: AsyncSession) -> List[schemas.RetailChannelOut]:
     counts = dict((await db.execute(counts_stmt)).all())
     out = []
     for r in rows:
+        cn, clogo = cust_info.get(r.customer_id or 0, (None, None))
         out.append(schemas.RetailChannelOut(
             id=r.id, name=r.name, code=r.code, customer_id=r.customer_id,
             target_wos_weeks=r.target_wos_weeks,
             critical_wos_weeks=r.critical_wos_weeks,
             overstock_wos_weeks=r.overstock_wos_weeks,
             is_active=r.is_active, notes=r.notes,
-            customer_name=cust_names.get(r.customer_id or 0),
+            customer_name=cn,
+            customer_logo_base64=clogo,
             stores_count=int(counts.get(r.id, 0)),
             created_at=r.created_at,
         ))
@@ -687,9 +690,28 @@ async def dashboard_kpis(db: AsyncSession, channel_id: Optional[int] = None,
     sell_through = round((total_so / sell_in_units * 100.0), 2) if sell_in_units > 0 else 0.0
 
     channel_name = None
+    channel_logo = None
     if channel_id is not None:
         ch = await db.get(models.RetailChannel, channel_id)
         channel_name = ch.name if ch else None
+        if ch and ch.customer_id:
+            cust = await db.get(cust_models.Customer, ch.customer_id)
+            if cust and cust.logo_base64:
+                channel_logo = cust.logo_base64
+
+    # Contadores totales (para KPIs 9 y 10 del dashboard v3)
+    ch_ct_q = select(func.count(models.RetailChannel.id)).where(
+        models.RetailChannel.is_active.is_(True),
+    )
+    if channel_id is not None:
+        ch_ct_q = ch_ct_q.where(models.RetailChannel.id == channel_id)
+    channels_count = int((await db.execute(ch_ct_q)).scalar() or 0)
+    st_ct_q = select(func.count(models.RetailStore.id)).where(
+        models.RetailStore.is_active.is_(True),
+    )
+    if channel_id is not None:
+        st_ct_q = st_ct_q.where(models.RetailStore.channel_id == channel_id)
+    stores_total_count = int((await db.execute(st_ct_q)).scalar() or 0)
 
     total_returns_units = int(so.units_returned or 0)
     total_returns_amount = round(float(so.returns_amount or 0.0), 2)
@@ -717,6 +739,9 @@ async def dashboard_kpis(db: AsyncSession, channel_id: Optional[int] = None,
         overstock_stores_count=overstock_stores,
         stores_active_count=stores_active,
         skus_active_count=skus_count,
+        channels_count=channels_count,
+        stores_total_count=stores_total_count,
+        channel_logo_url=channel_logo,
     )
 
 
@@ -6488,3 +6513,173 @@ async def cost_diagnostic(
         skus_cost_higher_than_price=higher_than_price_ct,
         rows=diag_rows,
     )
+
+
+# ── Dashboard v3: tabla resumen por tienda ──────────────────────────────
+
+async def stores_dashboard_summary(
+    db: AsyncSession, channel_id: Optional[int] = None, days: int = 30,
+) -> List[schemas.StoreDashboardRow]:
+    """Una fila por tienda con: inventario (unidades+dinero), WoS, ventas
+    (unidades+dinero), top y bottom SKU. Reemplaza las 2 tablas separadas
+    del dashboard viejo por una tabla única y ordenable.
+    """
+    from app.modules.inventory import models as inv_m
+
+    now = datetime.now(timezone.utc)
+    period_start = now - timedelta(days=days)
+
+    # Tiendas activas del canal (o todas)
+    st_q = (
+        select(models.RetailStore, models.RetailChannel.name.label("channel_name"),
+                models.RetailChannel.critical_wos_weeks,
+                models.RetailChannel.target_wos_weeks,
+                models.RetailChannel.overstock_wos_weeks)
+        .join(models.RetailChannel,
+              models.RetailStore.channel_id == models.RetailChannel.id)
+        .where(models.RetailStore.is_active.is_(True))
+    )
+    if channel_id is not None:
+        st_q = st_q.where(models.RetailStore.channel_id == channel_id)
+    st_rows = (await db.execute(st_q)).all()
+    if not st_rows:
+        return []
+
+    store_ids = [s.id for s, *_ in st_rows]
+
+    # Ventas por tienda en la ventana
+    sales_by_store: Dict[int, Dict[str, float]] = {}
+    sales_q = (
+        select(
+            models.SellOutReport.store_id,
+            func.sum(models.SellOutReport.units_sold).label("units"),
+            func.sum(models.SellOutReport.revenue).label("revenue"),
+        )
+        .where(models.SellOutReport.store_id.in_(store_ids),
+                models.SellOutReport.period_start >= period_start)
+        .group_by(models.SellOutReport.store_id)
+    )
+    for sid, units, revenue in (await db.execute(sales_q)).all():
+        sales_by_store[int(sid)] = {
+            "units": int(units or 0), "revenue": float(revenue or 0.0),
+        }
+
+    # On-hand por tienda: stock actual del consignment (StockLevel) o
+    # snapshot del último SellOutReport si no hay consignment
+    on_hand_by_store: Dict[int, int] = {}
+    on_hand_value_by_store: Dict[int, float] = {}
+
+    # Path A: consignment stock real desde StockLevel (con valor $ = qty × cost)
+    for s, *_ in st_rows:
+        if s.consignment_warehouse_id:
+            oh_q = (
+                select(
+                    func.coalesce(func.sum(inv_m.StockLevel.quantity), 0).label("qty"),
+                    func.coalesce(func.sum(
+                        inv_m.StockLevel.quantity * inv_m.ProductVariant.cost_price
+                    ), 0.0).label("value"),
+                )
+                .join(inv_m.ProductVariant,
+                      inv_m.StockLevel.variant_id == inv_m.ProductVariant.id)
+                .where(inv_m.StockLevel.warehouse_id == s.consignment_warehouse_id)
+            )
+            row = (await db.execute(oh_q)).one()
+            on_hand_by_store[s.id] = int(row.qty or 0)
+            on_hand_value_by_store[s.id] = round(float(row.value or 0.0), 2)
+
+    # Path B: para tiendas sin consignment, usar snapshot del último sellout
+    stores_missing = [s.id for s, *_ in st_rows if s.id not in on_hand_by_store]
+    if stores_missing:
+        last_q = (
+            select(
+                models.SellOutReport.store_id,
+                func.max(models.SellOutReport.period_start).label("last"),
+            )
+            .where(models.SellOutReport.store_id.in_(stores_missing))
+            .group_by(models.SellOutReport.store_id)
+        )
+        last_by_store = {int(sid): last for sid, last in (await db.execute(last_q)).all()}
+        for sid, last in last_by_store.items():
+            oh_snapshot_q = (
+                select(
+                    func.coalesce(func.sum(models.SellOutReport.units_on_hand), 0).label("qty"),
+                    func.coalesce(func.sum(
+                        models.SellOutReport.units_on_hand * inv_m.ProductVariant.cost_price
+                    ), 0.0).label("value"),
+                )
+                .outerjoin(inv_m.ProductVariant,
+                            models.SellOutReport.variant_id == inv_m.ProductVariant.id)
+                .where(models.SellOutReport.store_id == sid,
+                        models.SellOutReport.period_start == last)
+            )
+            row = (await db.execute(oh_snapshot_q)).one()
+            on_hand_by_store[sid] = int(row.qty or 0)
+            on_hand_value_by_store[sid] = round(float(row.value or 0.0), 2)
+
+    # Top y bottom SKU por tienda (dentro de la ventana)
+    top_bottom_by_store: Dict[int, Dict[str, Any]] = {}
+    tb_q = (
+        select(
+            models.SellOutReport.store_id,
+            models.SellOutReport.variant_id,
+            inv_m.ProductVariant.sku,
+            inv_m.Product.name.label("product_name"),
+            func.sum(models.SellOutReport.units_sold).label("units"),
+        )
+        .join(inv_m.ProductVariant,
+              models.SellOutReport.variant_id == inv_m.ProductVariant.id)
+        .join(inv_m.Product,
+              inv_m.ProductVariant.product_id == inv_m.Product.id)
+        .where(models.SellOutReport.store_id.in_(store_ids),
+                models.SellOutReport.period_start >= period_start,
+                models.SellOutReport.variant_id.is_not(None))
+        .group_by(models.SellOutReport.store_id,
+                   models.SellOutReport.variant_id,
+                   inv_m.ProductVariant.sku, inv_m.Product.name)
+    )
+    per_store: Dict[int, List[Dict[str, Any]]] = {}
+    for sid, vid, sku, name, units in (await db.execute(tb_q)).all():
+        per_store.setdefault(int(sid), []).append({
+            "sku": sku, "name": name, "units": int(units or 0),
+        })
+    for sid, items in per_store.items():
+        items.sort(key=lambda x: -x["units"])
+        top = items[0] if items else None
+        bottom = items[-1] if items and len(items) > 1 else None
+        top_bottom_by_store[sid] = {"top": top, "bottom": bottom}
+
+    # WoS por tienda (usa velocidad de la misma ventana)
+    weeks = max(days / 7.0, 1.0)
+    out: List[schemas.StoreDashboardRow] = []
+    for s, ch_name, crit_w, tgt_w, over_w in st_rows:
+        oh = on_hand_by_store.get(s.id, 0)
+        sales = sales_by_store.get(s.id, {"units": 0, "revenue": 0.0})
+        vel = sales["units"] / weeks if sales["units"] > 0 else 0.0
+        has_sales = vel > 0
+        if not has_sales:
+            wos = 999.0 if oh > 0 else 0.0
+        else:
+            wos = _clamp(oh / vel)
+        status = _wos_status(
+            wos, float(crit_w or 2.0), float(tgt_w or 4.0),
+            float(over_w or 12.0), has_sales,
+        )
+        tb = top_bottom_by_store.get(s.id, {})
+        top = tb.get("top") or {}
+        bottom = tb.get("bottom") or {}
+        out.append(schemas.StoreDashboardRow(
+            store_id=s.id, store_name=s.name,
+            channel_id=s.channel_id, channel_name=ch_name,
+            city=s.city,
+            on_hand_units=oh,
+            on_hand_value=round(on_hand_value_by_store.get(s.id, 0.0), 2),
+            wos_weeks=round(wos, 2), status=status,
+            days_window=days,
+            units_sold=int(sales["units"]),
+            revenue=round(sales["revenue"], 2),
+            top_sku=top.get("sku"), top_sku_name=top.get("name"),
+            top_sku_units=int(top.get("units") or 0),
+            bottom_sku=bottom.get("sku"), bottom_sku_name=bottom.get("name"),
+            bottom_sku_units=int(bottom.get("units") or 0),
+        ))
+    return out

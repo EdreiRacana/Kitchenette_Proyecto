@@ -80,6 +80,8 @@ _CUSTOMER_STATEMENTS = [
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS marketplace_platform    VARCHAR",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS seller_id_external      VARCHAR",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS consignment_settlement_days INTEGER DEFAULT 30",
+    # Retail Dashboard v3: logo del cliente (para mostrar en el header del módulo)
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS logo_base64 TEXT",
     "UPDATE customers SET relationship_type = 'retail' WHERE relationship_type IS NULL",
     "UPDATE customers SET withholding_scheme = 'none' WHERE withholding_scheme IS NULL",
     "CREATE INDEX IF NOT EXISTS ix_customers_relationship_type ON customers (relationship_type)",
