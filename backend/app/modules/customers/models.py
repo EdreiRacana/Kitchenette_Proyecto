@@ -147,6 +147,11 @@ class Customer(Base):
     # Configuración específica consignación
     consignment_settlement_days = Column(Integer, default=30, nullable=True)  # frecuencia de liquidación
 
+    # Logo del cliente (opcional). Base64 sin prefijo data:image — la UI
+    # lo prefija según el mimetype detectado (default png). Usado en el
+    # header del módulo Retail al filtrar por cadena vinculada a este customer.
+    logo_base64 = Column(Text, nullable=True)
+
     # ── Programa de fidelización (CRM) ─────────────────────────────────────
     # Datos demográficos capturados en el POS (registro cliente). Todos
     # opcionales para no aburrir; cada empresa decide qué obliga en su UI.

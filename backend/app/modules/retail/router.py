@@ -216,6 +216,18 @@ async def dashboard(db: DB, _: CurrentUser,
     return await service.dashboard_kpis(db, channel_id=channel_id, days=days)
 
 
+@router.get("/dashboard/stores-summary",
+             response_model=List[schemas.StoreDashboardRow])
+async def dashboard_stores_summary(db: DB, _: CurrentUser,
+                                     channel_id: Optional[int] = Query(None),
+                                     days: int = Query(30, ge=1, le=365)):
+    """Dashboard v3: una fila por tienda con inventario (u+$), WoS, ventas,
+    top y bottom SKU, status semáforo. Reemplaza las 2 tablas separadas."""
+    return await service.stores_dashboard_summary(
+        db, channel_id=channel_id, days=days,
+    )
+
+
 @router.get("/stores-velocity", response_model=List[schemas.StoreVelocityRow])
 async def stores_velocity(db: DB, _: CurrentUser,
                             channel_id: Optional[int] = Query(None)):

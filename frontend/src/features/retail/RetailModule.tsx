@@ -19,7 +19,7 @@ import { salesApi, type VariantOption } from "../sales/api";
 import type { CustomerLite } from "../sales/types";
 import type {
   RetailChannel, RetailStore, SellOutReport, RetailKPIs,
-  StoreVelocityRow, SKUVelocityRow, ReplenishmentResponse,
+  StoreVelocityRow, SKUVelocityRow, ReplenishmentResponse, StoreDashboardRow,
   ReplenishmentSuggestion, WosStatus, ImportSellOutResponse,
   RetailAlert, AlertStatus, AlertSeverity, AlertsSummary,
   ConsignmentWarehouseOption, ConsignmentReconResponse, ConsignmentReconRow,
@@ -69,11 +69,12 @@ function isoWeekEnd(startISO: string): string {
 }
 
 function statusInfo(t: Tokens, status: WosStatus) {
+  const PURPLE = "#a855f7";   // morado dedicado para sobreinventario
   switch (status) {
     case "critical": return { label: "Crítico", color: t.bad, bg: t.bad + "22" };
     case "replenish": return { label: "Resurtir", color: t.warn, bg: t.warn + "22" };
     case "healthy": return { label: "Sano", color: t.good, bg: t.good + "22" };
-    case "overstock": return { label: "Sobreinventario", color: t.nova, bg: t.nova + "22" };
+    case "overstock": return { label: "Sobreinventario", color: PURPLE, bg: PURPLE + "22" };
     default: return { label: "Sin datos", color: t.textLo, bg: t.panel3 };
   }
 }
@@ -124,6 +125,11 @@ export default function RetailModule({ t }: { t: Tokens }) {
     { id: "analytics", label: "Analíticas", icon: BarChart3 },
   ];
 
+  const selectedChannelObj = channels.find(c => c.id === selectedChannel) || null;
+  // Divide tabs en dos filas de aproximadamente igual tamaño
+  const half = Math.ceil(tabs.length / 2);
+  const tabRows = [tabs.slice(0, half), tabs.slice(half)];
+
   return (
     <div style={{ padding: 20, maxWidth: 1400, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
@@ -134,42 +140,49 @@ export default function RetailModule({ t }: { t: Tokens }) {
           </p>
         </div>
         {channels.length > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <label style={{ fontSize: 11.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Cadena</label>
-            <select value={selectedChannel ?? ""} onChange={e => setSelectedChannel(e.target.value ? Number(e.target.value) : null)}
-              style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13 }}>
-              <option value="">Todas</option>
-              {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <ChannelLogo channel={selectedChannelObj} t={t} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={{ fontSize: 11.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Cadena</label>
+              <select value={selectedChannel ?? ""} onChange={e => setSelectedChannel(e.target.value ? Number(e.target.value) : null)}
+                style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13 }}>
+                <option value="">Todas</option>
+                {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
           </div>
         )}
       </div>
 
-      <div style={{ marginTop: 18, borderBottom: `1px solid ${t.border}`, display: "flex", gap: 4, flexWrap: "wrap" }}>
-        {tabs.map(({ id, label, icon: Icon, badge, badgeColor }) => {
-          const active = tab === id;
-          return (
-            <button key={id} onClick={() => setTab(id)}
-              style={{
-                display: "flex", alignItems: "center", gap: 6,
-                padding: "10px 14px", background: "transparent",
-                border: "none", cursor: "pointer",
-                color: active ? t.nova : t.textMid, fontSize: 13, fontWeight: active ? 700 : 500,
-                borderBottom: `2px solid ${active ? t.nova : "transparent"}`,
-              }}>
-              <Icon size={14} /> {label}
-              {badge !== undefined && badge > 0 && (
-                <span style={{
-                  fontSize: 10.5, fontWeight: 800,
-                  padding: "1px 7px", borderRadius: 10,
-                  background: badgeColor === "urgent" ? t.bad : t.warn,
-                  color: "#fff",
-                  minWidth: 18, textAlign: "center",
-                }}>{badge}</span>
-              )}
-            </button>
-          );
-        })}
+      <div style={{ marginTop: 18, borderBottom: `1px solid ${t.border}`, display: "flex", flexDirection: "column", gap: 2 }}>
+        {tabRows.map((row, ri) => (
+          <div key={ri} style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {row.map(({ id, label, icon: Icon, badge, badgeColor }) => {
+              const active = tab === id;
+              return (
+                <button key={id} onClick={() => setTab(id)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    padding: "8px 12px", background: "transparent",
+                    border: "none", cursor: "pointer",
+                    color: active ? t.nova : t.textMid, fontSize: 12.5, fontWeight: active ? 700 : 500,
+                    borderBottom: `2px solid ${active ? t.nova : "transparent"}`,
+                  }}>
+                  <Icon size={13} /> {label}
+                  {badge !== undefined && badge > 0 && (
+                    <span style={{
+                      fontSize: 10.5, fontWeight: 800,
+                      padding: "1px 7px", borderRadius: 10,
+                      background: badgeColor === "urgent" ? t.bad : t.warn,
+                      color: "#fff",
+                      minWidth: 18, textAlign: "center",
+                    }}>{badge}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </div>
 
       <div style={{ marginTop: 18 }}>
@@ -210,29 +223,92 @@ export default function RetailModule({ t }: { t: Tokens }) {
 }
 
 
-// ── Dashboard ────────────────────────────────────────────────────────────
+// Logo del cliente vinculado a la cadena. Muestra imagen si existe;
+// si no, iniciales del nombre en un chip cuadrado.
+function ChannelLogo({ channel, t }: { channel: RetailChannel | null; t: Tokens }) {
+  const size = 40;
+  const box: CSSProperties = {
+    width: size, height: size, borderRadius: 8,
+    border: `1px solid ${t.border}`, background: t.panel,
+    display: "flex", alignItems: "center", justifyContent: "center",
+    overflow: "hidden", flexShrink: 0,
+  };
+  if (!channel) {
+    return (
+      <div style={{ ...box, background: t.panel2, color: t.textLo, fontSize: 11 }}>
+        —
+      </div>
+    );
+  }
+  const src = channel.customer_logo_base64;
+  if (src) {
+    const url = src.startsWith("data:") ? src : `data:image/png;base64,${src}`;
+    return (
+      <div style={box} title={channel.customer_name || channel.name}>
+        <img src={url} alt={channel.name} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+      </div>
+    );
+  }
+  // Iniciales
+  const source = channel.customer_name || channel.name || "?";
+  const initials = source.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || "").join("") || "?";
+  return (
+    <div style={{ ...box, background: t.nova + "18", color: t.nova, fontWeight: 800, fontSize: 14 }}
+      title={source}>
+      {initials}
+    </div>
+  );
+}
+
+
+// ── Dashboard v3 ────────────────────────────────────────────────────────
+type SortKey = "store_name" | "channel_name" | "on_hand_units" | "on_hand_value"
+              | "wos_weeks" | "units_sold" | "revenue" | "status";
+type SortDir = "asc" | "desc";
+
 function DashboardView({ t, channelId }: { t: Tokens; channelId: number | null }) {
   const [kpis, setKpis] = useState<RetailKPIs | null>(null);
-  const [stores, setStores] = useState<StoreVelocityRow[]>([]);
-  const [skus, setSkus] = useState<SKUVelocityRow[]>([]);
+  const [rows, setRows] = useState<StoreDashboardRow[]>([]);
   const [days, setDays] = useState(30);
   const [loading, setLoading] = useState(true);
+  const [sortKey, setSortKey] = useState<SortKey>("revenue");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const [k, sv, sk] = await Promise.all([
+        const [k, r] = await Promise.all([
           retailApi.dashboard({ channel_id: channelId || undefined, days }),
-          retailApi.storesVelocity(channelId || undefined),
-          retailApi.skusVelocity({ channel_id: channelId || undefined, limit: 20 }),
+          retailApi.dashboardStoresSummary({ channel_id: channelId || undefined, days }),
         ]);
-        if (!cancelled) { setKpis(k); setStores(sv); setSkus(sk); }
+        if (!cancelled) { setKpis(k); setRows(r); }
       } finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
   }, [channelId, days]);
+
+  const toggleSort = (k: SortKey) => {
+    if (sortKey === k) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else { setSortKey(k); setSortDir("desc"); }
+  };
+
+  const sorted = useMemo(() => {
+    const copy = [...rows];
+    // Orden semáforo: critical < replenish < healthy < overstock < no_data
+    const statusOrder: Record<string, number> = { critical: 0, replenish: 1, healthy: 2, overstock: 3, no_data: 4 };
+    copy.sort((a, b) => {
+      let va: any, vb: any;
+      if (sortKey === "status") { va = statusOrder[a.status] ?? 5; vb = statusOrder[b.status] ?? 5; }
+      else if (sortKey === "store_name" || sortKey === "channel_name") {
+        va = (a[sortKey] || "").toLowerCase(); vb = (b[sortKey] || "").toLowerCase();
+      } else va = a[sortKey], vb = b[sortKey];
+      const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return copy;
+  }, [rows, sortKey, sortDir]);
 
   if (loading) return <div style={{ padding: 40, color: t.textLo, textAlign: "center" }}>Calculando KPIs…</div>;
   if (!kpis) return null;
@@ -243,17 +319,34 @@ function DashboardView({ t, channelId }: { t: Tokens; channelId: number | null }
   const netU = kpis.net_units ?? Math.max(kpis.total_sell_out_units - retUnits, 0);
   const netRev = kpis.net_revenue ?? Math.max(kpis.total_sell_out_revenue - retAmt, 0);
   const retColor = retPct >= 10 ? t.bad : retPct >= 5 ? t.warn : t.good;
+
+  // 10 KPIs distribuidos en dos filas de 5
   const tiles = [
-    { label: "Sell-out (unidades)", value: num(kpis.total_sell_out_units), sub: mxn(kpis.total_sell_out_revenue), color: t.textHi },
-    { label: "Devoluciones", value: num(retUnits), sub: `${retPct.toFixed(1)}% · ${mxn(retAmt)}`, color: retColor },
-    { label: "Neto", value: num(netU), sub: mxn(netRev), color: t.textHi },
-    { label: "Sell-in (unidades)", value: num(kpis.total_sell_in_units), sub: mxn(kpis.total_sell_in_revenue), color: t.textHi },
+    // Fila 1 — cobertura + ventas
+    { label: "Cadenas", value: num(kpis.channels_count ?? 0), sub: channelId ? "filtro activo" : "activas", color: t.textHi },
+    { label: "Tiendas", value: num(kpis.stores_total_count ?? 0), sub: `${kpis.stores_active_count} con ventas`, color: t.textHi },
+    { label: "Sell-out (unid.)", value: num(kpis.total_sell_out_units), sub: mxn(kpis.total_sell_out_revenue), color: t.textHi },
+    { label: "Sell-in (unid.)", value: num(kpis.total_sell_in_units), sub: mxn(kpis.total_sell_in_revenue), color: t.textHi },
     { label: "Sell-through", value: `${kpis.sell_through_pct.toFixed(1)}%`, sub: "Sell-out / Sell-in", color: kpis.sell_through_pct >= 70 ? t.good : kpis.sell_through_pct >= 40 ? t.warn : t.bad },
-    { label: "On-hand total", value: num(kpis.total_on_hand), sub: `${kpis.stores_active_count} tiendas · ${kpis.skus_active_count} SKUs`, color: t.textHi },
-    { label: "WOS promedio", value: `${kpis.avg_wos_weeks.toFixed(1)} sem`, sub: "Weeks of Supply", color: kpis.avg_wos_weeks >= 4 && kpis.avg_wos_weeks <= 12 ? t.good : t.warn },
-    { label: "Tiendas críticas", value: num(kpis.critical_stores_count), sub: "WOS < mínimo", color: kpis.critical_stores_count > 0 ? t.bad : t.good },
-    { label: "Sobreinventario", value: num(kpis.overstock_stores_count), sub: "WOS > máximo", color: kpis.overstock_stores_count > 0 ? t.nova : t.good },
+    // Fila 2 — inventario + salud
+    { label: "On-hand", value: num(kpis.total_on_hand), sub: `${kpis.skus_active_count} SKUs`, color: t.textHi },
+    { label: "WOS promedio", value: `${kpis.avg_wos_weeks.toFixed(1)}s`, sub: "Weeks of Supply", color: kpis.avg_wos_weeks >= 4 && kpis.avg_wos_weeks <= 12 ? t.good : t.warn },
+    { label: "Neto", value: num(netU), sub: mxn(netRev), color: t.textHi },
+    { label: "Devoluciones", value: num(retUnits), sub: `${retPct.toFixed(1)}% · ${mxn(retAmt)}`, color: retColor },
+    { label: "Tiendas críticas", value: num(kpis.critical_stores_count), sub: `${kpis.overstock_stores_count} sobreinv.`, color: kpis.critical_stores_count > 0 ? t.bad : t.good },
   ];
+
+  const sortIcon = (k: SortKey) => (
+    <span style={{ marginLeft: 3, opacity: sortKey === k ? 1 : 0.35, fontSize: 9, fontWeight: 800 }}>
+      {sortKey === k ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+    </span>
+  );
+  const sortableTh = (k: SortKey, label: string, extra?: CSSProperties) => (
+    <th style={{ ...thStyle(t), cursor: "pointer", userSelect: "none", ...(extra || {}) }}
+        onClick={() => toggleSort(k)}>
+      {label}{sortIcon(k)}
+    </th>
+  );
 
   return (
     <div>
@@ -284,70 +377,88 @@ function DashboardView({ t, channelId }: { t: Tokens; channelId: number | null }
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
+      {/* 10 KPIs en 2 filas de 5 */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
         {tiles.map(tile => (
-          <div key={tile.label} style={{ padding: 14, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10 }}>
-            <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{tile.label}</div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: tile.color, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{tile.value}</div>
-            <div style={{ fontSize: 11, color: t.textLo, marginTop: 3 }}>{tile.sub}</div>
+          <div key={tile.label} style={{ padding: 12, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10 }}>
+            <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{tile.label}</div>
+            <div style={{ fontSize: 19, fontWeight: 800, color: tile.color, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{tile.value}</div>
+            <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2 }}>{tile.sub}</div>
           </div>
         ))}
       </div>
 
-      <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
-          <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 10 }}>Tiendas por WOS</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
-            {stores.length === 0 && <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>Sin datos aún</div>}
-            {stores.slice(0, 15).map(s => {
-              const info = statusInfo(t, s.status);
+      {/* Tabla única por tienda */}
+      <div style={{ marginTop: 20, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden", overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 1200 }}>
+          <thead>
+            <tr style={{ background: t.panel2 }}>
+              {sortableTh("status", "Estado", { width: 100 })}
+              {sortableTh("store_name", "Tienda")}
+              {sortableTh("channel_name", "Cadena")}
+              {sortableTh("on_hand_units", "Inv. (unid.)", { textAlign: "right" })}
+              {sortableTh("on_hand_value", "Inv. ($)", { textAlign: "right" })}
+              {sortableTh("wos_weeks", "WoS", { textAlign: "right" })}
+              {sortableTh("units_sold", "Ventas (unid.)", { textAlign: "right" })}
+              {sortableTh("revenue", "Ventas ($)", { textAlign: "right" })}
+              <th style={thStyle(t)}>Más vendido</th>
+              <th style={thStyle(t)}>Menos vendido</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.length === 0 && (
+              <tr><td colSpan={10} style={{ padding: 30, textAlign: "center", color: t.textLo }}>
+                Sin tiendas o sin datos en la ventana seleccionada.
+              </td></tr>
+            )}
+            {sorted.map(r => {
+              const info = statusInfo(t, r.status);
               return (
-                <div key={s.store_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", background: t.panel2, borderRadius: 6 }}>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontSize: 12, color: t.textHi, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {s.store_name}
-                    </div>
-                    <div style={{ fontSize: 10.5, color: t.textLo }}>{s.channel_name} · {num(s.total_units_sold)} u vend · {num(s.total_on_hand)} en stock</div>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, marginLeft: 8 }}>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: info.color, fontVariantNumeric: "tabular-nums" }}>
-                      {s.status === "no_data" ? "—" : `${s.wos_weeks.toFixed(1)}s`}
-                    </div>
-                    <span style={{ fontSize: 9.5, fontWeight: 700, color: info.color, background: info.bg, padding: "1px 6px", borderRadius: 10 }}>
+                <tr key={r.store_id} style={{ borderTop: `1px solid ${t.border}55` }}>
+                  <td style={tdStyle(t)}>
+                    <span style={{
+                      display: "inline-flex", alignItems: "center", gap: 5,
+                      padding: "2px 8px", borderRadius: 10,
+                      background: info.bg, color: info.color,
+                      fontSize: 10.5, fontWeight: 700,
+                    }} title={info.label}>
+                      <div style={{ width: 7, height: 7, borderRadius: "50%", background: info.color }} />
                       {info.label}
                     </span>
-                  </div>
-                </div>
+                  </td>
+                  <td style={tdStyle(t)}>
+                    <b style={{ color: t.textHi }}>{r.store_name}</b>
+                    {r.city && <div style={{ fontSize: 10.5, color: t.textLo }}>{r.city}</div>}
+                  </td>
+                  <td style={{ ...tdStyle(t), color: t.textLo }}>{r.channel_name || "—"}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{num(r.on_hand_units)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", color: t.textMid, fontVariantNumeric: "tabular-nums" }}>{mxn(r.on_hand_value)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: info.color, fontVariantNumeric: "tabular-nums" }}>
+                    {r.status === "no_data" ? "—" : `${r.wos_weeks.toFixed(1)}s`}
+                  </td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{num(r.units_sold)}</td>
+                  <td style={{ ...tdStyle(t), textAlign: "right", color: t.textMid, fontVariantNumeric: "tabular-nums" }}>{mxn(r.revenue)}</td>
+                  <td style={{ ...tdStyle(t), fontSize: 11 }}>
+                    {r.top_sku ? (
+                      <>
+                        <div style={{ color: t.textHi }}>{r.top_sku_name}</div>
+                        <div style={{ color: t.good, fontFamily: "monospace", fontSize: 10 }}>{r.top_sku} · {num(r.top_sku_units)}u</div>
+                      </>
+                    ) : <span style={{ color: t.textLo }}>—</span>}
+                  </td>
+                  <td style={{ ...tdStyle(t), fontSize: 11 }}>
+                    {r.bottom_sku ? (
+                      <>
+                        <div style={{ color: t.textHi }}>{r.bottom_sku_name}</div>
+                        <div style={{ color: t.bad, fontFamily: "monospace", fontSize: 10 }}>{r.bottom_sku} · {num(r.bottom_sku_units)}u</div>
+                      </>
+                    ) : <span style={{ color: t.textLo }}>—</span>}
+                  </td>
+                </tr>
               );
             })}
-          </div>
-        </div>
-
-        <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: 14 }}>
-          <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 10 }}>SKUs más vendidos (4 sem)</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
-            {skus.length === 0 && <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>Sin datos aún</div>}
-            {skus.slice(0, 15).map((sk, i) => {
-              const info = statusInfo(t, sk.status);
-              return (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", background: t.panel2, borderRadius: 6 }}>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontSize: 12, color: t.textHi, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {sk.product_name || sk.sku || "—"}
-                    </div>
-                    <div style={{ fontSize: 10.5, color: t.textLo }}>{sk.sku || "sin SKU"} · {sk.stores_count} tiendas · {sk.avg_weekly_units.toFixed(1)}/sem</div>
-                  </div>
-                  <div style={{ textAlign: "right", marginLeft: 8 }}>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{num(sk.total_units_sold)}</div>
-                    <span style={{ fontSize: 9.5, fontWeight: 700, color: info.color, background: info.bg, padding: "1px 6px", borderRadius: 10 }}>
-                      {info.label}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+          </tbody>
+        </table>
       </div>
     </div>
   );

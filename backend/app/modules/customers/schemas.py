@@ -120,6 +120,8 @@ class CustomerBase(BaseModel):
     marketplace_platform: Optional[str] = None
     seller_id_external: Optional[str] = None
     consignment_settlement_days: Optional[int] = 30
+    # Logo (base64 sin prefijo data:image)
+    logo_base64: Optional[str] = None
 
     is_active: Optional[bool] = True
     notes: Optional[str] = None

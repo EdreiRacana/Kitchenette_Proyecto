@@ -28,6 +28,7 @@ function toPayload(d: CustomerDraft) {
     relationship_type, commission_base_pct, logistics_pct, logistics_fixed,
     cedis_pct, portal_pct, withholding_scheme, withholding_isr_pct, withholding_iva_pct,
     commercial_discount_pct, marketplace_platform, seller_id_external, consignment_settlement_days,
+    logo_base64,
   } = d as any;
   return {
     razon_social: razon_social || null, nombre_comercial: nombre_comercial || null,
@@ -61,6 +62,7 @@ function toPayload(d: CustomerDraft) {
     marketplace_platform: marketplace_platform || null,
     seller_id_external: seller_id_external || null,
     consignment_settlement_days: consignment_settlement_days ?? 30,
+    logo_base64: logo_base64 || null,
   };
 }
 
