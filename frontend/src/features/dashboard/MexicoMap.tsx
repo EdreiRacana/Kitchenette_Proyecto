@@ -63,12 +63,14 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
 
   const maxRevenue = useMemo(() => Math.max(1, ...data.map(s => s.revenue)), [data]);
 
+  // Nunca usar t.panel2 aquí — es el mismo color del contenedor (invisible).
+  // Los estados sin venta se pintan con un gris tenue independiente del theme.
   const fillFor = (stateName: string): string => {
     const norm = normalizeStateName(stateName).toLowerCase();
     const s = salesByName[norm];
-    if (!s || s.revenue <= 0) return (t.panel2 || "rgba(255,255,255,0.03)");
+    if (!s || s.revenue <= 0) return "rgba(255,255,255,0.06)";
     const ratio = Math.min(1, s.revenue / maxRevenue);
-    const alpha = 0.18 + ratio * 0.62;
+    const alpha = 0.22 + ratio * 0.65;
     const rgb = hexToRgb(t.nova || "#33B2F5");
     return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha.toFixed(2)})`;
   };
@@ -108,10 +110,12 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
               isSelected ? (t.nova || "#33B2F5") + "aa"
               : isHovered ? (t.nova || "#33B2F5") + "77"
               : fillFor(p.name);
+            // Borde siempre visible: verde neón tenue (marca STHENOVA),
+            // se refuerza en selección/hover con el azul nova.
             const stroke =
               isSelected || isHovered
                 ? (t.nova || "#33B2F5")
-                : (t.border || "rgba(0,255,156,0.35)");
+                : "rgba(0,255,156,0.45)";
             return (
               <path
                 key={p.name || i}
