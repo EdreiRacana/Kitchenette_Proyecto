@@ -151,22 +151,14 @@ async def _sales_totals(
 async def _forecast_month_target(
     db: AsyncSession, target_date: date,
 ) -> float:
-    """Meta del mes = forecast agregado del mes. Sumamos (mN × unit_price)
-    para el mes indicado, filtrando por year del ForecastPlan.
-    Si no hay forecast plan para ese año, devuelve 0.0 (frontend muestra
-    'sin meta').
-    """
+    """Meta del mes completo (sum mN × unit_price del año)."""
     try:
         from app.modules.forecast import models as fc_models
     except Exception:
         return 0.0
-
-    month_num = target_date.month     # 1..12
-    year = target_date.year
-    month_col = getattr(fc_models.ForecastLine, f"m{month_num}", None)
+    month_col = getattr(fc_models.ForecastLine, f"m{target_date.month}", None)
     if month_col is None:
         return 0.0
-
     try:
         q = (
             select(func.coalesce(
@@ -174,13 +166,35 @@ async def _forecast_month_target(
             ))
             .join(fc_models.ForecastPlan,
                   fc_models.ForecastLine.plan_id == fc_models.ForecastPlan.id)
-            .where(fc_models.ForecastPlan.year == year)
+            .where(fc_models.ForecastPlan.year == target_date.year)
         )
-        r = (await db.execute(q)).scalar()
-        return float(r or 0.0)
+        return float((await db.execute(q)).scalar() or 0.0)
     except Exception as e:
         log.info("forecast target unavailable: %s", e)
         return 0.0
+
+
+async def _forecast_period_target(
+    db: AsyncSession, start: date, end: date,
+) -> float:
+    """Meta prorateada al periodo: para cada mes que toque el rango,
+    suma (forecast_mes × días_del_periodo_en_ese_mes / días_del_mes).
+    Así el KPI corresponde al periodo seleccionado (7d/30d/90d/1año).
+    """
+    total = 0.0
+    cur = start
+    while cur <= end:
+        m_first = cur.replace(day=1)
+        _, m_last = _month_bounds(cur)
+        seg_start = max(cur, m_first)
+        seg_end = min(end, m_last)
+        seg_days = (seg_end - seg_start).days + 1
+        month_days = (m_last - m_first).days + 1
+        month_target = await _forecast_month_target(db, cur)
+        if month_target > 0 and month_days > 0:
+            total += month_target * (seg_days / month_days)
+        cur = m_last + timedelta(days=1)
+    return total
 
 
 async def _daily_sales_series(
@@ -593,23 +607,19 @@ async def executive_dashboard(
     avg_ticket_prev = (rev_prev / orders_prev) if orders_prev > 0 else 0.0
     margin_pct_cur = (profit_cur / rev_cur * 100) if rev_cur > 0 else 0.0
 
-    # 2) Meta (forecast del mes actual)
-    goal_month = await _forecast_month_target(db, end)
-    m_first, m_last = _month_bounds(end)
-    real_month, _, _ = await _sales_totals(db, m_first, m_last)
-    meta_basis = "forecast" if goal_month > 0 else "none"
+    # 2) Meta prorateada al MISMO periodo seleccionado (no al mes calendario).
+    # Así 30d/90d/1año siempre comparan manzanas con manzanas.
+    goal_period = await _forecast_period_target(db, start, end)
+    real_period = rev_cur
+    meta_basis = "forecast" if goal_period > 0 else "none"
 
-    # Fallback: si no hay forecast, referenciar contra ventas del mes anterior
-    # para que el indicador nunca quede en 0 cuando sí hay actividad.
-    if goal_month <= 0:
-        prev_m_end = m_first - timedelta(days=1)
-        prev_m_start = prev_m_end.replace(day=1)
-        prev_month_rev, _, _ = await _sales_totals(db, prev_m_start, prev_m_end)
-        if prev_month_rev > 0:
-            goal_month = prev_month_rev
+    # Fallback: si no hay forecast del periodo, usar ventas del periodo anterior.
+    if goal_period <= 0:
+        if rev_prev > 0:
+            goal_period = rev_prev
             meta_basis = "previous_period"
 
-    achieved_pct = (real_month / goal_month * 100.0) if goal_month > 0 else 0.0
+    achieved_pct = (real_period / goal_period * 100.0) if goal_period > 0 else 0.0
 
     # 3) 6 KPIs principales
     def _color(delta: Optional[float]) -> str:
@@ -657,16 +667,16 @@ async def executive_dashboard(
         schemas.ExecKPI(
             key="revenue_target",
             label="Meta de Ingresos" if meta_basis == "forecast"
-                    else "Ingresos vs mes anterior",
+                    else "Ingresos vs periodo anterior",
             value=round(achieved_pct, 2),
-            display=f"{achieved_pct:.1f}%" if goal_month > 0 else "—",
-            sub=(f"Real {_format_money(real_month)} / "
-                 f"{'Meta' if meta_basis == 'forecast' else 'Mes ant.'} "
-                 f"{_format_money(goal_month)}"
-                 if goal_month > 0 else "Sin forecast ni mes de referencia"),
+            display=f"{achieved_pct:.1f}%" if goal_period > 0 else "—",
+            sub=(f"Real {_format_money(real_period)} / "
+                 f"{'Meta' if meta_basis == 'forecast' else 'Anterior'} "
+                 f"{_format_money(goal_period)}"
+                 if goal_period > 0 else "Sin forecast ni periodo de referencia"),
             delta_pct=None,
             color_hint=("good" if achieved_pct >= 90 else "warn"
-                        if achieved_pct >= 60 else "bad") if goal_month > 0 else "neutral",
+                        if achieved_pct >= 60 else "bad") if goal_period > 0 else "neutral",
         ),
     ]
 
@@ -714,7 +724,7 @@ async def executive_dashboard(
     geographic = await _geographic_sales(db, start, end)
 
     # 8) KPIs operativos
-    goal_pct = achieved_pct if goal_month > 0 else 0.0
+    goal_pct = achieved_pct if goal_period > 0 else 0.0
     operational_kpis = [
         schemas.OperationalKPIRow(
             key="goal_completion", label="Cumplimiento de meta",
@@ -795,8 +805,8 @@ async def executive_dashboard(
         prev_period_start=prev_start, prev_period_end=prev_end,
         kpis=kpis,
         meta_vs_real=schemas.MetaVsRealPoint(
-            period=end.strftime("%Y-%m"),
-            goal=round(goal_month, 2), real=round(real_month, 2),
+            period=f"{start.isoformat()}..{end.isoformat()}",
+            goal=round(goal_period, 2), real=round(real_period, 2),
             achieved_pct=round(achieved_pct, 2),
             basis=meta_basis,
         ),
