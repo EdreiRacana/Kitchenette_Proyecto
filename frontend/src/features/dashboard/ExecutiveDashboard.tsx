@@ -44,6 +44,7 @@ const I18N = {
     title: "Matriz de Indicadores", from: "Del", to: "al",
     refresh: "Actualizar", loading: "Calculando indicadores…",
     error: "Error", retry: "Reintentar", year: "1 año",
+    custom: "Personalizado", startDate: "Desde", endDate: "Hasta", apply: "Aplicar",
     salesPeriod: "Ventas del período", vsPrev: "Actual vs anterior",
     metaVsReal: "Meta vs Real", monthLabel: "Mes",
     basisForecast: "Contra forecast", basisPrev: "Contra mes anterior", basisNone: "Sin referencia",
@@ -64,6 +65,7 @@ const I18N = {
     title: "Dashboard", from: "From", to: "to",
     refresh: "Refresh", loading: "Computing dashboard…",
     error: "Error", retry: "Retry", year: "1 year",
+    custom: "Custom", startDate: "From", endDate: "To", apply: "Apply",
     salesPeriod: "Sales in period", vsPrev: "Current vs previous",
     metaVsReal: "Target vs Actual", monthLabel: "Month",
     basisForecast: "vs forecast", basisPrev: "vs previous month", basisNone: "No reference",
@@ -113,23 +115,43 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
   const [data, setData] = useState<ExecutiveDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [days, setDays] = useState(30);
+  const [days, setDays] = useState<number | "custom">(30);
+  const isoToday = () => new Date().toISOString().slice(0, 10);
+  const isoDaysAgo = (n: number) => {
+    const d = new Date(); d.setDate(d.getDate() - n);
+    return d.toISOString().slice(0, 10);
+  };
+  const [customStart, setCustomStart] = useState<string>(isoDaysAgo(30));
+  const [customEnd, setCustomEnd] = useState<string>(isoToday());
   const L = I18N[lang] || I18N.es;
   const locale = lang === "en" ? "en-US" : "es-MX";
 
   const load = async () => {
     setLoading(true); setError(null);
     try {
-      const end = new Date();
-      const start = new Date(); start.setDate(end.getDate() - days);
-      const iso = (d: Date) => d.toISOString().slice(0, 10);
-      const r = await dashboardApi.executive({ start: iso(start), end: iso(end) });
+      let start: string, end: string;
+      if (days === "custom") {
+        start = customStart; end = customEnd;
+      } else {
+        end = isoToday();
+        start = isoDaysAgo(days);
+      }
+      const r = await dashboardApi.executive({ start, end });
       setData(r);
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Error al cargar dashboard");
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, [days]);
+  const applyCustom = () => {
+    if (!customStart || !customEnd) return;
+    if (customStart > customEnd) {
+      alert(lang === "es" ? "La fecha inicial no puede ser mayor a la final" : "Start date must be before end date");
+      return;
+    }
+    if (days === "custom") load();
+    else setDays("custom");
+  };
 
   const nav = (page?: string) => { if (page && setPage) setPage(page); };
 
@@ -167,6 +189,34 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
               {d === 7 ? "7d" : d === 30 ? "30d" : d === 90 ? "90d" : L.year}
             </button>
           ))}
+          <button onClick={() => setDays("custom")}
+            style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${t.border}`,
+                      background: days === "custom" ? t.nova : "transparent",
+                      color: days === "custom" ? "#fff" : t.textMid,
+                      cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+            {L.custom}
+          </button>
+          {days === "custom" && (
+            <div style={{ display: "flex", gap: 4, alignItems: "center", background: t.panel2, padding: "4px 6px", borderRadius: 6, border: `1px solid ${t.border}` }}>
+              <input
+                type="date" value={customStart}
+                onChange={e => setCustomStart(e.target.value)}
+                title={L.startDate}
+                style={{ padding: "3px 6px", borderRadius: 4, border: `1px solid ${t.border}`, background: t.panel, color: t.textHi, fontSize: 11.5, outline: "none" }}
+              />
+              <span style={{ fontSize: 11, color: t.textLo }}>{L.to}</span>
+              <input
+                type="date" value={customEnd}
+                onChange={e => setCustomEnd(e.target.value)}
+                title={L.endDate}
+                style={{ padding: "3px 6px", borderRadius: 4, border: `1px solid ${t.border}`, background: t.panel, color: t.textHi, fontSize: 11.5, outline: "none" }}
+              />
+              <button onClick={applyCustom}
+                style={{ padding: "3px 10px", borderRadius: 4, border: "none", background: t.nova, color: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+                {L.apply}
+              </button>
+            </div>
+          )}
           <button onClick={load} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}>
             <RefreshCw size={12} /> {L.refresh}
           </button>
