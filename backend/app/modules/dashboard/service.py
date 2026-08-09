@@ -121,14 +121,16 @@ def _find_state_in_text(text: Optional[str]) -> Optional[str]:
 
 
 def _resolve_customer_state(cust: Any) -> Optional[str]:
-    """Prioridad: campo `estado` exacto → luego busca nombre de estado en
-    municipio, localidad, colonia, calle, address libre.
-    Nunca inventa; si nada matchea, devuelve None.
+    """Solo campos geográficos reales: estado, municipio, localidad.
+
+    NUNCA se busca en `calle`, `colonia` ni `address` libre — muchas
+    calles y colonias mexicanas llevan nombre de estado o de héroe
+    (Hidalgo, Juárez, Morelos, etc.) y darían falsos positivos.
     """
     code = _resolve_state_code(getattr(cust, "estado", None))
     if code:
         return code
-    for field in ("municipio", "localidad", "colonia", "calle", "address"):
+    for field in ("municipio", "localidad"):
         code = _find_state_in_text(getattr(cust, field, None))
         if code:
             return code
@@ -428,9 +430,6 @@ async def _geographic_sales(
                     cust_models.Customer.estado,
                     cust_models.Customer.municipio,
                     cust_models.Customer.localidad,
-                    cust_models.Customer.colonia,
-                    cust_models.Customer.calle,
-                    cust_models.Customer.address,
                 )
                 .where(cust_models.Customer.id.in_(list(rev_by_cust.keys())))
             )
@@ -785,21 +784,42 @@ async def executive_dashboard(
             color_hint="good" if margin_pct_cur >= 20
                         else "warn" if margin_pct_cur >= 10 else "bad",
         ),
-        schemas.ExecKPI(
-            key="revenue_target",
-            label="Meta de Ingresos" if meta_basis == "forecast"
-                    else "Ingresos vs periodo anterior",
-            value=round(achieved_pct, 2),
-            display=f"{achieved_pct:.1f}%" if goal_period > 0 else "—",
-            sub=(f"Real {_format_money(real_period)} / "
-                 f"{'Meta' if meta_basis == 'forecast' else 'Anterior'} "
-                 f"{_format_money(goal_period)}"
-                 if goal_period > 0 else "Sin forecast ni periodo de referencia"),
-            delta_pct=None,
-            color_hint=("good" if achieved_pct >= 90 else "warn"
-                        if achieved_pct >= 60 else "bad") if goal_period > 0 else "neutral",
-        ),
     ]
+
+    # Cuentas por cobrar (reemplaza el KPI de meta — la esfera ya la muestra)
+    try:
+        ar_q = (
+            select(
+                func.coalesce(func.sum(
+                    sales_models.Order.total_amount
+                    - func.coalesce(sales_models.Order.paid_amount, 0.0)
+                ), 0.0).label("balance"),
+                func.count(func.distinct(sales_models.Order.id)).label("cnt"),
+            )
+            .where(
+                sales_models.Order.kind == "order",
+                sales_models.Order.status.in_(("pending", "partial", "delivered")),
+            )
+        )
+        ar_row = (await db.execute(ar_q)).one()
+        ar_balance = float(ar_row.balance or 0.0)
+        ar_count = int(ar_row.cnt or 0)
+    except Exception as e:
+        log.info("receivables kpi skipped: %s", e)
+        ar_balance, ar_count = 0.0, 0
+
+    kpis.append(schemas.ExecKPI(
+        key="receivables",
+        label="Cuentas por Cobrar",
+        value=round(ar_balance, 2),
+        display=_format_money(ar_balance),
+        sub=(f"{ar_count} orden{'es' if ar_count != 1 else ''} con saldo"
+             if ar_count > 0 else "Sin cartera vencida"),
+        delta_pct=None,
+        color_hint=("bad" if ar_balance > rev_cur * 0.5
+                    else "warn" if ar_balance > rev_cur * 0.2
+                    else "good") if rev_cur > 0 else "neutral",
+    ))
 
     # 4) Serie temporal (ventas actuales vs anteriores mismo dia hace X)
     series_cur = await _daily_sales_series(db, start, end)
