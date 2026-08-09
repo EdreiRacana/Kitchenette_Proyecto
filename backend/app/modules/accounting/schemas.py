@@ -351,3 +351,106 @@ class FixedAssetInDB(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Balance General ──────────────────────────────────────────────────────────
+
+class BalanceSheetBase(BaseModel):
+    period_year: int = Field(..., ge=2000, le=2100)
+    period_month: int = Field(..., ge=1, le=12)
+    branch_id: Optional[int] = None
+
+    # Activo Circulante
+    cash_and_equivalents: float = 0.0
+    accounts_receivable: float = 0.0
+    inventory: float = 0.0
+    other_current_assets: float = 0.0
+
+    # Activo No Circulante
+    fixed_assets: float = 0.0
+    intangible_assets: float = 0.0
+    long_term_investments: float = 0.0
+    other_non_current_assets: float = 0.0
+
+    # Pasivo Corto Plazo
+    accounts_payable: float = 0.0
+    short_term_debt: float = 0.0
+    taxes_payable: float = 0.0
+    other_current_liabilities: float = 0.0
+
+    # Pasivo Largo Plazo
+    long_term_debt: float = 0.0
+    other_non_current_liabilities: float = 0.0
+
+    # Capital Contable
+    equity_capital: float = 0.0
+    retained_earnings: float = 0.0
+    period_result: float = 0.0
+
+    status: Literal["draft", "posted"] = "draft"
+    notes: Optional[str] = None
+
+
+class BalanceSheetCreate(BalanceSheetBase):
+    pass
+
+
+class BalanceSheetUpdate(BaseModel):
+    period_year: Optional[int] = Field(None, ge=2000, le=2100)
+    period_month: Optional[int] = Field(None, ge=1, le=12)
+    branch_id: Optional[int] = None
+    cash_and_equivalents: Optional[float] = None
+    accounts_receivable: Optional[float] = None
+    inventory: Optional[float] = None
+    other_current_assets: Optional[float] = None
+    fixed_assets: Optional[float] = None
+    intangible_assets: Optional[float] = None
+    long_term_investments: Optional[float] = None
+    other_non_current_assets: Optional[float] = None
+    accounts_payable: Optional[float] = None
+    short_term_debt: Optional[float] = None
+    taxes_payable: Optional[float] = None
+    other_current_liabilities: Optional[float] = None
+    long_term_debt: Optional[float] = None
+    other_non_current_liabilities: Optional[float] = None
+    equity_capital: Optional[float] = None
+    retained_earnings: Optional[float] = None
+    period_result: Optional[float] = None
+    status: Optional[Literal["draft", "posted"]] = None
+    notes: Optional[str] = None
+
+
+class FinancialRatios(BaseModel):
+    """Razones financieras calculadas del balance."""
+    current_ratio: Optional[float] = None          # Liquidez corriente
+    quick_ratio: Optional[float] = None            # Prueba ácida
+    debt_ratio: Optional[float] = None             # Endeudamiento
+    debt_to_equity: Optional[float] = None         # Apalancamiento
+    working_capital: Optional[float] = None        # Capital de trabajo
+    roe: Optional[float] = None                    # Return on Equity (%)
+    roa: Optional[float] = None                    # Return on Assets (%)
+
+
+class BalanceSheetTotals(BaseModel):
+    """Subtotales y totales derivados. No se persisten — se calculan al leer."""
+    current_assets_total: float
+    non_current_assets_total: float
+    total_assets: float
+    current_liabilities_total: float
+    non_current_liabilities_total: float
+    total_liabilities: float
+    total_equity: float
+    liabilities_plus_equity: float                 # Debe = total_assets
+    is_balanced: bool                              # |assets - (liab+equity)| < 1.0
+
+
+class BalanceSheetInDB(BalanceSheetBase):
+    id: int
+    created_by_id: Optional[int] = None
+    updated_by_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    totals: Optional[BalanceSheetTotals] = None
+    ratios: Optional[FinancialRatios] = None
+
+    model_config = ConfigDict(from_attributes=True)

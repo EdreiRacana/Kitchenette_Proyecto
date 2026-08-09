@@ -1638,3 +1638,169 @@ async def dispose_fixed_asset(db: AsyncSession, asset_id: int,
     await db.commit()
     await db.refresh(asset)
     return asset
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Balance General
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _balance_totals(bs: models.BalanceSheet) -> schemas.BalanceSheetTotals:
+    """Calcula subtotales y totales del balance."""
+    ca = (bs.cash_and_equivalents + bs.accounts_receivable
+          + bs.inventory + bs.other_current_assets)
+    nca = (bs.fixed_assets + bs.intangible_assets
+           + bs.long_term_investments + bs.other_non_current_assets)
+    ta = ca + nca
+
+    cl = (bs.accounts_payable + bs.short_term_debt
+          + bs.taxes_payable + bs.other_current_liabilities)
+    ncl = bs.long_term_debt + bs.other_non_current_liabilities
+    tl = cl + ncl
+
+    te = bs.equity_capital + bs.retained_earnings + bs.period_result
+    lpe = tl + te
+
+    return schemas.BalanceSheetTotals(
+        current_assets_total=round(ca, 2),
+        non_current_assets_total=round(nca, 2),
+        total_assets=round(ta, 2),
+        current_liabilities_total=round(cl, 2),
+        non_current_liabilities_total=round(ncl, 2),
+        total_liabilities=round(tl, 2),
+        total_equity=round(te, 2),
+        liabilities_plus_equity=round(lpe, 2),
+        is_balanced=abs(ta - lpe) < 1.0,
+    )
+
+
+def _balance_ratios(bs: models.BalanceSheet, totals: schemas.BalanceSheetTotals) -> schemas.FinancialRatios:
+    """Razones financieras estándar. None cuando el denominador es 0."""
+    def _div(num: float, den: float) -> Optional[float]:
+        return round(num / den, 4) if den > 0 else None
+
+    cl = totals.current_liabilities_total
+    ca = totals.current_assets_total
+    ta = totals.total_assets
+    tl = totals.total_liabilities
+    te = totals.total_equity
+    net_result = bs.period_result
+
+    roe = round(net_result / te * 100, 2) if te > 0 else None
+    roa = round(net_result / ta * 100, 2) if ta > 0 else None
+
+    return schemas.FinancialRatios(
+        current_ratio=_div(ca, cl),
+        quick_ratio=_div(ca - bs.inventory, cl),
+        debt_ratio=_div(tl, ta),
+        debt_to_equity=_div(tl, te),
+        working_capital=round(ca - cl, 2),
+        roe=roe,
+        roa=roa,
+    )
+
+
+def _enrich_balance(bs: models.BalanceSheet) -> dict:
+    """Serializa BalanceSheet + totales + ratios para el schema Out."""
+    totals = _balance_totals(bs)
+    ratios = _balance_ratios(bs, totals)
+    out = schemas.BalanceSheetInDB.model_validate(bs).model_dump()
+    out["totals"] = totals.model_dump()
+    out["ratios"] = ratios.model_dump()
+    return out
+
+
+async def list_balance_sheets(
+    db: AsyncSession, *, limit: int = 24, offset: int = 0,
+    branch_id: Optional[int] = None,
+) -> List[dict]:
+    """Últimos N balances ordenados por año/mes desc."""
+    q = select(models.BalanceSheet).order_by(
+        models.BalanceSheet.period_year.desc(),
+        models.BalanceSheet.period_month.desc(),
+    )
+    if branch_id is not None:
+        q = q.where(models.BalanceSheet.branch_id == branch_id)
+    q = q.limit(limit).offset(offset)
+    rows = (await db.execute(q)).scalars().all()
+    return [_enrich_balance(bs) for bs in rows]
+
+
+async def get_balance_sheet(db: AsyncSession, id_: int) -> Optional[dict]:
+    q = select(models.BalanceSheet).where(models.BalanceSheet.id == id_)
+    bs = (await db.execute(q)).scalars().first()
+    return _enrich_balance(bs) if bs else None
+
+
+async def get_balance_by_period(
+    db: AsyncSession, year: int, month: int,
+    branch_id: Optional[int] = None,
+) -> Optional[dict]:
+    q = select(models.BalanceSheet).where(
+        models.BalanceSheet.period_year == year,
+        models.BalanceSheet.period_month == month,
+    )
+    if branch_id is not None:
+        q = q.where(models.BalanceSheet.branch_id == branch_id)
+    bs = (await db.execute(q)).scalars().first()
+    return _enrich_balance(bs) if bs else None
+
+
+async def get_latest_balance(
+    db: AsyncSession, branch_id: Optional[int] = None,
+) -> Optional[dict]:
+    q = select(models.BalanceSheet).order_by(
+        models.BalanceSheet.period_year.desc(),
+        models.BalanceSheet.period_month.desc(),
+    ).limit(1)
+    if branch_id is not None:
+        q = q.where(models.BalanceSheet.branch_id == branch_id)
+    bs = (await db.execute(q)).scalars().first()
+    return _enrich_balance(bs) if bs else None
+
+
+async def create_balance_sheet(
+    db: AsyncSession, data: schemas.BalanceSheetCreate, user_id: Optional[int] = None,
+) -> dict:
+    # Evita duplicados por periodo (unique constraint también protege).
+    dup = await get_balance_by_period(
+        db, data.period_year, data.period_month, data.branch_id,
+    )
+    if dup:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=409,
+            detail=f"Ya existe balance para {data.period_year}-{data.period_month:02d}"
+                   + (f" (sucursal {data.branch_id})" if data.branch_id else ""),
+        )
+    bs = models.BalanceSheet(**data.model_dump(), created_by_id=user_id)
+    db.add(bs)
+    await db.commit()
+    await db.refresh(bs)
+    return _enrich_balance(bs)
+
+
+async def update_balance_sheet(
+    db: AsyncSession, id_: int, data: schemas.BalanceSheetUpdate,
+    user_id: Optional[int] = None,
+) -> Optional[dict]:
+    q = select(models.BalanceSheet).where(models.BalanceSheet.id == id_)
+    bs = (await db.execute(q)).scalars().first()
+    if not bs:
+        return None
+    for k, v in data.model_dump(exclude_unset=True).items():
+        setattr(bs, k, v)
+    bs.updated_by_id = user_id
+    await db.commit()
+    await db.refresh(bs)
+    return _enrich_balance(bs)
+
+
+async def delete_balance_sheet(db: AsyncSession, id_: int) -> bool:
+    q = select(models.BalanceSheet).where(models.BalanceSheet.id == id_)
+    bs = (await db.execute(q)).scalars().first()
+    if not bs:
+        return False
+    await db.delete(bs)
+    await db.commit()
+    return True

@@ -305,3 +305,141 @@ async def run_depreciation(year: int, month: int, db: DB, current_user: CurrentU
     return await service.record_monthly_depreciation(
         db, year=year, month=month, user_id=current_user.id,
     )
+
+
+# ── Balance General ──────────────────────────────────────────────────────────
+
+@router.get("/balance-sheets")
+async def list_balances(
+    db: DB, _: CurrentUser,
+    limit: int = Query(24, ge=1, le=120),
+    offset: int = Query(0, ge=0),
+    branch_id: Optional[int] = Query(None),
+):
+    """Lista de balances (paginada, más recientes primero)."""
+    return await service.list_balance_sheets(
+        db, limit=limit, offset=offset, branch_id=branch_id,
+    )
+
+
+@router.get("/balance-sheets/latest")
+async def latest_balance(
+    db: DB, _: CurrentUser,
+    branch_id: Optional[int] = Query(None),
+):
+    """Balance más reciente (para KPIs Financieros del dashboard)."""
+    r = await service.get_latest_balance(db, branch_id=branch_id)
+    if not r:
+        raise HTTPException(404, "Sin balances capturados")
+    return r
+
+
+@router.get("/balance-sheets/period/{year}/{month}")
+async def balance_by_period(
+    year: int, month: int, db: DB, _: CurrentUser,
+    branch_id: Optional[int] = Query(None),
+):
+    r = await service.get_balance_by_period(db, year, month, branch_id=branch_id)
+    if not r:
+        raise HTTPException(404, "Balance no encontrado para ese periodo")
+    return r
+
+
+@router.get("/balance-sheets/{id_}")
+async def get_balance(id_: int, db: DB, _: CurrentUser):
+    r = await service.get_balance_sheet(db, id_)
+    if not r:
+        raise HTTPException(404, "Balance no encontrado")
+    return r
+
+
+@router.post("/balance-sheets", status_code=201)
+async def create_balance(
+    data: schemas.BalanceSheetCreate, db: DB, current_user: CurrentUser,
+):
+    return await service.create_balance_sheet(db, data, user_id=current_user.id)
+
+
+@router.put("/balance-sheets/{id_}")
+async def update_balance(
+    id_: int, data: schemas.BalanceSheetUpdate,
+    db: DB, current_user: CurrentUser,
+):
+    r = await service.update_balance_sheet(db, id_, data, user_id=current_user.id)
+    if not r:
+        raise HTTPException(404, "Balance no encontrado")
+    return r
+
+
+@router.delete("/balance-sheets/{id_}")
+async def delete_balance(id_: int, db: DB, current_user: CurrentUser):
+    from app.modules.auth.rbac import user_can
+    if not user_can(current_user, "accounting", "delete"):
+        raise HTTPException(403, "No tienes permiso para eliminar balances")
+    ok = await service.delete_balance_sheet(db, id_)
+    if not ok:
+        raise HTTPException(404, "Balance no encontrado")
+    return {"deleted": True}
+
+
+# ── Exports oficiales del Balance ────────────────────────────────────────────
+
+@router.get("/balance-sheets/{id_}/pdf")
+async def balance_pdf(id_: int, db: DB, _: CurrentUser):
+    """PDF oficial del balance para firma."""
+    from fastapi.responses import Response
+    from app.modules.sales.universal_service import _get_company_dict
+    from app.modules.accounting.balance_exports import build_balance_pdf
+    bs = await service.get_balance_sheet(db, id_)
+    if not bs:
+        raise HTTPException(404, "Balance no encontrado")
+    company = await _get_company_dict(db)
+    pdf_bytes = build_balance_pdf(company, bs)
+    fname = f"balance_{bs['period_year']}_{bs['period_month']:02d}.pdf"
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/balance-sheets/{id_}/excel")
+async def balance_excel(id_: int, db: DB, _: CurrentUser):
+    """XLSX profesional del balance con secciones y ratios."""
+    from fastapi.responses import Response
+    from app.modules.sales.universal_service import _get_company_dict
+    from app.modules.accounting.balance_exports import build_balance_xlsx
+    bs = await service.get_balance_sheet(db, id_)
+    if not bs:
+        raise HTTPException(404, "Balance no encontrado")
+    company = await _get_company_dict(db)
+    xlsx_bytes = build_balance_xlsx(company, bs)
+    fname = f"balance_{bs['period_year']}_{bs['period_month']:02d}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/balance-sheets/history/excel")
+async def balance_history_excel(
+    db: DB, _: CurrentUser,
+    months: int = Query(12, ge=1, le=60),
+    branch_id: Optional[int] = Query(None),
+):
+    """XLSX multi-hoja: una hoja por balance + hoja resumen de razones."""
+    from fastapi.responses import Response
+    from datetime import datetime as _dt
+    from app.modules.sales.universal_service import _get_company_dict
+    from app.modules.accounting.balance_exports import build_balance_history_xlsx
+    balances = await service.list_balance_sheets(db, limit=months, branch_id=branch_id)
+    if not balances:
+        raise HTTPException(404, "Sin balances capturados")
+    company = await _get_company_dict(db)
+    xlsx_bytes = build_balance_history_xlsx(company, balances)
+    fname = f"balances_historico_{_dt.utcnow().strftime('%Y%m%d')}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
