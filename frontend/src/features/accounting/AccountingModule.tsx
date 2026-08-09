@@ -6,13 +6,14 @@ import {
   BookOpen, Layers, FileText, Plus, X, Check, Trash2, RefreshCw, Search,
   ChevronRight, AlertTriangle, Ban, Info, BarChart3, Scale, TrendingUp,
   SlidersHorizontal, Zap, Landmark, Download, Lock, Unlock, Calendar, Wrench,
-  Truck,
+  Truck, ClipboardList,
 } from "lucide-react";
 import {
   accountingService, type Account, type JournalEntry, type LedgerReport,
   type TrialBalance, type BalanceSheet, type IncomeStatement, type AccountMapItem,
   type PeriodClose, type FixedAsset,
 } from "./service";
+import BalanceGeneralTab from "./BalanceGeneralTab";
 
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -25,7 +26,7 @@ const TYPE_COLOR: Record<string, string> = {
   ingreso: "#34D399", costo: "#F472B6", gasto: "#F87171", orden: "#94A3B8",
 };
 
-type Tab = "accounts" | "entries" | "ledger" | "reports" | "assets" | "close" | "sat" | "config";
+type Tab = "accounts" | "entries" | "ledger" | "reports" | "balance" | "assets" | "close" | "sat" | "config";
 
 export default function AccountingModule({ t, s }: { t: any; s: any }) {
   const lang = s?.nav ? "es" : "en";
@@ -70,6 +71,7 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
     { id: "entries", label: lang === "es" ? "Pólizas" : "Journal entries", icon: FileText },
     { id: "ledger", label: lang === "es" ? "Mayor / auxiliar" : "Ledger", icon: BookOpen },
     { id: "reports", label: lang === "es" ? "Estados financieros" : "Financial statements", icon: BarChart3 },
+    { id: "balance", label: lang === "es" ? "Balance General" : "Balance sheet", icon: ClipboardList },
     { id: "assets", label: lang === "es" ? "Activos fijos" : "Fixed assets", icon: Truck },
     { id: "close", label: lang === "es" ? "Cierre" : "Close", icon: Lock },
     { id: "sat", label: lang === "es" ? "Contabilidad Electrónica (SAT)" : "SAT e-accounting", icon: Landmark },
@@ -228,6 +230,11 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: Estados financieros ── */}
       {tab === "reports" && accounts.length > 0 && (
         <ReportsView t={t} lang={lang} />
+      )}
+
+      {/* ── TAB: Balance General (captura mensual + KPIs Financieros) ── */}
+      {tab === "balance" && (
+        <BalanceGeneralTab t={t} lang={lang} />
       )}
 
       {/* ── TAB: Activos fijos (Hook 9 depreciación mensual) ── */}

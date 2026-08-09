@@ -245,7 +245,7 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
           <AlertList alerts={data.alerts} t={t} L={L} onClick={(a) => nav(a.module === "finance" ? "finanzas" : a.module === "retail" ? "retail" : "inventario")} />
         </PanelCard>
         <PanelCard t={t} title={L.finKpis}>
-          <FinancialKPIs kpis={data.financial_kpis} t={t} />
+          <FinancialKPIs kpis={data.financial_kpis} t={t} onClick={() => nav("contabilidad")} />
         </PanelCard>
       </div>
     </div>
@@ -635,12 +635,22 @@ function AlertList({ alerts, t, L, onClick }: { alerts: AlertRow[]; t: Tokens; L
 }
 
 
-function FinancialKPIs({ kpis, t }: { kpis: FinancialKPIRow[]; t: Tokens }) {
+function FinancialKPIs({ kpis, t, onClick }: { kpis: FinancialKPIRow[]; t: Tokens; onClick?: () => void }) {
   const statusColor = (s: string) => s === "good" ? (t.good || "#22c55e") : s === "warn" ? (t.warn || "#f59e0b") : s === "bad" ? (t.bad || "#ef4444") : t.textLo;
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
       {kpis.map(k => (
-        <div key={k.key} style={{ padding: 10, background: k.available ? t.panel2 : (t.panel2 + "88"), borderRadius: 8, border: k.available ? "none" : `1px dashed ${t.border}` }}>
+        <div key={k.key} onClick={onClick}
+          title={onClick ? "Ir a Contabilidad → Balance General" : undefined}
+          style={{
+            padding: 10, background: k.available ? t.panel2 : (t.panel2 + "88"),
+            borderRadius: 8, border: k.available ? "none" : `1px dashed ${t.border}`,
+            cursor: onClick ? "pointer" : "default",
+            transition: "transform 0.12s, box-shadow 0.12s",
+          }}
+          onMouseEnter={(e) => { if (onClick) (e.currentTarget as HTMLDivElement).style.transform = "translateY(-1px)"; }}
+          onMouseLeave={(e) => { if (onClick) (e.currentTarget as HTMLDivElement).style.transform = "none"; }}
+        >
           <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 3 }}>{k.label}</div>
           <div style={{ fontSize: 20, fontWeight: 800, color: k.available ? statusColor(k.status) : t.textLo, fontVariantNumeric: "tabular-nums" }}>{k.display}</div>
           {k.subtitle && <div style={{ fontSize: 9.5, color: t.textLo, marginTop: 2 }}>{k.subtitle}</div>}
