@@ -230,3 +230,97 @@ export interface PeriodClose {
     closed_by_id?: number;
     notes?: string;
 }
+
+
+// ── Balance General (captura manual mensual) ──────────────────────────────
+
+export interface BalanceGeneralInput {
+    period_year: number;
+    period_month: number;
+    branch_id?: number | null;
+    cash_and_equivalents: number;
+    accounts_receivable: number;
+    inventory: number;
+    other_current_assets: number;
+    fixed_assets: number;
+    intangible_assets: number;
+    long_term_investments: number;
+    other_non_current_assets: number;
+    accounts_payable: number;
+    short_term_debt: number;
+    taxes_payable: number;
+    other_current_liabilities: number;
+    long_term_debt: number;
+    other_non_current_liabilities: number;
+    equity_capital: number;
+    retained_earnings: number;
+    period_result: number;
+    status?: 'draft' | 'posted';
+    notes?: string | null;
+}
+
+export interface BalanceGeneralTotals {
+    current_assets_total: number;
+    non_current_assets_total: number;
+    total_assets: number;
+    current_liabilities_total: number;
+    non_current_liabilities_total: number;
+    total_liabilities: number;
+    total_equity: number;
+    liabilities_plus_equity: number;
+    is_balanced: boolean;
+}
+
+export interface FinancialRatios {
+    current_ratio: number | null;
+    quick_ratio: number | null;
+    debt_ratio: number | null;
+    debt_to_equity: number | null;
+    working_capital: number | null;
+    roe: number | null;
+    roa: number | null;
+}
+
+export interface BalanceGeneral extends BalanceGeneralInput {
+    id: number;
+    created_at?: string;
+    updated_at?: string;
+    created_by_id?: number;
+    updated_by_id?: number;
+    totals?: BalanceGeneralTotals;
+    ratios?: FinancialRatios;
+}
+
+async function downloadBlob(url: string, filename: string) {
+    const res = await api.get(url, { responseType: 'blob' });
+    const cd = (res.headers as any)['content-disposition'] || '';
+    const m = /filename="?([^"]+)"?/.exec(cd);
+    const name = m ? m[1] : filename;
+    const blobUrl = window.URL.createObjectURL(res.data as Blob);
+    const a = document.createElement('a');
+    a.href = blobUrl; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    window.URL.revokeObjectURL(blobUrl);
+}
+
+export const balanceService = {
+    list: async (params?: { limit?: number; offset?: number; branch_id?: number }) =>
+        (await api.get<BalanceGeneral[]>('/accounting/balance-sheets', { params })).data,
+    latest: async (branch_id?: number) =>
+        (await api.get<BalanceGeneral>('/accounting/balance-sheets/latest', { params: { branch_id } })).data,
+    getByPeriod: async (year: number, month: number, branch_id?: number) =>
+        (await api.get<BalanceGeneral>(
+            `/accounting/balance-sheets/period/${year}/${month}`, { params: { branch_id } })).data,
+    get: async (id: number) => (await api.get<BalanceGeneral>(`/accounting/balance-sheets/${id}`)).data,
+    create: async (data: BalanceGeneralInput) =>
+        (await api.post<BalanceGeneral>('/accounting/balance-sheets', data)).data,
+    update: async (id: number, data: Partial<BalanceGeneralInput>) =>
+        (await api.put<BalanceGeneral>(`/accounting/balance-sheets/${id}`, data)).data,
+    remove: async (id: number) => { await api.delete(`/accounting/balance-sheets/${id}`); },
+    downloadPdf: (id: number, year: number, month: number) =>
+        downloadBlob(`/accounting/balance-sheets/${id}/pdf`, `balance_${year}_${String(month).padStart(2, '0')}.pdf`),
+    downloadExcel: (id: number, year: number, month: number) =>
+        downloadBlob(`/accounting/balance-sheets/${id}/excel`, `balance_${year}_${String(month).padStart(2, '0')}.xlsx`),
+    downloadHistoryExcel: (months = 12) =>
+        downloadBlob(`/accounting/balance-sheets/history/excel?months=${months}`, `balances_historico.xlsx`),
+};
