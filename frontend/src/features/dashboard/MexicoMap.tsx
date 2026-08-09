@@ -85,7 +85,7 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
 
   const hasAnyData = data && data.length > 0;
 
-  const hoveredNorm = hoveredState ? normalizeStateName(hoveredState).toLowerCase() : "";
+  const hoveredNorm = hoveredState ? stripAccents(normalizeStateName(hoveredState).toLowerCase()) : "";
   const hoveredRow = hoveredState ? salesByName[hoveredNorm] : null;
 
   const containerStyle: CSSProperties = {
@@ -154,15 +154,16 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
           position: "absolute", top: "50%", left: "50%",
           transform: "translate(-50%, -50%)",
           padding: "10px 14px",
-          background: "rgba(15,20,30,0.82)",
+          background: t.panel || t.panel2 || "rgba(15,20,30,0.9)",
           border: `1px solid ${t.border || "rgba(0,255,156,0.35)"}`,
           borderRadius: 8,
-          color: t.textMid || "#aaa",
+          color: t.textMid || "#666",
           fontSize: 11.5,
           textAlign: "center",
           maxWidth: 260,
           pointerEvents: "none",
           lineHeight: 1.4,
+          boxShadow: "0 6px 24px rgba(0,0,0,0.35)",
         }}>
           <div style={{ color: t.textHi, fontWeight: 700, marginBottom: 4 }}>
             Sin ventas geolocalizadas en el periodo
@@ -177,14 +178,12 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
         <div style={{
           position: "absolute", top: 12, right: 12,
           padding: "10px 14px",
-          background: "rgba(15,20,30,0.85)",
+          background: t.panel || t.panel2 || "rgba(15,20,30,0.9)",
           border: `1px solid ${t.nova || "#33B2F5"}55`,
           borderRadius: 10,
-          backdropFilter: "blur(10px)",
-          WebkitBackdropFilter: "blur(10px)",
           pointerEvents: "none",
           minWidth: 180,
-          boxShadow: `0 0 20px ${(t.nova || "#33B2F5")}22`,
+          boxShadow: `0 4px 16px rgba(0,0,0,0.25), 0 0 20px ${(t.nova || "#33B2F5")}22`,
         }}>
           <div style={{ color: t.textHi, fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
             {hoveredState}

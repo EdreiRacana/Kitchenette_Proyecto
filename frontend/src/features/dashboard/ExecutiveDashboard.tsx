@@ -397,9 +397,11 @@ function ChartTooltip({ t, x, y, title, rows }: {
   return (
     <div style={{
       position: "absolute", left: Math.min(x + 12, 999), top: Math.max(y - 40, 0),
-      background: "rgba(15,20,30,0.92)", border: `1px solid ${t.border}`,
+      background: t.panel || t.panel2 || "rgba(15,20,30,0.92)",
+      border: `1px solid ${t.border}`,
       borderRadius: 6, padding: "6px 8px", pointerEvents: "none",
       fontSize: 11, whiteSpace: "nowrap", zIndex: 10,
+      boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
       transform: x > 200 ? "translateX(-100%) translateX(-24px)" : undefined,
     }}>
       <div style={{ color: t.textHi, fontWeight: 700, marginBottom: 3 }}>{title}</div>
