@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import {
   TrendingUp, TrendingDown, Package, ShoppingCart, Target,
-  DollarSign, RefreshCw, Building2, AlertTriangle, MapPin,
+  DollarSign, RefreshCw, Building2, AlertTriangle, MapPin, CreditCard,
 } from "lucide-react";
 import { dashboardApi } from "./api";
 import MexicoMap from "./MexicoMap";
@@ -87,7 +87,7 @@ const KPI_ICON: Record<string, any> = {
   orders: Package,
   avg_ticket: ShoppingCart,
   margin_pct: Target,
-  revenue_target: Target,
+  receivables: CreditCard,
 };
 
 const KPI_NAV: Record<string, string> = {
@@ -96,7 +96,7 @@ const KPI_NAV: Record<string, string> = {
   orders: "ventas",
   avg_ticket: "ventas",
   margin_pct: "reportes",
-  revenue_target: "forecast",
+  receivables: "finanzas",
 };
 
 function colorForHint(t: Tokens, hint?: string | null): string {
@@ -276,7 +276,7 @@ function KPITile({ kpi, t, onClick }: { kpi: ExecKPI; t: Tokens; onClick?: () =>
   const deltaColor = kpi.delta_pct == null ? t.textLo
     : kpi.delta_pct >= 0 ? (t.good || "#22c55e") : (t.bad || "#ef4444");
 
-  const isMeta = kpi.key === "revenue_target" || kpi.key === "margin_pct";
+  const isMeta = kpi.key === "margin_pct";
   return (
     <div onClick={onClick}
       style={{
