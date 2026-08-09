@@ -363,15 +363,15 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
         <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.nova, marginRight: 4 }} /> {L.current}</span>
         <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.textLo, opacity: 0.5, marginRight: 4 }} /> {L.previous}</span>
       </div>
-      <div style={{ position: "relative", flex: 1 }} onMouseMove={onMove} onMouseLeave={onLeave}>
-        <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%" }}>
-          <path d={linePrev} stroke={t.textLo} strokeWidth="0.5" fill="none" strokeDasharray="1.5,1.5" opacity="0.6" />
-          <path d={lineCur} stroke={t.nova} strokeWidth="0.8" fill="none" strokeLinejoin="round" strokeLinecap="round" />
+      <div style={{ position: "relative", flex: 1, overflow: "hidden" }} onMouseMove={onMove} onMouseLeave={onLeave}>
+        <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%", display: "block" }}>
+          <path d={linePrev} stroke={t.textLo} strokeWidth="1.5" fill="none" strokeDasharray="4,4" opacity="0.6" vectorEffect="non-scaling-stroke" />
+          <path d={lineCur} stroke={t.nova} strokeWidth="2" fill="none" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
           {idx != null && (
             <>
-              <line x1={idx * step} y1="0" x2={idx * step} y2={H} stroke={t.textLo} strokeWidth="0.3" strokeDasharray="1,1" opacity="0.7" />
-              <circle cx={idx * step} cy={H - ((data[idx].revenue || 0) / maxVal) * H} r="1.2" fill={t.nova} />
-              <circle cx={idx * step} cy={H - ((data[idx].prev_revenue || 0) / maxVal) * H} r="1" fill={t.textLo} opacity="0.7" />
+              <line x1={idx * step} y1="0" x2={idx * step} y2={H} stroke={t.textLo} strokeWidth="1" strokeDasharray="2,2" opacity="0.7" vectorEffect="non-scaling-stroke" />
+              <circle cx={idx * step} cy={H - ((data[idx].revenue || 0) / maxVal) * H} r="1.2" fill={t.nova} vectorEffect="non-scaling-stroke" />
+              <circle cx={idx * step} cy={H - ((data[idx].prev_revenue || 0) / maxVal) * H} r="1" fill={t.textLo} opacity="0.7" vectorEffect="non-scaling-stroke" />
             </>
           )}
         </svg>
@@ -431,16 +431,16 @@ function IncomeExpensesChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L:
         <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.good, marginRight: 4 }} /> {L.income}</span>
         <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.bad, marginRight: 4 }} /> {L.expenses}</span>
       </div>
-      <div style={{ position: "relative", flex: 1 }} onMouseMove={onMove} onMouseLeave={onLeave}>
-        <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%" }}>
+      <div style={{ position: "relative", flex: 1, overflow: "hidden" }} onMouseMove={onMove} onMouseLeave={onLeave}>
+        <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%", display: "block" }}>
           <path d={areaRev} fill={t.good} opacity="0.15" />
-          <path d={areaRev.replace(` L ${W} ${H} L 0 ${H} Z`, "")} stroke={t.good} strokeWidth="0.7" fill="none" strokeLinejoin="round" />
-          <path d={lineExp} stroke={t.bad} strokeWidth="0.6" fill="none" strokeLinejoin="round" />
+          <path d={areaRev.replace(` L ${W} ${H} L 0 ${H} Z`, "")} stroke={t.good} strokeWidth="2" fill="none" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+          <path d={lineExp} stroke={t.bad} strokeWidth="2" fill="none" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
           {idx != null && (
             <>
-              <line x1={idx * step} y1="0" x2={idx * step} y2={H} stroke={t.textLo} strokeWidth="0.3" strokeDasharray="1,1" opacity="0.7" />
-              <circle cx={idx * step} cy={H - ((data[idx].revenue || 0) / maxVal) * H} r="1.2" fill={t.good} />
-              <circle cx={idx * step} cy={H - ((data[idx].expenses || 0) / maxVal) * H} r="1.2" fill={t.bad} />
+              <line x1={idx * step} y1="0" x2={idx * step} y2={H} stroke={t.textLo} strokeWidth="1" strokeDasharray="2,2" opacity="0.7" vectorEffect="non-scaling-stroke" />
+              <circle cx={idx * step} cy={H - ((data[idx].revenue || 0) / maxVal) * H} r="1.2" fill={t.good} vectorEffect="non-scaling-stroke" />
+              <circle cx={idx * step} cy={H - ((data[idx].expenses || 0) / maxVal) * H} r="1.2" fill={t.bad} vectorEffect="non-scaling-stroke" />
             </>
           )}
         </svg>
@@ -540,8 +540,8 @@ function OperationalBars({ kpis, t }: { kpis: OperationalKPIRow[]; t: Tokens }) 
 
 function ChannelDonut({ data, total, t, L }: { data: ChannelSalesRow[]; total: number; t: Tokens; L: any }) {
   const palette = [t.nova || "#33B2F5", t.good || "#22c55e", t.warn || "#f59e0b", "#a855f7", "#ec4899", t.textLo];
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   if (total === 0) return <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noChannel}</div>;
-  // Donut SVG con arcs
   const cx = 50, cy = 50, r = 34, w = 12;
   let accum = 0;
   const arcs = data.map((d, i) => {
@@ -554,21 +554,45 @@ function ChannelDonut({ data, total, t, L }: { data: ChannelSalesRow[]; total: n
     const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
     const large = share > 0.5 ? 1 : 0;
     const d_ = `M ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1}`;
-    return <path key={i} d={d_} stroke={palette[i % palette.length]} strokeWidth={w} fill="none" />;
+    const isHover = hoverIdx === i;
+    return (
+      <path key={i} d={d_}
+        stroke={palette[i % palette.length]}
+        strokeWidth={isHover ? w + 3 : w}
+        fill="none"
+        opacity={hoverIdx == null || isHover ? 1 : 0.4}
+        style={{ cursor: "pointer", transition: "stroke-width 0.15s, opacity 0.15s" }}
+        onMouseEnter={() => setHoverIdx(i)}
+        onMouseLeave={() => setHoverIdx(null)}
+      />
+    );
   });
-  const winner = data[0];
+  const focused = hoverIdx != null ? data[hoverIdx] : data[0];
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, height: 180 }}>
       <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <svg viewBox="0 0 100 100" style={{ width: "100%", height: "100%" }}>{arcs}</svg>
-        <div style={{ position: "absolute", textAlign: "center" }}>
-          <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi }}>{winner ? winner.share_pct.toFixed(0) : 0}%</div>
-          <div style={{ fontSize: 10, color: t.textLo, textTransform: "uppercase" }}>{winner?.label || "—"}</div>
+        <div style={{ position: "absolute", textAlign: "center", pointerEvents: "none" }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi }}>{focused ? focused.share_pct.toFixed(0) : 0}%</div>
+          <div style={{ fontSize: 10, color: t.textLo, textTransform: "uppercase" }}>{focused?.label || "—"}</div>
+          {hoverIdx != null && focused && (
+            <div style={{ fontSize: 10.5, color: t.textMid, marginTop: 3 }}>
+              {mxn(focused.revenue)} · {focused.orders} ped.
+            </div>
+          )}
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
         {data.map((d, i) => (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+          <div key={i}
+            onMouseEnter={() => setHoverIdx(i)}
+            onMouseLeave={() => setHoverIdx(null)}
+            style={{
+              display: "flex", alignItems: "center", gap: 6, fontSize: 11,
+              padding: "3px 4px", borderRadius: 4, cursor: "pointer",
+              background: hoverIdx === i ? t.panel2 : "transparent",
+              transition: "background 0.15s",
+            }}>
             <div style={{ width: 10, height: 10, background: palette[i % palette.length], borderRadius: 2 }} />
             <div style={{ flex: 1, color: t.textMid }}>{d.label}</div>
             <div style={{ color: t.textHi, fontWeight: 700 }}>{mxn(d.revenue)}</div>
