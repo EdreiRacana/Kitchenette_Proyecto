@@ -34,9 +34,15 @@ const NAME_ALIASES: Record<string, string> = {
   "coahuila de zaragoza": "Coahuila",
 };
 
+// Quita acentos y baja a minúsculas para comparación insensitiva.
+// "Ciudad de México" y "ciudad de mexico" deben matchear.
+function stripAccents(s: string): string {
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
 function normalizeStateName(raw: string): string {
   if (!raw) return "";
-  const key = raw.trim().toLowerCase();
+  const key = stripAccents(raw.trim().toLowerCase());
   return NAME_ALIASES[key] || raw;
 }
 
@@ -55,7 +61,7 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
   const salesByName = useMemo(() => {
     const idx: Record<string, GeoStateRow> = {};
     for (const s of data) {
-      const norm = normalizeStateName(s.state_name).toLowerCase();
+      const norm = stripAccents(normalizeStateName(s.state_name).toLowerCase());
       idx[norm] = s;
     }
     return idx;
@@ -68,7 +74,7 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
   // Nunca usar t.panel2 aquí — coincide con el fondo del contenedor y hace
   // invisibles los estados. Sin dato: gris tenue pero legible.
   const fillFor = (stateName: string): string => {
-    const norm = normalizeStateName(stateName).toLowerCase();
+    const norm = stripAccents(normalizeStateName(stateName).toLowerCase());
     const s = salesByName[norm];
     if (!s || s.revenue <= 0) return "rgba(120,180,220,0.22)";
     const ratio = Math.min(1, s.revenue / maxRevenue);
@@ -108,7 +114,7 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
           {MX_STATE_PATHS.map((p, i) => {
             const isSelected = selectedState === p.name;
             const isHovered = hoveredState === p.name;
-            const norm = normalizeStateName(p.name).toLowerCase();
+            const norm = stripAccents(normalizeStateName(p.name).toLowerCase());
             const row = salesByName[norm];
             const fill =
               isSelected ? (t.nova || "#33B2F5") + "aa"
