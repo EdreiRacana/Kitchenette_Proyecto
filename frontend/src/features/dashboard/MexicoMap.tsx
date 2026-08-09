@@ -70,9 +70,9 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
   const fillFor = (stateName: string): string => {
     const norm = normalizeStateName(stateName).toLowerCase();
     const s = salesByName[norm];
-    if (!s || s.revenue <= 0) return "rgba(255,255,255,0.14)";
+    if (!s || s.revenue <= 0) return "rgba(120,180,220,0.22)";
     const ratio = Math.min(1, s.revenue / maxRevenue);
-    const alpha = 0.28 + ratio * 0.62;
+    const alpha = 0.35 + ratio * 0.60;
     const rgb = hexToRgb(t.nova || "#33B2F5");
     return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha.toFixed(2)})`;
   };
@@ -119,14 +119,14 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
             const stroke =
               isSelected || isHovered
                 ? (t.nova || "#33B2F5")
-                : "rgba(0,255,156,0.55)";
+                : "rgba(0,255,156,0.75)";
             return (
               <path
                 key={p.name || i}
                 d={p.d}
                 fill={fill}
                 stroke={stroke}
-                strokeWidth={isSelected || isHovered ? 1.5 : 0.9}
+                strokeWidth={isSelected || isHovered ? 1.8 : 1.2}
                 filter={isSelected || isHovered ? "url(#mexico-map-glow)" : undefined}
                 style={{
                   cursor: "pointer",
