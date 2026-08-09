@@ -147,17 +147,23 @@ export default function MexicoMap({ t, data, selectedState = null, onStateClick 
         <div style={{
           position: "absolute", top: "50%", left: "50%",
           transform: "translate(-50%, -50%)",
-          padding: "8px 14px",
-          background: "rgba(15,20,30,0.78)",
+          padding: "10px 14px",
+          background: "rgba(15,20,30,0.82)",
           border: `1px solid ${t.border || "rgba(0,255,156,0.35)"}`,
           borderRadius: 8,
           color: t.textMid || "#aaa",
           fontSize: 11.5,
           textAlign: "center",
-          maxWidth: 220,
+          maxWidth: 260,
           pointerEvents: "none",
+          lineHeight: 1.4,
         }}>
-          Sin ventas geolocalizadas — captura <b style={{ color: t.textHi }}>estado</b> del cliente para verlas aquí.
+          <div style={{ color: t.textHi, fontWeight: 700, marginBottom: 4 }}>
+            Sin ventas geolocalizadas en el periodo
+          </div>
+          <div style={{ fontSize: 10.5 }}>
+            Se lee de <b>Sell-out × Tienda</b> (Retail) y de <b>Cliente.estado</b>.
+          </div>
         </div>
       )}
 
