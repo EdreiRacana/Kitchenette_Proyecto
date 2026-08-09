@@ -617,22 +617,64 @@ async def _alerts_top5(db: AsyncSession) -> List[schemas.AlertRow]:
 async def _financial_kpis(
     db: AsyncSession, start: date, end: date,
 ) -> List[schemas.FinancialKPIRow]:
-    """KPIs financieros: si no hay estados capturados, marca available=False
-    para que el frontend muestre placeholder 'sin datos'."""
+    """KPIs financieros: lee del último BalanceSheet capturado.
+    Si no hay balance, marca available=False.
+    """
     kpis: List[schemas.FinancialKPIRow] = []
 
-    # Liquidez corriente = Activo circulante / Pasivo corto plazo
-    # Sin estados financieros capturados por ahora — placeholder
-    kpis.append(schemas.FinancialKPIRow(
-        key="liquidity", label="Liquidez Corriente",
-        display="—", value=None, status="pending",
-        subtitle="Requiere balance capturado", available=False,
-    ))
-    kpis.append(schemas.FinancialKPIRow(
-        key="debt_ratio", label="Endeudamiento",
-        display="—", value=None, status="pending",
-        subtitle="Requiere balance capturado", available=False,
-    ))
+    # Traemos el último balance capturado (cualquier sucursal)
+    latest = None
+    try:
+        from app.modules.accounting import service as acc_service
+        latest = await acc_service.get_latest_balance(db)
+    except Exception as e:
+        log.info("no accounting service: %s", e)
+
+    if latest and latest.get("ratios"):
+        ratios = latest["ratios"]
+        period_lbl = f"{latest['period_year']}-{latest['period_month']:02d}"
+        cr = ratios.get("current_ratio")
+        if cr is not None:
+            st = "good" if cr >= 1.5 else "warn" if cr >= 1.0 else "bad"
+            kpis.append(schemas.FinancialKPIRow(
+                key="liquidity", label="Liquidez Corriente",
+                display=f"{cr:.2f}", value=cr, status=st,
+                subtitle=f"Balance {period_lbl}", available=True,
+            ))
+        else:
+            kpis.append(schemas.FinancialKPIRow(
+                key="liquidity", label="Liquidez Corriente",
+                display="—", value=None, status="pending",
+                subtitle=f"Balance {period_lbl} sin pasivo corto plazo",
+                available=False,
+            ))
+        dr = ratios.get("debt_ratio")
+        if dr is not None:
+            # Endeudamiento óptimo < 0.5, alto > 0.7
+            st = "good" if dr <= 0.5 else "warn" if dr <= 0.7 else "bad"
+            kpis.append(schemas.FinancialKPIRow(
+                key="debt_ratio", label="Endeudamiento",
+                display=f"{dr*100:.1f}%", value=dr, status=st,
+                subtitle=f"Balance {period_lbl}", available=True,
+            ))
+        else:
+            kpis.append(schemas.FinancialKPIRow(
+                key="debt_ratio", label="Endeudamiento",
+                display="—", value=None, status="pending",
+                subtitle=f"Balance {period_lbl} sin activo",
+                available=False,
+            ))
+    else:
+        kpis.append(schemas.FinancialKPIRow(
+            key="liquidity", label="Liquidez Corriente",
+            display="—", value=None, status="pending",
+            subtitle="Captura balance en Contabilidad", available=False,
+        ))
+        kpis.append(schemas.FinancialKPIRow(
+            key="debt_ratio", label="Endeudamiento",
+            display="—", value=None, status="pending",
+            subtitle="Captura balance en Contabilidad", available=False,
+        ))
 
     # Rotación de inventario (calculable con datos actuales):
     # COGS periodo / valor promedio de inventario. Si podemos calcularlo,

@@ -4,7 +4,7 @@ Catálogo de cuentas + pólizas (asientos) con movimientos de cargo/abono. Todo
 calculado de pólizas contabilizadas (status='posted'); las canceladas se
 excluyen de saldos. Sin dependencias externas.
 """
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text, JSON
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -227,3 +227,54 @@ class PeriodClose(Base):
     # Snapshot en JSON: {"trial_balance": [...], "income_statement": {...}, "totals": {...}}
     snapshot_json = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
+
+
+class BalanceSheet(Base):
+    """Balance General por periodo (mes/año). Snapshot capturado por el
+    contador. La ecuación contable Activo = Pasivo + Capital debe cumplirse
+    (se valida en el servicio con tolerancia de $1 por redondeo)."""
+    __tablename__ = "accounting_balance_sheets"
+    __table_args__ = (
+        UniqueConstraint("period_year", "period_month", "branch_id",
+                         name="uq_balance_sheet_period_branch"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    period_year = Column(Integer, nullable=False, index=True)
+    period_month = Column(Integer, nullable=False, index=True)   # 1..12
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
+
+    # ── Activo Circulante (corto plazo, liquidable < 1 año) ──────────
+    cash_and_equivalents = Column(Float, default=0.0, nullable=False)     # Caja + bancos
+    accounts_receivable = Column(Float, default=0.0, nullable=False)      # Clientes
+    inventory = Column(Float, default=0.0, nullable=False)                # Inventarios
+    other_current_assets = Column(Float, default=0.0, nullable=False)     # IVA acreditable, anticipos, etc.
+
+    # ── Activo No Circulante (largo plazo) ────────────────────────────
+    fixed_assets = Column(Float, default=0.0, nullable=False)             # Terrenos, edificios, equipo (neto de depreciación)
+    intangible_assets = Column(Float, default=0.0, nullable=False)        # Marcas, patentes, software, crédito mercantil
+    long_term_investments = Column(Float, default=0.0, nullable=False)    # Acciones, bonos > 1 año
+    other_non_current_assets = Column(Float, default=0.0, nullable=False) # Depósitos en garantía, etc.
+
+    # ── Pasivo Corto Plazo (< 1 año) ──────────────────────────────────
+    accounts_payable = Column(Float, default=0.0, nullable=False)         # Proveedores
+    short_term_debt = Column(Float, default=0.0, nullable=False)          # Créditos bancarios < 1 año
+    taxes_payable = Column(Float, default=0.0, nullable=False)            # ISR, IVA por pagar
+    other_current_liabilities = Column(Float, default=0.0, nullable=False) # Acreedores diversos, PTU, etc.
+
+    # ── Pasivo Largo Plazo (> 1 año) ──────────────────────────────────
+    long_term_debt = Column(Float, default=0.0, nullable=False)           # Créditos hipotecarios, bonos
+    other_non_current_liabilities = Column(Float, default=0.0, nullable=False)
+
+    # ── Capital Contable ──────────────────────────────────────────────
+    equity_capital = Column(Float, default=0.0, nullable=False)           # Capital social
+    retained_earnings = Column(Float, default=0.0, nullable=False)        # Utilidades acumuladas
+    period_result = Column(Float, default=0.0, nullable=False)            # Utilidad/pérdida del ejercicio
+
+    status = Column(String, default="draft", nullable=False)   # draft | posted
+    notes = Column(Text, nullable=True)
+
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
