@@ -327,14 +327,35 @@ function MiniGauge({ value_pct, color, t, display }: { value_pct: number; color:
 }
 
 
+// Hook mínimo: dado un div-container y una longitud de dataset,
+// retorna el índice del data-point sobre el que está el mouse (o null).
+function useHoverIndex(len: number) {
+  const [idx, setIdx] = useState<number | null>(null);
+  const [mouseX, setMouseX] = useState(0);
+  const [mouseY, setMouseY] = useState(0);
+  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const rel = (e.clientX - rect.left) / rect.width;
+    const i = Math.max(0, Math.min(len - 1, Math.round(rel * (len - 1))));
+    setIdx(i);
+    setMouseX(e.clientX - rect.left);
+    setMouseY(e.clientY - rect.top);
+  };
+  const onLeave = () => setIdx(null);
+  return { idx, mouseX, mouseY, onMove, onLeave };
+}
+
+
 function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any }) {
   const maxVal = Math.max(1, ...data.map(d => Math.max(d.revenue, d.prev_revenue)));
-  const W = 100, H = 60;   // viewbox virtual
+  const W = 100, H = 60;
   const step = data.length > 1 ? W / (data.length - 1) : W;
   const buildPath = (getVal: (d: TrendPoint) => number) =>
     data.map((d, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(2)} ${(H - (getVal(d) / maxVal) * H).toFixed(2)}`).join(" ");
   const lineCur = buildPath(d => d.revenue);
   const linePrev = buildPath(d => d.prev_revenue);
+  const { idx, mouseX, mouseY, onMove, onLeave } = useHoverIndex(data.length);
+  const hovered = idx != null ? data[idx] : null;
 
   return (
     <div style={{ width: "100%", height: 180, display: "flex", flexDirection: "column" }}>
@@ -342,13 +363,53 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
         <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.nova, marginRight: 4 }} /> {L.current}</span>
         <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.textLo, opacity: 0.5, marginRight: 4 }} /> {L.previous}</span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", flex: 1 }}>
-        <path d={linePrev} stroke={t.textLo} strokeWidth="0.5" fill="none" strokeDasharray="1.5,1.5" opacity="0.6" />
-        <path d={lineCur} stroke={t.nova} strokeWidth="0.8" fill="none" strokeLinejoin="round" strokeLinecap="round" />
-      </svg>
+      <div style={{ position: "relative", flex: 1 }} onMouseMove={onMove} onMouseLeave={onLeave}>
+        <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%" }}>
+          <path d={linePrev} stroke={t.textLo} strokeWidth="0.5" fill="none" strokeDasharray="1.5,1.5" opacity="0.6" />
+          <path d={lineCur} stroke={t.nova} strokeWidth="0.8" fill="none" strokeLinejoin="round" strokeLinecap="round" />
+          {idx != null && (
+            <>
+              <line x1={idx * step} y1="0" x2={idx * step} y2={H} stroke={t.textLo} strokeWidth="0.3" strokeDasharray="1,1" opacity="0.7" />
+              <circle cx={idx * step} cy={H - ((data[idx].revenue || 0) / maxVal) * H} r="1.2" fill={t.nova} />
+              <circle cx={idx * step} cy={H - ((data[idx].prev_revenue || 0) / maxVal) * H} r="1" fill={t.textLo} opacity="0.7" />
+            </>
+          )}
+        </svg>
+        {hovered && (
+          <ChartTooltip t={t} x={mouseX} y={mouseY} title={hovered.label} rows={[
+            { label: L.current, value: mxn(hovered.revenue), color: t.nova },
+            { label: L.previous, value: mxn(hovered.prev_revenue), color: t.textLo },
+          ]} />
+        )}
+      </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, color: t.textLo, marginTop: 4 }}>
         {data.filter((_, i) => i === 0 || i === Math.floor(data.length / 2) || i === data.length - 1).map(d => <span key={d.period}>{d.label}</span>)}
       </div>
+    </div>
+  );
+}
+
+
+function ChartTooltip({ t, x, y, title, rows }: {
+  t: Tokens; x: number; y: number; title: string;
+  rows: { label: string; value: string; color: string }[];
+}) {
+  return (
+    <div style={{
+      position: "absolute", left: Math.min(x + 12, 999), top: Math.max(y - 40, 0),
+      background: "rgba(15,20,30,0.92)", border: `1px solid ${t.border}`,
+      borderRadius: 6, padding: "6px 8px", pointerEvents: "none",
+      fontSize: 11, whiteSpace: "nowrap", zIndex: 10,
+      transform: x > 200 ? "translateX(-100%) translateX(-24px)" : undefined,
+    }}>
+      <div style={{ color: t.textHi, fontWeight: 700, marginBottom: 3 }}>{title}</div>
+      {rows.map((r, i) => (
+        <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color, display: "inline-block" }} />
+          <span style={{ color: t.textMid }}>{r.label}:</span>
+          <b style={{ color: t.textHi, marginLeft: "auto" }}>{r.value}</b>
+        </div>
+      ))}
     </div>
   );
 }
@@ -361,6 +422,8 @@ function IncomeExpensesChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L:
   const areaRev = data.map((d, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(2)} ${(H - (d.revenue / maxVal) * H).toFixed(2)}`).join(" ")
                     + ` L ${W} ${H} L 0 ${H} Z`;
   const lineExp = data.map((d, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(2)} ${(H - (d.expenses / maxVal) * H).toFixed(2)}`).join(" ");
+  const { idx, mouseX, mouseY, onMove, onLeave } = useHoverIndex(data.length);
+  const hovered = idx != null ? data[idx] : null;
 
   return (
     <div style={{ width: "100%", height: 180, display: "flex", flexDirection: "column" }}>
@@ -368,11 +431,26 @@ function IncomeExpensesChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L:
         <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.good, marginRight: 4 }} /> {L.income}</span>
         <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.bad, marginRight: 4 }} /> {L.expenses}</span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", flex: 1 }}>
-        <path d={areaRev} fill={t.good} opacity="0.15" />
-        <path d={areaRev.replace(` L ${W} ${H} L 0 ${H} Z`, "")} stroke={t.good} strokeWidth="0.7" fill="none" strokeLinejoin="round" />
-        <path d={lineExp} stroke={t.bad} strokeWidth="0.6" fill="none" strokeLinejoin="round" />
-      </svg>
+      <div style={{ position: "relative", flex: 1 }} onMouseMove={onMove} onMouseLeave={onLeave}>
+        <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%" }}>
+          <path d={areaRev} fill={t.good} opacity="0.15" />
+          <path d={areaRev.replace(` L ${W} ${H} L 0 ${H} Z`, "")} stroke={t.good} strokeWidth="0.7" fill="none" strokeLinejoin="round" />
+          <path d={lineExp} stroke={t.bad} strokeWidth="0.6" fill="none" strokeLinejoin="round" />
+          {idx != null && (
+            <>
+              <line x1={idx * step} y1="0" x2={idx * step} y2={H} stroke={t.textLo} strokeWidth="0.3" strokeDasharray="1,1" opacity="0.7" />
+              <circle cx={idx * step} cy={H - ((data[idx].revenue || 0) / maxVal) * H} r="1.2" fill={t.good} />
+              <circle cx={idx * step} cy={H - ((data[idx].expenses || 0) / maxVal) * H} r="1.2" fill={t.bad} />
+            </>
+          )}
+        </svg>
+        {hovered && (
+          <ChartTooltip t={t} x={mouseX} y={mouseY} title={hovered.label} rows={[
+            { label: L.income, value: mxn(hovered.revenue), color: t.good },
+            { label: L.expenses, value: mxn(hovered.expenses), color: t.bad },
+          ]} />
+        )}
+      </div>
     </div>
   );
 }

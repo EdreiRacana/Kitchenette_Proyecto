@@ -7,8 +7,9 @@ o marca available=False. Nunca crea tablas nuevas.
 from __future__ import annotations
 
 import calendar
+import re
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,7 +68,9 @@ MX_STATES: Dict[str, Dict[str, str]] = {
 
 
 def _resolve_state_code(raw: Optional[str]) -> Optional[str]:
-    """Normaliza un texto libre (ej. 'CDMX', 'Distrito Federal') a code."""
+    """Normaliza un texto libre (ej. 'CDMX', 'Distrito Federal') a code.
+    Match exacto contra código o alias.
+    """
     if not raw:
         return None
     r = raw.strip().lower()
@@ -79,6 +82,56 @@ def _resolve_state_code(raw: Optional[str]) -> Optional[str]:
         for alias in meta["aliases"].split("|"):
             if r == alias.strip():
                 return code
+    return None
+
+
+# Índice pre-computado (alias -> code), ordenado por longitud descendente
+# para que "ciudad de mexico" gane sobre "mexico".
+_STATE_MATCH_TABLE: List[Tuple[str, str]] = []
+
+
+def _build_state_match_table() -> List[Tuple[str, str]]:
+    if _STATE_MATCH_TABLE:
+        return _STATE_MATCH_TABLE
+    entries: List[Tuple[str, str]] = []
+    for code, meta in MX_STATES.items():
+        entries.append((meta["name"].lower(), code))
+        for alias in meta["aliases"].split("|"):
+            a = alias.strip().lower()
+            if len(a) >= 4:  # evita 'df', 'nl', 'bc' que dan falsos positivos
+                entries.append((a, code))
+    entries.sort(key=lambda x: -len(x[0]))
+    _STATE_MATCH_TABLE.extend(entries)
+    return _STATE_MATCH_TABLE
+
+
+def _find_state_in_text(text: Optional[str]) -> Optional[str]:
+    """Busca cualquier nombre/alias de estado dentro de un texto libre.
+    Usa palabra completa (\\b) para evitar 'nuevo' matcheando 'nuevos'.
+    """
+    if not text:
+        return None
+    t = text.strip().lower()
+    if not t:
+        return None
+    for alias, code in _build_state_match_table():
+        if re.search(rf"\b{re.escape(alias)}\b", t):
+            return code
+    return None
+
+
+def _resolve_customer_state(cust: Any) -> Optional[str]:
+    """Prioridad: campo `estado` exacto → luego busca nombre de estado en
+    municipio, localidad, colonia, calle, address libre.
+    Nunca inventa; si nada matchea, devuelve None.
+    """
+    code = _resolve_state_code(getattr(cust, "estado", None))
+    if code:
+        return code
+    for field in ("municipio", "localidad", "colonia", "calle", "address"):
+        code = _find_state_in_text(getattr(cust, field, None))
+        if code:
+            return code
     return None
 
 
@@ -321,63 +374,78 @@ async def _geographic_sales(
     except Exception as e:
         log.info("geo sell-out skipped: %s", e)
 
-    # 2) Ventas directas (Orders) — suplemento para B2B / mayoreo
+    # 2) Ventas directas (Orders): agregamos por customer_id y luego
+    # resolvemos su estado con TODAS las columnas de dirección disponibles
+    # (estado, municipio, localidad, colonia, calle, address libre).
     try:
-        q = (
+        rev_q = (
             select(
-                cust_models.Customer.estado.label("st"),
+                sales_models.Order.customer_id.label("cid"),
                 func.coalesce(func.sum(sales_models.Order.total_amount), 0.0).label("rev"),
                 func.count(func.distinct(sales_models.Order.id)).label("orders"),
             )
-            .join(
-                cust_models.Customer,
-                sales_models.Order.customer_id == cust_models.Customer.id,
-            )
             .where(
                 sales_models.Order.kind == "order",
                 sales_models.Order.status != "cancelled",
                 func.date(sales_models.Order.created_at) >= start,
                 func.date(sales_models.Order.created_at) <= end,
-                cust_models.Customer.estado.is_not(None),
+                sales_models.Order.customer_id.is_not(None),
             )
-            .group_by(cust_models.Customer.estado)
+            .group_by(sales_models.Order.customer_id)
         )
-        revenue_rows = (await db.execute(q)).all()
+        rev_by_cust = {
+            int(r.cid): (float(r.rev or 0.0), int(r.orders or 0))
+            for r in (await db.execute(rev_q)).all()
+        }
 
-        uq = (
+        units_q = (
             select(
-                cust_models.Customer.estado.label("st"),
+                sales_models.Order.customer_id.label("cid"),
                 func.coalesce(func.sum(sales_models.OrderItem.quantity), 0).label("units"),
             )
             .join(
-                sales_models.Order,
+                sales_models.OrderItem,
                 sales_models.OrderItem.order_id == sales_models.Order.id,
-            )
-            .join(
-                cust_models.Customer,
-                sales_models.Order.customer_id == cust_models.Customer.id,
             )
             .where(
                 sales_models.Order.kind == "order",
                 sales_models.Order.status != "cancelled",
                 func.date(sales_models.Order.created_at) >= start,
                 func.date(sales_models.Order.created_at) <= end,
-                cust_models.Customer.estado.is_not(None),
+                sales_models.Order.customer_id.is_not(None),
             )
-            .group_by(cust_models.Customer.estado)
+            .group_by(sales_models.Order.customer_id)
         )
-        units_by_raw = {r.st: int(r.units or 0) for r in (await db.execute(uq)).all()}
+        units_by_cust = {
+            int(r.cid): int(r.units or 0)
+            for r in (await db.execute(units_q)).all()
+        }
 
-        for r in revenue_rows:
-            code = _resolve_state_code(r.st)
-            if code is None:
-                continue
-            bucket = by_state.setdefault(
-                code, {"revenue": 0.0, "units": 0, "orders_count": 0},
+        if rev_by_cust:
+            cust_q = (
+                select(
+                    cust_models.Customer.id,
+                    cust_models.Customer.estado,
+                    cust_models.Customer.municipio,
+                    cust_models.Customer.localidad,
+                    cust_models.Customer.colonia,
+                    cust_models.Customer.calle,
+                    cust_models.Customer.address,
+                )
+                .where(cust_models.Customer.id.in_(list(rev_by_cust.keys())))
             )
-            bucket["revenue"] += float(r.rev or 0.0)
-            bucket["units"] += int(units_by_raw.get(r.st, 0))
-            bucket["orders_count"] += int(r.orders or 0)
+            for c in (await db.execute(cust_q)).all():
+                code = _resolve_customer_state(c)
+                if code is None:
+                    continue
+                rev, orders = rev_by_cust.get(int(c.id), (0.0, 0))
+                units = units_by_cust.get(int(c.id), 0)
+                bucket = by_state.setdefault(
+                    code, {"revenue": 0.0, "units": 0, "orders_count": 0},
+                )
+                bucket["revenue"] += rev
+                bucket["units"] += units
+                bucket["orders_count"] += orders
     except Exception as e:
         log.info("geo direct sales skipped: %s", e)
 
