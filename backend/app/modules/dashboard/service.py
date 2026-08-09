@@ -274,77 +274,130 @@ async def _top_customers(
 async def _geographic_sales(
     db: AsyncSession, start: date, end: date,
 ) -> schemas.GeoResponse:
-    """Agrupa ventas por estado (Customer.estado). Usa unidades de OrderItems."""
-    # Traemos revenue+orders por Customer.estado
-    q = (
-        select(
-            cust_models.Customer.estado,
-            func.coalesce(func.sum(sales_models.Order.total_amount), 0.0).label("rev"),
-            func.count(func.distinct(sales_models.Order.id)).label("orders"),
-        )
-        .join(cust_models.Customer,
-              sales_models.Order.customer_id == cust_models.Customer.id)
-        .where(
-            sales_models.Order.kind == "order",
-            sales_models.Order.status != "cancelled",
-            func.date(sales_models.Order.created_at) >= start,
-            func.date(sales_models.Order.created_at) <= end,
-            cust_models.Customer.estado.is_not(None),
-        )
-        .group_by(cust_models.Customer.estado)
-    )
-    revenue_rows = (await db.execute(q)).all()
+    """Agrupa ventas por estado usando las fuentes reales:
 
-    # Unidades por estado (via OrderItems)
-    uq = (
-        select(
-            cust_models.Customer.estado,
-            func.coalesce(func.sum(sales_models.OrderItem.quantity), 0).label("units"),
-        )
-        .join(sales_models.Order, sales_models.OrderItem.order_id == sales_models.Order.id)
-        .join(cust_models.Customer,
-              sales_models.Order.customer_id == cust_models.Customer.id)
-        .where(
-            sales_models.Order.kind == "order",
-            sales_models.Order.status != "cancelled",
-            func.date(sales_models.Order.created_at) >= start,
-            func.date(sales_models.Order.created_at) <= end,
-            cust_models.Customer.estado.is_not(None),
-        )
-        .group_by(cust_models.Customer.estado)
-    )
-    units_by_state_raw = {r.estado: int(r.units or 0) for r in (await db.execute(uq)).all()}
+    1. **Sell-out de retail** (fuente principal): SellOutReport × RetailStore.state.
+       Cada tienda física de cadena tiene su estado capturado y los reportes
+       de sell-out traen revenue/units por tienda.
+    2. **Ventas directas** (suplemento): Order × Customer.estado.
+       Para pedidos B2B / mayoreo / etc. que no pasan por retail.
 
-    by_state: Dict[str, schemas.GeoStateRow] = {}
-    total_rev = 0.0
-    total_units = 0
-    for r in revenue_rows:
-        code = _resolve_state_code(r.estado)
-        if code is None:
-            continue
-        rev = float(r.rev or 0.0)
-        units = int(units_by_state_raw.get(r.estado, 0))
-        total_rev += rev
-        total_units += units
-        if code in by_state:
-            by_state[code].revenue += rev
-            by_state[code].units += units
-            by_state[code].orders_count += int(r.orders or 0)
-        else:
-            by_state[code] = schemas.GeoStateRow(
-                state_code=code, state_name=MX_STATES[code]["name"],
-                revenue=round(rev, 2), units=units, share_pct=0.0,
-                orders_count=int(r.orders or 0),
+    Se combinan sumando por state_code. Nunca se inventa ubicación.
+    """
+    by_state: Dict[str, Dict[str, float]] = {}
+
+    # 1) Sell-out de retail — la fuente autoritativa por tienda física
+    try:
+        from app.modules.retail import models as retail_models
+        q = (
+            select(
+                retail_models.RetailStore.state.label("st"),
+                func.coalesce(func.sum(retail_models.SellOutReport.revenue), 0.0).label("rev"),
+                func.coalesce(func.sum(retail_models.SellOutReport.units_sold), 0).label("units"),
+                func.count(func.distinct(retail_models.SellOutReport.id)).label("rows"),
             )
+            .join(
+                retail_models.RetailStore,
+                retail_models.SellOutReport.store_id == retail_models.RetailStore.id,
+            )
+            .where(
+                # overlap: reporte cae dentro (o cruza) el rango solicitado
+                func.date(retail_models.SellOutReport.period_start) <= end,
+                func.date(retail_models.SellOutReport.period_end) >= start,
+                retail_models.RetailStore.state.is_not(None),
+            )
+            .group_by(retail_models.RetailStore.state)
+        )
+        for r in (await db.execute(q)).all():
+            code = _resolve_state_code(r.st)
+            if code is None:
+                continue
+            bucket = by_state.setdefault(
+                code, {"revenue": 0.0, "units": 0, "orders_count": 0},
+            )
+            bucket["revenue"] += float(r.rev or 0.0)
+            bucket["units"] += int(r.units or 0)
+            bucket["orders_count"] += int(r.rows or 0)
+    except Exception as e:
+        log.info("geo sell-out skipped: %s", e)
 
-    # Calcular share
-    for row in by_state.values():
-        row.share_pct = round((row.revenue / total_rev * 100.0), 2) if total_rev > 0 else 0.0
+    # 2) Ventas directas (Orders) — suplemento para B2B / mayoreo
+    try:
+        q = (
+            select(
+                cust_models.Customer.estado.label("st"),
+                func.coalesce(func.sum(sales_models.Order.total_amount), 0.0).label("rev"),
+                func.count(func.distinct(sales_models.Order.id)).label("orders"),
+            )
+            .join(
+                cust_models.Customer,
+                sales_models.Order.customer_id == cust_models.Customer.id,
+            )
+            .where(
+                sales_models.Order.kind == "order",
+                sales_models.Order.status != "cancelled",
+                func.date(sales_models.Order.created_at) >= start,
+                func.date(sales_models.Order.created_at) <= end,
+                cust_models.Customer.estado.is_not(None),
+            )
+            .group_by(cust_models.Customer.estado)
+        )
+        revenue_rows = (await db.execute(q)).all()
 
-    sorted_rows = sorted(by_state.values(), key=lambda x: -x.revenue)
+        uq = (
+            select(
+                cust_models.Customer.estado.label("st"),
+                func.coalesce(func.sum(sales_models.OrderItem.quantity), 0).label("units"),
+            )
+            .join(
+                sales_models.Order,
+                sales_models.OrderItem.order_id == sales_models.Order.id,
+            )
+            .join(
+                cust_models.Customer,
+                sales_models.Order.customer_id == cust_models.Customer.id,
+            )
+            .where(
+                sales_models.Order.kind == "order",
+                sales_models.Order.status != "cancelled",
+                func.date(sales_models.Order.created_at) >= start,
+                func.date(sales_models.Order.created_at) <= end,
+                cust_models.Customer.estado.is_not(None),
+            )
+            .group_by(cust_models.Customer.estado)
+        )
+        units_by_raw = {r.st: int(r.units or 0) for r in (await db.execute(uq)).all()}
+
+        for r in revenue_rows:
+            code = _resolve_state_code(r.st)
+            if code is None:
+                continue
+            bucket = by_state.setdefault(
+                code, {"revenue": 0.0, "units": 0, "orders_count": 0},
+            )
+            bucket["revenue"] += float(r.rev or 0.0)
+            bucket["units"] += int(units_by_raw.get(r.st, 0))
+            bucket["orders_count"] += int(r.orders or 0)
+    except Exception as e:
+        log.info("geo direct sales skipped: %s", e)
+
+    total_rev = sum(v["revenue"] for v in by_state.values())
+    total_units = sum(v["units"] for v in by_state.values())
+
+    rows = [
+        schemas.GeoStateRow(
+            state_code=code, state_name=MX_STATES[code]["name"],
+            revenue=round(v["revenue"], 2),
+            units=int(v["units"]),
+            orders_count=int(v["orders_count"]),
+            share_pct=round(v["revenue"] / total_rev * 100.0, 2) if total_rev > 0 else 0.0,
+        )
+        for code, v in by_state.items()
+    ]
+    rows.sort(key=lambda x: -x.revenue)
     return schemas.GeoResponse(
         total_revenue=round(total_rev, 2), total_units=total_units,
-        by_state=sorted_rows, top5=sorted_rows[:5],
+        by_state=rows, top5=rows[:5],
     )
 
 
