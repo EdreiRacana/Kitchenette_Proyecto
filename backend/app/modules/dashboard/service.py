@@ -12,17 +12,6 @@ import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-
-def _norm(s: Optional[str]) -> str:
-    """Normaliza texto para comparación: minúsculas + sin acentos."""
-    if not s:
-        return ""
-    s = s.strip().lower()
-    return "".join(
-        c for c in unicodedata.normalize("NFD", s)
-        if unicodedata.category(c) != "Mn"
-    )
-
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +24,17 @@ from app.modules.sales import models as sales_models
 from . import schemas
 
 log = get_logger(__name__)
+
+
+def _norm(s: Optional[str]) -> str:
+    """Normaliza texto para comparación: minúsculas + sin acentos."""
+    if not s:
+        return ""
+    s = s.strip().lower()
+    return "".join(
+        c for c in unicodedata.normalize("NFD", s)
+        if unicodedata.category(c) != "Mn"
+    )
 
 
 # ── Catálogo de estados MX (para mapa + top 5) ──────────────────────────
@@ -240,6 +240,8 @@ async def _forecast_period_target(
     suma (forecast_mes × días_del_periodo_en_ese_mes / días_del_mes).
     Así el KPI corresponde al periodo seleccionado (7d/30d/90d/1año).
     """
+    if start > end:
+        return 0.0
     total = 0.0
     cur = start
     while cur <= end:

@@ -327,16 +327,18 @@ function MiniGauge({ value_pct, color, t, display }: { value_pct: number; color:
 }
 
 
-// Hook mínimo: dado un div-container y una longitud de dataset,
-// retorna el índice del data-point sobre el que está el mouse (o null).
+// Hook: índice del data-point bajo el mouse, o null.
+// Si el dataset está vacío o tiene un solo punto, no calcula índice — evita
+// crash accediendo a data[0] en un array vacío.
 function useHoverIndex(len: number) {
   const [idx, setIdx] = useState<number | null>(null);
   const [mouseX, setMouseX] = useState(0);
   const [mouseY, setMouseY] = useState(0);
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (len <= 0) { setIdx(null); return; }
     const rect = e.currentTarget.getBoundingClientRect();
     const rel = (e.clientX - rect.left) / rect.width;
-    const i = Math.max(0, Math.min(len - 1, Math.round(rel * (len - 1))));
+    const i = Math.max(0, Math.min(len - 1, Math.round(rel * Math.max(1, len - 1))));
     setIdx(i);
     setMouseX(e.clientX - rect.left);
     setMouseY(e.clientY - rect.top);
@@ -347,15 +349,16 @@ function useHoverIndex(len: number) {
 
 
 function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any }) {
-  const maxVal = Math.max(1, ...data.map(d => Math.max(d.revenue, d.prev_revenue)));
+  const safe = data || [];
+  const maxVal = Math.max(1, ...safe.map(d => Math.max(d.revenue || 0, d.prev_revenue || 0)));
   const W = 100, H = 60;
-  const step = data.length > 1 ? W / (data.length - 1) : W;
+  const step = safe.length > 1 ? W / (safe.length - 1) : W;
   const buildPath = (getVal: (d: TrendPoint) => number) =>
-    data.map((d, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(2)} ${(H - (getVal(d) / maxVal) * H).toFixed(2)}`).join(" ");
+    safe.map((d, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(2)} ${(H - ((getVal(d) || 0) / maxVal) * H).toFixed(2)}`).join(" ");
   const lineCur = buildPath(d => d.revenue);
   const linePrev = buildPath(d => d.prev_revenue);
-  const { idx, mouseX, mouseY, onMove, onLeave } = useHoverIndex(data.length);
-  const hovered = idx != null ? data[idx] : null;
+  const { idx, mouseX, mouseY, onMove, onLeave } = useHoverIndex(safe.length);
+  const hovered = idx != null && safe[idx] ? safe[idx] : null;
 
   return (
     <div style={{ width: "100%", height: 180, display: "flex", flexDirection: "column" }}>
@@ -367,11 +370,11 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
         <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%", display: "block" }}>
           <path d={linePrev} stroke={t.textLo} strokeWidth="1.5" fill="none" strokeDasharray="4,4" opacity="0.6" vectorEffect="non-scaling-stroke" />
           <path d={lineCur} stroke={t.nova} strokeWidth="2" fill="none" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-          {idx != null && (
+          {idx != null && safe[idx] && (
             <>
               <line x1={idx * step} y1="0" x2={idx * step} y2={H} stroke={t.textLo} strokeWidth="1" strokeDasharray="2,2" opacity="0.7" vectorEffect="non-scaling-stroke" />
-              <circle cx={idx * step} cy={H - ((data[idx].revenue || 0) / maxVal) * H} r="1.2" fill={t.nova} vectorEffect="non-scaling-stroke" />
-              <circle cx={idx * step} cy={H - ((data[idx].prev_revenue || 0) / maxVal) * H} r="1" fill={t.textLo} opacity="0.7" vectorEffect="non-scaling-stroke" />
+              <circle cx={idx * step} cy={H - ((safe[idx].revenue || 0) / maxVal) * H} r="1.2" fill={t.nova} vectorEffect="non-scaling-stroke" />
+              <circle cx={idx * step} cy={H - ((safe[idx].prev_revenue || 0) / maxVal) * H} r="1" fill={t.textLo} opacity="0.7" vectorEffect="non-scaling-stroke" />
             </>
           )}
         </svg>
@@ -383,7 +386,7 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
         )}
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, color: t.textLo, marginTop: 4 }}>
-        {data.filter((_, i) => i === 0 || i === Math.floor(data.length / 2) || i === data.length - 1).map(d => <span key={d.period}>{d.label}</span>)}
+        {safe.filter((_, i) => i === 0 || i === Math.floor(safe.length / 2) || i === safe.length - 1).map(d => <span key={d.period}>{d.label}</span>)}
       </div>
     </div>
   );
@@ -418,14 +421,15 @@ function ChartTooltip({ t, x, y, title, rows }: {
 
 
 function IncomeExpensesChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any }) {
-  const maxVal = Math.max(1, ...data.map(d => Math.max(d.revenue, d.expenses)));
+  const safe = data || [];
+  const maxVal = Math.max(1, ...safe.map(d => Math.max(d.revenue || 0, d.expenses || 0)));
   const W = 100, H = 60;
-  const step = data.length > 1 ? W / (data.length - 1) : W;
-  const areaRev = data.map((d, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(2)} ${(H - (d.revenue / maxVal) * H).toFixed(2)}`).join(" ")
+  const step = safe.length > 1 ? W / (safe.length - 1) : W;
+  const areaRev = safe.map((d, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(2)} ${(H - ((d.revenue || 0) / maxVal) * H).toFixed(2)}`).join(" ")
                     + ` L ${W} ${H} L 0 ${H} Z`;
-  const lineExp = data.map((d, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(2)} ${(H - (d.expenses / maxVal) * H).toFixed(2)}`).join(" ");
-  const { idx, mouseX, mouseY, onMove, onLeave } = useHoverIndex(data.length);
-  const hovered = idx != null ? data[idx] : null;
+  const lineExp = safe.map((d, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(2)} ${(H - ((d.expenses || 0) / maxVal) * H).toFixed(2)}`).join(" ");
+  const { idx, mouseX, mouseY, onMove, onLeave } = useHoverIndex(safe.length);
+  const hovered = idx != null && safe[idx] ? safe[idx] : null;
 
   return (
     <div style={{ width: "100%", height: 180, display: "flex", flexDirection: "column" }}>
@@ -438,11 +442,11 @@ function IncomeExpensesChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L:
           <path d={areaRev} fill={t.good} opacity="0.15" />
           <path d={areaRev.replace(` L ${W} ${H} L 0 ${H} Z`, "")} stroke={t.good} strokeWidth="2" fill="none" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
           <path d={lineExp} stroke={t.bad} strokeWidth="2" fill="none" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-          {idx != null && (
+          {idx != null && safe[idx] && (
             <>
               <line x1={idx * step} y1="0" x2={idx * step} y2={H} stroke={t.textLo} strokeWidth="1" strokeDasharray="2,2" opacity="0.7" vectorEffect="non-scaling-stroke" />
-              <circle cx={idx * step} cy={H - ((data[idx].revenue || 0) / maxVal) * H} r="1.2" fill={t.good} vectorEffect="non-scaling-stroke" />
-              <circle cx={idx * step} cy={H - ((data[idx].expenses || 0) / maxVal) * H} r="1.2" fill={t.bad} vectorEffect="non-scaling-stroke" />
+              <circle cx={idx * step} cy={H - ((safe[idx].revenue || 0) / maxVal) * H} r="1.2" fill={t.good} vectorEffect="non-scaling-stroke" />
+              <circle cx={idx * step} cy={H - ((safe[idx].expenses || 0) / maxVal) * H} r="1.2" fill={t.bad} vectorEffect="non-scaling-stroke" />
             </>
           )}
         </svg>
@@ -459,7 +463,7 @@ function IncomeExpensesChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L:
 
 
 function TopCustomers({ rows, t, L, onSelect }: { rows: TopCustomerRow[]; t: Tokens; L: any; onSelect?: (id?: number | null) => void }) {
-  if (!rows.length) return <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noSalesPeriod}</div>;
+  if (!rows?.length) return <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noSalesPeriod}</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {rows.map((c, i) => (
@@ -491,15 +495,15 @@ function GeoMap({ geo, t, L }: { geo: { by_state: GeoStateRow[]; top5: GeoStateR
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, height: 260 }}>
       <div style={{ position: "relative", background: t.panel2, borderRadius: 8, overflow: "hidden", minHeight: 240 }}>
-        <MexicoMap t={t} data={geo.by_state} />
+        <MexicoMap t={t} data={geo.by_state || []} />
         <div style={{ position: "absolute", bottom: 6, left: 8, fontSize: 9, color: t.textLo, pointerEvents: "none" }}>
-          {L.statesWithSales(geo.by_state.length)}
+          {L.statesWithSales(geo.by_state?.length || 0)}
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}>
         <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>{L.top5states}</div>
-        {geo.top5.length === 0 && <div style={{ color: t.textLo, fontSize: 11 }}>{L.noGeo}</div>}
-        {geo.top5.map((s, i) => (
+        {(!geo.top5?.length) && <div style={{ color: t.textLo, fontSize: 11 }}>{L.noGeo}</div>}
+        {(geo.top5 || []).map((s, i) => (
           <div key={s.state_code} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px", background: t.panel2, borderRadius: 6 }}>
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontSize: 11.5, color: t.textHi, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i + 1}. {s.state_name}</div>
@@ -543,7 +547,7 @@ function OperationalBars({ kpis, t }: { kpis: OperationalKPIRow[]; t: Tokens }) 
 function ChannelDonut({ data, total, t, L }: { data: ChannelSalesRow[]; total: number; t: Tokens; L: any }) {
   const palette = [t.nova || "#33B2F5", t.good || "#22c55e", t.warn || "#f59e0b", "#a855f7", "#ec4899", t.textLo];
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  if (total === 0) return <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noChannel}</div>;
+  if (!data?.length || total === 0) return <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noChannel}</div>;
   const cx = 50, cy = 50, r = 34, w = 12;
   let accum = 0;
   const arcs = data.map((d, i) => {
@@ -608,7 +612,7 @@ function ChannelDonut({ data, total, t, L }: { data: ChannelSalesRow[]; total: n
 
 
 function AlertList({ alerts, t, L, onClick }: { alerts: AlertRow[]; t: Tokens; L: any; onClick?: (a: AlertRow) => void }) {
-  if (!alerts.length) return <div style={{ color: t.good, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noAlerts}</div>;
+  if (!alerts?.length) return <div style={{ color: t.good, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noAlerts}</div>;
   const sevColor = (s: string) => s === "urgent" ? (t.bad || "#ef4444") : s === "high" ? (t.warn || "#f59e0b") : t.nova;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
