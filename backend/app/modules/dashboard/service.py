@@ -8,8 +8,20 @@ from __future__ import annotations
 
 import calendar
 import re
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
+
+
+def _norm(s: Optional[str]) -> str:
+    """Normaliza texto para comparación: minúsculas + sin acentos."""
+    if not s:
+        return ""
+    s = s.strip().lower()
+    return "".join(
+        c for c in unicodedata.normalize("NFD", s)
+        if unicodedata.category(c) != "Mn"
+    )
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,19 +80,17 @@ MX_STATES: Dict[str, Dict[str, str]] = {
 
 
 def _resolve_state_code(raw: Optional[str]) -> Optional[str]:
-    """Normaliza un texto libre (ej. 'CDMX', 'Distrito Federal') a code.
-    Match exacto contra código o alias.
+    """Normaliza texto libre a state_code por match EXACTO (case+acento
+    insensitive) contra código o alias. 'Ciudad de México' == 'ciudad de mexico'.
     """
-    if not raw:
-        return None
-    r = raw.strip().lower()
+    r = _norm(raw)
     if not r:
         return None
     for code, meta in MX_STATES.items():
         if r == code.lower():
             return code
         for alias in meta["aliases"].split("|"):
-            if r == alias.strip():
+            if r == _norm(alias):
                 return code
     return None
 
@@ -121,20 +131,14 @@ def _find_state_in_text(text: Optional[str]) -> Optional[str]:
 
 
 def _resolve_customer_state(cust: Any) -> Optional[str]:
-    """Solo campos geográficos reales: estado, municipio, localidad.
+    """Solo el campo `estado` del cliente, match exacto.
 
-    NUNCA se busca en `calle`, `colonia` ni `address` libre — muchas
-    calles y colonias mexicanas llevan nombre de estado o de héroe
-    (Hidalgo, Juárez, Morelos, etc.) y darían falsos positivos.
+    No se adivina desde municipio/localidad porque muchas alcaldías y
+    ciudades llevan nombre de estado o de héroe (Miguel Hidalgo en CDMX,
+    Ciudad Hidalgo en Michoacán, Hidalgo del Parral en Chihuahua). El
+    único campo confiable es `estado`.
     """
-    code = _resolve_state_code(getattr(cust, "estado", None))
-    if code:
-        return code
-    for field in ("municipio", "localidad"):
-        code = _find_state_in_text(getattr(cust, field, None))
-        if code:
-            return code
-    return None
+    return _resolve_state_code(getattr(cust, "estado", None))
 
 
 def _month_bounds(d: date) -> Tuple[date, date]:
