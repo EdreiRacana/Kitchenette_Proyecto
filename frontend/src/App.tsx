@@ -3071,7 +3071,7 @@ export default function App() {
   const qFor = (id) => (searchNav && searchNav.page === id ? searchNav.query : undefined);
 
   const PAGES = {
-    dashboard: <ExecutiveDashboard t={t} lang={lang} setPage={setPage} />,
+    dashboard: <ExecutiveDashboard t={t} lang={lang} setPage={setPage} isMobile={isMobile} />,
     inventario: <InventoryModule t={t} s={s} initialQuery={qFor("inventario")} />,
     ventas: <SalesCRM t={t} s={s} initialQuery={qFor("ventas")} />,
     pos: <POSModule t={t} />,

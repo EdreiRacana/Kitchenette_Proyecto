@@ -33,6 +33,7 @@ interface Props {
   t: Tokens;
   lang?: "es" | "en";
   setPage?: (page: string) => void;
+  isMobile?: boolean;
 }
 
 // Diccionario mínimo para los strings visibles del dashboard.
@@ -108,7 +109,7 @@ function colorForHint(t: Tokens, hint?: string | null): string {
   }
 }
 
-export default function ExecutiveDashboard({ t, lang = "es", setPage }: Props) {
+export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile = false }: Props) {
   const [data, setData] = useState<ExecutiveDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -145,11 +146,11 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage }: Props) {
   if (!data) return null;
 
   return (
-    <div style={{ padding: 20, maxWidth: 1500, margin: "0 auto" }}>
+    <div style={{ padding: isMobile ? 12 : 20, maxWidth: 1500, margin: "0 auto" }}>
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: isMobile ? 12 : 18, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 24, color: t.textHi }}>{L.title}</h1>
+          <h1 style={{ margin: 0, fontSize: isMobile ? 20 : 24, color: t.textHi }}>{L.title}</h1>
           <div style={{ fontSize: 12, color: t.textLo, marginTop: 3 }}>
             {L.from} {new Date(data.period_start).toLocaleDateString(locale, { day: "2-digit", month: "short", year: "numeric" })}
             {" "}{L.to}{" "}
@@ -172,13 +173,13 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage }: Props) {
         </div>
       </div>
 
-      {/* Fila 1: 6 KPIs principales */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 14 }}>
-        {data.kpis.map(k => <KPITile key={k.key} kpi={k} t={t} onClick={() => nav(KPI_NAV[k.key])} />)}
+      {/* Fila 1: 6 KPIs principales (móvil: 2×3) */}
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(6, minmax(0, 1fr))", gap: isMobile ? 8 : 10, marginBottom: isMobile ? 10 : 14 }}>
+        {data.kpis.map(k => <KPITile key={k.key} kpi={k} t={t} isMobile={isMobile} onClick={() => nav(KPI_NAV[k.key])} />)}
       </div>
 
       {/* Fila 2: Ventas del período + Meta vs Real + Top 5 Clientes */}
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr)", gap: isMobile ? 10 : 12, marginBottom: isMobile ? 10 : 14 }}>
         <PanelCard t={t} title={L.salesPeriod} subtitle={L.vsPrev}>
           <SalesTrendChart data={data.trend_sales} t={t} L={L} />
         </PanelCard>
@@ -223,12 +224,12 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage }: Props) {
       </div>
 
       {/* Fila 3: Ingresos vs Gastos + Mapa MX + KPIs Operativos */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr 1fr", gap: 12, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr)", gap: isMobile ? 10 : 12, marginBottom: isMobile ? 10 : 14 }}>
         <PanelCard t={t} title={L.incomeExpenses}>
           <IncomeExpensesChart data={data.trend_income_expenses} t={t} L={L} />
         </PanelCard>
         <PanelCard t={t} title={L.geoDist} subtitle={L.salesByState}>
-          <GeoMap geo={data.geographic} t={t} L={L} />
+          <GeoMap geo={data.geographic} t={t} L={L} isMobile={isMobile} />
         </PanelCard>
         <PanelCard t={t} title={L.opKpis}>
           <OperationalBars kpis={data.operational_kpis} t={t} />
@@ -236,7 +237,7 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage }: Props) {
       </div>
 
       {/* Fila 4: Canales + Alertas + Financieros */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr 1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr)", gap: isMobile ? 10 : 12 }}>
         <PanelCard t={t} title={L.channels}>
           <ChannelDonut data={data.channel_sales.channels} total={data.channel_sales.total_revenue} t={t} L={L} />
         </PanelCard>
@@ -269,7 +270,7 @@ function PanelCard({ t, title, subtitle, children }: { t: Tokens; title: string;
 }
 
 
-function KPITile({ kpi, t, onClick }: { kpi: ExecKPI; t: Tokens; onClick?: () => void }) {
+function KPITile({ kpi, t, isMobile, onClick }: { kpi: ExecKPI; t: Tokens; isMobile?: boolean; onClick?: () => void }) {
   const Icon = KPI_ICON[kpi.key] || DollarSign;
   const color = colorForHint(t, kpi.color_hint);
   const deltaSign = kpi.delta_pct == null ? null : kpi.delta_pct >= 0 ? "▲" : "▼";
@@ -280,27 +281,28 @@ function KPITile({ kpi, t, onClick }: { kpi: ExecKPI; t: Tokens; onClick?: () =>
   return (
     <div onClick={onClick}
       style={{
-        padding: 14, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12,
+        padding: isMobile ? 10 : 14, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12,
         cursor: onClick ? "pointer" : "default", position: "relative", overflow: "hidden",
       }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ width: 32, height: 32, borderRadius: 8, background: color + "22", color: color, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Icon size={16} />
+        <div style={{ width: isMobile ? 28 : 32, height: isMobile ? 28 : 32, borderRadius: 8, background: color + "22", color: color, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Icon size={isMobile ? 14 : 16} />
         </div>
       </div>
-      <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 10 }}>{kpi.label}</div>
+      <div style={{ fontSize: isMobile ? 9.5 : 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginTop: isMobile ? 8 : 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{kpi.label}</div>
       {isMeta ? (
         <MiniGauge value_pct={kpi.value} color={color} t={t} display={kpi.display} />
       ) : (
-        <div style={{ fontSize: 22, fontWeight: 800, color: t.textHi, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{kpi.display}</div>
+        <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 800, color: t.textHi, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{kpi.display}</div>
       )}
       {kpi.delta_pct != null && (
-        <div style={{ fontSize: 11, color: deltaColor, marginTop: 4, fontWeight: 700 }}>
-          {deltaSign} {Math.abs(kpi.delta_pct).toFixed(1)}% <span style={{ color: t.textLo, fontWeight: 400 }}>{kpi.sub}</span>
+        <div style={{ fontSize: isMobile ? 10 : 11, color: deltaColor, marginTop: 4, fontWeight: 700 }}>
+          {deltaSign} {Math.abs(kpi.delta_pct).toFixed(1)}%
+          {!isMobile && <span style={{ color: t.textLo, fontWeight: 400 }}> {kpi.sub}</span>}
         </div>
       )}
       {kpi.delta_pct == null && kpi.sub && (
-        <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4 }}>{kpi.sub}</div>
+        <div style={{ fontSize: isMobile ? 9.5 : 10.5, color: t.textLo, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{kpi.sub}</div>
       )}
     </div>
   );
@@ -491,10 +493,10 @@ function TopCustomers({ rows, t, L, onSelect }: { rows: TopCustomerRow[]; t: Tok
 }
 
 
-function GeoMap({ geo, t, L }: { geo: { by_state: GeoStateRow[]; top5: GeoStateRow[]; total_revenue: number }; t: Tokens; L: any }) {
+function GeoMap({ geo, t, L, isMobile }: { geo: { by_state: GeoStateRow[]; top5: GeoStateRow[]; total_revenue: number }; t: Tokens; L: any; isMobile?: boolean }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, height: 260 }}>
-      <div style={{ position: "relative", background: t.panel2, borderRadius: 8, overflow: "hidden", minHeight: 240 }}>
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr", gap: 12, minHeight: isMobile ? 420 : 260 }}>
+      <div style={{ position: "relative", background: t.panel2, borderRadius: 8, overflow: "hidden", minHeight: isMobile ? 240 : 240 }}>
         <MexicoMap t={t} data={geo.by_state || []} />
         <div style={{ position: "absolute", bottom: 6, left: 8, fontSize: 9, color: t.textLo, pointerEvents: "none" }}>
           {L.statesWithSales(geo.by_state?.length || 0)}
