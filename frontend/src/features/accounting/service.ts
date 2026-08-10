@@ -360,6 +360,54 @@ export interface DiotPreview {
     };
 }
 
+// ── Presupuestos ─────────────────────────────────────────────────────────
+
+export interface BudgetRow {
+    id: number; period_year: number; branch_id?: number | null;
+    account_id: number; account_code: string; account_name: string;
+    account_type: string; nature: 'deudora' | 'acreedora';
+    notes?: string | null;
+    m1: number; m2: number; m3: number; m4: number; m5: number; m6: number;
+    m7: number; m8: number; m9: number; m10: number; m11: number; m12: number;
+    annual_total: number;
+}
+
+export interface BudgetVarianceRow extends BudgetRow {
+    budget_monthly: number[]; real_monthly: number[]; variance_monthly: number[];
+    variance_pct_monthly: (number | null)[];
+    budget_ytd: number; real_ytd: number; variance_ytd: number;
+    variance_pct_ytd: number | null;
+}
+
+export interface BudgetVariance {
+    period_year: number;
+    rows: BudgetVarianceRow[];
+    totals: {
+        budget_monthly: number[]; real_monthly: number[]; variance_monthly: number[];
+        budget_ytd: number; real_ytd: number; variance_ytd: number;
+    };
+}
+
+export const budgetService = {
+    list: async (year: number, branch_id?: number) =>
+        (await api.get<BudgetRow[]>('/accounting/budgets', { params: { year, branch_id } })).data,
+    upsert: async (data: Partial<BudgetRow> & { year: number; account_id: number }) =>
+        (await api.put<BudgetRow>('/accounting/budgets', data)).data,
+    remove: async (id: number) => { await api.delete(`/accounting/budgets/${id}`); },
+    copyFromYear: async (source_year: number, target_year: number, factor = 1.0, branch_id?: number) =>
+        (await api.post<{ copied: number }>('/accounting/budgets/copy-from-year',
+            { source_year, target_year, factor, branch_id })).data,
+    variance: async (year: number, branch_id?: number) =>
+        (await api.get<BudgetVariance>(`/accounting/budgets/${year}/variance`,
+            { params: { branch_id } })).data,
+    downloadVarianceXlsx: (year: number, branch_id?: number) => {
+        const qs = branch_id ? `?branch_id=${branch_id}` : '';
+        return downloadBlob(`/accounting/budgets/${year}/variance.xlsx${qs}`,
+                            `presupuesto_vs_real_${year}.xlsx`);
+    },
+};
+
+
 export const diotService = {
     preview: async (year: number, month: number, branch_id?: number) =>
         (await api.get<DiotPreview>('/accounting/diot/preview', { params: { year, month, branch_id } })).data,
