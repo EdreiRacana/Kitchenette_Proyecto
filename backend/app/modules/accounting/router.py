@@ -421,6 +421,88 @@ async def balance_excel(id_: int, db: DB, _: CurrentUser):
     )
 
 
+# ── DIOT (Declaración Informativa de Operaciones con Terceros) ──────────────
+
+@router.get("/diot/preview")
+async def diot_preview(
+    db: DB, _: CurrentUser,
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    branch_id: Optional[int] = Query(None),
+):
+    """Preview JSON de las filas del DIOT del periodo con totales."""
+    from app.modules.accounting import diot as diot_mod
+    rows = await diot_mod.generate_diot_rows(db, year, month, branch_id=branch_id)
+    total_paid = sum(r.total_paid() for r in rows)
+    total_iva = sum(r.total_iva() for r in rows)
+    warnings_ct = sum(1 for r in rows if r.warnings)
+    return {
+        "period_year": year, "period_month": month,
+        "rows": [{
+            "supplier_id": r.supplier_id,
+            "supplier_name": r.supplier_name,
+            "third_type": r.third_type,
+            "third_type_label": diot_mod.THIRD_TYPES.get(r.third_type, ""),
+            "operation_type": r.operation_type,
+            "operation_type_label": diot_mod.OPERATION_TYPES.get(r.operation_type, ""),
+            "rfc": r.rfc,
+            "country_code": r.country_code,
+            "value_16": r.value_16, "iva_16": r.iva_16,
+            "value_0": r.value_0, "value_exempt": r.value_exempt,
+            "iva_withheld": r.iva_withheld,
+            "iva_non_deductible": r.iva_non_deductible,
+            "total_paid": r.total_paid(),
+            "total_iva": r.total_iva(),
+            "warnings": r.warnings,
+        } for r in rows],
+        "totals": {
+            "rows": len(rows),
+            "total_paid": total_paid,
+            "total_iva": total_iva,
+            "warnings_count": warnings_ct,
+        },
+    }
+
+
+@router.get("/diot/download.txt")
+async def diot_download_txt(
+    db: DB, _: CurrentUser,
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    branch_id: Optional[int] = Query(None),
+):
+    """.txt oficial (pipe-delimited) para subir al portal del SAT."""
+    from fastapi.responses import Response
+    from app.modules.accounting import diot as diot_mod
+    content = await diot_mod.generate_diot_txt(db, year, month, branch_id=branch_id)
+    fname = f"DIOT_{year}_{month:02d}.txt"
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/diot/download.xlsx")
+async def diot_download_xlsx(
+    db: DB, _: CurrentUser,
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    branch_id: Optional[int] = Query(None),
+):
+    """XLSX legible del DIOT para revisión previa del contador."""
+    from fastapi.responses import Response
+    from app.modules.accounting import diot as diot_mod
+    rows = await diot_mod.generate_diot_rows(db, year, month, branch_id=branch_id)
+    xlsx_bytes = diot_mod.generate_diot_xlsx(rows, year, month)
+    fname = f"DIOT_{year}_{month:02d}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 @router.get("/balance-sheets/history/excel")
 async def balance_history_excel(
     db: DB, _: CurrentUser,
