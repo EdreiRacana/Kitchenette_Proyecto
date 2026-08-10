@@ -38,6 +38,14 @@ class Supplier(Base):
     extra_contacts = Column(JSON, nullable=True)    # [{name, role, phone, email}, ...]
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
+    # ── DIOT (SAT A29) ────────────────────────────────────────────
+    # Se usan al generar el archivo DIOT mensual. Defaults sensatos
+    # para proveedores nacionales de bienes/servicios.
+    diot_third_type = Column(String, default="04", nullable=True)   # 04 nacional | 05 extranjero | 15 global
+    diot_operation_type = Column(String, default="85", nullable=True)  # 85 otros | 84 bienes | 03 servicios profesionales | 06 arrendamiento
+    country_code = Column(String, nullable=True)                     # ISO 3166-1 alfa-2 (solo extranjeros)
+    foreign_tax_id = Column(String, nullable=True)                   # ID fiscal en su país (extranjeros)
+    foreign_nationality = Column(String, nullable=True)              # Nacionalidad (extranjeros)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     purchase_orders = relationship("PurchaseOrder", back_populates="supplier")

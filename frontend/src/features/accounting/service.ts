@@ -324,3 +324,53 @@ export const balanceService = {
     downloadHistoryExcel: (months = 12) =>
         downloadBlob(`/accounting/balance-sheets/history/excel?months=${months}`, `balances_historico.xlsx`),
 };
+
+
+// ── DIOT (SAT A29) ────────────────────────────────────────────────────────
+
+export interface DiotRow {
+    supplier_id?: number | null;
+    supplier_name: string;
+    third_type: string;
+    third_type_label: string;
+    operation_type: string;
+    operation_type_label: string;
+    rfc?: string | null;
+    country_code?: string | null;
+    value_16: number;
+    iva_16: number;
+    value_0: number;
+    value_exempt: number;
+    iva_withheld: number;
+    iva_non_deductible: number;
+    total_paid: number;
+    total_iva: number;
+    warnings: string[];
+}
+
+export interface DiotPreview {
+    period_year: number;
+    period_month: number;
+    rows: DiotRow[];
+    totals: {
+        rows: number;
+        total_paid: number;
+        total_iva: number;
+        warnings_count: number;
+    };
+}
+
+export const diotService = {
+    preview: async (year: number, month: number, branch_id?: number) =>
+        (await api.get<DiotPreview>('/accounting/diot/preview', { params: { year, month, branch_id } })).data,
+    downloadTxt: (year: number, month: number, branch_id?: number) => {
+        const qs = new URLSearchParams({ year: String(year), month: String(month) });
+        if (branch_id) qs.set('branch_id', String(branch_id));
+        return downloadBlob(`/accounting/diot/download.txt?${qs}`, `DIOT_${year}_${String(month).padStart(2, '0')}.txt`);
+    },
+    downloadXlsx: (year: number, month: number, branch_id?: number) => {
+        const qs = new URLSearchParams({ year: String(year), month: String(month) });
+        if (branch_id) qs.set('branch_id', String(branch_id));
+        return downloadBlob(`/accounting/diot/download.xlsx?${qs}`, `DIOT_${year}_${String(month).padStart(2, '0')}.xlsx`);
+    },
+};
