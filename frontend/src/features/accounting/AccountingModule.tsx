@@ -102,8 +102,8 @@ export default function AccountingModule({ t, s }: { t: any; s: any }) {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", borderBottom: `1px solid ${t.border}`, marginBottom: 20, overflowX: "auto", gap: 2 }}>
+      {/* Tabs (wrap en 2 filas si son muchos) */}
+      <div style={{ display: "flex", flexWrap: "wrap", borderBottom: `1px solid ${t.border}`, marginBottom: 20, gap: 2 }}>
         {TABS.map(({ id, label, icon: Icon }) => (
           <button key={id} onClick={() => setTab(id as Tab)} style={tabBtn(tab === id)}>
             <span style={{ display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}><Icon size={14} />{label}</span>
