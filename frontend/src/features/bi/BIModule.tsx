@@ -11,10 +11,11 @@ import {
   XCircle, Download, ChevronRight,
   Target, DollarSign, ShoppingCart, Clock, Star,
   Mail, X, Check,
-  TrendingDown, Activity, TrendingUp, Store,
+  TrendingDown, Activity, TrendingUp, Store, FileText,
 } from "lucide-react";
 import { salesApi } from "../sales/api";
 import { financeService } from "../finance/service";
+import ReportBuilder from "./ReportBuilder";
 import { inventoryService, type ReorderAlert } from "../inventory/service";
 import { hrApi } from "../hr/api";
 import { biService, type OmnichannelData } from "./service";
@@ -1016,7 +1017,7 @@ async function loadBIState(period: Period): Promise<BIState> {
 // ── Main Module ───────────────────────────────────────────────────────────
 export default function BIModule({ t, s }: { t: any; s: any }) {
   void s;
-  const [tab, setTab] = useState<"executive" | "sales" | "inventory" | "finance" | "hr" | "omnichannel" | "custom">("executive");
+  const [tab, setTab] = useState<"executive" | "sales" | "inventory" | "finance" | "hr" | "omnichannel" | "custom" | "reports">("executive");
   const [period, setPeriod] = useState<Period>("month");
   const [D, setD] = useState<BIState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1058,6 +1059,7 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
     { id: "hr", label: "RH", icon: Users },
     { id: "omnichannel", label: "Omnicanal", icon: Store },
     { id: "custom", label: "Personalizado", icon: Sliders },
+    { id: "reports", label: "Reportes", icon: FileText },
   ] as const;
 
   const ALL_KPIS = useMemo(() => {
@@ -1651,6 +1653,8 @@ function BIModuleBody({
 
       {/* ── TAB: Custom ── */}
       {tab === "omnichannel" && <OmnichannelView t={t} />}
+
+      {tab === "reports" && <ReportBuilder t={t} />}
 
       {tab === "custom" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
