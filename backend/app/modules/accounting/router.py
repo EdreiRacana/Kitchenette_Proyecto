@@ -421,6 +421,87 @@ async def balance_excel(id_: int, db: DB, _: CurrentUser):
     )
 
 
+# ── Presupuestos (por cuenta contable, año, mes) ─────────────────────────────
+
+@router.get("/budgets")
+async def budgets_list(
+    db: DB, _: CurrentUser,
+    year: int = Query(..., ge=2000, le=2100),
+    branch_id: Optional[int] = Query(None),
+):
+    from app.modules.accounting import budgets as bud_mod
+    return await bud_mod.list_budgets(db, year, branch_id=branch_id)
+
+
+@router.put("/budgets")
+async def budgets_upsert(
+    payload: dict, db: DB, current_user: CurrentUser,
+):
+    """Body: {year, account_id, branch_id?, m1..m12, notes?}"""
+    from app.modules.accounting import budgets as bud_mod
+    year = int(payload.get("year") or payload.get("period_year"))
+    account_id = int(payload["account_id"])
+    branch_id = payload.get("branch_id")
+    months = {c: payload.get(c) for c in bud_mod.MONTH_COLS if c in payload}
+    notes = payload.get("notes")
+    return await bud_mod.upsert_budget(
+        db, year=year, account_id=account_id, months=months,
+        branch_id=branch_id, notes=notes, user_id=current_user.id,
+    )
+
+
+@router.delete("/budgets/{budget_id}")
+async def budgets_delete(budget_id: int, db: DB, _: CurrentUser):
+    from app.modules.accounting import budgets as bud_mod
+    ok = await bud_mod.delete_budget(db, budget_id)
+    if not ok:
+        raise HTTPException(404, "Presupuesto no encontrado")
+    return {"deleted": True}
+
+
+@router.post("/budgets/copy-from-year")
+async def budgets_copy_from_year(
+    payload: dict, db: DB, current_user: CurrentUser,
+):
+    """Body: {source_year, target_year, factor?, branch_id?}"""
+    from app.modules.accounting import budgets as bud_mod
+    source = int(payload["source_year"])
+    target = int(payload["target_year"])
+    factor = float(payload.get("factor") or 1.0)
+    branch_id = payload.get("branch_id")
+    created = await bud_mod.copy_from_year(
+        db, source, target, factor=factor, branch_id=branch_id,
+        user_id=current_user.id,
+    )
+    return {"copied": created, "source_year": source, "target_year": target}
+
+
+@router.get("/budgets/{year}/variance")
+async def budgets_variance(
+    year: int, db: DB, _: CurrentUser,
+    branch_id: Optional[int] = Query(None),
+):
+    from app.modules.accounting import budgets as bud_mod
+    return await bud_mod.compute_variance(db, year, branch_id=branch_id)
+
+
+@router.get("/budgets/{year}/variance.xlsx")
+async def budgets_variance_xlsx(
+    year: int, db: DB, _: CurrentUser,
+    branch_id: Optional[int] = Query(None),
+):
+    from fastapi.responses import Response
+    from app.modules.accounting import budgets as bud_mod
+    variance = await bud_mod.compute_variance(db, year, branch_id=branch_id)
+    xlsx_bytes = bud_mod.build_variance_xlsx(variance)
+    fname = f"presupuesto_vs_real_{year}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 # ── DIOT (Declaración Informativa de Operaciones con Terceros) ──────────────
 
 @router.get("/diot/preview")

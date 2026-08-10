@@ -229,6 +229,47 @@ class PeriodClose(Base):
     notes = Column(Text, nullable=True)
 
 
+class AccountBudget(Base):
+    """Presupuesto anual por cuenta. Una fila = una cuenta contable × un año
+    (× sucursal opcional). Los 12 meses en columnas para captura tipo matriz.
+
+    Al comparar contra ejecución (JournalLine.debit/credit del mes) se
+    calcula la variación en pesos y %. Estándar en COI/CONTPAQi.
+    """
+    __tablename__ = "accounting_budgets"
+    __table_args__ = (
+        UniqueConstraint("period_year", "account_id", "branch_id",
+                         name="uq_budget_year_account_branch"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    period_year = Column(Integer, nullable=False, index=True)
+    account_id = Column(Integer, ForeignKey("accounting_accounts.id"),
+                         nullable=False, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
+
+    m1 = Column(Float, default=0.0, nullable=False)
+    m2 = Column(Float, default=0.0, nullable=False)
+    m3 = Column(Float, default=0.0, nullable=False)
+    m4 = Column(Float, default=0.0, nullable=False)
+    m5 = Column(Float, default=0.0, nullable=False)
+    m6 = Column(Float, default=0.0, nullable=False)
+    m7 = Column(Float, default=0.0, nullable=False)
+    m8 = Column(Float, default=0.0, nullable=False)
+    m9 = Column(Float, default=0.0, nullable=False)
+    m10 = Column(Float, default=0.0, nullable=False)
+    m11 = Column(Float, default=0.0, nullable=False)
+    m12 = Column(Float, default=0.0, nullable=False)
+
+    notes = Column(Text, nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    account = relationship("Account", foreign_keys=[account_id])
+
+
 class BalanceSheet(Base):
     """Balance General por periodo (mes/año). Snapshot capturado por el
     contador. La ecuación contable Activo = Pasivo + Capital debe cumplirse
