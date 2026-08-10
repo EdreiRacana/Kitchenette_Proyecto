@@ -439,6 +439,9 @@ _AUTH_STATEMENTS = [
 _BRANCH_STATEMENTS = [
     "ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS branch_id INTEGER",
     "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS branch_id INTEGER",
+    # Conciliación bancaria — Transaction ligada a la cuenta bancaria destino/origen
+    "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS bank_account_id INTEGER REFERENCES bank_accounts(id)",
+    "CREATE INDEX IF NOT EXISTS ix_transactions_bank_account_id ON transactions (bank_account_id)",
     "ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS branch_id INTEGER",
     "ALTER TABLE budgets ADD COLUMN IF NOT EXISTS branch_id INTEGER",
     # Tasa ISN estatal (patronal) en el perfil de la empresa

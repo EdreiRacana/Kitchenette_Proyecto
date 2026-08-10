@@ -16,6 +16,10 @@ class Transaction(Base):
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     attachment_url = Column(Text, nullable=True)  # comprobante adjunto (factura/recibo)
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)  # sucursal (aislamiento)
+    # Cuenta bancaria destino/origen — necesaria para conciliación bancaria.
+    # Nullable = transacción de caja o no ligada a un banco específico.
+    bank_account_id = Column(Integer, ForeignKey("bank_accounts.id"),
+                              nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -365,10 +365,19 @@ async def get_workspace(
     )
     bank_rows = (await db.execute(q_bank)).scalars().all()
 
-    # 2) Transactions del sistema del periodo (para la misma cuenta)
+    # 2) Transactions del sistema del periodo. Incluimos:
+    #    - las asignadas a esta cuenta bancaria
+    #    - las sin cuenta asignada (bank_account_id IS NULL) para permitir
+    #      conciliar transactions históricas capturadas antes de que la
+    #      columna existiera. Al matchearlas se auto-asignan.
     q_sys = (
         select(fin_models.Transaction)
-        .where(fin_models.Transaction.bank_account_id == bank_account_id)
+        .where(
+            or_(
+                fin_models.Transaction.bank_account_id == bank_account_id,
+                fin_models.Transaction.bank_account_id.is_(None),
+            )
+        )
         .where(fin_models.Transaction.created_at >= start)
         .where(fin_models.Transaction.created_at < end_excl)
         .order_by(fin_models.Transaction.created_at.desc())
@@ -461,6 +470,10 @@ async def manual_match(
         return {"ok": False, "error": "El movimiento bancario y la transacción tienen signos opuestos"}
     b.matched_transaction_id = t.id
     b.reconciled = True
+    # Auto-asignar la transacción a esta cuenta bancaria (útil para datos
+    # históricos sin bank_account_id).
+    if getattr(t, "bank_account_id", None) is None:
+        t.bank_account_id = b.bank_account_id
     await db.commit()
     return {"ok": True, "matched": True, "bank_tx_id": b.id, "system_tx_id": t.id}
 
