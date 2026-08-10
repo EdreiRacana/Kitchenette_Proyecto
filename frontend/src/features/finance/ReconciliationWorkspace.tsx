@@ -76,7 +76,7 @@ export default function ReconciliationWorkspace({ t, lang }: { t: any; lang: str
 
   const loadAccounts = useCallback(async () => {
     try {
-      const r = await api.get<BankAccount[]>("/finance/bank-accounts");
+      const r = await api.get<BankAccount[]>("/finance/banks");
       setAccounts(r.data || []);
       if (r.data?.length && accountId == null) setAccountId(r.data[0].id);
     } catch (e: any) {
