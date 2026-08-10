@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.session import Base
@@ -173,3 +173,44 @@ class ScheduledPayment(Base):
     bank_account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class BankReconciliation(Base):
+    """Sesión de conciliación bancaria para una cuenta × periodo mensual.
+
+    Estándar contable: cada mes el contador concilia los movimientos del
+    extracto bancario contra los movimientos del sistema, ajusta diferencias
+    y firma la conciliación. Una vez marcada como 'completed', los
+    movimientos incluidos quedan bloqueados a menos que se reabra.
+    """
+    __tablename__ = "bank_reconciliations"
+    __table_args__ = (
+        UniqueConstraint("bank_account_id", "period_year", "period_month",
+                         name="uq_bank_reconc_period"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    bank_account_id = Column(Integer, ForeignKey("bank_accounts.id"),
+                              nullable=False, index=True)
+    period_year = Column(Integer, nullable=False, index=True)
+    period_month = Column(Integer, nullable=False, index=True)  # 1..12
+
+    # Saldos capturados manualmente por el conciliador (del extracto bancario)
+    opening_balance = Column(Float, default=0.0, nullable=False)  # saldo del banco al inicio
+    closing_balance_bank = Column(Float, default=0.0, nullable=False)  # saldo del banco al final
+    # Saldo calculado del sistema (snapshot al momento de cierre)
+    closing_balance_system = Column(Float, default=0.0, nullable=False)
+    # Diferencia = closing_balance_bank - closing_balance_system - ajustes
+    difference = Column(Float, default=0.0, nullable=False)
+
+    status = Column(String, default="draft", nullable=False, index=True)   # draft | completed | reopened
+    notes = Column(Text, nullable=True)
+
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    completed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reopened_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    reopened_at = Column(DateTime(timezone=True), nullable=True)
+
+    bank_account = relationship("BankAccount")

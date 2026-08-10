@@ -17,6 +17,7 @@ import { financeService, downloadCSV } from "./service";
 import type { SupplierBill, SupplierBillDraft, BillsStats as BillsStatsData } from "./service";
 import { useServerRecovery } from "../../hooks/useServerRecovery";
 import api from "../../services/api";
+import ReconciliationWorkspace from "./ReconciliationWorkspace";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Transaction {
@@ -88,7 +89,7 @@ const CATEGORIES: Record<string, { label: string; color: string }> = {
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function FinanceModule({ t, s }: { t: any; s: any }) {
-  const [tab, setTab] = useState<"dashboard" | "cxc" | "cxp" | "banks" | "transactions" | "flow" | "advanced">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "cxc" | "cxp" | "banks" | "reconciliation" | "transactions" | "flow" | "advanced">("dashboard");
   const [demo, setDemo] = useState(false); // legado: ya nunca se activa (sin datos ficticios)
   const [loadError, setLoadError] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -236,6 +237,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
     { id: "cxc", label: "Por cobrar", icon: TrendingUp },
     { id: "cxp", label: "Por pagar", icon: TrendingDown },
     { id: "banks", label: "Bancos", icon: Building2 },
+    { id: "reconciliation", label: "Conciliación", icon: CheckCircle },
     { id: "transactions", label: "Transacciones", icon: ArrowLeftRight },
     { id: "flow", label: "Flujo de caja", icon: BarChart3 },
     { id: "advanced", label: "Avanzado", icon: Wallet },
@@ -266,8 +268,8 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", borderBottom: `1px solid ${t.border}`, marginBottom: 20, overflowX: "auto", gap: 2 }}>
+      {/* Tabs (wrap en 2 filas si son muchos) */}
+      <div style={{ display: "flex", flexWrap: "wrap", borderBottom: `1px solid ${t.border}`, marginBottom: 20, gap: 2 }}>
         {TABS.map(({ id, label, icon: Icon }) => (
           <button key={id} onClick={() => setTab(id as any)} style={tabBtn(tab === id)}>
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Icon size={14} />{label}</span>
@@ -663,6 +665,11 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
           onClose={() => setMultiPayOpen(false)}
           onSaved={async () => { setMultiPayOpen(false); setSelectedBillIds([]); await load(); }}
         />
+      )}
+
+      {/* ── TAB: Conciliación bancaria (workspace dedicado) ── */}
+      {tab === "reconciliation" && (
+        <ReconciliationWorkspace t={t} lang={s?.nav ? "es" : "en"} />
       )}
 
       {/* ── TAB: Banks ── */}

@@ -136,6 +136,151 @@ async def import_bank_statement(
         raise HTTPException(500, f"Error al procesar el extracto: {e}")
 
 
+# ── Conciliación dedicada (sesión por mes) ──────────────────────────────
+
+@router.get("/reconciliation/workspace")
+async def reconciliation_workspace(
+    db: DB, current_user: CurrentUser,
+    bank_account_id: int = Query(...),
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+):
+    """Workspace completo: sesión + bank + system + totales."""
+    from app.modules.finance import reconciliation
+    return await reconciliation.get_workspace(
+        db, bank_account_id, year, month, user_id=current_user.id,
+    )
+
+
+@router.post("/reconciliation/match")
+async def reconciliation_match(payload: dict, db: DB, _: CurrentUser):
+    """Body: {bank_tx_id, system_tx_id}"""
+    from app.modules.finance import reconciliation
+    r = await reconciliation.manual_match(
+        db, int(payload["bank_tx_id"]), int(payload["system_tx_id"]),
+    )
+    if not r.get("ok"):
+        raise HTTPException(400, r.get("error", "No se pudo hacer match"))
+    return r
+
+
+@router.post("/reconciliation/unmatch")
+async def reconciliation_unmatch(payload: dict, db: DB, _: CurrentUser):
+    """Body: {bank_tx_id}"""
+    from app.modules.finance import reconciliation
+    r = await reconciliation.manual_unmatch(db, int(payload["bank_tx_id"]))
+    if not r.get("ok"):
+        raise HTTPException(404, r.get("error", "No encontrado"))
+    return r
+
+
+@router.put("/reconciliation/{rec_id}")
+async def reconciliation_update(rec_id: int, payload: dict, db: DB, _: CurrentUser):
+    """Body: {opening_balance?, closing_balance_bank?, notes?}"""
+    from app.modules.finance import reconciliation
+    rec = await reconciliation.update_reconciliation(
+        db, rec_id,
+        opening_balance=payload.get("opening_balance"),
+        closing_balance_bank=payload.get("closing_balance_bank"),
+        notes=payload.get("notes"),
+    )
+    if not rec:
+        raise HTTPException(404, "Conciliación no encontrada")
+    return {
+        "id": rec.id, "opening_balance": rec.opening_balance,
+        "closing_balance_bank": rec.closing_balance_bank,
+        "closing_balance_system": rec.closing_balance_system,
+        "difference": rec.difference, "status": rec.status,
+        "notes": rec.notes,
+    }
+
+
+@router.post("/reconciliation/{rec_id}/complete")
+async def reconciliation_complete(rec_id: int, db: DB, current_user: CurrentUser):
+    from app.modules.finance import reconciliation
+    rec = await reconciliation.complete_reconciliation(db, rec_id, user_id=current_user.id)
+    if not rec:
+        raise HTTPException(404, "Conciliación no encontrada")
+    return {"id": rec.id, "status": rec.status,
+             "completed_at": rec.completed_at.isoformat() if rec.completed_at else None,
+             "difference": rec.difference}
+
+
+@router.post("/reconciliation/{rec_id}/reopen")
+async def reconciliation_reopen(rec_id: int, db: DB, current_user: CurrentUser):
+    from app.modules.finance import reconciliation
+    rec = await reconciliation.reopen_reconciliation(db, rec_id, user_id=current_user.id)
+    if not rec:
+        raise HTTPException(404, "Conciliación no encontrada")
+    return {"id": rec.id, "status": rec.status}
+
+
+@router.get("/reconciliation/{rec_id}/pdf")
+async def reconciliation_pdf(rec_id: int, db: DB, current_user: CurrentUser):
+    from fastapi.responses import Response
+    from sqlalchemy.future import select
+    from app.modules.finance import reconciliation
+    from app.modules.finance import models as fin_models
+    from app.modules.sales.universal_service import _get_company_dict
+
+    rec = (await db.execute(
+        select(fin_models.BankReconciliation).where(fin_models.BankReconciliation.id == rec_id)
+    )).scalars().first()
+    if not rec:
+        raise HTTPException(404, "Conciliación no encontrada")
+
+    workspace = await reconciliation.get_workspace(
+        db, rec.bank_account_id, rec.period_year, rec.period_month,
+        user_id=current_user.id,
+    )
+    bank_acct = (await db.execute(
+        select(fin_models.BankAccount).where(fin_models.BankAccount.id == rec.bank_account_id)
+    )).scalars().first()
+    bank_dict = {
+        "name": bank_acct.name if bank_acct else "",
+        "bank": bank_acct.bank if bank_acct else "",
+        "account_number": bank_acct.account_number if bank_acct else "",
+    }
+    company = await _get_company_dict(db)
+    pdf_bytes = reconciliation.build_reconciliation_pdf(company, workspace, bank_dict)
+    fname = f"conciliacion_{rec.period_year}_{rec.period_month:02d}.pdf"
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/reconciliation/{rec_id}/xlsx")
+async def reconciliation_xlsx(rec_id: int, db: DB, current_user: CurrentUser):
+    from fastapi.responses import Response
+    from sqlalchemy.future import select
+    from app.modules.finance import reconciliation
+    from app.modules.finance import models as fin_models
+    from app.modules.sales.universal_service import _get_company_dict
+
+    rec = (await db.execute(
+        select(fin_models.BankReconciliation).where(fin_models.BankReconciliation.id == rec_id)
+    )).scalars().first()
+    if not rec:
+        raise HTTPException(404, "Conciliación no encontrada")
+    workspace = await reconciliation.get_workspace(
+        db, rec.bank_account_id, rec.period_year, rec.period_month,
+        user_id=current_user.id,
+    )
+    bank_acct = (await db.execute(
+        select(fin_models.BankAccount).where(fin_models.BankAccount.id == rec.bank_account_id)
+    )).scalars().first()
+    bank_dict = {
+        "name": bank_acct.name if bank_acct else "",
+        "bank": bank_acct.bank if bank_acct else "",
+        "account_number": bank_acct.account_number if bank_acct else "",
+    }
+    company = await _get_company_dict(db)
+    xlsx_bytes = reconciliation.build_reconciliation_xlsx(company, workspace, bank_dict)
+    fname = f"conciliacion_{rec.period_year}_{rec.period_month:02d}.xlsx"
+    return Response(content=xlsx_bytes,
+                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
 @router.get("/reconciliation/{bank_account_id}/unreconciled")
 async def unreconciled_transactions(bank_account_id: int, db: DB, _: CurrentUser):
     """Lista transacciones bancarias no conciliadas de una cuenta."""
