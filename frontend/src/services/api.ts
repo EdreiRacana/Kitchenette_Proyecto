@@ -73,12 +73,28 @@ function isRetryable(error) {
     return RETRYABLE_STATUS.includes(error.response.status);
 }
 
-// --- Request interceptor: auth token ---
+// --- Multi-empresa: empresa activa por sesión (localStorage) ---
+const COMPANY_KEY = 'active_company_id';
+export function getActiveCompanyId(): string | null {
+    try { return localStorage.getItem(COMPANY_KEY); } catch { return null; }
+}
+export function setActiveCompanyId(id: string | null) {
+    try {
+        if (id) localStorage.setItem(COMPANY_KEY, id);
+        else localStorage.removeItem(COMPANY_KEY);
+    } catch { /* ignore */ }
+}
+
+// --- Request interceptor: auth token + empresa activa ---
 api.interceptors.request.use(
     (config) => {
         const token = localStorage.getItem('token');
         if (token) {
             config.headers.Authorization = `Bearer ${token}`;
+        }
+        const companyId = getActiveCompanyId();
+        if (companyId) {
+            config.headers['X-Company-Id'] = companyId;
         }
         return config;
     },

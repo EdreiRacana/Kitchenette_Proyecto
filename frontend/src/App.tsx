@@ -26,6 +26,7 @@ import ForecastModule from "./features/forecast/ForecastModule";
 import RetailModule from "./features/retail/RetailModule";
 import POSModule from "./features/pos/POSModule";
 import { TrianglesCanvas } from "./components/TrianglesCanvas";
+import CompanySwitcher from "./components/CompanySwitcher";
 import api, { onUnauthorized } from "./services/api";
 import { useServerRecovery } from "./hooks/useServerRecovery";
 import configService from "./features/config/service";
@@ -2777,6 +2778,7 @@ function Topbar({ t, s, lang, setLang, theme, setTheme, onLogout, isMobile, onMe
       )}
       <GlobalSearch t={t} s={s} lang={lang} onNavigate={onNavigate} />
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: isMobile ? 4 : 6 }}>
+        <CompanySwitcher t={t} isMobile={isMobile} lang={lang} />
         {!isMobile && (
           <button onClick={() => setLang(lang === "es" ? "en" : "es")} title="Language / Idioma" style={{ display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 11px", borderRadius: 10, cursor: "pointer", background: t.panel2, border: `1px solid ${t.border}`, color: t.textMid, fontSize: 12.5, fontWeight: 700 }}>
             <Globe size={15} />{lang.toUpperCase()}
