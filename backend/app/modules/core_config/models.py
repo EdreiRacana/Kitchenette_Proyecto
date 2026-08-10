@@ -53,6 +53,29 @@ class CompanyProfile(Base):
     # (CDMX 3%, Nuevo León 3%, Jalisco 2%, Estado de México 3%, etc.).
     # Se guarda como % (ej. 3.0 = 3%). Default 3% para orientar.
     state_payroll_tax_rate = Column(Float, default=3.0, nullable=True)
+    # ── Multi-empresa ──────────────────────────────────────────────
+    # Al soltar el uso "singleton" de esta tabla, cada fila representa una
+    # empresa/tenant separado con su propio RFC.
+    regimen_fiscal = Column(String, nullable=True)         # Régimen SAT (601, 612, 626, etc.)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+
+class UserCompany(Base):
+    """Enlace usuarios ↔ empresas (multi-tenant real).
+
+    Un usuario puede pertenecer a varias empresas con distinto rol en cada una.
+    `is_default` marca la empresa que se selecciona al login.
+    """
+    __tablename__ = "user_companies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    role_in_company = Column(String, default="member", nullable=False)   # admin | manager | member | viewer
+    is_default = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class Branch(Base):

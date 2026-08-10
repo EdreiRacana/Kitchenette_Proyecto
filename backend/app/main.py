@@ -130,6 +130,41 @@ async def startup():
     except Exception as e:
         logger.warning("Accounting seed skipped", extra={"error": str(e)})
 
+    # Seed multi-empresa — asegura que todos los usuarios tengan al menos
+    # una empresa asignada (por default la primera CompanyProfile que exista).
+    # Idempotente: solo crea links faltantes.
+    try:
+        from app.db.session import AsyncSessionLocal
+        from sqlalchemy import select as _sel
+        from app.modules.core_config import models as _cfg
+        from app.modules.auth.models import User as _User
+        async with AsyncSessionLocal() as session:
+            # Toma la primera empresa activa
+            company = (await session.execute(
+                _sel(_cfg.CompanyProfile).where(_cfg.CompanyProfile.is_active == True).limit(1)  # noqa: E712
+            )).scalars().first()
+            if not company:
+                company = (await session.execute(
+                    _sel(_cfg.CompanyProfile).limit(1)
+                )).scalars().first()
+            if company:
+                users = (await session.execute(_sel(_User.id))).all()
+                for (uid,) in users:
+                    existing = (await session.execute(
+                        _sel(_cfg.UserCompany).where(
+                            _cfg.UserCompany.user_id == uid,
+                            _cfg.UserCompany.company_id == company.id,
+                        )
+                    )).scalars().first()
+                    if existing is None:
+                        session.add(_cfg.UserCompany(
+                            user_id=uid, company_id=company.id,
+                            role_in_company="admin", is_default=True,
+                        ))
+                await session.commit()
+    except Exception as e:
+        logger.warning("Multi-company seed skipped", extra={"error": str(e)})
+
     from app.core.scheduler import start_scheduler
     start_scheduler()
 

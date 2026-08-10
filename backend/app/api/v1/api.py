@@ -50,6 +50,8 @@ api_router.include_router(notifications_router, prefix="/notifications", tags=["
 api_router.include_router(bi_router,        prefix="/bi",         tags=["bi"])
 from app.modules.reports.router import router as reports_router  # noqa: E402
 api_router.include_router(reports_router,   prefix="/reports",    tags=["reports"])
+from app.modules.core_config.companies_router import router as companies_router  # noqa: E402
+api_router.include_router(companies_router, prefix="",            tags=["companies"])
 api_router.include_router(promotions_router, prefix="/promotions", tags=["promotions"], dependencies=[Depends(module_write_guard("inventory"))])
 api_router.include_router(marketplaces_router, prefix="/marketplaces", tags=["marketplaces"], dependencies=[Depends(module_write_guard("sales"))])
 api_router.include_router(dashboard_router, prefix="/dashboard",  tags=["dashboard"])

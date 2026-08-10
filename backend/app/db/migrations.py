@@ -449,6 +449,10 @@ _BRANCH_STATEMENTS = [
     # Logo persistente en la DB (el filesystem de Render es efímero)
     "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS logo_bytes BYTEA",
     "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS logo_mime  VARCHAR",
+    # Multi-empresa (multi-tenant real) — company_profile deja de ser singleton
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS regimen_fiscal VARCHAR",
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
+    "UPDATE company_profile SET is_active = TRUE WHERE is_active IS NULL",
     # Cierre de período contable
     """CREATE TABLE IF NOT EXISTS accounting_period_close (
         id            SERIAL PRIMARY KEY,
