@@ -89,6 +89,7 @@ from app.modules.forecast import models as forecast_models
 from app.modules.retail import models as retail_models
 from app.modules.promotions import models as promotions_models
 from app.modules.marketplaces import models as marketplaces_models
+from app.modules.reports import models as reports_models  # noqa: F401
 
 
 @app.on_event("startup")
