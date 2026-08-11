@@ -58,6 +58,9 @@ class CompanyProfile(Base):
     # empresa/tenant separado con su propio RFC.
     regimen_fiscal = Column(String, nullable=True)         # Régimen SAT (601, 612, 626, etc.)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Registro patronal IMSS (formato: AAA-NN-CCCC-D con dígito verificador).
+    # Se imprime en cédulas y en avisos AFIL-02/04/08 al IMSS.
+    imss_registro_patronal = Column(String, nullable=True)
 
 
 class UserCompany(Base):

@@ -60,6 +60,7 @@ async def _get_company_dict(db: AsyncSession) -> dict:
         "legal_name": cp.legal_name,
         "commercial_name": cp.commercial_name or cp.legal_name,
         "tax_id": cp.tax_id,
+        "rfc": cp.tax_id,  # alias práctico para PDFs mexicanos
         "contact_email": cp.contact_email,
         "contact_phone": cp.contact_phone,
         "address": cp.address,
@@ -68,6 +69,8 @@ async def _get_company_dict(db: AsyncSession) -> dict:
         "logo_mime": getattr(cp, "logo_mime", None),
         "brand_color": cp.brand_color or "#33B2F5",
         "document_footer": cp.document_footer,
+        "imss_registro_patronal": getattr(cp, "imss_registro_patronal", None),
+        "regimen_fiscal": getattr(cp, "regimen_fiscal", None),
     }
 
 

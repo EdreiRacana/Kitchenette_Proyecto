@@ -469,3 +469,49 @@ class AnnualISRDetail(Base):
 
     adjustment = relationship("AnnualISRAdjustment", back_populates="details")
     employee = relationship("Employee")
+
+
+# ── Avisos IMSS papel (arts. 15 y 34 LSS + Reglamento) ─────────────────
+# Movimientos afiliatorios que el patrón debe presentar al IMSS:
+#   Alta (AFIL-02):      5 días hábiles desde inicio de la relación
+#   Baja (AFIL-04):      5 días hábiles desde término
+#   Modif. salario:      dentro de 5 días hábiles siguientes al cambio
+#                        (efectos bimestrales para IV/CV/GPS).
+# Historial persistido para auditoría STPS / inspección IMSS.
+
+class IMSSMovement(Base):
+    """Movimiento afiliatorio IMSS registrado."""
+    __tablename__ = "hr_imss_movements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("hr_employees.id", ondelete="CASCADE"),
+                          nullable=False, index=True)
+    # alta | baja | modif_salario
+    movement_type = Column(String, nullable=False, index=True)
+    movement_date = Column(String, nullable=False)   # fecha del hecho ISO
+    presented_date = Column(String, nullable=True)   # fecha de presentación IMSS ISO
+    folio = Column(String, nullable=True)            # folio del IDSE si se presentó electrónico
+
+    # Alta
+    sbc_at_movement = Column(Float, nullable=True)   # SBC al momento del movimiento
+    # Baja: código IMSS de motivo (1..9)
+    #   1 Termino de contrato
+    #   2 Separación voluntaria (renuncia)
+    #   3 Abandono de trabajo
+    #   4 Defunción
+    #   5 Clausura del centro de trabajo
+    #   6 Otras causas
+    #   7 Ausentismo (arts. 47/517 LFT)
+    #   8 Rescisión de contrato (justificada por el patrón)
+    #   9 Jubilación / pensión
+    baja_reason_code = Column(String, nullable=True)
+    baja_reason_text = Column(Text, nullable=True)
+    # Modif salario
+    old_sbc = Column(Float, nullable=True)
+    new_sbc = Column(Float, nullable=True)
+
+    notes = Column(Text, nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    employee = relationship("Employee")

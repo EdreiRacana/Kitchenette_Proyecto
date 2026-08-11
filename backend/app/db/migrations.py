@@ -464,6 +464,8 @@ _BRANCH_STATEMENTS = [
     "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS regimen_fiscal VARCHAR",
     "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
     "UPDATE company_profile SET is_active = TRUE WHERE is_active IS NULL",
+    # Registro patronal IMSS — para avisos AFIL-02/04/08 y cédulas
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS imss_registro_patronal VARCHAR",
     # Cierre de período contable
     """CREATE TABLE IF NOT EXISTS accounting_period_close (
         id            SERIAL PRIMARY KEY,
