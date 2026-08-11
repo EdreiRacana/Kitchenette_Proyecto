@@ -173,6 +173,35 @@ export const hrApi = {
       { responseType: "blob" });
     downloadBlob(res.data as Blob, `presupuesto_nomina_${year}.xlsx`);
   },
+
+  // PTU v2 (B3 Fase B) — reparto con topes LFT arts. 122-131 + reforma 2021
+  ptuPreview: (year: number, utilidadRepartible: number,
+                sindicatoMaxDaily?: number | null) =>
+    api.post(`/hr/ptu/preview`, {
+      year, utilidad_repartible: utilidadRepartible,
+      sindicato_max_daily: sindicatoMaxDaily || null,
+    }).then(r => r.data),
+  ptuSave: (data: {
+    year: number; utilidad_repartible: number;
+    sindicato_max_daily?: number | null;
+    payment_deadline?: string; notes?: string;
+  }) => api.post(`/hr/ptu`, data).then(r => r.data),
+  ptuList: () => api.get(`/hr/ptu`).then(r => r.data),
+  ptuGet: (calcId: number) => api.get(`/hr/ptu/${calcId}`).then(r => r.data),
+  ptuDelete: (calcId: number) => api.delete(`/hr/ptu/${calcId}`).then(r => r.data),
+  ptuApprove: (calcId: number) =>
+    api.post(`/hr/ptu/${calcId}/approve`).then(r => r.data),
+  ptuGeneratePayroll: (calcId: number, paymentDate: string) =>
+    api.post(`/hr/ptu/${calcId}/generate-payroll`, { payment_date: paymentDate })
+       .then(r => r.data),
+  downloadPtuXlsx: async (calcId: number, year: number) => {
+    const res = await api.get(`/hr/ptu/${calcId}/xlsx`, { responseType: "blob" });
+    downloadBlob(res.data as Blob, `ptu_${year}.xlsx`);
+  },
+  downloadPtuPdf: async (calcId: number, year: number) => {
+    const res = await api.get(`/hr/ptu/${calcId}/pdf`, { responseType: "blob" });
+    downloadBlob(res.data as Blob, `ptu_${year}.pdf`);
+  },
 };
 
 export function downloadBlob(blob: Blob, filename: string) {

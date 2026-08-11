@@ -420,6 +420,13 @@ _HR_STATEMENTS = [
     "ALTER TABLE hr_contracts ADD COLUMN IF NOT EXISTS payment_place   TEXT",
     "ALTER TABLE hr_contracts ADD COLUMN IF NOT EXISTS training_clause TEXT",
     "ALTER TABLE hr_contracts ADD COLUMN IF NOT EXISTS temporary_reason TEXT",
+    # PTU (art. 127 LFT) — marca empleados excluidos del reparto:
+    # directores, administradores, gerentes generales (frac. I).
+    # is_confidential: si es trabajador de confianza (aplica cap art. 127-II).
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS ptu_excluded BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS is_confidential BOOLEAN DEFAULT FALSE",
+    "UPDATE hr_employees SET ptu_excluded = FALSE WHERE ptu_excluded IS NULL",
+    "UPDATE hr_employees SET is_confidential = FALSE WHERE is_confidential IS NULL",
 ]
 
 _AUTH_STATEMENTS = [

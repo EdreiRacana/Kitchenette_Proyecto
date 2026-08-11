@@ -19,6 +19,7 @@ import {
 import { hrApi, downloadBlob } from "./api";
 import KardexModal from "./KardexModal";
 import PayrollBudgetTab from "./PayrollBudgetTab";
+import PTUTab from "./PTUTab";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type ContractType = "indefinido" | "prueba" | "capacitacion" | "temporal" | "eventual" | "honorarios" | "outsourcing" | "proyecto" | "partime";
@@ -188,7 +189,7 @@ const glass = (t: any): React.CSSProperties =>
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function HRModule({ t, s }: { t: any; s: any }) {
-  const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports" | "communication" | "budget">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports" | "communication" | "budget" | "ptu">("dashboard");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
@@ -294,6 +295,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
     { id: "payroll", label: "Nómina", icon: Receipt },
     { id: "dispersion", label: "Dispersión", icon: Banknote },
     { id: "budget", label: "Presupuesto", icon: TrendingDown },
+    { id: "ptu", label: "PTU", icon: DollarSign },
     { id: "communication", label: "Comunicación", icon: Megaphone },
     { id: "contracts", label: "Contratos", icon: FileSignature },
     { id: "settlements", label: "Liquidaciones", icon: Scale },
@@ -1155,6 +1157,9 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
         <PayrollBudgetTab t={t} employees={employees as any} />
       )}
 
+      {/* ── TAB: PTU (B3) — LFT arts. 122-131 + reforma 2021 ── */}
+      {tab === "ptu" && <PTUTab t={t} />}
+
       {/* ── TAB: Comunicación (anuncios internos) ── */}
       {tab === "communication" && (
         <CommunicationPanel t={t} employees={employees} onLoaded={load} />
@@ -1429,6 +1434,8 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
     alimony_value: editing?.alimony_value ?? "",
     alimony_beneficiary: editing?.alimony_beneficiary || "",
     alimony_court_order: editing?.alimony_court_order || "",
+    ptu_excluded: editing?.ptu_excluded || false,
+    is_confidential: editing?.is_confidential || false,
   });
 
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
@@ -1765,6 +1772,46 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
                     </div>
                   </div>
                 )}
+
+                {/* PTU — clasificación art. 127 LFT */}
+                <div style={{ borderTop: `1px dashed ${t.border}`, paddingTop: 12, marginTop: 4 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textMid, marginBottom: 8,
+                                textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    PTU — Reparto de utilidades (LFT art. 127)
+                  </div>
+                  <div style={g2}>
+                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: 10,
+                                    borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2,
+                                    cursor: "pointer" }}>
+                      <input type="checkbox" checked={!!form.ptu_excluded}
+                        onChange={e => setForm((f: any) => ({ ...f, ptu_excluded: e.target.checked }))}
+                        style={{ marginTop: 2 }} />
+                      <span>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: t.textHi, display: "block" }}>
+                          Excluido del reparto PTU
+                        </span>
+                        <span style={{ fontSize: 11, color: t.textLo }}>
+                          Directores, administradores, gerentes generales (frac. I) o domésticos (frac. VI).
+                        </span>
+                      </span>
+                    </label>
+                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: 10,
+                                    borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2,
+                                    cursor: "pointer" }}>
+                      <input type="checkbox" checked={!!form.is_confidential}
+                        onChange={e => setForm((f: any) => ({ ...f, is_confidential: e.target.checked }))}
+                        style={{ marginTop: 2 }} />
+                      <span>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: t.textHi, display: "block" }}>
+                          Trabajador de confianza
+                        </span>
+                        <span style={{ fontSize: 11, color: t.textLo }}>
+                          Aplica cap salarial art. 127-II (sindicalizado máx × 1.20) al calcular PTU.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
               </div>
 
               {/* Resumen fiscal (referencia rápida) */}

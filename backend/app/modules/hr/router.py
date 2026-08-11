@@ -671,3 +671,166 @@ async def payroll_budget_variance_xlsx(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+# ── PTU (Participación de Utilidades) v2 — LFT arts. 122-131 + reforma 2021
+
+@router.post("/ptu/preview")
+async def ptu_preview(payload: dict, db: DB, current_user: CurrentUser):
+    """Preview del reparto sin persistir.
+
+    Body: { year, utilidad_repartible, sindicato_max_daily? }.
+    """
+    _require_manager(current_user)
+    from app.modules.hr import ptu as ptu_mod
+    year = int(payload.get("year") or 0)
+    util = float(payload.get("utilidad_repartible") or 0)
+    smax = payload.get("sindicato_max_daily")
+    smax = float(smax) if smax not in (None, "", 0) else None
+    if not year or util <= 0:
+        raise HTTPException(400, "year y utilidad_repartible (>0) son obligatorios")
+    return await ptu_mod.calculate_ptu(db, year, util, smax)
+
+
+@router.post("/ptu")
+async def ptu_save(payload: dict, db: DB, current_user: CurrentUser):
+    """Corre y persiste el cálculo como draft.
+
+    Body: { year, utilidad_repartible, sindicato_max_daily?, payment_deadline?, notes? }
+    """
+    _require_manager(current_user)
+    from app.modules.hr import ptu as ptu_mod
+    year = int(payload.get("year") or 0)
+    util = float(payload.get("utilidad_repartible") or 0)
+    smax = payload.get("sindicato_max_daily")
+    smax = float(smax) if smax not in (None, "", 0) else None
+    if not year or util <= 0:
+        raise HTTPException(400, "year y utilidad_repartible (>0) son obligatorios")
+    try:
+        return await ptu_mod.save_calculation(
+            db, year=year, utilidad_repartible=util,
+            sindicato_max_daily=smax,
+            payment_deadline=payload.get("payment_deadline"),
+            notes=payload.get("notes"),
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/ptu")
+async def ptu_list(db: DB, current_user: CurrentUser):
+    """Lista de cálculos PTU (todos los años, más recientes primero)."""
+    from app.modules.hr import ptu as ptu_mod
+    return await ptu_mod.list_calculations(db)
+
+
+@router.get("/ptu/{calc_id}")
+async def ptu_get(calc_id: int, db: DB, current_user: CurrentUser):
+    from app.modules.hr import ptu as ptu_mod
+    r = await ptu_mod.get_calculation(db, calc_id)
+    if not r:
+        raise HTTPException(404, "Cálculo PTU no encontrado")
+    return r
+
+
+@router.delete("/ptu/{calc_id}")
+async def ptu_delete(calc_id: int, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    from app.modules.hr import ptu as ptu_mod
+    try:
+        ok = await ptu_mod.delete_calculation(db, calc_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not ok:
+        raise HTTPException(404, "Cálculo no encontrado")
+    return {"ok": True}
+
+
+@router.post("/ptu/{calc_id}/approve")
+async def ptu_approve(calc_id: int, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    from app.modules.hr import ptu as ptu_mod
+    try:
+        return await ptu_mod.approve_calculation(db, calc_id, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/ptu/{calc_id}/generate-payroll")
+async def ptu_generate_payroll(
+    calc_id: int, payload: dict, db: DB, current_user: CurrentUser,
+):
+    """Genera un PayrollPeriod tipo 'ptu' con un detalle por empleado.
+
+    Body: { payment_date: 'YYYY-MM-DD' }.
+    """
+    _require_manager(current_user)
+    from app.modules.hr import ptu as ptu_mod
+    pay = payload.get("payment_date")
+    if not pay:
+        raise HTTPException(400, "payment_date es obligatorio")
+    try:
+        return await ptu_mod.generate_payroll_period(db, calc_id, pay)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/ptu/{calc_id}/xlsx")
+async def ptu_xlsx(calc_id: int, db: DB, current_user: CurrentUser):
+    from app.modules.hr import ptu as ptu_mod
+    calc = await ptu_mod.get_calculation(db, calc_id)
+    if not calc:
+        raise HTTPException(404, "Cálculo no encontrado")
+    # Enriquecer con `totals` si viene del persistido (get_calculation no lo trae)
+    if "totals" not in calc:
+        rows = calc.get("rows", [])
+        included = [r for r in rows if not r["excluded"]]
+        calc["totals"] = {
+            "total_employees": len(rows), "total_included": len(included),
+            "total_excluded": len(rows) - len(included),
+            "total_days": sum(r["days_worked_ptu"] for r in included),
+            "total_salary_base": sum(r["salary_earned_ptu"] for r in included),
+            "total_ptu_gross": sum(r["ptu_gross"] for r in rows),
+            "total_ptu_paid": sum(r["ptu_final"] for r in rows),
+            "total_cap_savings": sum(
+                r["ptu_gross"] - r["ptu_final"] for r in rows if not r["excluded"]
+            ),
+        }
+    xlsx = ptu_mod.build_ptu_xlsx(calc)
+    fname = f"ptu_{calc['period_year']}.xlsx"
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/ptu/{calc_id}/pdf")
+async def ptu_pdf(calc_id: int, db: DB, current_user: CurrentUser):
+    from app.modules.hr import ptu as ptu_mod
+    from app.modules.sales.universal_service import _get_company_dict
+    calc = await ptu_mod.get_calculation(db, calc_id)
+    if not calc:
+        raise HTTPException(404, "Cálculo no encontrado")
+    if "totals" not in calc:
+        rows = calc.get("rows", [])
+        included = [r for r in rows if not r["excluded"]]
+        calc["totals"] = {
+            "total_employees": len(rows), "total_included": len(included),
+            "total_excluded": len(rows) - len(included),
+            "total_days": sum(r["days_worked_ptu"] for r in included),
+            "total_salary_base": sum(r["salary_earned_ptu"] for r in included),
+            "total_ptu_gross": sum(r["ptu_gross"] for r in rows),
+            "total_ptu_paid": sum(r["ptu_final"] for r in rows),
+            "total_cap_savings": sum(
+                r["ptu_gross"] - r["ptu_final"] for r in rows if not r["excluded"]
+            ),
+        }
+    company = await _get_company_dict(db)
+    pdf = ptu_mod.build_ptu_pdf(company, calc)
+    fname = f"ptu_{calc['period_year']}.pdf"
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
