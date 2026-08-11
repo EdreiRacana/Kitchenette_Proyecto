@@ -202,6 +202,28 @@ export const hrApi = {
     const res = await api.get(`/hr/ptu/${calcId}/pdf`, { responseType: "blob" });
     downloadBlob(res.data as Blob, `ptu_${year}.pdf`);
   },
+
+  // Ajuste anual ISR (B4 Fase B) — LISR arts. 97 y 116
+  annualIsrPreview: (year: number) =>
+    api.post(`/hr/annual-isr/preview`, { year }).then(r => r.data),
+  annualIsrSave: (year: number) =>
+    api.post(`/hr/annual-isr`, { year }).then(r => r.data),
+  annualIsrList: () => api.get(`/hr/annual-isr`).then(r => r.data),
+  annualIsrGet: (adjId: number) =>
+    api.get(`/hr/annual-isr/${adjId}`).then(r => r.data),
+  annualIsrDelete: (adjId: number) =>
+    api.delete(`/hr/annual-isr/${adjId}`).then(r => r.data),
+  annualIsrApprove: (adjId: number) =>
+    api.post(`/hr/annual-isr/${adjId}/approve`).then(r => r.data),
+  downloadAnnualIsrXlsx: async (adjId: number, year: number) => {
+    const res = await api.get(`/hr/annual-isr/${adjId}/xlsx`, { responseType: "blob" });
+    downloadBlob(res.data as Blob, `ajuste_isr_${year}.xlsx`);
+  },
+  downloadAnnualIsrConstancia: async (year: number, empId: number, empNumber: string) => {
+    const res = await api.get(`/hr/annual-isr/${year}/constancia/${empId}.pdf`,
+      { responseType: "blob" });
+    downloadBlob(res.data as Blob, `constancia_isr_${year}_${empNumber}.pdf`);
+  },
 };
 
 export function downloadBlob(blob: Blob, filename: string) {

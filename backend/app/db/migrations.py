@@ -427,6 +427,10 @@ _HR_STATEMENTS = [
     "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS is_confidential BOOLEAN DEFAULT FALSE",
     "UPDATE hr_employees SET ptu_excluded = FALSE WHERE ptu_excluded IS NULL",
     "UPDATE hr_employees SET is_confidential = FALSE WHERE is_confidential IS NULL",
+    # Ajuste anual ISR (art. 97-B LISR) — aviso escrito del empleado de que
+    # hará su propia declaración anual, releva al patrón del ajuste.
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS declares_own_annual BOOLEAN DEFAULT FALSE",
+    "UPDATE hr_employees SET declares_own_annual = FALSE WHERE declares_own_annual IS NULL",
 ]
 
 _AUTH_STATEMENTS = [

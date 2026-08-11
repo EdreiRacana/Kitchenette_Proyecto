@@ -806,6 +806,104 @@ async def ptu_xlsx(calc_id: int, db: DB, current_user: CurrentUser):
     )
 
 
+# ── Ajuste Anual de ISR (B4) — LISR arts. 97 y 116 ──────────────────
+
+@router.post("/annual-isr/preview")
+async def annual_isr_preview(payload: dict, db: DB, current_user: CurrentUser):
+    """Preview del ajuste anual (sin persistir). Body: { year }."""
+    _require_manager(current_user)
+    from app.modules.hr import annual_isr as ai
+    year = int(payload.get("year") or 0)
+    if not year:
+        raise HTTPException(400, "year es obligatorio")
+    return await ai.calculate_adjustment(db, year)
+
+
+@router.post("/annual-isr")
+async def annual_isr_save(payload: dict, db: DB, current_user: CurrentUser):
+    """Corre y persiste como draft. Body: { year }."""
+    _require_manager(current_user)
+    from app.modules.hr import annual_isr as ai
+    year = int(payload.get("year") or 0)
+    if not year:
+        raise HTTPException(400, "year es obligatorio")
+    try:
+        return await ai.save_adjustment(db, year, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/annual-isr")
+async def annual_isr_list(db: DB, current_user: CurrentUser):
+    from app.modules.hr import annual_isr as ai
+    return await ai.list_adjustments(db)
+
+
+@router.get("/annual-isr/{adj_id}")
+async def annual_isr_get(adj_id: int, db: DB, current_user: CurrentUser):
+    from app.modules.hr import annual_isr as ai
+    r = await ai.get_adjustment(db, adj_id)
+    if not r:
+        raise HTTPException(404, "Ajuste no encontrado")
+    return r
+
+
+@router.delete("/annual-isr/{adj_id}")
+async def annual_isr_delete(adj_id: int, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    from app.modules.hr import annual_isr as ai
+    try:
+        ok = await ai.delete_adjustment(db, adj_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not ok:
+        raise HTTPException(404, "Ajuste no encontrado")
+    return {"ok": True}
+
+
+@router.post("/annual-isr/{adj_id}/approve")
+async def annual_isr_approve(adj_id: int, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    from app.modules.hr import annual_isr as ai
+    try:
+        return await ai.approve_adjustment(db, adj_id, user_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/annual-isr/{adj_id}/xlsx")
+async def annual_isr_xlsx(adj_id: int, db: DB, current_user: CurrentUser):
+    from app.modules.hr import annual_isr as ai
+    data = await ai.get_adjustment(db, adj_id)
+    if not data:
+        raise HTTPException(404, "Ajuste no encontrado")
+    xlsx = ai.build_adjustment_xlsx(data)
+    fname = f"ajuste_isr_{data['period_year']}.xlsx"
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/annual-isr/{year}/constancia/{employee_id}.pdf")
+async def annual_isr_constancia(
+    year: int, employee_id: int, db: DB, current_user: CurrentUser,
+):
+    """Constancia individual de retenciones (art. 99 LISR)."""
+    from app.modules.hr import annual_isr as ai
+    from app.modules.sales.universal_service import _get_company_dict
+    company = await _get_company_dict(db)
+    pdf = await ai.build_constancia_pdf(db, company, year, employee_id)
+    if not pdf:
+        raise HTTPException(404, "Empleado sin nómina en el año")
+    fname = f"constancia_isr_{year}_{employee_id}.pdf"
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 @router.get("/ptu/{calc_id}/pdf")
 async def ptu_pdf(calc_id: int, db: DB, current_user: CurrentUser):
     from app.modules.hr import ptu as ptu_mod
