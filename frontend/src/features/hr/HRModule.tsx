@@ -14,9 +14,10 @@ import {
   Building2, Briefcase, MapPin, Phone, Mail, Hash, Star,
   ChevronDown, ChevronUp, Filter, MoreVertical, Play, Pause,
   CheckSquare, Clock3, UserCheck, UserX, Cake, Award,
-  Megaphone, Send, FileSignature, Trash2, Scale,
+  Megaphone, Send, FileSignature, Trash2, Scale, BookOpen,
 } from "lucide-react";
 import { hrApi, downloadBlob } from "./api";
+import KardexModal from "./KardexModal";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type ContractType = "indefinido" | "prueba" | "capacitacion" | "temporal" | "eventual" | "honorarios" | "outsourcing" | "proyecto" | "partime";
@@ -198,6 +199,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
   const [employeeForm, setEmployeeForm] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+  const [kardexEmployee, setKardexEmployee] = useState<Employee | null>(null);
   const [selectedPeriod, setSelectedPeriod] = useState<PayrollPeriod | null>(null);
   const [periodDetail, setPeriodDetail] = useState<any | null>(null);
   // Set de period IDs actualmente descargando su ZIP (para spinner + evitar doble click)
@@ -548,7 +550,23 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
                             <sm.icon size={12} />{sm.label}
                           </span>
                         </td>
-                        <td style={{ padding: "13px 16px" }}><ChevronRight size={16} color={t.textLo} /></td>
+                        <td style={{ padding: "13px 16px" }}>
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <button
+                              title="Ver kardex del empleado"
+                              onClick={(ev) => { ev.stopPropagation(); setKardexEmployee(e); }}
+                              style={{
+                                padding: "5px 10px", borderRadius: 6,
+                                border: `1px solid ${t.nova}44`,
+                                background: t.nova + "18", color: t.nova,
+                                cursor: "pointer", fontSize: 11, fontWeight: 600,
+                                display: "inline-flex", alignItems: "center", gap: 4,
+                              }}>
+                              <BookOpen size={11} /> Kardex
+                            </button>
+                            <ChevronRight size={16} color={t.textLo} />
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1227,6 +1245,15 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
             const fresh = await hrApi.periodDetail(bulkUpload.period.id);
             setPeriodDetail(fresh);
           }}
+        />
+      )}
+
+      {kardexEmployee && (
+        <KardexModal
+          t={t}
+          employeeId={kardexEmployee.id}
+          employeeNumber={kardexEmployee.employee_number}
+          onClose={() => setKardexEmployee(null)}
         />
       )}
 
