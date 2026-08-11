@@ -53,6 +53,11 @@ class Employee(Base):
     alimony_court_order = Column(String, nullable=True)  # expediente / juzgado
     vacation_days = Column(Integer, nullable=False, default=0)
     vacation_used = Column(Integer, nullable=False, default=0)
+    # PTU (art. 127 LFT):
+    # ptu_excluded: TRUE si es director, administrador o gerente general (frac. I)
+    # is_confidential: aplica cap art. 127-II (salario tope = sindicalizado max × 1.20)
+    ptu_excluded = Column(Boolean, default=False, nullable=False)
+    is_confidential = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -280,3 +285,116 @@ class PayrollBudget(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     employee_link = relationship("Employee", foreign_keys=[employee_id])
+
+
+# ── PTU (Participación de los Trabajadores en las Utilidades) ──────────────
+# LFT arts. 117-131 + reforma DOF 23-abr-2021 (tope art. 127-VIII).
+# Cada corrida se persiste completa con topes y exclusiones justificadas para
+# tener trazabilidad legal ante inspección STPS o juicio individual.
+
+class PTUCalculation(Base):
+    """Corrida de reparto de PTU de un año.
+
+    Un cálculo por (period_year × company). Estados:
+      - draft: cálculo guardado, aún no genera nómina
+      - approved: aprobado, listo para nómina/CFDI
+      - paid: ya se generó PayrollPeriod y dispersó
+    """
+    __tablename__ = "hr_ptu_calculations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    period_year = Column(Integer, nullable=False, index=True)
+    utilidad_repartible = Column(Float, nullable=False)
+    # Tarifa máxima del sindicalizado (tope art. 127-II para confianza).
+    # NULL = no aplica (no hay sindicato o no se capturó).
+    sindicato_max_daily = Column(Float, nullable=True)
+    # Fecha límite legal de pago (60 días después del 31-mar = 30-mayo)
+    payment_deadline = Column(String, nullable=True)  # ISO YYYY-MM-DD
+    notes = Column(Text, nullable=True)
+    status = Column(String, nullable=False, default="draft", index=True)
+    # Enlace opcional al período de nómina generado (tipo="ptu")
+    payroll_period_id = Column(Integer, ForeignKey("hr_payroll_periods.id"), nullable=True)
+
+    total_days = Column(Float, nullable=False, default=0.0)
+    total_salary_base = Column(Float, nullable=False, default=0.0)
+    total_ptu_paid = Column(Float, nullable=False, default=0.0)  # suma después de topes
+    total_excluded = Column(Integer, nullable=False, default=0)
+
+    calculated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    details = relationship("PTUDetail", back_populates="calculation",
+                           cascade="all, delete-orphan")
+    payroll_period = relationship("PayrollPeriod", foreign_keys=[payroll_period_id])
+
+
+class PTUDetail(Base):
+    """Cálculo por empleado dentro de una corrida.
+
+    Guarda la mitad-por-días, la mitad-por-salario, y el monto final
+    después del cap art. 127-VIII con justificación del cap y bandera
+    de exclusión (art. 127-I / VII).
+    """
+    __tablename__ = "hr_ptu_details"
+
+    id = Column(Integer, primary_key=True, index=True)
+    calculation_id = Column(Integer,
+                             ForeignKey("hr_ptu_calculations.id", ondelete="CASCADE"),
+                             nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("hr_employees.id"),
+                          nullable=False, index=True)
+
+    # Datos base
+    days_worked_ptu = Column(Float, nullable=False, default=0.0)   # art. 123 LFT
+    salary_earned_ptu = Column(Float, nullable=False, default=0.0)  # cap conf. art. 127-II
+    salary_cap_applied = Column(Boolean, default=False, nullable=False)
+    salary_cap_note = Column(Text, nullable=True)  # ej. "cap $Xdía por confianza"
+
+    # Reparto bruto
+    ptu_by_days = Column(Float, nullable=False, default=0.0)
+    ptu_by_salary = Column(Float, nullable=False, default=0.0)
+    ptu_gross = Column(Float, nullable=False, default=0.0)
+
+    # Tope art. 127-VIII (mayor entre 3 meses salario o promedio 3 años)
+    cap_3_months = Column(Float, nullable=True)
+    cap_avg_3_years = Column(Float, nullable=True)
+    cap_applied_amount = Column(Float, nullable=True)  # el mayor de los dos
+    cap_reason = Column(String, nullable=True)   # "3_months" | "avg_3_years"
+
+    ptu_final = Column(Float, nullable=False, default=0.0)  # después del cap
+
+    # Exclusiones art. 127
+    excluded = Column(Boolean, default=False, nullable=False)
+    excluded_reason = Column(String, nullable=True)  # "director_gerente" | "eventual_menor_60d" | "domestico"
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    calculation = relationship("PTUCalculation", back_populates="details")
+    employee = relationship("Employee")
+
+
+class PTUHistoric(Base):
+    """PTU pagada históricamente a un empleado — sirve de insumo para el
+    promedio de los últimos 3 años del cap art. 127-VIII.
+
+    Se llena automáticamente cuando un cálculo pasa a status='paid', pero
+    también se puede capturar manualmente para años previos al sistema.
+    """
+    __tablename__ = "hr_ptu_historic"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "period_year",
+                         name="uq_ptu_historic_employee_year"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("hr_employees.id", ondelete="CASCADE"),
+                          nullable=False, index=True)
+    period_year = Column(Integer, nullable=False, index=True)
+    amount_paid = Column(Float, nullable=False, default=0.0)
+    source = Column(String, nullable=False, default="system")  # system | manual
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    employee = relationship("Employee")

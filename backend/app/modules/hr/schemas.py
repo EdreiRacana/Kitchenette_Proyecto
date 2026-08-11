@@ -44,6 +44,9 @@ class EmployeeBase(BaseModel):
     alimony_court_order: Optional[str] = None
     vacation_days: int = 0
     vacation_used: int = 0
+    # PTU (LFT art. 127)
+    ptu_excluded: bool = False        # frac. I / VI: director, gerente general, doméstico
+    is_confidential: bool = False     # aplica cap frac. II
     is_active: bool = True
 
 
@@ -90,6 +93,8 @@ class EmployeeUpdate(BaseModel):
     alimony_court_order: Optional[str] = None
     vacation_days: Optional[int] = None
     vacation_used: Optional[int] = None
+    ptu_excluded: Optional[bool] = None
+    is_confidential: Optional[bool] = None
     is_active: Optional[bool] = None
 
 
