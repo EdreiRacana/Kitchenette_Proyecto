@@ -886,6 +886,103 @@ async def annual_isr_xlsx(adj_id: int, db: DB, current_user: CurrentUser):
     )
 
 
+# ── B5 · Cédulas IMSS mensual + bimestral (SAR/INFONAVIT) ──────────
+
+@router.get("/cedulas/imss/{year}/{month}")
+async def cedula_imss_mensual(
+    year: int, month: int, db: DB, current_user: CurrentUser,
+    prima_rt: Optional[float] = None,
+):
+    """Cédula IMSS mensual (E y M especie/dinero + IV + GPS + RT)."""
+    from app.modules.hr import imss_cedulas as ced
+    if month < 1 or month > 12:
+        raise HTTPException(400, "month debe ser 1-12")
+    return await ced.cedula_mensual(db, year, month, prima_rt=prima_rt)
+
+
+@router.get("/cedulas/imss/{year}/{month}.pdf")
+async def cedula_imss_mensual_pdf(
+    year: int, month: int, db: DB, current_user: CurrentUser,
+    prima_rt: Optional[float] = None,
+):
+    from app.modules.hr import imss_cedulas as ced
+    from app.modules.sales.universal_service import _get_company_dict
+    if month < 1 or month > 12:
+        raise HTTPException(400, "month debe ser 1-12")
+    cedula = await ced.cedula_mensual(db, year, month, prima_rt=prima_rt)
+    company = await _get_company_dict(db)
+    pdf = ced.build_pdf(company, cedula, "mensual")
+    fname = f"cedula_imss_{year}_{month:02d}.pdf"
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/cedulas/imss/{year}/{month}.xlsx")
+async def cedula_imss_mensual_xlsx(
+    year: int, month: int, db: DB, current_user: CurrentUser,
+    prima_rt: Optional[float] = None,
+):
+    from app.modules.hr import imss_cedulas as ced
+    if month < 1 or month > 12:
+        raise HTTPException(400, "month debe ser 1-12")
+    cedula = await ced.cedula_mensual(db, year, month, prima_rt=prima_rt)
+    xlsx = ced.build_xlsx(cedula, "mensual")
+    fname = f"cedula_imss_{year}_{month:02d}.xlsx"
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/cedulas/bimestral/{year}/{bimester}")
+async def cedula_bimestral_get(
+    year: int, bimester: int, db: DB, current_user: CurrentUser,
+):
+    """Cédula bimestral SAR/INFONAVIT (Retiro + CV + INFONAVIT 5% + amortizaciones)."""
+    from app.modules.hr import imss_cedulas as ced
+    if bimester < 1 or bimester > 6:
+        raise HTTPException(400, "bimester debe ser 1-6")
+    return await ced.cedula_bimestral(db, year, bimester)
+
+
+@router.get("/cedulas/bimestral/{year}/{bimester}.pdf")
+async def cedula_bimestral_pdf(
+    year: int, bimester: int, db: DB, current_user: CurrentUser,
+):
+    from app.modules.hr import imss_cedulas as ced
+    from app.modules.sales.universal_service import _get_company_dict
+    if bimester < 1 or bimester > 6:
+        raise HTTPException(400, "bimester debe ser 1-6")
+    cedula = await ced.cedula_bimestral(db, year, bimester)
+    company = await _get_company_dict(db)
+    pdf = ced.build_pdf(company, cedula, "bimestral")
+    fname = f"cedula_bimestral_{year}_B{bimester}.pdf"
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/cedulas/bimestral/{year}/{bimester}.xlsx")
+async def cedula_bimestral_xlsx(
+    year: int, bimester: int, db: DB, current_user: CurrentUser,
+):
+    from app.modules.hr import imss_cedulas as ced
+    if bimester < 1 or bimester > 6:
+        raise HTTPException(400, "bimester debe ser 1-6")
+    cedula = await ced.cedula_bimestral(db, year, bimester)
+    xlsx = ced.build_xlsx(cedula, "bimestral")
+    fname = f"cedula_bimestral_{year}_B{bimester}.xlsx"
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 @router.get("/annual-isr/{year}/constancia/{employee_id}.pdf")
 async def annual_isr_constancia(
     year: int, employee_id: int, db: DB, current_user: CurrentUser,
