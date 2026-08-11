@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.session import Base
@@ -240,3 +240,43 @@ class Contract(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     employee = relationship("Employee")
+
+
+class PayrollBudget(Base):
+    """Presupuesto anual de nómina por empleado — 12 columnas mensuales.
+
+    Cada fila = un empleado × un año. Los montos m1..m12 son el costo total
+    proyectado por mes (sueldo bruto + prestaciones + carga patronal).
+    El sistema compara contra PayrollDetail.total_gross real para variance.
+    """
+    __tablename__ = "hr_payroll_budgets"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "period_year",
+                         name="uq_payroll_budget_employee_year"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("hr_employees.id", ondelete="CASCADE"),
+                          nullable=False, index=True)
+    period_year = Column(Integer, nullable=False, index=True)
+
+    m1 = Column(Float, default=0.0, nullable=False)
+    m2 = Column(Float, default=0.0, nullable=False)
+    m3 = Column(Float, default=0.0, nullable=False)
+    m4 = Column(Float, default=0.0, nullable=False)
+    m5 = Column(Float, default=0.0, nullable=False)
+    m6 = Column(Float, default=0.0, nullable=False)
+    m7 = Column(Float, default=0.0, nullable=False)
+    m8 = Column(Float, default=0.0, nullable=False)
+    m9 = Column(Float, default=0.0, nullable=False)
+    m10 = Column(Float, default=0.0, nullable=False)
+    m11 = Column(Float, default=0.0, nullable=False)
+    m12 = Column(Float, default=0.0, nullable=False)
+
+    notes = Column(Text, nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    employee_link = relationship("Employee", foreign_keys=[employee_id])

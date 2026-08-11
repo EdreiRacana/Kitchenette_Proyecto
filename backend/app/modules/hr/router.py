@@ -563,3 +563,111 @@ async def employee_kardex_pdf(
         content=pdf, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+# ── Presupuesto anual de nómina (B2) ───────────────────────────────────
+
+@router.get("/payroll-budgets")
+async def list_payroll_budgets(
+    db: DB, current_user: CurrentUser, year: int,
+):
+    """Devuelve los presupuestos anuales de nómina del año indicado."""
+    from app.modules.hr import payroll_budgets as pb
+    return await pb.list_budgets(db, year)
+
+
+@router.put("/payroll-budgets")
+async def upsert_payroll_budget(
+    payload: dict, db: DB, current_user: CurrentUser,
+):
+    """Crea o actualiza el presupuesto de un empleado/año.
+
+    Body: { employee_id, period_year, m1..m12, notes? }.
+    """
+    _require_manager(current_user)
+    from app.modules.hr import payroll_budgets as pb
+    year = int(payload.get("period_year") or 0)
+    emp_id = int(payload.get("employee_id") or 0)
+    if not year or not emp_id:
+        raise HTTPException(400, "period_year y employee_id son obligatorios")
+    months = {c: payload.get(c) for c in pb.MONTH_COLS if c in payload}
+    try:
+        return await pb.upsert_budget(
+            db, year=year, employee_id=emp_id, months=months,
+            notes=payload.get("notes"), user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.delete("/payroll-budgets/{budget_id}")
+async def delete_payroll_budget(
+    budget_id: int, db: DB, current_user: CurrentUser,
+):
+    _require_manager(current_user)
+    from app.modules.hr import payroll_budgets as pb
+    ok = await pb.delete_budget(db, budget_id)
+    if not ok:
+        raise HTTPException(404, "Presupuesto no encontrado")
+    return {"ok": True}
+
+
+@router.post("/payroll-budgets/copy-from-year")
+async def copy_payroll_budgets(
+    payload: dict, db: DB, current_user: CurrentUser,
+):
+    """Copia presupuestos de un año a otro con factor opcional (aumentos).
+
+    Body: { source_year, target_year, factor? } (factor default 1.0).
+    """
+    _require_manager(current_user)
+    from app.modules.hr import payroll_budgets as pb
+    src = int(payload.get("source_year") or 0)
+    tgt = int(payload.get("target_year") or 0)
+    factor = float(payload.get("factor") or 1.0)
+    if not src or not tgt:
+        raise HTTPException(400, "source_year y target_year son obligatorios")
+    created = await pb.copy_from_year(
+        db, src, tgt, factor=factor, user_id=current_user.id,
+    )
+    return {"created": created, "source_year": src, "target_year": tgt, "factor": factor}
+
+
+@router.post("/payroll-budgets/seed")
+async def seed_payroll_budgets(
+    payload: dict, db: DB, current_user: CurrentUser,
+):
+    """Inicializa presupuesto en 0 para todos los empleados activos que aún
+    no lo tengan capturado en el año. Body: { year }."""
+    _require_manager(current_user)
+    from app.modules.hr import payroll_budgets as pb
+    year = int(payload.get("year") or 0)
+    if not year:
+        raise HTTPException(400, "year es obligatorio")
+    created = await pb.seed_from_active_employees(db, year, user_id=current_user.id)
+    return {"created": created, "year": year}
+
+
+@router.get("/payroll-budgets/{year}/variance")
+async def payroll_budget_variance(
+    year: int, db: DB, current_user: CurrentUser,
+):
+    """Comparativo mes a mes presupuesto vs. costo real de nómina."""
+    from app.modules.hr import payroll_budgets as pb
+    return await pb.compute_variance(db, year)
+
+
+@router.get("/payroll-budgets/{year}/variance.xlsx")
+async def payroll_budget_variance_xlsx(
+    year: int, db: DB, current_user: CurrentUser,
+):
+    """Descarga XLSX profesional del comparativo presupuesto vs real."""
+    from app.modules.hr import payroll_budgets as pb
+    variance = await pb.compute_variance(db, year)
+    xlsx = pb.build_variance_xlsx(variance)
+    fname = f"presupuesto_nomina_{year}.xlsx"
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )

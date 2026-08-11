@@ -147,6 +147,32 @@ export const hrApi = {
     const y = year || new Date().getFullYear();
     downloadBlob(res.data as Blob, `kardex_${empNumber}_${y}.pdf`);
   },
+
+  // Presupuesto anual de nómina (B2 Fase B)
+  listPayrollBudgets: (year: number) =>
+    api.get(`/hr/payroll-budgets`, { params: { year } }).then(r => r.data),
+  upsertPayrollBudget: (data: {
+    employee_id: number; period_year: number;
+    m1?: number; m2?: number; m3?: number; m4?: number;
+    m5?: number; m6?: number; m7?: number; m8?: number;
+    m9?: number; m10?: number; m11?: number; m12?: number;
+    notes?: string;
+  }) => api.put(`/hr/payroll-budgets`, data).then(r => r.data),
+  deletePayrollBudget: (budgetId: number) =>
+    api.delete(`/hr/payroll-budgets/${budgetId}`).then(r => r.data),
+  copyPayrollBudgets: (sourceYear: number, targetYear: number, factor = 1.0) =>
+    api.post(`/hr/payroll-budgets/copy-from-year`, {
+      source_year: sourceYear, target_year: targetYear, factor,
+    }).then(r => r.data),
+  seedPayrollBudgets: (year: number) =>
+    api.post(`/hr/payroll-budgets/seed`, { year }).then(r => r.data),
+  getPayrollBudgetVariance: (year: number) =>
+    api.get(`/hr/payroll-budgets/${year}/variance`).then(r => r.data),
+  downloadPayrollBudgetVarianceXlsx: async (year: number) => {
+    const res = await api.get(`/hr/payroll-budgets/${year}/variance.xlsx`,
+      { responseType: "blob" });
+    downloadBlob(res.data as Blob, `presupuesto_nomina_${year}.xlsx`);
+  },
 };
 
 export function downloadBlob(blob: Blob, filename: string) {

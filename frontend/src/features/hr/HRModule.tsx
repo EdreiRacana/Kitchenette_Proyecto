@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { hrApi, downloadBlob } from "./api";
 import KardexModal from "./KardexModal";
+import PayrollBudgetTab from "./PayrollBudgetTab";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type ContractType = "indefinido" | "prueba" | "capacitacion" | "temporal" | "eventual" | "honorarios" | "outsourcing" | "proyecto" | "partime";
@@ -187,7 +188,7 @@ const glass = (t: any): React.CSSProperties =>
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function HRModule({ t, s }: { t: any; s: any }) {
-  const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports" | "communication">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports" | "communication" | "budget">("dashboard");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
@@ -292,6 +293,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
     { id: "checker", label: "Checador", icon: Fingerprint },
     { id: "payroll", label: "Nómina", icon: Receipt },
     { id: "dispersion", label: "Dispersión", icon: Banknote },
+    { id: "budget", label: "Presupuesto", icon: TrendingDown },
     { id: "communication", label: "Comunicación", icon: Megaphone },
     { id: "contracts", label: "Contratos", icon: FileSignature },
     { id: "settlements", label: "Liquidaciones", icon: Scale },
@@ -1146,6 +1148,11 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           setSelectedPeriod={setSelectedPeriod}
           onDispersed={async () => { await load(); if (selectedPeriod) { const d = await hrApi.periodDetail(selectedPeriod.id); setPeriodDetail(d); } }}
         />
+      )}
+
+      {/* ── TAB: Presupuesto anual de nómina (B2) ── */}
+      {tab === "budget" && (
+        <PayrollBudgetTab t={t} employees={employees as any} />
       )}
 
       {/* ── TAB: Comunicación (anuncios internos) ── */}
