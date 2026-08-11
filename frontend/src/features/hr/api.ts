@@ -282,6 +282,17 @@ export const hrApi = {
     const fmt = { alta: "AFIL02", baja: "AFIL04", modif_salario: "AFIL08" }[mov.movement_type as string] || "AFIL";
     downloadBlob(res.data as Blob, `${fmt}_${mov.employee_number}_${mov.movement_date}.pdf`);
   },
+
+  // Exportadores fiscales (B7 DIM + B8 SUA)
+  downloadDimAnexo1: async (year: number) => {
+    const res = await api.get(`/hr/exports/dim/${year}.txt`, { responseType: "blob" });
+    downloadBlob(res.data as Blob, `dim_anexo1_${year}.txt`);
+  },
+  downloadSuaMovimientos: async (year?: number) => {
+    const res = await api.get(`/hr/exports/sua/movimientos.txt`,
+      { params: year ? { year } : {}, responseType: "blob" });
+    downloadBlob(res.data as Blob, `MOVTOS_SUA_${year || "todos"}.txt`);
+  },
 };
 
 export function downloadBlob(blob: Blob, filename: string) {

@@ -76,6 +76,16 @@ export default function AvisosImssTab({ t, employees }: { t: any; employees: any
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={load} style={btnGhost(t)}><RefreshCw size={14} /></button>
+          <button onClick={() => {
+            const y = prompt("¿Exportar SUA de qué año? (vacío = todos los movimientos)",
+                              String(new Date().getFullYear()));
+            if (y === null) return;
+            const yr = y.trim() ? Number(y) : undefined;
+            hrApi.downloadSuaMovimientos(yr).catch((e: any) =>
+              alert(e?.response?.data?.detail || "Error al exportar SUA"));
+          }} title="MOVTOS.txt para importar en SUA escritorio" style={btnGhost(t)}>
+            <Download size={14} /> SUA .txt
+          </button>
           <button onClick={() => setShowWizard({})} style={btnPrimary(t)}>
             <Plus size={14} /> Nuevo aviso
           </button>
