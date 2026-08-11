@@ -251,6 +251,37 @@ export const hrApi = {
       { responseType: "blob" });
     downloadBlob(res.data as Blob, `cedula_bimestral_${year}_B${bimester}.xlsx`);
   },
+
+  // Avisos IMSS (B6) — AFIL-02/04/08
+  imssMovementsList: (opts?: { employee_id?: number; movement_type?: string; year?: number }) =>
+    api.get(`/hr/imss-movements`, { params: opts || {} }).then(r => r.data),
+  imssMovementsPending: () =>
+    api.get(`/hr/imss-movements/pending`).then(r => r.data),
+  imssMovementGet: (movId: number) =>
+    api.get(`/hr/imss-movements/${movId}`).then(r => r.data),
+  imssMovementCreate: (data: {
+    employee_id: number;
+    movement_type: "alta" | "baja" | "modif_salario";
+    movement_date: string;
+    sbc_at_movement?: number;
+    baja_reason_code?: string;
+    baja_reason_text?: string;
+    old_sbc?: number;
+    new_sbc?: number;
+    notes?: string;
+    presented_date?: string;
+    folio?: string;
+  }) => api.post(`/hr/imss-movements`, data).then(r => r.data),
+  imssMovementUpdate: (movId: number, data: {
+    presented_date?: string; folio?: string; notes?: string;
+  }) => api.patch(`/hr/imss-movements/${movId}`, data).then(r => r.data),
+  imssMovementDelete: (movId: number) =>
+    api.delete(`/hr/imss-movements/${movId}`).then(r => r.data),
+  downloadImssMovementPdf: async (mov: any) => {
+    const res = await api.get(`/hr/imss-movements/${mov.id}/pdf`, { responseType: "blob" });
+    const fmt = { alta: "AFIL02", baja: "AFIL04", modif_salario: "AFIL08" }[mov.movement_type as string] || "AFIL";
+    downloadBlob(res.data as Blob, `${fmt}_${mov.employee_number}_${mov.movement_date}.pdf`);
+  },
 };
 
 export function downloadBlob(blob: Blob, filename: string) {

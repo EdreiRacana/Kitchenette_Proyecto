@@ -22,6 +22,7 @@ import PayrollBudgetTab from "./PayrollBudgetTab";
 import PTUTab from "./PTUTab";
 import AnnualIsrTab from "./AnnualIsrTab";
 import CedulasImssTab from "./CedulasImssTab";
+import AvisosImssTab from "./AvisosImssTab";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type ContractType = "indefinido" | "prueba" | "capacitacion" | "temporal" | "eventual" | "honorarios" | "outsourcing" | "proyecto" | "partime";
@@ -191,7 +192,7 @@ const glass = (t: any): React.CSSProperties =>
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function HRModule({ t, s }: { t: any; s: any }) {
-  const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports" | "communication" | "budget" | "ptu" | "annualisr" | "cedulas">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports" | "communication" | "budget" | "ptu" | "annualisr" | "cedulas" | "avisos">("dashboard");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
@@ -300,6 +301,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
     { id: "ptu", label: "PTU", icon: DollarSign },
     { id: "annualisr", label: "Ajuste ISR", icon: Calculator },
     { id: "cedulas", label: "Cédulas IMSS", icon: Shield },
+    { id: "avisos", label: "Avisos IMSS", icon: FileSignature },
     { id: "communication", label: "Comunicación", icon: Megaphone },
     { id: "contracts", label: "Contratos", icon: FileSignature },
     { id: "settlements", label: "Liquidaciones", icon: Scale },
@@ -1169,6 +1171,9 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
 
       {/* ── TAB: Cédulas IMSS / SAR / INFONAVIT (B5) ── */}
       {tab === "cedulas" && <CedulasImssTab t={t} />}
+
+      {/* ── TAB: Avisos IMSS papel AFIL-02/04/08 (B6) ── */}
+      {tab === "avisos" && <AvisosImssTab t={t} employees={employees as any} />}
 
       {/* ── TAB: Comunicación (anuncios internos) ── */}
       {tab === "communication" && (

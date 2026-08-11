@@ -886,6 +886,108 @@ async def annual_isr_xlsx(adj_id: int, db: DB, current_user: CurrentUser):
     )
 
 
+# ── B6 · Avisos IMSS papel (AFIL-02/04/08) ──────────────────────────
+
+@router.get("/imss-movements")
+async def imss_movements_list(
+    db: DB, current_user: CurrentUser,
+    employee_id: Optional[int] = None,
+    movement_type: Optional[str] = None,
+    year: Optional[int] = None,
+):
+    from app.modules.hr import imss_avisos as ia
+    return await ia.list_movements(db, employee_id=employee_id,
+                                    movement_type=movement_type, year=year)
+
+
+@router.get("/imss-movements/pending")
+async def imss_movements_pending(db: DB, current_user: CurrentUser):
+    """Movimientos que faltan por registrar (alta/baja/modif detectados)."""
+    from app.modules.hr import imss_avisos as ia
+    return await ia.pending_movements(db)
+
+
+@router.get("/imss-movements/{mov_id}")
+async def imss_movement_get(mov_id: int, db: DB, current_user: CurrentUser):
+    from app.modules.hr import imss_avisos as ia
+    r = await ia.get_movement(db, mov_id)
+    if not r:
+        raise HTTPException(404, "Movimiento no encontrado")
+    return r
+
+
+@router.post("/imss-movements")
+async def imss_movement_create(
+    payload: dict, db: DB, current_user: CurrentUser,
+):
+    _require_manager(current_user)
+    from app.modules.hr import imss_avisos as ia
+    try:
+        return await ia.create_movement(
+            db,
+            employee_id=int(payload.get("employee_id") or 0),
+            movement_type=payload.get("movement_type") or "",
+            movement_date=payload.get("movement_date") or "",
+            sbc_at_movement=payload.get("sbc_at_movement"),
+            baja_reason_code=payload.get("baja_reason_code"),
+            baja_reason_text=payload.get("baja_reason_text"),
+            old_sbc=payload.get("old_sbc"),
+            new_sbc=payload.get("new_sbc"),
+            notes=payload.get("notes"),
+            presented_date=payload.get("presented_date"),
+            folio=payload.get("folio"),
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.patch("/imss-movements/{mov_id}")
+async def imss_movement_update(
+    mov_id: int, payload: dict, db: DB, current_user: CurrentUser,
+):
+    """Solo actualiza campos post-presentación: fecha, folio, notas."""
+    _require_manager(current_user)
+    from app.modules.hr import imss_avisos as ia
+    try:
+        return await ia.update_movement(
+            db, mov_id,
+            presented_date=payload.get("presented_date"),
+            folio=payload.get("folio"),
+            notes=payload.get("notes"),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.delete("/imss-movements/{mov_id}")
+async def imss_movement_delete(mov_id: int, db: DB, current_user: CurrentUser):
+    _require_manager(current_user)
+    from app.modules.hr import imss_avisos as ia
+    ok = await ia.delete_movement(db, mov_id)
+    if not ok:
+        raise HTTPException(404, "Movimiento no encontrado")
+    return {"ok": True}
+
+
+@router.get("/imss-movements/{mov_id}/pdf")
+async def imss_movement_pdf(mov_id: int, db: DB, current_user: CurrentUser):
+    """PDF del aviso (AFIL-02/04/08 según el tipo)."""
+    from app.modules.hr import imss_avisos as ia
+    from app.modules.sales.universal_service import _get_company_dict
+    mov = await ia.get_movement(db, mov_id)
+    if not mov:
+        raise HTTPException(404, "Movimiento no encontrado")
+    company = await _get_company_dict(db)
+    pdf = ia.build_aviso_pdf(company, mov)
+    fmt_code = {"alta": "AFIL02", "baja": "AFIL04", "modif_salario": "AFIL08"}[mov["movement_type"]]
+    fname = f"{fmt_code}_{mov['employee_number']}_{mov['movement_date']}.pdf"
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 # ── B5 · Cédulas IMSS mensual + bimestral (SAR/INFONAVIT) ──────────
 
 @router.get("/cedulas/imss/{year}/{month}")
