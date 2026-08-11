@@ -224,6 +224,33 @@ export const hrApi = {
       { responseType: "blob" });
     downloadBlob(res.data as Blob, `constancia_isr_${year}_${empNumber}.pdf`);
   },
+
+  // Cédulas IMSS / SAR / INFONAVIT (B5) — LSS + LINFONAVIT
+  cedulaImssMensual: (year: number, month: number, primaRt?: number) =>
+    api.get(`/hr/cedulas/imss/${year}/${month}`,
+      { params: primaRt ? { prima_rt: primaRt } : {} }).then(r => r.data),
+  downloadCedulaImssPdf: async (year: number, month: number, primaRt?: number) => {
+    const res = await api.get(`/hr/cedulas/imss/${year}/${month}.pdf`,
+      { params: primaRt ? { prima_rt: primaRt } : {}, responseType: "blob" });
+    downloadBlob(res.data as Blob, `cedula_imss_${year}_${String(month).padStart(2, "0")}.pdf`);
+  },
+  downloadCedulaImssXlsx: async (year: number, month: number, primaRt?: number) => {
+    const res = await api.get(`/hr/cedulas/imss/${year}/${month}.xlsx`,
+      { params: primaRt ? { prima_rt: primaRt } : {}, responseType: "blob" });
+    downloadBlob(res.data as Blob, `cedula_imss_${year}_${String(month).padStart(2, "0")}.xlsx`);
+  },
+  cedulaBimestral: (year: number, bimester: number) =>
+    api.get(`/hr/cedulas/bimestral/${year}/${bimester}`).then(r => r.data),
+  downloadCedulaBimestralPdf: async (year: number, bimester: number) => {
+    const res = await api.get(`/hr/cedulas/bimestral/${year}/${bimester}.pdf`,
+      { responseType: "blob" });
+    downloadBlob(res.data as Blob, `cedula_bimestral_${year}_B${bimester}.pdf`);
+  },
+  downloadCedulaBimestralXlsx: async (year: number, bimester: number) => {
+    const res = await api.get(`/hr/cedulas/bimestral/${year}/${bimester}.xlsx`,
+      { responseType: "blob" });
+    downloadBlob(res.data as Blob, `cedula_bimestral_${year}_B${bimester}.xlsx`);
+  },
 };
 
 export function downloadBlob(blob: Blob, filename: string) {
