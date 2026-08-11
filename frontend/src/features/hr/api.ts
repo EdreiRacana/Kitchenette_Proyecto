@@ -137,6 +137,16 @@ export const hrApi = {
     pending_days_worked?: number;
     pending_vacation_days?: number | null;
   }) => api.post("/hr/settlements/calculate", data).then(r => r.data),
+
+  // Kardex del empleado (B1 Fase B)
+  getKardex: (employeeId: number, year?: number) =>
+    api.get(`/hr/employees/${employeeId}/kardex`, { params: { year } }).then(r => r.data),
+  downloadKardexPdf: async (employeeId: number, empNumber: string, year?: number) => {
+    const res = await api.get(`/hr/employees/${employeeId}/kardex.pdf`,
+      { params: { year }, responseType: "blob" });
+    const y = year || new Date().getFullYear();
+    downloadBlob(res.data as Blob, `kardex_${empNumber}_${y}.pdf`);
+  },
 };
 
 export function downloadBlob(blob: Blob, filename: string) {

@@ -527,3 +527,39 @@ async def calculate_settlement(data: schemas.SettlementRequest,
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return result
+
+
+# ── Kardex del empleado ────────────────────────────────────────────────
+
+@router.get("/employees/{employee_id}/kardex")
+async def employee_kardex(
+    employee_id: int, db: DB, _: CurrentUser,
+    year: Optional[int] = None,
+):
+    """Devuelve el kardex estructurado JSON del empleado (para UI)."""
+    from app.modules.hr.kardex import build_kardex
+    r = await build_kardex(db, employee_id, year=year)
+    if not r:
+        raise HTTPException(404, "Empleado no encontrado")
+    return r
+
+
+@router.get("/employees/{employee_id}/kardex.pdf")
+async def employee_kardex_pdf(
+    employee_id: int, db: DB, _: CurrentUser,
+    year: Optional[int] = None,
+):
+    """PDF oficial del kardex (para firma y expediente físico)."""
+    from app.modules.hr.kardex import build_kardex, build_kardex_pdf
+    from app.modules.sales.universal_service import _get_company_dict
+    kardex = await build_kardex(db, employee_id, year=year)
+    if not kardex:
+        raise HTTPException(404, "Empleado no encontrado")
+    company = await _get_company_dict(db)
+    pdf = build_kardex_pdf(company, kardex)
+    y = kardex["year"]
+    fname = f"kardex_{kardex['employee']['employee_number']}_{y}.pdf"
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )

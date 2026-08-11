@@ -249,7 +249,7 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
                   pct={data.meta_vs_real.achieved_pct}
                   t={t}
                   sub={L.ofGoal}
-                  hue={data.meta_vs_real.achieved_pct >= 60 ? "green" : "blue"}
+                  hue="blue"
                 />
                 <div style={{ fontSize: 11, color: t.textLo, textAlign: "center" }}>
                   <b style={{ color: t.textHi }}>{mxn(data.meta_vs_real.real)}</b>
