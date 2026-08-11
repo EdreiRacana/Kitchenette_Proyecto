@@ -145,6 +145,21 @@ tienda destino no tiene consignation. Nunca falla el flujo por eso.
 - **Contratos**: 8 plantillas PDF (LFT + Cód. Comercio + Cód. Civil) en `hr/contracts_pdf.py`
 - **CFDI**: recibos de nómina generados con ReportLab, listos para timbrar externamente
 - **UMA 2026**: `113.14` diario, se lee desde `hr/service.py`
+- **Kardex del empleado** (B1): `hr/kardex.py` — historial anual JSON + PDF firmado
+- **Presupuesto de nómina** (B2): `hr/payroll_budgets.py` — matriz 12 meses × empleado + variance real vs budget
+- **PTU** (B3): `hr/ptu.py` — arts. 122-131 LFT + reforma 2021 art. 127-VIII (mayor entre 3 meses salario o promedio 3 años), exclusiones art. 127-I/II/VI/VII, cédula PDF, genera nómina tipo `ptu`
+- **Ajuste anual ISR** (B4): `hr/annual_isr.py` — arts. 97 y 116 LISR, tarifa anual = mensual×12, exclusiones art. 97-A/B, PDF constancia art. 99
+- **Cédulas IMSS** (B5): `hr/imss_cedulas.py` — mensual (EGM/IV/GPS/RT) + bimestral (Retiro/CV/INFONAVIT 5% + amortizaciones), PDF/XLSX
+- **Avisos IMSS** (B6): `hr/imss_avisos.py` — modelos AFIL-02/04/08, detección automática de pendientes con `overdue` (5 días hábiles), historial persistido en `IMSSMovement`
+- **DIM Anexo 1** (B7): `hr/dim_export.py` — .txt CP-850 con RFC/CURP/nombre/ingresos/ISR para importar en programa DIM SAT
+- **SUA export** (B8): `hr/sua_export.py` — MOVTOS.txt ancho-fijo con tipos SUA (08 alta / 02 baja / 07 modif salario) importable en SUA escritorio
+
+## Campos empleado / empresa relacionados a fiscal MX
+
+- `Employee.ptu_excluded` — art. 127-I/VI LFT (director/gerente/doméstico)
+- `Employee.is_confidential` — cap art. 127-II (sindicato_max × 1.20)
+- `Employee.declares_own_annual` — art. 97-B (empleado hace su propia declaración anual)
+- `CompanyProfile.imss_registro_patronal` — se imprime en cédulas y avisos AFIL
 
 ## Comandos frecuentes
 

@@ -215,10 +215,17 @@ export default function AnnualIsrTab({ t }: { t: any }) {
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     {!isPreview && (
-                      <button onClick={() => hrApi.downloadAnnualIsrXlsx(data.id, data.period_year)}
-                        style={btnGhost(t)}>
-                        <Download size={14} /> XLSX
-                      </button>
+                      <>
+                        <button onClick={() => hrApi.downloadAnnualIsrXlsx(data.id, data.period_year)}
+                          style={btnGhost(t)}>
+                          <Download size={14} /> XLSX
+                        </button>
+                        <button onClick={() => hrApi.downloadDimAnexo1(data.period_year)}
+                          title="DIM Anexo 1 — layout .txt para programa DIM SAT"
+                          style={btnGhost(t)}>
+                          <FileText size={14} /> DIM .txt
+                        </button>
+                      </>
                     )}
                     {!isPreview && data.status === "draft" && (
                       <button onClick={approve} disabled={busy} style={{

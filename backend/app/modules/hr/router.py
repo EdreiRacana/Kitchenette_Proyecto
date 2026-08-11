@@ -886,6 +886,46 @@ async def annual_isr_xlsx(adj_id: int, db: DB, current_user: CurrentUser):
     )
 
 
+# ── B7 · DIM anual (Anexo 1 Sueldos y Salarios) ─────────────────────
+
+@router.get("/exports/dim/{year}.txt")
+async def export_dim_anexo1(year: int, db: DB, current_user: CurrentUser):
+    """Genera el .txt del DIM Anexo 1 para importar al programa DIM del SAT."""
+    _require_manager(current_user)
+    from app.modules.hr import dim_export as dm
+    txt = await dm.build_dim_anexo1(db, year)
+    fname = f"dim_anexo1_{year}.txt"
+    return Response(
+        content=txt.encode("cp850", errors="replace"),
+        media_type="text/plain; charset=cp850",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# ── B8 · SUA export (movimientos afiliatorios batch) ─────────────────
+
+@router.get("/exports/sua/movimientos.txt")
+async def export_sua_movimientos(
+    db: DB, current_user: CurrentUser,
+    year: Optional[int] = None,
+):
+    """Genera MOVTOS.txt para importar en el SUA de escritorio."""
+    _require_manager(current_user)
+    from app.modules.hr import sua_export as se
+    from app.modules.sales.universal_service import _get_company_dict
+    company = await _get_company_dict(db)
+    reg_patronal = (company.get("imss_registro_patronal") or "").strip()
+    if not reg_patronal:
+        raise HTTPException(400, "Captura el registro patronal IMSS en Config → Empresa antes de exportar SUA.")
+    txt = await se.build_sua_movimientos(db, reg_patronal, year=year)
+    fname = f"MOVTOS_SUA_{year or 'todos'}.txt"
+    return Response(
+        content=txt.encode("cp850", errors="replace"),
+        media_type="text/plain; charset=cp850",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 # ── B6 · Avisos IMSS papel (AFIL-02/04/08) ──────────────────────────
 
 @router.get("/imss-movements")
