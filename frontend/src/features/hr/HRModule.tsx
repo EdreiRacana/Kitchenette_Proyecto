@@ -14,12 +14,13 @@ import {
   Building2, Briefcase, MapPin, Phone, Mail, Hash, Star,
   ChevronDown, ChevronUp, Filter, MoreVertical, Play, Pause,
   CheckSquare, Clock3, UserCheck, UserX, Cake, Award,
-  Megaphone, Send, FileSignature, Trash2, Scale, BookOpen,
+  Megaphone, Send, FileSignature, Trash2, Scale, BookOpen, Calculator,
 } from "lucide-react";
 import { hrApi, downloadBlob } from "./api";
 import KardexModal from "./KardexModal";
 import PayrollBudgetTab from "./PayrollBudgetTab";
 import PTUTab from "./PTUTab";
+import AnnualIsrTab from "./AnnualIsrTab";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type ContractType = "indefinido" | "prueba" | "capacitacion" | "temporal" | "eventual" | "honorarios" | "outsourcing" | "proyecto" | "partime";
@@ -189,7 +190,7 @@ const glass = (t: any): React.CSSProperties =>
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function HRModule({ t, s }: { t: any; s: any }) {
-  const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports" | "communication" | "budget" | "ptu">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports" | "communication" | "budget" | "ptu" | "annualisr">("dashboard");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
@@ -296,6 +297,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
     { id: "dispersion", label: "Dispersión", icon: Banknote },
     { id: "budget", label: "Presupuesto", icon: TrendingDown },
     { id: "ptu", label: "PTU", icon: DollarSign },
+    { id: "annualisr", label: "Ajuste ISR", icon: Calculator },
     { id: "communication", label: "Comunicación", icon: Megaphone },
     { id: "contracts", label: "Contratos", icon: FileSignature },
     { id: "settlements", label: "Liquidaciones", icon: Scale },
@@ -1160,6 +1162,9 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
       {/* ── TAB: PTU (B3) — LFT arts. 122-131 + reforma 2021 ── */}
       {tab === "ptu" && <PTUTab t={t} />}
 
+      {/* ── TAB: Ajuste anual ISR (B4) — LISR arts. 97 y 116 ── */}
+      {tab === "annualisr" && <AnnualIsrTab t={t} />}
+
       {/* ── TAB: Comunicación (anuncios internos) ── */}
       {tab === "communication" && (
         <CommunicationPanel t={t} employees={employees} onLoaded={load} />
@@ -1436,6 +1441,7 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
     alimony_court_order: editing?.alimony_court_order || "",
     ptu_excluded: editing?.ptu_excluded || false,
     is_confidential: editing?.is_confidential || false,
+    declares_own_annual: editing?.declares_own_annual || false,
   });
 
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
@@ -1811,6 +1817,31 @@ function EmployeeFormModal({ t, editing, onClose, onSave }: any) {
                       </span>
                     </label>
                   </div>
+                </div>
+
+                {/* Ajuste anual ISR — aviso art. 97-B */}
+                <div style={{ borderTop: `1px dashed ${t.border}`, paddingTop: 12, marginTop: 4 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textMid, marginBottom: 8,
+                                textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Ajuste anual ISR (LISR art. 97-B)
+                  </div>
+                  <label style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: 10,
+                                  borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2,
+                                  cursor: "pointer" }}>
+                    <input type="checkbox" checked={!!form.declares_own_annual}
+                      onChange={e => setForm((f: any) => ({ ...f, declares_own_annual: e.target.checked }))}
+                      style={{ marginTop: 2 }} />
+                    <span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: t.textHi, display: "block" }}>
+                        El empleado presentará su propia declaración anual
+                      </span>
+                      <span style={{ fontSize: 11, color: t.textLo }}>
+                        Marca esta casilla si el trabajador comunicó por escrito
+                        que hará su declaración anual (art. 97-B). El patrón entonces
+                        NO realizará el ajuste anual del ISR sobre este empleado.
+                      </span>
+                    </span>
+                  </label>
                 </div>
               </div>
 

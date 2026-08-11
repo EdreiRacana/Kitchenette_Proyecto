@@ -47,6 +47,8 @@ class EmployeeBase(BaseModel):
     # PTU (LFT art. 127)
     ptu_excluded: bool = False        # frac. I / VI: director, gerente general, doméstico
     is_confidential: bool = False     # aplica cap frac. II
+    # Ajuste anual ISR (LISR art. 97-B)
+    declares_own_annual: bool = False  # empleado comunica que hará su propia declaración
     is_active: bool = True
 
 
@@ -95,6 +97,7 @@ class EmployeeUpdate(BaseModel):
     vacation_used: Optional[int] = None
     ptu_excluded: Optional[bool] = None
     is_confidential: Optional[bool] = None
+    declares_own_annual: Optional[bool] = None
     is_active: Optional[bool] = None
 
 

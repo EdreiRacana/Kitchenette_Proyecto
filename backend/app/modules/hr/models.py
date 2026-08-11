@@ -58,6 +58,10 @@ class Employee(Base):
     # is_confidential: aplica cap art. 127-II (salario tope = sindicalizado max × 1.20)
     ptu_excluded = Column(Boolean, default=False, nullable=False)
     is_confidential = Column(Boolean, default=False, nullable=False)
+    # Ajuste anual ISR (art. 97 LISR):
+    # declares_own_annual = empleado comunicó por escrito que hará su propia
+    # declaración anual (art. 97-B). Si TRUE, el patrón NO realiza ajuste.
+    declares_own_annual = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -397,4 +401,71 @@ class PTUHistoric(Base):
     source = Column(String, nullable=False, default="system")  # system | manual
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    employee = relationship("Employee")
+
+
+# ── Ajuste anual de ISR (LISR art. 97 y 116) ───────────────────────────────
+# Cada empresa corre 1 ajuste por año. Cada empleado tiene un renglón con
+# el ISR causado anual vs. el retenido durante el año → saldo a favor / a
+# cargo, o marcado como excluido con la razón legal (art. 97-A / 97-B).
+
+class AnnualISRAdjustment(Base):
+    """Cabecera del ajuste anual del año."""
+    __tablename__ = "hr_annual_isr_adjustments"
+    __table_args__ = (
+        UniqueConstraint("period_year", name="uq_annual_isr_year"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    period_year = Column(Integer, nullable=False, index=True)
+    status = Column(String, nullable=False, default="draft")  # draft | approved | applied
+    notes = Column(Text, nullable=True)
+
+    total_employees = Column(Integer, nullable=False, default=0)
+    total_excluded = Column(Integer, nullable=False, default=0)
+    total_saldo_a_favor = Column(Float, nullable=False, default=0.0)
+    total_saldo_a_cargo = Column(Float, nullable=False, default=0.0)
+
+    calculated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    details = relationship("AnnualISRDetail", back_populates="adjustment",
+                            cascade="all, delete-orphan")
+
+
+class AnnualISRDetail(Base):
+    """Ajuste anual por empleado."""
+    __tablename__ = "hr_annual_isr_details"
+
+    id = Column(Integer, primary_key=True, index=True)
+    adjustment_id = Column(Integer,
+                            ForeignKey("hr_annual_isr_adjustments.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("hr_employees.id"),
+                          nullable=False, index=True)
+
+    # Ingresos del año (según nóminas calculadas)
+    total_ingresos = Column(Float, nullable=False, default=0.0)     # total_gross del año
+    total_gravable = Column(Float, nullable=False, default=0.0)     # ingresos - exentos aprox
+    total_isr_retenido = Column(Float, nullable=False, default=0.0)
+    total_sae_pagado = Column(Float, nullable=False, default=0.0)
+    days_worked_year = Column(Float, nullable=False, default=0.0)
+    periods_count = Column(Integer, nullable=False, default=0)
+
+    # Cálculo anual
+    isr_causado_anual = Column(Float, nullable=False, default=0.0)  # tarifa anual sobre gravable
+    diferencia = Column(Float, nullable=False, default=0.0)          # retenido - causado (>0 = a favor)
+
+    # Estado
+    excluded = Column(Boolean, default=False, nullable=False)
+    excluded_reason = Column(String, nullable=True)
+    # ingresos_excede_400k | declara_propia | alta_mid_year | baja_pre_dic
+
+    applied_to_period_id = Column(Integer, ForeignKey("hr_payroll_periods.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    adjustment = relationship("AnnualISRAdjustment", back_populates="details")
     employee = relationship("Employee")
