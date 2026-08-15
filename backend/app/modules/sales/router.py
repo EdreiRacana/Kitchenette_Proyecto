@@ -306,6 +306,25 @@ async def invoice_payload(order_id: int, db: DB, _: CurrentUser):
     return service.build_invoice_payload(order)
 
 
+@router.get("/{order_id}/ticket/text")
+async def get_ticket_text(order_id: int, db: DB, _: CurrentUser):
+    """Devuelve el ticket como texto plano listo para WhatsApp (con emojis,
+    *bold* y saldo). Pensado para pre-llenar wa.me?text=... desde el POS."""
+    from app.modules.sales import ticket as ticket_mod
+    from app.modules.core_config.service import get_company_profile
+
+    order = await service.get_order_detail(db, order_id)
+    if not order:
+        raise HTTPException(404, "Pedido no encontrado")
+    company = await get_company_profile(db)
+    text = ticket_mod.render_ticket_text(order, company)
+    return {
+        "text": text,
+        "phone": order.customer.phone if order.customer else None,
+        "customer_name": order.customer.name if order.customer else None,
+    }
+
+
 @router.post("/{order_id}/ticket/email", response_model=schemas.TicketEmailResult)
 async def send_ticket_email(order_id: int, payload: schemas.TicketSendRequest, db: DB, _: CurrentUser):
     """Envía el ticket de la orden por correo (usa Resend/plataforma o SMTP)."""

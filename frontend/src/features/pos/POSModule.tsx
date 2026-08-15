@@ -10,7 +10,9 @@ import {
   Banknote, CreditCard, ArrowLeftRight, Check, X, AlertTriangle,
   Receipt, User, Clock, ChevronRight, History, Scale, Zap, Sparkles,
   Grid3x3, Barcode, Tablet, ShieldCheck, RotateCcw, Undo2, Mail,
+  MessageCircle,
 } from "lucide-react";
+import { openWhatsApp } from "../../utils/whatsapp";
 import {
   posApi, DENOMINATIONS,
   type POSTerminal, type POSSession, type POSProduct, type POSSaleItem, type SessionSale,
@@ -225,6 +227,31 @@ function useIsMobile(bp: number = 768): boolean {
   return is;
 }
 
+// Ventas "en espera" (parked sales): el cajero pausa una venta para atender
+// a otro cliente y la retoma después. Real-world: cliente pide algo, va por
+// más productos al pasillo, mientras el cajero cobra a los siguientes. Vive
+// solo en el navegador del cajero, indexada por turno. Cero backend.
+const PARKED_STORE_KEY = (sessionId: number) => `pos:parked:${sessionId}`;
+type ParkedSale = {
+  id: string;
+  name: string;             // Nombre opcional dado por el cajero (o cliente)
+  cart: CartItem[];
+  customer: LoyaltyCustomerLite | null;
+  saved_at: number;         // Date.now() para "hace X min"
+  total: number;
+};
+function loadParked(sessionId: number): ParkedSale[] {
+  try {
+    const raw = localStorage.getItem(PARKED_STORE_KEY(sessionId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+function saveParked(sessionId: number, list: ParkedSale[]) {
+  try { localStorage.setItem(PARKED_STORE_KEY(sessionId), JSON.stringify(list)); } catch { /* noop */ }
+}
+
 // Persistencia del carrito y del cliente identificado por turno.
 // El cajero a veces cambia de módulo mientras el cliente decide (ver otro
 // producto en Inventario, revisar un saldo, etc.) — al regresar, el carrito
@@ -271,6 +298,8 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   // En móvil el carrito vive como bottom sheet: colapsado se ve solo la
   // barra con total + Cobrar; al tocarla se expande a pantalla casi completa.
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
+  const [parked, setParked] = useState<ParkedSale[]>(() => loadParked(session.id));
+  const [showParked, setShowParked] = useState(false);
   const [company, setCompany] = useState<{ commercial_name?: string; legal_name?: string; logo_url?: string } | null>(null);
   const [now, setNow] = useState(new Date());
   // Modo "Registro cliente": la caja voltea la pantalla al cliente para
@@ -409,6 +438,53 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   };
   const removeLine = (idx: number) => setCart(prev => prev.filter((_, i) => i !== idx));
 
+  // Poner el carrito actual "en espera" (parked sale). Guarda + vacía.
+  const parkCurrent = (nameHint?: string) => {
+    if (cart.length === 0) return;
+    const defaultName = customer?.name || nameHint || `Cliente ${parked.length + 1}`;
+    const name = (prompt("Nombre para esta venta en espera:", defaultName) || "").trim() || defaultName;
+    const sub = cart.reduce((a, it) => a + it.line_total, 0);
+    const tierPct = (loyaltyCfg?.is_enabled && customer?.tier?.discount_pct) || 0;
+    const totalNow = Math.max(0, sub - Math.round(sub * (tierPct / 100) * 100) / 100);
+    const entry: ParkedSale = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name, cart, customer, saved_at: Date.now(), total: totalNow,
+    };
+    const next = [entry, ...parked];
+    setParked(next); saveParked(session.id, next);
+    setCart([]); setCustomer(null);
+    setCartSheetOpen(false);
+  };
+
+  const resumeParked = (id: string) => {
+    const found = parked.find(p => p.id === id);
+    if (!found) return;
+    // Si el actual tiene items, guarda antes de sobrescribir — no pierdas ventas.
+    if (cart.length > 0) {
+      const sub = cart.reduce((a, it) => a + it.line_total, 0);
+      const tierPct = (loyaltyCfg?.is_enabled && customer?.tier?.discount_pct) || 0;
+      const totalNow = Math.max(0, sub - Math.round(sub * (tierPct / 100) * 100) / 100);
+      const auto: ParkedSale = {
+        id: `${Date.now()}-auto`,
+        name: customer?.name || `Auto-guardado ${new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}`,
+        cart, customer, saved_at: Date.now(), total: totalNow,
+      };
+      const next = [auto, ...parked.filter(p => p.id !== id)];
+      setParked(next); saveParked(session.id, next);
+    } else {
+      const next = parked.filter(p => p.id !== id);
+      setParked(next); saveParked(session.id, next);
+    }
+    setCart(found.cart); setCustomer(found.customer);
+    setShowParked(false);
+  };
+
+  const discardParked = (id: string) => {
+    if (!confirm("¿Descartar esta venta en espera?")) return;
+    const next = parked.filter(p => p.id !== id);
+    setParked(next); saveParked(session.id, next);
+  };
+
   const subtotal = cart.reduce((a, it) => a + it.line_total, 0);
   // Descuento por tier del cliente identificado (solo si programa está activo)
   const tierDiscountPct = (loyaltyCfg?.is_enabled && customer?.tier?.discount_pct) || 0;
@@ -476,6 +552,14 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
           <button onClick={() => setShowPrev(true)} title="Turno anterior" style={iconBtn}>
             <History size={14} /> Anterior
           </button>
+          {parked.length > 0 && (
+            <button onClick={() => setShowParked(true)}
+              title="Ventas pausadas en este turno"
+              style={{ ...iconBtn, background: t.warn + "18", border: `1px solid ${t.warn}55`, color: t.warn, fontWeight: 700 }}>
+              <Clock size={14} /> En espera
+              <span style={{ background: t.warn, color: "#fff", borderRadius: 999, padding: "1px 7px", fontSize: 10, fontWeight: 800 }}>{parked.length}</span>
+            </button>
+          )}
           <button onClick={() => setShowArqueos(true)} title="Arqueos y conciliación" style={iconBtn}>
             <Scale size={14} /> Arqueos
           </button>
@@ -641,23 +725,56 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
               </div>
             )}
             {results.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 10 }}>
-                {results.map(p => (
-                  <button key={p.variant_id} onClick={() => addToCart(p)}
-                    style={{ textAlign: "left", padding: 14, borderRadius: 12, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", transition: "transform .1s, border-color .15s, box-shadow .15s", display: "flex", flexDirection: "column", gap: 6 }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = t.nova; (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 12px ${t.nova}22`; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = t.border; (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, lineHeight: 1.3, minHeight: 34 }}>{p.product_name}</div>
-                    {p.sku && <div style={{ fontSize: 10.5, color: t.textLo, fontFamily: "monospace", letterSpacing: 0.5 }}>{p.sku}</div>}
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
-                      <div style={{ fontSize: 17, fontWeight: 800, color: t.good, letterSpacing: -0.3 }}>{mxn(p.unit_price)}</div>
-                      <div style={{ width: 28, height: 28, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <Plus size={16} strokeWidth={3} />
+              isMobile ? (
+                // En móvil: lista compacta, un producto por fila (~56px), caben
+                // ~10 al mismo tiempo. Buscar "apple" ya no obliga a scrollear.
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {results.map(p => (
+                    <button key={p.variant_id} onClick={() => addToCart(p)}
+                      style={{
+                        textAlign: "left", padding: "10px 12px", borderRadius: 10,
+                        border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer",
+                        display: "flex", alignItems: "center", gap: 10, minHeight: 56,
+                      }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {p.product_name}
+                        </div>
+                        {p.sku && (
+                          <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace", letterSpacing: 0.3, marginTop: 2 }}>
+                            {p.sku}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: t.good, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                        {mxn(p.unit_price)}
+                      </div>
+                      <div style={{ width: 36, height: 36, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <Plus size={18} strokeWidth={3} />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                // Desktop / tablet: grid de tarjetas grandes con hover.
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 10 }}>
+                  {results.map(p => (
+                    <button key={p.variant_id} onClick={() => addToCart(p)}
+                      style={{ textAlign: "left", padding: 14, borderRadius: 12, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", transition: "transform .1s, border-color .15s, box-shadow .15s", display: "flex", flexDirection: "column", gap: 6 }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = t.nova; (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 12px ${t.nova}22`; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = t.border; (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, lineHeight: 1.3, minHeight: 34 }}>{p.product_name}</div>
+                      {p.sku && <div style={{ fontSize: 10.5, color: t.textLo, fontFamily: "monospace", letterSpacing: 0.5 }}>{p.sku}</div>}
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                        <div style={{ fontSize: 17, fontWeight: 800, color: t.good, letterSpacing: -0.3 }}>{mxn(p.unit_price)}</div>
+                        <div style={{ width: 28, height: 28, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <Plus size={16} strokeWidth={3} />
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )
             )}
           </div>
         </div>
@@ -712,7 +829,21 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                 )}
               </div>
             </div>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              {cart.length > 0 && (
+                <button onClick={() => parkCurrent()}
+                  title="Pausar esta venta y atender a otro cliente"
+                  style={{ background: t.warn + "18", border: `1px solid ${t.warn}55`, color: t.warn, cursor: "pointer", fontSize: 11.5, display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, fontWeight: 700 }}>
+                  <Clock size={12} /> En espera
+                </button>
+              )}
+              {parked.length > 0 && (
+                <button onClick={() => setShowParked(true)}
+                  title="Ver ventas pausadas del turno"
+                  style={{ background: t.nova + "18", border: `1px solid ${t.nova}55`, color: t.nova, cursor: "pointer", fontSize: 11.5, display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, fontWeight: 700 }}>
+                  <History size={12} /> Retomar ({parked.length})
+                </button>
+              )}
               {cart.length > 0 && (
                 <button onClick={() => { if (confirm("¿Vaciar el ticket?")) setCart([]); }}
                   title="Vaciar ticket"
@@ -887,7 +1018,115 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
         />
       )}
       {showArqueos && <ReconciliationPanel t={t} onClose={() => setShowArqueos(false)} />}
+      {showParked && (
+        <ParkedSalesDrawer t={t}
+          parked={parked}
+          onClose={() => setShowParked(false)}
+          onResume={resumeParked}
+          onDiscard={discardParked} />
+      )}
     </div>
+  );
+}
+
+// ── Drawer de ventas en espera ─────────────────────────────────────────────
+function ParkedSalesDrawer({ t, parked, onClose, onResume, onDiscard }: {
+  t: any;
+  parked: ParkedSale[];
+  onClose: () => void;
+  onResume: (id: string) => void;
+  onDiscard: (id: string) => void;
+}) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const fmtAge = (ts: number) => {
+    const min = Math.floor((Date.now() - ts) / 60000);
+    if (min < 1) return "hace un momento";
+    if (min < 60) return `hace ${min} min`;
+    const h = Math.floor(min / 60);
+    return `hace ${h}h ${min % 60}m`;
+  };
+
+  return createPortal(
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.6)", display: "flex", justifyContent: "flex-end" }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: 480, maxWidth: "100%", height: "100%", background: t.panel, borderLeft: `1px solid ${t.border}`, display: "flex", flexDirection: "column", boxShadow: "-8px 0 32px rgba(0,0,0,0.4)" }}>
+        <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.border}`, background: t.panel2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}>
+              <Clock size={16} color={t.warn} /> Ventas en espera
+            </div>
+            <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 3 }}>
+              {parked.length === 0 ? "Sin ventas pausadas" : `${parked.length} venta${parked.length === 1 ? "" : "s"} pausada${parked.length === 1 ? "" : "s"}`}
+            </div>
+          </div>
+          <button onClick={onClose}
+            style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 4 }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+          {parked.length === 0 && (
+            <div style={{ padding: 40, textAlign: "center", color: t.textLo, fontSize: 13 }}>
+              No hay ventas en espera.<br/>
+              <span style={{ fontSize: 12, opacity: 0.7 }}>
+                Cuando el cliente vaya por más productos, presiona "En espera" en el ticket para pausar la venta y atender a otro.
+              </span>
+            </div>
+          )}
+          {parked.map(p => {
+            const totalItems = p.cart.reduce((a, it) => a + it.quantity, 0);
+            return (
+              <div key={p.id} style={{ background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 14.5, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {p.name}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 3 }}>
+                      {totalItems} artículo{totalItems === 1 ? "" : "s"} · {fmtAge(p.saved_at)}
+                    </div>
+                    {p.customer?.tier && (
+                      <div style={{ marginTop: 4, display: "inline-block", padding: "1px 8px", borderRadius: 999,
+                                   background: (p.customer.tier.color_hex || t.nova) + "22",
+                                   color: p.customer.tier.color_hex || t.nova, fontSize: 10.5, fontWeight: 800 }}>
+                        {p.customer.tier.name} · −{p.customer.tier.discount_pct.toFixed(0)}%
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: t.good, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                    {mxn(p.total)}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => onResume(p.id)}
+                    style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: "none",
+                             background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff",
+                             cursor: "pointer", fontWeight: 700, fontSize: 13, display: "flex",
+                             alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <ChevronRight size={14} /> Retomar
+                  </button>
+                  <button onClick={() => onDiscard(p.id)}
+                    title="Descartar esta venta"
+                    style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.bad}55`,
+                             background: t.bad + "18", color: t.bad, cursor: "pointer", fontWeight: 700,
+                             fontSize: 13, display: "flex", alignItems: "center", gap: 5 }}>
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -946,6 +1185,22 @@ function SaleSuccessModal({ t, sale, onClose }: { t: any; sale: any; onClose: ()
       alert(e?.response?.data?.detail || "Error al enviar el correo");
     } finally { setEmailing(false); }
   };
+  const doWhatsApp = async () => {
+    // Pide el texto del ticket al backend (lo arma con el mismo formato que
+    // ya usa el CRM: emojis, *bold*, saldo). El cajero solo confirma el
+    // número — se abre WhatsApp Web o app con el mensaje pre-cargado.
+    try {
+      const { text, phone: defaultPhone } = await salesApi.getTicketText(sale.order_id);
+      const phone = prompt(
+        "Enviar ticket por WhatsApp\n\nNúmero del cliente (10 dígitos):",
+        sale.customer_phone || defaultPhone || "",
+      );
+      if (!phone || !phone.trim()) return;
+      openWhatsApp(phone.trim(), text);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "No se pudo abrir WhatsApp");
+    }
+  };
 
   return createPortal(
     <div onClick={onClose}
@@ -1000,17 +1255,22 @@ function SaleSuccessModal({ t, sale, onClose }: { t: any; sale: any; onClose: ()
               <Printer size={17} /> {printing === 58 ? "Imprimiendo…" : "Ticket 58mm"}
             </button>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
             <button onClick={doDownload}
-              style={{ padding: "11px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              {downloaded ? <><Check size={14} /> Descargado</> : <><Download size={14} /> Descargar PDF</>}
+              style={{ padding: "11px 8px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+              {downloaded ? <><Check size={14} /> Descargado</> : <><Download size={14} /> PDF</>}
             </button>
             <button onClick={doEmail} disabled={emailing}
               title="Enviar el ticket al correo del cliente"
-              style={{ padding: "11px 12px", borderRadius: 10, border: `1px solid ${t.good}55`, background: emailedTo ? t.good + "22" : t.good + "18", color: t.good, cursor: emailing ? "wait" : "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              style={{ padding: "11px 8px", borderRadius: 10, border: `1px solid ${t.good}55`, background: emailedTo ? t.good + "22" : t.good + "18", color: t.good, cursor: emailing ? "wait" : "pointer", fontSize: 12.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
               {emailing ? <>Enviando…</>
                 : emailedTo ? <><Check size={14} /> Enviado</>
-                : <><Mail size={14} /> Enviar por correo</>}
+                : <><Mail size={14} /> Correo</>}
+            </button>
+            <button onClick={doWhatsApp}
+              title="Enviar el ticket por WhatsApp"
+              style={{ padding: "11px 8px", borderRadius: 10, border: `1px solid #25D36655`, background: "#25D36618", color: "#25D366", cursor: "pointer", fontSize: 12.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+              <MessageCircle size={14} /> WhatsApp
             </button>
           </div>
           {emailedTo && (
@@ -1926,7 +2186,7 @@ function POSReturnModal({ t, sale, onClose, onDone }: {
                 })}
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
                 <div>
                   <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>Liquidación</label>
                   <select value={settlement} onChange={e => setSettlement(e.target.value as any)}
@@ -3154,7 +3414,7 @@ function CustomerRegistrationMode({ t, cart, total, brandName, logoSrc, loyaltyC
           <div style={{ fontSize: 26, fontWeight: 700, color: t.textHi, textAlign: "center", maxWidth: 640 }}>
             ¿Ya eres parte de nuestro programa de fidelidad?
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, maxWidth: 800, width: "100%" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, maxWidth: 800, width: "100%" }}>
             <button onClick={() => setMode("identify")} style={{
               padding: "36px 24px", borderRadius: 20, border: `2px solid ${t.nova}66`,
               background: t.nova + "12", color: t.textHi, cursor: "pointer", textAlign: "left",
@@ -3315,7 +3575,7 @@ function CustomerRegistrationMode({ t, cart, total, brandName, logoSrc, loyaltyC
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
           <div>
             <label style={label}>Nombre completo *</label>
             <input value={name} onChange={e => setName(e.target.value)} autoFocus style={bigInp} />
@@ -3328,7 +3588,7 @@ function CustomerRegistrationMode({ t, cart, total, brandName, logoSrc, loyaltyC
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
           <div>
             <label style={label}>Correo electrónico</label>
             <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="tucorreo@ejemplo.com" style={bigInp} />
@@ -3339,7 +3599,7 @@ function CustomerRegistrationMode({ t, cart, total, brandName, logoSrc, loyaltyC
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
           <div>
             <label style={label}>Fecha de nacimiento</label>
             <input type="date" value={birth} onChange={e => setBirth(e.target.value)} style={bigInp} />

@@ -291,6 +291,10 @@ export const salesApi = {
     const { data } = await api.post(`/sales/${orderId}/ticket/email`, { to: to || null });
     return data;
   },
+  async getTicketText(orderId: number): Promise<{ text: string; phone?: string | null; customer_name?: string | null }> {
+    const { data } = await api.get(`/sales/${orderId}/ticket/text`);
+    return data;
+  },
 
   // ── Universal ERP ──────────────────────────────────────
   async downloadDocument(orderId: number, kind: "quote" | "remission" | "proforma"): Promise<Blob> {
