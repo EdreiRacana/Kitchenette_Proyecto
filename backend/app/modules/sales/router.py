@@ -401,3 +401,89 @@ async def receive_return_endpoint(return_id: int, payload: dict, db: DB, current
     if not result:
         raise HTTPException(404, "Devolución no encontrada")
     return result
+
+
+# ── #7 · Export XLSX de ventas con filtros ────────────────────────────
+
+@router.get("/export.xlsx")
+async def export_orders_xlsx(
+    db: DB, current_user: CurrentUser,
+    kind: Optional[str] = None,
+    status: Optional[str] = None,
+    customer_id: Optional[int] = None,
+    seller_id: Optional[int] = None,
+    payment_method: Optional[str] = None,
+    channel: Optional[str] = None,
+    q: Optional[str] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+):
+    """XLSX detallado (1 fila por partida) de ventas con los mismos
+    filtros que la tabla del CRM: cliente, producto, fecha, canal,
+    forma de pago, vendedor, estado, tipo."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    orders, _ = await service.get_orders(
+        db, skip=0, limit=10000,
+        kind=kind, status=status, customer_id=customer_id,
+        seller_id=seller_id, payment_method=payment_method,
+        channel=channel, q=q, date_from=date_from, date_to=date_to,
+    )
+
+    wb = Workbook(); ws = wb.active
+    ws.title = "Ventas"
+    header = [
+        "Folio", "Fecha", "Estado", "Tipo", "Cliente", "RFC", "Vendedor",
+        "Canal", "Forma pago", "SKU", "Producto", "Cantidad",
+        "Precio unit.", "Descuento", "Subtotal partida",
+        "Total orden", "Pagado", "Saldo", "Notas",
+    ]
+    brand = "33B2F5"
+    for i, h in enumerate(header, 1):
+        c = ws.cell(row=1, column=i, value=h)
+        c.fill = PatternFill("solid", fgColor=brand)
+        c.font = Font(bold=True, color="FFFFFF")
+
+    row = 2
+    for o in orders:
+        cliente = getattr(o.customer, "name", None) if getattr(o, "customer", None) else None
+        rfc = getattr(o.customer, "rfc", None) if getattr(o, "customer", None) else None
+        vendedor = getattr(o.user, "email", None) if getattr(o, "user", None) else None
+        fecha = o.created_at.strftime("%Y-%m-%d %H:%M") if o.created_at else ""
+        items = list(getattr(o, "items", []) or [])
+        if not items:
+            items = [None]
+        for it in items:
+            vals = [
+                o.folio or f"ORD-{o.id}", fecha, o.status or "", o.kind or "",
+                cliente or "—", rfc or "", vendedor or "",
+                o.channel or "", o.payment_method or "",
+                (it.sku if it else "") or "",
+                (it.product_name if it else "") or "",
+                float(it.quantity or 0) if it else 0,
+                float(it.unit_price or 0) if it else 0,
+                float(it.discount_amount or 0) if it else 0,
+                float(it.total or 0) if it else 0,
+                float(o.total or 0), float(o.paid or 0),
+                float((o.total or 0) - (o.paid or 0)),
+                (o.notes or "") if it is items[0] else "",
+            ]
+            for i, v in enumerate(vals, 1):
+                cell = ws.cell(row=row, column=i, value=v)
+                if i >= 12 and isinstance(v, (int, float)):
+                    cell.number_format = "#,##0.00"
+                    cell.alignment = Alignment(horizontal="right")
+            row += 1
+
+    widths = [14, 17, 12, 12, 32, 15, 22, 14, 14, 16, 34, 10, 12, 12, 14, 14, 12, 12, 30]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    fname = f"ventas_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
