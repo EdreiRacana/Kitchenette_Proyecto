@@ -129,6 +129,36 @@ def _serialize_customer_lite(c: Customer, tier: Optional[CustomerTier]) -> dict:
     }
 
 
+async def search_customers_lite(db: AsyncSession, query: str, limit: int = 8) -> List[dict]:
+    """Búsqueda difusa para autocomplete del POS. Devuelve hasta `limit`
+    clientes que hacen match parcial en nombre, teléfono, correo, número de
+    cliente, RFC o código de tarjeta. Ordena: match exacto primero, después
+    los que compraron más recientemente (útil para clientes recurrentes)."""
+    q = (query or "").strip()
+    if not q or len(q) < 2:
+        return []
+    like = f"%{q}%"
+    stmt = (
+        select(Customer).options(selectinload(Customer.tier)).where(or_(
+            Customer.name.ilike(like),
+            Customer.email.ilike(like),
+            Customer.phone.ilike(like),
+            Customer.client_number.ilike(like),
+            Customer.loyalty_code.ilike(like),
+            Customer.rfc.ilike(like),
+        ))
+        .order_by(Customer.last_order_at.desc().nulls_last(), Customer.name.asc())
+        .limit(max(1, min(limit, 25)))
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    # Priorizar match exacto (correo/tel/código de tarjeta/número de cliente)
+    exact = [c for c in rows if (c.email or "").lower() == q.lower()
+             or c.phone == q or c.loyalty_code == q or c.client_number == q]
+    seen = {c.id for c in exact}
+    ordered = exact + [c for c in rows if c.id not in seen]
+    return [_serialize_customer_lite(c, c.tier) for c in ordered]
+
+
 async def lookup_customer(db: AsyncSession, query: str) -> Optional[dict]:
     """Búsqueda flexible: id > código de tarjeta > teléfono > email >
     número de cliente > nombre. Retorna el primer match.

@@ -109,6 +109,9 @@ export const loyaltyApi = {
   // POS-side operations
   lookup: async (q: string) =>
     (await api.get<LoyaltyCustomerLite>('/loyalty/lookup', { params: { q } })).data,
+  // Autocomplete de identificación: match parcial en nombre/tel/correo/etc.
+  search: async (q: string, limit = 8) =>
+    (await api.get<LoyaltyCustomerLite[]>('/loyalty/search', { params: { q, limit } })).data,
   history: async (customerId: number, limit = 20) =>
     (await api.get<LoyaltyHistoryItem[]>(`/loyalty/customers/${customerId}/history`, { params: { limit } })).data,
   recommendations: async (customerId: number, limit = 5) =>

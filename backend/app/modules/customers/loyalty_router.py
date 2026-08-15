@@ -66,6 +66,14 @@ async def lookup(q: str, db: DB, current_user: CurrentUser):
     return res
 
 
+@router.get("/search")
+async def search(q: str, db: DB, current_user: CurrentUser, limit: int = 8):
+    """Autocomplete para el POS — múltiples resultados, match difuso en nombre,
+    teléfono, correo, número de cliente, RFC o código de tarjeta. Devuelve una
+    lista (posiblemente vacía). No 404 si no hay resultados."""
+    return await loyalty_service.search_customers_lite(db, q, limit=limit)
+
+
 @router.get("/customers/{customer_id}/history")
 async def history(customer_id: int, db: DB, current_user: CurrentUser, limit: int = 20):
     return await loyalty_service.get_customer_history(db, customer_id, limit=limit)

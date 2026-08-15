@@ -2783,10 +2783,11 @@ function CustomerRegistrationMode({ t, cart, total, brandName, logoSrc, loyaltyC
   const [mode, setMode] = useState<"choose" | "identify" | "register">("choose");
   const [thanks, setThanks] = useState<LoyaltyCustomerLite | null>(null);
 
-  // Search (identify)
+  // Search (identify) — autocomplete con resultados en vivo
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchErr, setSearchErr] = useState<string | null>(null);
+  const [searchResults, setSearchResults] = useState<LoyaltyCustomerLite[]>([]);
 
   // Register form
   const [name, setName] = useState("");
@@ -2811,9 +2812,39 @@ function CustomerRegistrationMode({ t, cart, total, brandName, logoSrc, loyaltyC
     if (clicksRef.current.length >= 5) { clicksRef.current = []; onExit(); }
   };
 
+  // Debounce: cada vez que el cajero teclea, buscamos coincidencias en vivo
+  // (nombre, teléfono, correo, número de cliente o código de tarjeta). Sin
+  // apretar Enter, sin adivinar exactamente cómo se registró.
+  useEffect(() => {
+    const q = query.trim();
+    if (mode !== "identify") { setSearchResults([]); return; }
+    if (q.length < 2) { setSearchResults([]); setSearchErr(null); return; }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setSearching(true); setSearchErr(null);
+      try {
+        const rows = await loyaltyApi.search(q, 8);
+        if (!cancelled) setSearchResults(rows);
+      } catch { if (!cancelled) setSearchResults([]); }
+      finally { if (!cancelled) setSearching(false); }
+    }, 220);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [query, mode]);
+
+  const chooseFromResults = (c: LoyaltyCustomerLite) => {
+    setThanks(c);
+    setTimeout(() => onIdentified(c), 900);
+  };
+
   const doIdentify = async () => {
     const q = query.trim();
     if (!q) return;
+    // Si el cajero da Enter y hay un match exacto único, lo elige directo;
+    // si no, se apoya en la lista de sugerencias visibles.
+    if (searchResults.length === 1) {
+      chooseFromResults(searchResults[0]);
+      return;
+    }
     setSearching(true); setSearchErr(null);
     try {
       const c = await loyaltyApi.lookup(q);
@@ -2955,39 +2986,109 @@ function CustomerRegistrationMode({ t, cart, total, brandName, logoSrc, loyaltyC
     );
   }
 
-  // ── Pantalla de identificación ──
+  // ── Pantalla de identificación con autocomplete ──
   if (mode === "identify") {
+    const q = query.trim();
+    const showNoMatches = q.length >= 2 && !searching && searchResults.length === 0;
+    const maskEmail = (em?: string | null) => {
+      if (!em) return "";
+      const [u, d] = em.split("@");
+      if (!d) return em;
+      const shown = u.length <= 2 ? u : u.slice(0, 2) + "…";
+      return `${shown}@${d}`;
+    };
     return createPortal(
       <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: `linear-gradient(135deg, ${t.panel} 0%, ${t.panel2} 100%)`, display: "flex", flexDirection: "column", overflow: "auto" }}>
         <Header />
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, gap: 20 }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "28px 20px 40px", gap: 16 }}>
           <div style={{ fontSize: 24, fontWeight: 700, color: t.textHi, textAlign: "center" }}>Identifícate</div>
           <div style={{ fontSize: 14, color: t.textMid, textAlign: "center", maxWidth: 520 }}>
-            Escribe el código de tu tarjeta, tu teléfono o tu correo. Aplicaremos automáticamente tu descuento.
+            Escribe tu nombre, teléfono o correo. Aparecerán sugerencias en cuanto empieces.
           </div>
-          <div style={{ maxWidth: 520, width: "100%" }}>
+          <div style={{ maxWidth: 560, width: "100%", position: "relative" }}>
             <input value={query} onChange={e => setQuery(e.target.value)}
-              placeholder="LP-XXXX-XXXXX  ·  10 dígitos  ·  correo@ejemplo.com"
+              placeholder="Nombre, teléfono, correo o código de tarjeta…"
               onKeyDown={e => { if (e.key === "Enter") doIdentify(); }}
               autoFocus autoComplete="off"
-              style={{ ...bigInp, fontSize: 20, textAlign: "center", letterSpacing: 0.5 }} />
+              style={{ ...bigInp, fontSize: 20, letterSpacing: 0.3 }} />
+            {searching && (
+              <div style={{ position: "absolute", right: 16, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: t.textLo }}>
+                Buscando…
+              </div>
+            )}
           </div>
+
+          {/* Sugerencias en vivo */}
+          {searchResults.length > 0 && (
+            <div style={{ maxWidth: 560, width: "100%", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 14, overflow: "hidden", boxShadow: "0 4px 20px rgba(0,0,0,0.15)" }}>
+              {searchResults.map(c => (
+                <button key={c.id} onClick={() => chooseFromResults(c)}
+                  style={{
+                    width: "100%", padding: "14px 18px", background: "transparent", border: "none",
+                    borderBottom: `1px solid ${t.border}`, cursor: "pointer", textAlign: "left",
+                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                    color: t.textHi, transition: "background .12s",
+                  }}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = t.panel2}
+                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}
+                >
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {c.name || "(Sin nombre)"}
+                    </div>
+                    <div style={{ fontSize: 12, color: t.textLo, marginTop: 3, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      {c.phone && <span>📞 {c.phone}</span>}
+                      {c.email && <span>✉ {maskEmail(c.email)}</span>}
+                      {c.client_number && <span style={{ fontFamily: "monospace" }}>{c.client_number}</span>}
+                    </div>
+                  </div>
+                  {c.tier && (
+                    <div style={{
+                      padding: "5px 12px", borderRadius: 999, fontSize: 11.5, fontWeight: 800,
+                      background: (c.tier.color_hex || t.nova) + "22",
+                      color: c.tier.color_hex || t.nova, whiteSpace: "nowrap",
+                    }}>
+                      {c.tier.name} · {c.tier.discount_pct.toFixed(0)}%
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Sin resultados → invitación a registrarse pre-llenando lo que ya escribió */}
+          {showNoMatches && (
+            <div style={{ maxWidth: 560, width: "100%", padding: "14px 18px", background: t.panel, border: `1px dashed ${t.border}`, borderRadius: 12, textAlign: "center" }}>
+              <div style={{ fontSize: 13.5, color: t.textMid, marginBottom: 10 }}>
+                No encontramos a nadie con "<b>{q}</b>". ¿Es tu primera vez?
+              </div>
+              <button onClick={() => {
+                // Pre-llenar el form según lo que parezca (correo/tel/nombre)
+                const looksEmail = /@/.test(q);
+                const digits = q.replace(/\D/g, "");
+                if (looksEmail) setEmail(q);
+                else if (digits.length >= 8) setPhone(digits);
+                else setName(q);
+                setMode("register");
+              }}
+                style={{ padding: "11px 22px", borderRadius: 10, border: "none",
+                         background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff",
+                         cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
+                <Plus size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                Registrarme por primera vez
+              </button>
+            </div>
+          )}
+
           {searchErr && (
             <div style={{ padding: "10px 16px", background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10, fontSize: 14 }}>
               {searchErr}
             </div>
           )}
-          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-            <button onClick={() => setMode("choose")} style={{ padding: "12px 22px", borderRadius: 12, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 14 }}>
+          <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+            <button onClick={() => { setQuery(""); setSearchResults([]); setSearchErr(null); setMode("choose"); }}
+              style={{ padding: "12px 22px", borderRadius: 12, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 14 }}>
               Atrás
-            </button>
-            <button disabled={searching || !query.trim()} onClick={doIdentify} style={{
-              padding: "14px 28px", borderRadius: 12, border: "none",
-              background: !query.trim() ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`,
-              color: !query.trim() ? t.textLo : "#fff",
-              cursor: !query.trim() ? "not-allowed" : "pointer", fontSize: 16, fontWeight: 800,
-            }}>
-              {searching ? "Buscando…" : "Continuar"}
             </button>
           </div>
         </div>
