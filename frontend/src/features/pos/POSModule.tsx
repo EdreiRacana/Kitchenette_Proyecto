@@ -761,6 +761,8 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
 function SaleSuccessModal({ t, sale, onClose }: { t: any; sale: any; onClose: () => void }) {
   const [printing, setPrinting] = useState<58 | 80 | null>(null);
   const [downloaded, setDownloaded] = useState(false);
+  const [emailing, setEmailing] = useState(false);
+  const [emailedTo, setEmailedTo] = useState<string | null>(null);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Escape" || e.key === "Enter") onClose(); };
@@ -789,6 +791,25 @@ function SaleSuccessModal({ t, sale, onClose }: { t: any; sale: any; onClose: ()
       setDownloaded(true);
       setTimeout(() => setDownloaded(false), 2000);
     } catch { alert("Error al descargar ticket"); }
+  };
+  const doEmail = async () => {
+    setEmailing(true);
+    try {
+      const to = prompt(
+        "Enviar ticket por correo\n\nCaptura el correo del cliente:",
+        sale.customer_email || "",
+      );
+      if (!to || !to.trim()) return;
+      const res = await salesApi.sendTicketEmail(sale.order_id, to.trim());
+      if (res.sent) {
+        setEmailedTo(res.to || to.trim());
+        setTimeout(() => setEmailedTo(null), 3500);
+      } else {
+        alert(res.reason || "No se pudo enviar el correo.");
+      }
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "Error al enviar el correo");
+    } finally { setEmailing(false); }
   };
 
   return createPortal(
@@ -844,10 +865,24 @@ function SaleSuccessModal({ t, sale, onClose }: { t: any; sale: any; onClose: ()
               <Printer size={17} /> {printing === 58 ? "Imprimiendo…" : "Ticket 58mm"}
             </button>
           </div>
-          <button onClick={doDownload}
-            style={{ width: "100%", padding: "11px 16px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            {downloaded ? <><Check size={14} /> Descargado</> : <><Download size={14} /> Descargar PDF</>}
-          </button>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <button onClick={doDownload}
+              style={{ padding: "11px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              {downloaded ? <><Check size={14} /> Descargado</> : <><Download size={14} /> Descargar PDF</>}
+            </button>
+            <button onClick={doEmail} disabled={emailing}
+              title="Enviar el ticket al correo del cliente"
+              style={{ padding: "11px 12px", borderRadius: 10, border: `1px solid ${t.good}55`, background: emailedTo ? t.good + "22" : t.good + "18", color: t.good, cursor: emailing ? "wait" : "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              {emailing ? <>Enviando…</>
+                : emailedTo ? <><Check size={14} /> Enviado</>
+                : <><Mail size={14} /> Enviar por correo</>}
+            </button>
+          </div>
+          {emailedTo && (
+            <div style={{ marginTop: 8, fontSize: 11.5, color: t.good, textAlign: "center", fontWeight: 600 }}>
+              ✓ Ticket enviado a {emailedTo}
+            </div>
+          )}
         </div>
 
         {/* Footer with next action */}

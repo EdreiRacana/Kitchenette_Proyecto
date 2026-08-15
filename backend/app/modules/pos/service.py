@@ -552,6 +552,18 @@ async def register_sale(db: AsyncSession, session_id: int,
                 await loyalty_service.recompute_customer_tier(db, customer_id)
         except Exception as e:
             print(f"[loyalty] recompute_tier failed for customer {customer_id}: {e}")
+    # Correo del cliente — pre-llena el prompt de "Enviar por correo" en el
+     # modal de venta exitosa (evita que el cajero lo capture cada vez).
+    customer_email: Optional[str] = None
+    if customer_id:
+        try:
+            from app.modules.customers.models import Customer
+            res_c = await db.execute(select(Customer).where(Customer.id == customer_id))
+            c = res_c.scalars().first()
+            if c and c.email:
+                customer_email = c.email
+        except Exception:
+            pass
     return {
         "order_id": order.id, "folio": folio,
         "subtotal": round(subtotal, 2),
@@ -562,6 +574,7 @@ async def register_sale(db: AsyncSession, session_id: int,
         "paid_amount": settled,
         "tendered": round(paid, 2),
         "change": change,
+        "customer_email": customer_email,
     }
 
 
