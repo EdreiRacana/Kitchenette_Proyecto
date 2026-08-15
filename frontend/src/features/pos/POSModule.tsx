@@ -522,46 +522,102 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const scanState = scanFlash === "__notfound__" || scanFlash === "__error__" ? "error"
     : scanFlash ? "ok" : "idle";
 
+  // Modo compacto en móvil: cuando el cajero teclea o hay carrito armado,
+  // colapsamos el header (marca + botones) para que la lista de productos
+  // gane toda la altura disponible. Antes el header consumía ~60% de la
+  // pantalla del celular y solo se veía 1 producto.
+  const compactHeader = isMobile && (query.trim().length > 0 || cart.length > 0);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 90px)", padding: 12, gap: 12 }}>
-      <style>{`@keyframes sheet-in { 0% { transform: translateY(100%) } 100% { transform: translateY(0) } }`}</style>
+      <style>{`@keyframes sheet-in { 0% { transform: translateY(100%) } 100% { transform: translateY(0) } }
+        .pos-btn-strip::-webkit-scrollbar { display: none; }
+        .pos-btn-strip { scrollbar-width: none; -ms-overflow-style: none; }`}</style>
+
+      {/* Modo compacto móvil: minibarra con logo + nombre + botón para
+          expandir el header completo si el cajero necesita otra acción. */}
+      {compactHeader && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: "8px 12px", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            {logoSrc ? (
+              <img src={logoSrc} alt="" style={{ height: 26, maxWidth: 60, objectFit: "contain" }} />
+            ) : (
+              <div style={{ width: 26, height: 26, borderRadius: 6, background: `linear-gradient(135deg, ${t.nova}, ${t.navy || t.nova})`, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 12 }}>
+                {brandName.slice(0, 2).toUpperCase()}
+              </div>
+            )}
+            <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{brandName}</div>
+            {parked.length > 0 && (
+              <span onClick={() => setShowParked(true)}
+                style={{ padding: "2px 8px", borderRadius: 999, background: t.warn + "22", color: t.warn, fontSize: 10.5, fontWeight: 800, cursor: "pointer" }}>
+                <Clock size={9} style={{ verticalAlign: "middle" }} /> {parked.length}
+              </span>
+            )}
+          </div>
+          <button onClick={() => setQuery("")}
+            title="Ver todas las acciones (Ventas, Fondo, Cerrar turno, etc.)"
+            style={{ background: t.panel2, border: `1px solid ${t.border}`, color: t.textMid, cursor: "pointer", width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Grid3x3 size={16} />
+          </button>
+        </div>
+      )}
+
       {/* ══════════ HEADER PREMIUM ══════════ */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: `linear-gradient(135deg, ${t.panel} 0%, ${t.panel2} 100%)`, border: `1px solid ${t.border}`, borderRadius: 14, padding: "10px 18px", gap: 14, flexWrap: "wrap", boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.15)"}` }}>
+      <div style={{
+        display: compactHeader ? "none" : "flex",
+        alignItems: "center", justifyContent: "space-between",
+        background: `linear-gradient(135deg, ${t.panel} 0%, ${t.panel2} 100%)`,
+        border: `1px solid ${t.border}`, borderRadius: 14,
+        padding: isMobile ? "8px 12px" : "10px 18px",
+        gap: isMobile ? 8 : 14, flexWrap: "wrap",
+        boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.15)"}`,
+      }}>
         {/* Izquierda: Marca */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 10 : 14, minWidth: 0 }}>
           {logoSrc ? (
-            <img src={logoSrc} alt="" style={{ height: 40, maxWidth: 100, objectFit: "contain" }} />
+            <img src={logoSrc} alt="" style={{ height: isMobile ? 32 : 40, maxWidth: isMobile ? 70 : 100, objectFit: "contain" }} />
           ) : (
-            <div style={{ width: 40, height: 40, borderRadius: 10, background: `linear-gradient(135deg, ${t.nova}, ${t.navy || t.nova})`, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 18 }}>
+            <div style={{ width: isMobile ? 32 : 40, height: isMobile ? 32 : 40, borderRadius: 10, background: `linear-gradient(135deg, ${t.nova}, ${t.navy || t.nova})`, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: isMobile ? 14 : 18 }}>
               {brandName.slice(0, 2).toUpperCase()}
             </div>
           )}
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi, letterSpacing: -0.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{brandName}</div>
-            <div style={{ fontSize: 11, color: t.textLo, display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+            <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: t.textHi, letterSpacing: -0.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{brandName}</div>
+            <div style={{ fontSize: isMobile ? 10 : 11, color: t.textLo, display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                 <Store size={11} /> {session.terminal_name}
               </span>
-              <span style={{ opacity: 0.5 }}>·</span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <User size={11} /> {session.cashier_name}
-              </span>
+              {!isMobile && <span style={{ opacity: 0.5 }}>·</span>}
+              {!isMobile && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <User size={11} /> {session.cashier_name}
+                </span>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Centro: Reloj + fecha */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "4px 16px", borderLeft: `1px solid ${t.border}`, borderRight: `1px solid ${t.border}` }}>
-          <div style={{ fontSize: 18, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums", letterSpacing: 0.5 }}>
-            {now.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
+        {/* Centro: Reloj + fecha — oculto en móvil para ganar espacio */}
+        {!isMobile && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "4px 16px", borderLeft: `1px solid ${t.border}`, borderRight: `1px solid ${t.border}` }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums", letterSpacing: 0.5 }}>
+              {now.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}
+            </div>
+            <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "capitalize" }}>
+              {now.toLocaleDateString("es-MX", { weekday: "long", day: "2-digit", month: "short" })}
+            </div>
           </div>
-          <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "capitalize" }}>
-            {now.toLocaleDateString("es-MX", { weekday: "long", day: "2-digit", month: "short" })}
-          </div>
-        </div>
+        )}
 
-        {/* Derecha: Acciones rápidas */}
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {/* Derecha: Acciones rápidas — en móvil, tira horizontal scrolleable */}
+        <div
+          className={isMobile ? "pos-btn-strip" : ""}
+          style={
+            isMobile
+              ? { display: "flex", gap: 6, flexWrap: "nowrap", overflowX: "auto", width: "100%", paddingBottom: 2 }
+              : { display: "flex", gap: 6, flexWrap: "wrap" }
+          }
+        >
           <button onClick={() => setShowHistory(true)} title="Historial de ventas del turno"
             style={{ ...iconBtn, background: t.nova + "16", border: `1px solid ${t.nova}44`, color: t.nova, fontWeight: 600 }}>
             <Receipt size={14} /> Ventas
