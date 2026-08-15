@@ -208,8 +208,35 @@ function SessionSetup({ t, terminals, onOpened, onTerminalsChanged }: {
 
 
 // ── 2) Sala POS: cart + búsqueda + cobro ────────────────────────────
+// Persistencia del carrito y del cliente identificado por turno.
+// El cajero a veces cambia de módulo mientras el cliente decide (ver otro
+// producto en Inventario, revisar un saldo, etc.) — al regresar, el carrito
+// tiene que estar tal como lo dejó. Sobrevive refresh, cambio de módulo y
+// cierre de pestaña. Se limpia al cobrar o al cerrar el turno.
+const CART_STORE_KEY = (sessionId: number) => `pos:cart:${sessionId}`;
+type PersistedPOS = { cart: CartItem[]; customer: LoyaltyCustomerLite | null };
+
+function loadPersistedPOS(sessionId: number): PersistedPOS {
+  try {
+    const raw = localStorage.getItem(CART_STORE_KEY(sessionId));
+    if (!raw) return { cart: [], customer: null };
+    const parsed = JSON.parse(raw);
+    return {
+      cart: Array.isArray(parsed?.cart) ? parsed.cart : [],
+      customer: parsed?.customer || null,
+    };
+  } catch { return { cart: [], customer: null }; }
+}
+function savePersistedPOS(sessionId: number, data: PersistedPOS) {
+  try { localStorage.setItem(CART_STORE_KEY(sessionId), JSON.stringify(data)); } catch { /* noop */ }
+}
+function clearPersistedPOS(sessionId: number) {
+  try { localStorage.removeItem(CART_STORE_KEY(sessionId)); } catch { /* noop */ }
+}
+
 function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClosed: () => void }) {
-  const [cart, setCart] = useState<CartItem[]>([]);
+  // Rehidratar carrito y cliente si el cajero volvió a este turno.
+  const [cart, setCart] = useState<CartItem[]>(() => loadPersistedPOS(session.id).cart);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<POSProduct[]>([]);
   const [searching, setSearching] = useState(false);
@@ -229,7 +256,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   // registrarse o para identificarse (loyalty code / teléfono / email). Si el
   // cliente ya existe, se aplica su descuento por tier al ticket.
   const [tabletMode, setTabletMode] = useState(false);
-  const [customer, setCustomer] = useState<LoyaltyCustomerLite | null>(null);
+  const [customer, setCustomer] = useState<LoyaltyCustomerLite | null>(() => loadPersistedPOS(session.id).customer);
   const [customerHistory, setCustomerHistory] = useState<LoyaltyHistoryItem[]>([]);
   const [customerRecs, setCustomerRecs] = useState<LoyaltyRecommendation[]>([]);
   const [loyaltyCfg, setLoyaltyCfg] = useState<LoyaltyProgramConfig | null>(null);
@@ -238,6 +265,20 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   useEffect(() => {
     loyaltyApi.getProgram().then(setLoyaltyCfg).catch(() => setLoyaltyCfg(null));
   }, []);
+
+  // Persistir cada cambio del carrito/cliente. Debounce chico para no
+  // martillar localStorage al escribir cantidades. Se limpia al cobrar
+  // (donde se llama clearPersistedPOS explícitamente).
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (cart.length === 0 && !customer) {
+        clearPersistedPOS(session.id);
+      } else {
+        savePersistedPOS(session.id, { cart, customer });
+      }
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [cart, customer, session.id]);
 
   // Al identificar cliente: cargar historial + recomendaciones
   useEffect(() => {
@@ -725,7 +766,11 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
 
       {showPay && <PayModal t={t} session={session} total={total} cart={cart}
         customer={customer} tierDiscount={tierDiscount} tierDiscountPct={tierDiscountPct}
-        onDone={(sale) => { setCart([]); setShowPay(false); setLastSale(sale); setHistoryRefresh(v => v + 1); setCustomer(null); }}
+        onDone={(sale) => {
+          setCart([]); setShowPay(false); setLastSale(sale);
+          setHistoryRefresh(v => v + 1); setCustomer(null);
+          clearPersistedPOS(session.id);
+        }}
         onCancel={() => setShowPay(false)} />}
       {tabletMode && (
         <CustomerRegistrationMode t={t} cart={cart} total={total} brandName={brandName} logoSrc={logoSrc}
@@ -740,7 +785,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
         onClose={() => setShowReturnFinder(false)}
         onDone={() => { setShowReturnFinder(false); setHistoryRefresh(v => v + 1); }} />}
       {showClose && <CloseSessionModal t={t} session={session}
-        onClosed={() => { setShowClose(false); onClosed(); }} onCancel={() => setShowClose(false)} />}
+        onClosed={() => { setShowClose(false); clearPersistedPOS(session.id); onClosed(); }} onCancel={() => setShowClose(false)} />}
       {showCash && <CashMovementModal t={t} session={session} type={showCash}
         onDone={() => setShowCash(null)} onCancel={() => setShowCash(null)} />}
       {lastSale && <SaleSuccessModal t={t} sale={lastSale} onClose={() => setLastSale(null)} />}
