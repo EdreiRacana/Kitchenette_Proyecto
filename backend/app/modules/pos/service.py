@@ -746,6 +746,52 @@ async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List
     return [_serialize(v, p) for v, p in res.all()]
 
 
+async def get_popular_products(db: AsyncSession, limit: int = 12) -> List[dict]:
+    """Top productos vendidos en los últimos 30 días — se muestran en el POS
+    cuando el buscador está vacío para que el cajero solo tenga que tocar.
+    Es lo que hacen Square y Toast en su "quick access grid"."""
+    from app.modules.inventory.models import ProductVariant, Product
+    from datetime import timedelta
+
+    cutoff = datetime.now() - timedelta(days=30)
+    stmt = (
+        select(
+            sales_models.OrderItem.variant_id.label("variant_id"),
+            func.sum(sales_models.OrderItem.quantity).label("sold"),
+        )
+        .join(sales_models.Order, sales_models.Order.id == sales_models.OrderItem.order_id)
+        .where(
+            sales_models.Order.channel == "pos",
+            sales_models.Order.created_at >= cutoff,
+            sales_models.OrderItem.variant_id.isnot(None),
+        )
+        .group_by(sales_models.OrderItem.variant_id)
+        .order_by(func.sum(sales_models.OrderItem.quantity).desc())
+        .limit(max(1, min(limit, 40)))
+    )
+    rows = (await db.execute(stmt)).all()
+    variant_ids = [r.variant_id for r in rows if r.variant_id]
+    if not variant_ids:
+        return []
+    res = await db.execute(
+        select(ProductVariant, Product)
+        .join(Product, ProductVariant.product_id == Product.id)
+        .where(ProductVariant.id.in_(variant_ids))
+    )
+    by_id: dict = {}
+    for v, p in res.all():
+        by_id[v.id] = {
+            "variant_id": v.id, "product_id": p.id,
+            "sku": v.sku, "barcode": getattr(v, "barcode", None),
+            "product_name": p.name,
+            "variant_label": getattr(v, "label", None) or getattr(v, "attributes", None),
+            "unit_price": getattr(v, "price", 0.0) or 0.0,
+            "unit_cost": getattr(v, "cost_price", 0.0) or 0.0,
+        }
+    # Respetar el orden de más vendido a menos
+    return [by_id[vid] for vid in variant_ids if vid in by_id]
+
+
 # ── Reconciliación post-cierre ────────────────────────────────────────────
 # El variance del cierre queda inmutable (auditoría del arqueo real). Los
 # movimientos post-cierre solo describen a dónde fue el efectivo: banco,

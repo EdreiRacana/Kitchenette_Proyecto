@@ -10,7 +10,7 @@ import {
   Banknote, CreditCard, ArrowLeftRight, Check, X, AlertTriangle,
   Receipt, User, Clock, ChevronRight, History, Scale, Zap, Sparkles,
   Grid3x3, Barcode, Tablet, ShieldCheck, RotateCcw, Undo2, Mail,
-  MessageCircle,
+  MessageCircle, Camera, Star,
 } from "lucide-react";
 import { openWhatsApp } from "../../utils/whatsapp";
 import {
@@ -300,6 +300,8 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [parked, setParked] = useState<ParkedSale[]>(() => loadParked(session.id));
   const [showParked, setShowParked] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [popular, setPopular] = useState<POSProduct[]>([]);
   const [company, setCompany] = useState<{ commercial_name?: string; legal_name?: string; logo_url?: string } | null>(null);
   const [now, setNow] = useState(new Date());
   // Modo "Registro cliente": la caja voltea la pantalla al cliente para
@@ -404,14 +406,12 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
     return () => clearTimeout(timer);
   }, [query]);
 
-  // Enter en el input: escáner físico termina con Enter. Si hay 1 resultado,
-  // agregar; si hay varios, seleccionar el primero exacto.
-  const onSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    const q = query.trim();
+  // Lógica compartida entre Enter en el input, escáner físico (que termina
+  // con Enter), y cámara del celular (BarcodeDetector). Busca por código,
+  // agrega el match exacto o el primero.
+  const handleBarcode = async (code: string) => {
+    const q = code.trim();
     if (!q) return;
-    // Buscar sincrónicamente sin esperar debounce
     try {
       const r = await posApi.searchProducts(q, 5);
       if (r.length === 0) {
@@ -419,15 +419,25 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
         setTimeout(() => setScanFlash(null), 1400);
         return;
       }
-      // Priorizar match exacto por SKU o barcode
       const exact = r.find(p => p.sku === q || p.barcode === q);
-      const chosen = exact || r[0];
-      addToCart(chosen, true);
+      addToCart(exact || r[0], true);
     } catch {
       setScanFlash("__error__");
       setTimeout(() => setScanFlash(null), 1400);
     }
   };
+
+  const onSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    await handleBarcode(query);
+  };
+
+  // Productos populares: cuando el buscador está vacío y no hay cliente, un
+  // grid clickeable de los top vendidos ahorra teclear (a la Square/Toast).
+  useEffect(() => {
+    posApi.popularProducts(12).then(setPopular).catch(() => setPopular([]));
+  }, []);
 
   const changeQty = (idx: number, delta: number) => {
     setCart(prev => prev.map((it, i) => {
@@ -608,13 +618,25 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                 placeholder="Escanear código o buscar producto…"
                 autoFocus autoComplete="off" spellCheck={false}
                 style={{
-                  width: "100%", padding: "18px 18px 18px 52px", borderRadius: 12,
+                  width: "100%", padding: `18px ${isMobile ? 60 : 18}px 18px 52px`, borderRadius: 12,
                   border: `2px solid ${scanState === "error" ? t.bad : scanState === "ok" ? t.good : t.nova + "55"}`,
                   background: t.inputBg, color: t.textHi, fontSize: 17, fontWeight: 500, outline: "none",
                   transition: "border-color .2s, box-shadow .2s",
                   boxShadow: scanState !== "idle" ? `0 0 0 4px ${(scanState === "error" ? t.bad : t.good)}22` : "none",
                   boxSizing: "border-box",
                 }} />
+              {/* Botón cámara — usa BarcodeDetector nativo del navegador. Se
+                  esconde si el navegador no lo soporta (mostramos icono gris). */}
+              <button onClick={() => setShowScanner(true)}
+                title="Escanear con la cámara"
+                style={{
+                  position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                  width: 44, height: 44, borderRadius: 10, border: "none",
+                  background: t.nova + "22", color: t.nova, cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                <Camera size={20} />
+              </button>
               {scanFlash && (
                 <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: scanState === "error" ? t.bad : t.good, background: (scanState === "error" ? t.bad : t.good) + "22", padding: "5px 12px", borderRadius: 999, pointerEvents: "none" }}>
                   {scanFlash === "__notfound__" ? <><AlertTriangle size={14} /> No encontrado</>
@@ -637,15 +659,59 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
           {/* Resultados / vacío */}
           <div style={{ flex: 1, overflowY: "auto", padding: results.length ? 12 : 0 }}>
             {results.length === 0 && !searching && !customer && (
-              <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, color: t.textLo, gap: 12 }}>
-                <div style={{ width: 80, height: 80, borderRadius: 20, background: t.nova + "10", display: "flex", alignItems: "center", justifyContent: "center", border: `2px dashed ${t.nova}44` }}>
-                  <Barcode size={40} color={t.nova} style={{ opacity: 0.6 }} />
+              popular.length > 0 ? (
+                <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 2px" }}>
+                    <Star size={14} color={t.warn} />
+                    <div style={{ fontSize: 12, fontWeight: 700, color: t.textMid, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                      Más vendidos
+                    </div>
+                    <span style={{ fontSize: 10.5, color: t.textLo }}>últimos 30 días</span>
+                  </div>
+                  {isMobile ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {popular.map(p => (
+                        <button key={p.variant_id} onClick={() => addToCart(p)}
+                          style={{ textAlign: "left", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, minHeight: 56 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.product_name}</div>
+                            {p.sku && <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace", marginTop: 2 }}>{p.sku}</div>}
+                          </div>
+                          <div style={{ fontSize: 15, fontWeight: 800, color: t.good, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{mxn(p.unit_price)}</div>
+                          <div style={{ width: 36, height: 36, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            <Plus size={18} strokeWidth={3} />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10 }}>
+                      {popular.map(p => (
+                        <button key={p.variant_id} onClick={() => addToCart(p)}
+                          style={{ textAlign: "left", padding: 12, borderRadius: 12, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", display: "flex", flexDirection: "column", gap: 4, minHeight: 88 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, lineHeight: 1.3, minHeight: 34, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.product_name}</div>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                            <div style={{ fontSize: 15, fontWeight: 800, color: t.good }}>{mxn(p.unit_price)}</div>
+                            <div style={{ width: 26, height: 26, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              <Plus size={14} strokeWidth={3} />
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: t.textMid, marginBottom: 4 }}>Listo para vender</div>
-                  <div style={{ fontSize: 12.5 }}>Escanea el código de barras o busca por nombre / SKU</div>
+              ) : (
+                <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, color: t.textLo, gap: 12 }}>
+                  <div style={{ width: 80, height: 80, borderRadius: 20, background: t.nova + "10", display: "flex", alignItems: "center", justifyContent: "center", border: `2px dashed ${t.nova}44` }}>
+                    <Barcode size={40} color={t.nova} style={{ opacity: 0.6 }} />
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: t.textMid, marginBottom: 4 }}>Listo para vender</div>
+                    <div style={{ fontSize: 12.5 }}>Escanea el código de barras o busca por nombre / SKU</div>
+                  </div>
                 </div>
-              </div>
+              )
             )}
             {results.length === 0 && !searching && customer && (
               <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 18 }}>
@@ -1025,7 +1091,154 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
           onResume={resumeParked}
           onDiscard={discardParked} />
       )}
+      {showScanner && (
+        <CameraScannerModal t={t}
+          onDetected={async (code) => { setShowScanner(false); await handleBarcode(code); }}
+          onClose={() => setShowScanner(false)} />
+      )}
     </div>
+  );
+}
+
+// ── Escáner de código de barras con la cámara del dispositivo ──────────────
+// Usa la BarcodeDetector API nativa del navegador (Chrome/Edge Android,
+// Safari iOS 17+). No requiere librerías. Si el navegador no la soporta,
+// mostramos un mensaje claro y le pedimos usar el buscador o un escáner USB.
+function CameraScannerModal({ t, onDetected, onClose }: {
+  t: any;
+  onDetected: (code: string) => void;
+  onClose: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const detectorRef = useRef<any>(null);
+  const rafRef = useRef<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(true);
+  const [supported, setSupported] = useState<boolean>(true);
+  const doneRef = useRef(false);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  useEffect(() => {
+    let stopped = false;
+    const start = async () => {
+      // 1) API soportada?
+      const BD = (window as any).BarcodeDetector;
+      if (!BD) { setSupported(false); setStarting(false); return; }
+      // 2) Detector con formatos comunes de retail
+      try {
+        detectorRef.current = new BD({
+          formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "qr_code", "itf"],
+        });
+      } catch { setSupported(false); setStarting(false); return; }
+
+      // 3) Cámara trasera (facingMode: environment) — la que apunta al mundo
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+        if (stopped) { stream.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => { /* iOS a veces requiere gesto */ });
+        }
+        setStarting(false);
+
+        // 4) Loop de detección — throttle vía requestAnimationFrame + pequeño delay
+        let last = 0;
+        const tick = async (ts: number) => {
+          if (stopped || doneRef.current) return;
+          if (ts - last > 220 && videoRef.current && detectorRef.current) {
+            last = ts;
+            try {
+              const codes = await detectorRef.current.detect(videoRef.current);
+              if (codes && codes.length > 0) {
+                const value = codes[0].rawValue || codes[0].raw || "";
+                if (value) {
+                  doneRef.current = true;
+                  // Vibración corta como feedback en móvil (si el navegador soporta)
+                  try { (navigator as any).vibrate?.(80); } catch { /* noop */ }
+                  onDetected(String(value));
+                  return;
+                }
+              }
+            } catch { /* frame no listo, seguimos */ }
+          }
+          rafRef.current = requestAnimationFrame(tick);
+        };
+        rafRef.current = requestAnimationFrame(tick);
+      } catch (e: any) {
+        setError(e?.message || "No se pudo acceder a la cámara. Revisa los permisos del navegador.");
+        setStarting(false);
+      }
+    };
+    start();
+    return () => {
+      stopped = true;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      streamRef.current?.getTracks().forEach(tr => tr.stop());
+      streamRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "#000", display: "flex", flexDirection: "column" }}>
+      <div style={{ padding: "14px 16px calc(14px + env(safe-area-inset-top, 0px))", display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(0,0,0,0.6)" }}>
+        <div style={{ color: "#fff", fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+          <Camera size={18} /> Escanear código
+        </div>
+        <button onClick={onClose}
+          style={{ background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", width: 40, height: 40, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <X size={20} />
+        </button>
+      </div>
+
+      <div style={{ flex: 1, position: "relative", background: "#000", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+        {supported ? (
+          <>
+            <video ref={videoRef} playsInline muted
+              style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            {/* Overlay guía — cuadro de puntería */}
+            <div style={{ position: "absolute", inset: 0, pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ width: "80%", maxWidth: 340, aspectRatio: "1.6/1", border: `3px solid ${t.nova}`, borderRadius: 16, boxShadow: `0 0 0 9999px rgba(0,0,0,0.4)` }} />
+            </div>
+            {starting && (
+              <div style={{ position: "absolute", bottom: 40, left: 0, right: 0, textAlign: "center", color: "#fff", fontSize: 13 }}>
+                Encendiendo cámara…
+              </div>
+            )}
+            {error && (
+              <div style={{ position: "absolute", bottom: 40, left: 20, right: 20, background: "rgba(220,38,38,0.9)", color: "#fff", padding: "12px 16px", borderRadius: 10, textAlign: "center", fontSize: 13 }}>
+                {error}
+              </div>
+            )}
+          </>
+        ) : (
+          <div style={{ padding: 40, color: "#fff", textAlign: "center", maxWidth: 400 }}>
+            <AlertTriangle size={48} color="#F59E0B" style={{ marginBottom: 16 }} />
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Cámara no soportada</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+              Este navegador no puede leer códigos con la cámara. Usa el buscador
+              o un escáner USB. En Android prueba con Chrome; en iPhone actualiza
+              a iOS 17 o más reciente.
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ padding: "14px 20px calc(14px + env(safe-area-inset-bottom, 0px))", background: "rgba(0,0,0,0.6)", color: "#fff", textAlign: "center", fontSize: 12.5 }}>
+        Apunta la cámara al código de barras o QR
+      </div>
+    </div>,
+    document.body,
   );
 }
 

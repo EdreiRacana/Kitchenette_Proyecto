@@ -301,6 +301,13 @@ async def search_products(db: DB, _: CurrentUser,
     return await service.search_products(db, q, limit)
 
 
+@router.get("/products/popular")
+async def popular_products(db: DB, _: CurrentUser,
+                            limit: int = Query(12, ge=1, le=40)):
+    """Top vendidos en los últimos 30 días — para el grid de acceso rápido."""
+    return await service.get_popular_products(db, limit)
+
+
 # ── PDFs: ticket térmico y reporte Z ──────────────────────────────────────
 from fastapi.responses import Response
 from app.modules.pos import pdf_ticket

@@ -122,6 +122,8 @@ export const posApi = {
 
   searchProducts: (q: string, limit = 20) =>
     api.get<POSProduct[]>("/pos/products/search", { params: { q, limit } }).then(r => r.data),
+  popularProducts: (limit = 12) =>
+    api.get<POSProduct[]>("/pos/products/popular", { params: { limit } }).then(r => r.data),
 
   downloadTicket: (orderId: number, width: 58 | 80 = 80) =>
     api.get<Blob>(`/pos/sale/${orderId}/ticket.pdf`, { params: { width }, responseType: "blob" }).then(r => r.data),
