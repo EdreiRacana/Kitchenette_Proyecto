@@ -306,6 +306,33 @@ async def invoice_payload(order_id: int, db: DB, _: CurrentUser):
     return service.build_invoice_payload(order)
 
 
+@router.post("/{order_id}/ticket/email", response_model=schemas.TicketEmailResult)
+async def send_ticket_email(order_id: int, payload: schemas.TicketSendRequest, db: DB, _: CurrentUser):
+    """Envía el ticket de la orden por correo (usa Resend/plataforma o SMTP)."""
+    from app.modules.sales import ticket as ticket_mod
+    from app.modules.core_config.service import get_company_profile
+    from app.core.email import send_email
+
+    order = await service.get_order_detail(db, order_id)
+    if not order:
+        raise HTTPException(404, "Pedido no encontrado")
+
+    recipient = (payload.to or "").strip() or (order.customer.email if order.customer else "")
+    if not recipient:
+        return schemas.TicketEmailResult(sent=False, reason="El cliente no tiene correo registrado")
+
+    company = await get_company_profile(db)
+    html = ticket_mod.render_ticket_html(order, company)
+    biz = (company.legal_name if company and company.legal_name else "Sthenova")
+    subject = f"Ticket {order.folio or order.id} — {biz}"
+
+    ok = await send_email(db, to=recipient, subject=subject, body_html=html)
+    if not ok:
+        return schemas.TicketEmailResult(sent=False, to=recipient,
+                                         reason="No se pudo enviar el correo (revisa la configuración de correo)")
+    return schemas.TicketEmailResult(sent=True, to=recipient)
+
+
 # ── Universal ERP: PDFs, importadores marketplace, P&L cliente ─────────────
 from fastapi import UploadFile, File, Form
 from fastapi.responses import Response

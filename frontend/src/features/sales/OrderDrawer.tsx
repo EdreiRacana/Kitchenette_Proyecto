@@ -3,7 +3,7 @@
 
 import { useEffect } from "react";
 import {
-  X, CreditCard, CheckCircle, XCircle, Pencil, ArrowRightLeft, Printer, FileText, MessageCircle,
+  X, CreditCard, CheckCircle, XCircle, Pencil, ArrowRightLeft, Printer, FileText, MessageCircle, Mail,
 } from "lucide-react";
 import type { Tokens, Translator } from "./theme";
 import { money, dateTime, paymentLabel, statusColors, statusMeta } from "./theme";
@@ -12,6 +12,25 @@ import { Badge, Button, IconButton } from "./ui";
 import configService from "../config/service";
 import { resolveMediaUrl } from "../../services/api";
 import { openWhatsApp } from "../../utils/whatsapp";
+import { salesApi } from "./api";
+
+async function emailTicket(order: Order) {
+  const suggested = order.customer?.email || "";
+  const to = window.prompt(
+    `Enviar ticket ${order.folio || "#" + order.id} por correo a:`,
+    suggested
+  );
+  if (to === null) return;
+  const dest = to.trim();
+  if (!dest) { alert("Escribe un correo válido."); return; }
+  try {
+    const r = await salesApi.sendTicketEmail(order.id, dest);
+    if (r.sent) alert(`✅ Ticket enviado a ${r.to}`);
+    else alert(`No se envió: ${r.reason || "error desconocido"}`);
+  } catch (e: any) {
+    alert(e?.response?.data?.detail || e?.message || "Error al enviar el correo");
+  }
+}
 
 function whatsappTicketMessage(order: Order): string {
   const lines = order.items.map((it) => `· ${it.quantity}x ${it.product_name ?? ""} — ${money((it.subtotal ?? it.unit_price * it.quantity))}`);
@@ -267,6 +286,10 @@ export function OrderDrawer({
                     window.URL.revokeObjectURL(url);
                   } catch (e: any) { alert(e?.response?.data?.detail || "Error al descargar PDF"); }
                 }}>PDF cotización</Button>
+                <Button tk={tk} variant="ghost" icon={<Mail size={16} />} onClick={() => emailTicket(order)}>{tr("sales_email_quote", "Enviar por correo")}</Button>
+                {order.customer?.phone && (
+                  <Button tk={tk} variant="ghost" icon={<MessageCircle size={16} />} onClick={() => openWhatsApp(order.customer!.phone!, whatsappTicketMessage(order))}>{tr("sales_whatsapp", "Enviar por WhatsApp")}</Button>
+                )}
                 <Button tk={tk} variant="ghost" icon={<Pencil size={16} />} onClick={() => onEdit(order)}>{tr("sales_edit", "Editar")}</Button>
                 <Button tk={tk} variant="danger" icon={<XCircle size={16} />} onClick={() => onCancel(order)}>{tr("sales_btn_cancel_quote", "Cancelar cotización")}</Button>
               </>
@@ -316,6 +339,7 @@ export function OrderDrawer({
               {order.customer?.phone && (
                 <Button tk={tk} variant="ghost" icon={<MessageCircle size={16} />} onClick={() => openWhatsApp(order.customer!.phone!, whatsappTicketMessage(order))}>{tr("sales_whatsapp", "Enviar por WhatsApp")}</Button>
               )}
+              <Button tk={tk} variant="ghost" icon={<Mail size={16} />} onClick={() => emailTicket(order)}>{tr("sales_email_ticket", "Enviar por correo")}</Button>
               <Button tk={tk} variant="ghost" icon={<FileText size={16} />} onClick={() => onInvoice(order)}>{tr("sales_invoice", "CFDI")}</Button>
               {!closed && order.status !== "paid" && <Button tk={tk} variant="ghost" icon={<Pencil size={16} />} onClick={() => onEdit(order)}>{tr("sales_edit", "Editar")}</Button>}
               <div style={{ flex: 1 }} />

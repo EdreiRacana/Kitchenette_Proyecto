@@ -516,3 +516,15 @@ class ReturnableOrder(BaseModel):
     customer_name: Optional[str] = None
     warehouse_id: Optional[int] = None
     items: List[ReturnableItem] = []
+
+
+# ── Envío de ticket por correo ────────────────────────────────────────────────
+
+class TicketSendRequest(BaseModel):
+    to: Optional[str] = None  # si vacío usa el correo del cliente
+
+
+class TicketEmailResult(BaseModel):
+    sent: bool
+    to: Optional[str] = None
+    reason: Optional[str] = None
