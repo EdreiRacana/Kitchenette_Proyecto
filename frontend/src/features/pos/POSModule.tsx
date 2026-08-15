@@ -208,6 +208,23 @@ function SessionSetup({ t, terminals, onOpened, onTerminalsChanged }: {
 
 
 // ── 2) Sala POS: cart + búsqueda + cobro ────────────────────────────
+// Detecta si estamos en un viewport tipo celular. Se re-evalúa al rotar la
+// pantalla o al cambiar el tamaño de la ventana (útil para probar en dev).
+// El breakpoint 768px separa "tablet-vertical/celular" de "tablet-horizontal/desktop".
+function useIsMobile(bp: number = 768): boolean {
+  const query = `(max-width: ${bp - 1}px)`;
+  const get = () => typeof window !== "undefined" && window.matchMedia(query).matches;
+  const [is, setIs] = useState<boolean>(get);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const m = window.matchMedia(query);
+    const h = () => setIs(m.matches);
+    m.addEventListener?.("change", h);
+    return () => m.removeEventListener?.("change", h);
+  }, [query]);
+  return is;
+}
+
 // Persistencia del carrito y del cliente identificado por turno.
 // El cajero a veces cambia de módulo mientras el cliente decide (ver otro
 // producto en Inventario, revisar un saldo, etc.) — al regresar, el carrito
@@ -250,6 +267,10 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const [showPrev, setShowPrev] = useState(false);
   const [showReturnFinder, setShowReturnFinder] = useState(false);
   const [scanFlash, setScanFlash] = useState<string | null>(null); // feedback breve al escanear
+  const isMobile = useIsMobile(768);
+  // En móvil el carrito vive como bottom sheet: colapsado se ve solo la
+  // barra con total + Cobrar; al tocarla se expande a pantalla casi completa.
+  const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [company, setCompany] = useState<{ commercial_name?: string; legal_name?: string; logo_url?: string } | null>(null);
   const [now, setNow] = useState(new Date());
   // Modo "Registro cliente": la caja voltea la pantalla al cliente para
@@ -409,6 +430,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 90px)", padding: 12, gap: 12 }}>
+      <style>{`@keyframes sheet-in { 0% { transform: translateY(100%) } 100% { transform: translateY(0) } }`}</style>
       {/* ══════════ HEADER PREMIUM ══════════ */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: `linear-gradient(135deg, ${t.panel} 0%, ${t.panel2} 100%)`, border: `1px solid ${t.border}`, borderRadius: 14, padding: "10px 18px", gap: 14, flexWrap: "wrap", boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.15)"}` }}>
         {/* Izquierda: Marca */}
@@ -482,7 +504,14 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
       </div>
 
       {/* ══════════ CUERPO: catálogo (izq) + carrito (der) ══════════ */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, flex: 1, minHeight: 0 }}>
+      {/* En móvil apilamos verticalmente y el carrito vive como bottom sheet,
+          pinneado abajo. En tablet/desktop, dos columnas como antes. */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr",
+        gap: 12, flex: 1, minHeight: 0,
+        paddingBottom: isMobile ? 92 : 0,  // hueco para la barra flotante
+      }}>
         {/* ─── Panel izquierdo: búsqueda + resultados ─── */}
         <div style={{ background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.10)"}` }}>
           {/* Buscador gigante con feedback de escáner */}
@@ -633,8 +662,20 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
           </div>
         </div>
 
-        {/* ─── Panel derecho: ticket + total + cobrar ─── */}
-        <div style={{ background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.10)"}` }}>
+        {/* ─── Panel derecho: ticket + total + cobrar ───
+            En móvil se convierte en bottom sheet (fixed, ocupa toda la pantalla
+            cuando cartSheetOpen=true, si no, oculto — la barra flotante de abajo
+            hace de resumen y de invitación a abrirlo). */}
+        <div style={
+          isMobile
+            ? {
+                position: "fixed", left: 0, right: 0, top: 0, bottom: 0, zIndex: 200,
+                background: t.panel, display: cartSheetOpen ? "flex" : "none",
+                flexDirection: "column", overflow: "hidden",
+                animation: cartSheetOpen ? "sheet-in .2s ease-out" : undefined,
+              }
+            : { background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.10)"}` }
+        }>
           {/* Header del ticket */}
           <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2} 0%, ${t.panel} 100%)`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -671,13 +712,22 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                 )}
               </div>
             </div>
-            {cart.length > 0 && (
-              <button onClick={() => { if (confirm("¿Vaciar el ticket?")) setCart([]); }}
-                title="Vaciar ticket"
-                style={{ background: t.bad + "16", border: `1px solid ${t.bad}44`, color: t.bad, cursor: "pointer", fontSize: 11.5, display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, fontWeight: 600 }}>
-                <Trash2 size={12} /> Vaciar
-              </button>
-            )}
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              {cart.length > 0 && (
+                <button onClick={() => { if (confirm("¿Vaciar el ticket?")) setCart([]); }}
+                  title="Vaciar ticket"
+                  style={{ background: t.bad + "16", border: `1px solid ${t.bad}44`, color: t.bad, cursor: "pointer", fontSize: 11.5, display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, fontWeight: 600 }}>
+                  <Trash2 size={12} /> Vaciar
+                </button>
+              )}
+              {isMobile && (
+                <button onClick={() => setCartSheetOpen(false)}
+                  title="Volver al catálogo"
+                  style={{ background: t.panel2, border: `1px solid ${t.border}`, color: t.textMid, cursor: "pointer", width: 34, height: 34, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <X size={16} />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Lista de items */}
@@ -764,12 +814,52 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
         </div>
       </div>
 
+      {/* Barra flotante inferior — solo en móvil cuando el sheet está cerrado.
+          Sirve como resumen persistente y como acceso a Cobrar sin abrir el sheet. */}
+      {isMobile && !cartSheetOpen && (
+        <div style={{
+          position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 150,
+          padding: "10px 12px calc(10px + env(safe-area-inset-bottom, 0px))",
+          background: t.panel, borderTop: `1px solid ${t.border}`,
+          boxShadow: "0 -6px 20px rgba(0,0,0,0.25)",
+          display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <button onClick={() => setCartSheetOpen(true)}
+            style={{
+              flex: 1, minWidth: 0, textAlign: "left", padding: "10px 14px",
+              background: t.panel2, border: `1px solid ${t.border}`, borderRadius: 12,
+              color: t.textHi, cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
+            }}>
+            <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 8, padding: 6, display: "flex" }}>
+              <ShoppingCart size={16} />
+            </div>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 12, color: t.textLo }}>
+                {cart.length === 0 ? "Ticket vacío" : `${totalItems} artículo${totalItems === 1 ? "" : "s"}${customer ? ` · ${customer.name.split(" ")[0]}` : ""}`}
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(total)}</div>
+            </div>
+          </button>
+          <button disabled={cart.length === 0} onClick={() => setShowPay(true)}
+            style={{
+              padding: "14px 18px", borderRadius: 12, border: "none",
+              background: cart.length === 0 ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`,
+              color: cart.length === 0 ? t.textLo : "#fff",
+              fontSize: 15, fontWeight: 800, cursor: cart.length === 0 ? "not-allowed" : "pointer",
+              display: "flex", alignItems: "center", gap: 6, boxShadow: cart.length > 0 ? `0 4px 12px ${t.good}55` : "none",
+              minWidth: 130, justifyContent: "center",
+            }}>
+            <DollarSign size={18} /> COBRAR
+          </button>
+        </div>
+      )}
+
       {showPay && <PayModal t={t} session={session} total={total} cart={cart}
         customer={customer} tierDiscount={tierDiscount} tierDiscountPct={tierDiscountPct}
         onDone={(sale) => {
           setCart([]); setShowPay(false); setLastSale(sale);
           setHistoryRefresh(v => v + 1); setCustomer(null);
-          clearPersistedPOS(session.id);
+          clearPersistedPOS(session.id); setCartSheetOpen(false);
         }}
         onCancel={() => setShowPay(false)} />}
       {tabletMode && (
