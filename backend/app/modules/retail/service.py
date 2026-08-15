@@ -4357,6 +4357,20 @@ async def ensure_store_consignment(
     if store.consignment_warehouse_id:
         return store
 
+    # Solo cadenas de tipo 'consignacion' generan consignaciones.
+    # Firme y marketplace NO deben tener consignation warehouse — evita
+    # que un traslado accidental convierta a Walmart o Liverpool MP en
+    # cliente en consignación.
+    channel = await db.get(models.RetailChannel, store.channel_id)
+    sale_type = (channel.sale_type if channel else "consignacion") or "consignacion"
+    if sale_type != "consignacion":
+        raise ValueError(
+            f"La cadena '{channel.name if channel else store.channel_id}' "
+            f"tiene tipo de venta '{sale_type}'; no se generan almacenes de "
+            f"consignación para venta en firme o marketplace. Cámbialo en "
+            f"la ficha de la cadena si es necesario."
+        )
+
     # Nombre único (agrega sufijo -N si ya existe)
     base_name = f"Consignación · {store.name}"
     name = base_name

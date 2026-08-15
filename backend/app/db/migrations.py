@@ -707,6 +707,10 @@ _RETAIL_STATEMENTS = [
     # Devoluciones (Fase 8) — captura los returns que las cadenas reportan
     # junto con el sell-out para no perderlos, calcular tasa y alertar.
     "ALTER TABLE retail_channels          ADD COLUMN IF NOT EXISTS return_rate_max_pct DOUBLE PRECISION DEFAULT 5.0 NOT NULL",
+    # Modelo comercial de la cadena — firme / consignacion / marketplace
+    "ALTER TABLE retail_channels          ADD COLUMN IF NOT EXISTS sale_type VARCHAR DEFAULT 'consignacion' NOT NULL",
+    "UPDATE retail_channels               SET sale_type = 'consignacion' WHERE sale_type IS NULL",
+    "CREATE INDEX IF NOT EXISTS ix_retail_channels_sale_type ON retail_channels(sale_type)",
     "ALTER TABLE retail_sellout_reports   ADD COLUMN IF NOT EXISTS units_returned      INTEGER DEFAULT 0 NOT NULL",
     "ALTER TABLE retail_sellout_reports   ADD COLUMN IF NOT EXISTS returns_amount      DOUBLE PRECISION DEFAULT 0.0 NOT NULL",
     # Promociones (Fase 9) — ventana + alcance + mecánica para medir el lift.

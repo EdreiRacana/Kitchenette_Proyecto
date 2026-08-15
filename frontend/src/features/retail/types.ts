@@ -9,6 +9,7 @@ export interface RetailChannel {
   critical_wos_weeks: number;
   overstock_wos_weeks: number;
   return_rate_max_pct?: number;
+  sale_type?: "firme" | "consignacion" | "marketplace";
   is_active: boolean;
   notes?: string | null;
   stores_count: number;
@@ -23,6 +24,7 @@ export interface RetailChannelCreate {
   critical_wos_weeks?: number;
   overstock_wos_weeks?: number;
   return_rate_max_pct?: number;
+  sale_type?: "firme" | "consignacion" | "marketplace";
   is_active?: boolean;
   notes?: string | null;
 }
