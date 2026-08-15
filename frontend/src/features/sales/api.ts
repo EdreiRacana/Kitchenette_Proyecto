@@ -351,4 +351,18 @@ export const salesApi = {
     }
     return opts;
   },
+
+  // Export XLSX de ventas con los mismos filtros que la tabla del CRM
+  downloadOrdersXlsx: async (filters: Record<string, any> = {}) => {
+    const res = await api.get(`/sales/export.xlsx`, {
+      params: filters, responseType: "blob",
+    });
+    const url = URL.createObjectURL(res.data as Blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[-T:]/g, "");
+    a.download = `ventas_${stamp}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  },
 };

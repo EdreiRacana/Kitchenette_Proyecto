@@ -1003,6 +1003,12 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
                 </>
               )}
             </div>
+            <Button tk={tk} variant="ghost" icon={<Download size={16} />}
+              onClick={() => salesApi.downloadOrdersXlsx(filters as any).catch((e: any) =>
+                alert(e?.response?.data?.detail || "Error al descargar XLSX"))}
+              title="Descargar ventas en Excel con los filtros aplicados">
+              XLSX
+            </Button>
             <Button tk={tk} variant="primary" icon={<Plus size={16} />} onClick={openNew}>{tr("sales_new", "Nuevo")}</Button>
           </>
         )}
