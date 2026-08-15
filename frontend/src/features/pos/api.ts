@@ -147,7 +147,23 @@ export const posApi = {
     api.post<PreviousSessionReport>(`/pos/session/${sessionId}/unmark-reconciled`).then(r => r.data),
   recountSession: (sessionId: number, data: { denominations: Record<string, number>; notes?: string }) =>
     api.post<PreviousSessionReport>(`/pos/session/${sessionId}/recount`, data).then(r => r.data),
+
+  emailSessionToAccounting: (sessionId: number, data: { to?: string; kind?: "Z" | "X"; notes?: string } = {}) =>
+    api.post<SessionEmailResult>(`/pos/session/${sessionId}/email-accounting`, data).then(r => r.data),
+
+  // Correo de contabilidad configurado en el perfil de la empresa (para
+  // pre-llenar el prompt de envío del cierre).
+  companyAccountingEmail: () =>
+    api.get<{ accounting_email?: string | null }>("/config/company")
+       .then(r => (r.data?.accounting_email || "").trim())
+       .catch(() => ""),
 };
+
+export interface SessionEmailResult {
+  sent: boolean;
+  to?: string | null;
+  reason?: string | null;
+}
 
 export interface PosBankAccount {
   id: number;

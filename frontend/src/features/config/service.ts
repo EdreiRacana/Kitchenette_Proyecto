@@ -22,6 +22,7 @@ export interface CompanyProfile {
     base_currency?: string;
     timezone?: string;
     logo_url?: string;
+    accounting_email?: string;
     commercial_name?: string;
     brand_color?: string;
     document_footer?: string;

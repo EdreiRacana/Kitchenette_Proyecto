@@ -35,6 +35,10 @@ class CompanyProfile(Base):
     base_currency = Column(String, default="MXN")
     timezone = Column(String, default="America/Mexico_City")
     logo_url = Column(String, nullable=True)
+    # Correo del contador/contabilidad — destino por defecto de reportes
+    # como el cierre de turno POS (reporte Z). Se puede sobreescribir por
+    # envío. Nullable: si no está seteado, la UI pide el correo cada vez.
+    accounting_email = Column(String, nullable=True)
     # Bytes del logo — persistente cross-deploy. El filesystem de Render es
     # efímero, así que /uploads/ se pierde en cada deploy y sólo confiar en
     # `logo_url` rompe los PDFs. `logo_bytes` es la fuente de verdad para PDFs.

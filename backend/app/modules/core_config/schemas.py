@@ -14,6 +14,9 @@ class CompanyProfileBase(BaseModel):
     base_currency: Optional[str] = "MXN"
     timezone: Optional[str] = "America/Mexico_City"
     logo_url: Optional[str] = None
+    # Correo de contabilidad (destino por defecto para reportes automáticos:
+    # cierre de turno POS, cortes, etc.).
+    accounting_email: Optional[EmailStr] = None
     # ── Branding para documentos PDF ─────────────────
     commercial_name: Optional[str] = None
     brand_color: Optional[str] = "#33B2F5"

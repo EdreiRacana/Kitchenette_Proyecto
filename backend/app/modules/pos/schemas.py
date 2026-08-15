@@ -132,3 +132,17 @@ class RecountRequest(BaseModel):
     contó mal. Recalcula actual_cash y variance con audit log."""
     denominations: Dict[str, int]  # {"500": 4, "200": 5, ...}
     notes: Optional[str] = None
+
+
+class SessionEmailAccountingRequest(BaseModel):
+    """Enviar el reporte Z del cierre de turno al correo del contador.
+    Si `to` viene vacío se usa `CompanyProfile.accounting_email`."""
+    to: Optional[str] = None
+    kind: str = "Z"  # Z (cierre) o X (corte intermedio)
+    notes: Optional[str] = None
+
+
+class SessionEmailAccountingResult(BaseModel):
+    sent: bool
+    to: Optional[str] = None
+    reason: Optional[str] = None

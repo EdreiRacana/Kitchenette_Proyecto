@@ -9,7 +9,7 @@ import {
   Lock, Unlock, LogIn, LogOut, Printer, RefreshCw, Package, Download,
   Banknote, CreditCard, ArrowLeftRight, Check, X, AlertTriangle,
   Receipt, User, Clock, ChevronRight, History, Scale, Zap, Sparkles,
-  Grid3x3, Barcode, Tablet, ShieldCheck, RotateCcw, Undo2,
+  Grid3x3, Barcode, Tablet, ShieldCheck, RotateCcw, Undo2, Mail,
 } from "lucide-react";
 import {
   posApi, DENOMINATIONS,
@@ -1155,6 +1155,23 @@ function CloseSessionModal({ t, session, onClosed, onCancel }: any) {
                   URL.revokeObjectURL(url);
                 } catch { /* silencio: el cierre ya se ejecutó */ }
               }
+
+              // Envío del reporte a contabilidad — pre-llena con el correo
+              // configurado en el perfil de la empresa. Si no hay ninguno
+              // configurado y el usuario tampoco escribe uno, se salta.
+              try {
+                const defaultTo = await posApi.companyAccountingEmail();
+                const to = prompt(
+                  "¿Enviar el reporte Z a contabilidad?\n\nDeja el campo vacío para omitir.",
+                  defaultTo,
+                );
+                if (to && to.trim()) {
+                  const res = await posApi.emailSessionToAccounting(session.id, { to: to.trim(), kind: "Z" });
+                  if (res.sent) alert(`Reporte enviado a ${res.to}`);
+                  else alert(res.reason || "No se pudo enviar el correo.");
+                }
+              } catch { /* silencio: el cierre ya se ejecutó */ }
+
               onClosed();
             } catch (e: any) { alert(e?.response?.data?.detail || "Error"); }
             finally { setSaving(false); }
@@ -1853,6 +1870,7 @@ function PreviousSessionDrawer({ t, terminalId, scope, sessionId, onClose }: {
   const [report, setReport] = useState<PreviousSessionReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<"Z" | "X" | null>(null);
+  const [emailing, setEmailing] = useState(false);
   const [reprint, setReprint] = useState<number | null>(null);
   const [reconcileType, setReconcileType] = useState<"bank_deposit" | "float_next_shift" | "adjustment" | null>(null);
   const [editingNotes, setEditingNotes] = useState(false);
@@ -1945,6 +1963,25 @@ function PreviousSessionDrawer({ t, terminalId, scope, sessionId, onClose }: {
       URL.revokeObjectURL(url);
     } catch { alert("Error al descargar el reporte"); }
     finally { setDownloading(null); }
+  };
+
+  const emailToAccounting = async (kind: "Z" | "X" = "Z") => {
+    if (!report) return;
+    setEmailing(true);
+    try {
+      const defaultTo = await posApi.companyAccountingEmail();
+      const to = prompt(
+        `Enviar reporte ${kind} del turno #${report.id} a contabilidad.\n\n`
+        + `Correo de contabilidad (deja vacío para omitir):`,
+        defaultTo,
+      );
+      if (!to || !to.trim()) return;
+      const res = await posApi.emailSessionToAccounting(report.id, { to: to.trim(), kind });
+      if (res.sent) flashOk(`Reporte ${kind} enviado a ${res.to}`);
+      else alert(res.reason || "No se pudo enviar el correo.");
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "Error al enviar el correo");
+    } finally { setEmailing(false); }
   };
 
   const reprintTicket = async (orderId: number) => {
@@ -2258,6 +2295,11 @@ function PreviousSessionDrawer({ t, terminalId, scope, sessionId, onClose }: {
                 <button disabled={downloading === "X"} onClick={() => downloadZ("X")}
                   style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel3, color: t.textMid, cursor: downloading ? "wait" : "pointer", fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
                   <Download size={14} /> {downloading === "X" ? "…" : "Corte X"}
+                </button>
+                <button disabled={emailing} onClick={() => emailToAccounting("Z")}
+                  title="Enviar el reporte Z (PDF + resumen HTML) al correo del contador"
+                  style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${t.good}55`, background: t.good + "18", color: t.good, cursor: emailing ? "wait" : "pointer", fontSize: 12.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                  <Mail size={14} /> {emailing ? "Enviando…" : "Enviar a contabilidad"}
                 </button>
               </div>
             </>

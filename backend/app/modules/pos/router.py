@@ -342,3 +342,78 @@ async def download_session_report(session_id: int, db: DB, _: CurrentUser,
     fname = f"reporte_{kind}_turno_{session_id}.pdf"
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.post("/session/{session_id}/email-accounting",
+             response_model=schemas.SessionEmailAccountingResult)
+async def email_session_to_accounting(
+    session_id: int,
+    data: schemas.SessionEmailAccountingRequest,
+    db: DB,
+    current_user: CurrentUser,
+):
+    """Envía por correo el reporte Z del cierre de turno al contador.
+
+    Destinatario: `data.to` si viene, si no `CompanyProfile.accounting_email`.
+    Adjunta el PDF del reporte Z (o X) y un HTML resumen del turno.
+    """
+    kind = (data.kind or "Z").upper()
+    if kind not in ("Z", "X"):
+        raise HTTPException(400, "kind debe ser Z (cierre) o X (corte)")
+
+    session = await service.get_session(db, session_id)
+    if not session:
+        raise HTTPException(404, "Sesión no encontrada")
+
+    from app.modules.core_config.service import get_company_profile
+    company_obj = await get_company_profile(db)
+    default_to = (getattr(company_obj, "accounting_email", None) or "").strip()
+    recipient = (data.to or "").strip() or default_to
+    if not recipient:
+        return schemas.SessionEmailAccountingResult(
+            sent=False,
+            reason=("No hay correo de contabilidad configurado ni destinatario. "
+                    "Configúralo en Configuración → Empresa o captúralo al enviar."),
+        )
+
+    report = await service.get_session_report(db, session_id)
+    sales = await service.list_session_sales(db, session_id)
+    from app.modules.sales.universal_service import _get_company_dict
+    from app.modules.pos import email_report as pos_email
+    from app.core.email import send_email
+
+    company_dict = await _get_company_dict(db)
+    pdf = pdf_ticket.build_session_z_report(
+        company_dict, session, report, kind=kind, sales=sales,
+    )
+    html = pos_email.render_session_close_html(
+        company_dict, session, report, kind=kind, extra_notes=data.notes,
+    )
+    biz = (company_obj.legal_name if company_obj and company_obj.legal_name else "Sthenova")
+    kind_label = "Cierre de turno" if kind == "Z" else "Corte intermedio"
+    subject = (f"{kind_label} · Turno #{session_id} · {session.get('terminal_name') or 'POS'}"
+               f" · {biz}")
+    fname = f"reporte_{kind}_turno_{session_id}.pdf"
+
+    ok = await send_email(
+        db, to=recipient, subject=subject, body_html=html,
+        attachments=[(fname, pdf, "pdf")],
+    )
+    if not ok:
+        return schemas.SessionEmailAccountingResult(
+            sent=False, to=recipient,
+            reason=("No se pudo enviar el correo. Revisa la configuración de correo "
+                    "(Configuración → Integraciones)."),
+        )
+
+    # Audit trail — deja rastro de a quién y cuándo se envió el cierre.
+    try:
+        await service._log(
+            db, current_user.id, "EMAIL_POS_SESSION_TO_ACCOUNTING",
+            f"Reporte {kind} del turno {session_id} enviado a {recipient}",
+            {"session_id": session_id, "kind": kind, "to": recipient},
+        )
+    except Exception:
+        pass
+
+    return schemas.SessionEmailAccountingResult(sent=True, to=recipient)

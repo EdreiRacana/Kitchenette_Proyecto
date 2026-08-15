@@ -168,6 +168,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const [companyForm, setCompanyForm] = useState<CompanyProfile>({
     legal_name: "", tax_id: "", contact_email: "", contact_phone: "", address: "",
     base_currency: "MXN", timezone: "America/Mexico_City", logo_url: "",
+    accounting_email: "",
     commercial_name: "", brand_color: "#33B2F5", document_footer: "",
     business_mode: "product",
   });
@@ -199,6 +200,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
         contact_email: data.contact_email || "", contact_phone: data.contact_phone || "",
         address: data.address || "", base_currency: data.base_currency || "MXN",
         timezone: data.timezone || "America/Mexico_City", logo_url: data.logo_url || "",
+        accounting_email: data.accounting_email || "",
         commercial_name: data.commercial_name || "", brand_color: data.brand_color || "#33B2F5",
         document_footer: data.document_footer || "",
         business_mode: (data.business_mode as any) || "product",
@@ -212,7 +214,11 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const handleSaveCompanyProfile = async () => {
     setCompanySaving(true); setCompanyMsg("");
     try {
-      const payload = { ...companyForm, contact_email: companyForm.contact_email?.trim() || undefined };
+      const payload = {
+        ...companyForm,
+        contact_email: companyForm.contact_email?.trim() || undefined,
+        accounting_email: companyForm.accounting_email?.trim() || undefined,
+      };
       if (companyExists) await configService.updateCompanyProfile(payload);
       else await configService.createCompanyProfile(payload);
       setCompanyMsg("Datos de la empresa guardados ✓");
@@ -448,6 +454,19 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <div><label style={lbl}>Teléfono</label><input value={companyForm.contact_phone || ""} onChange={e => setCompanyForm(f => ({ ...f, contact_phone: e.target.value }))} style={inp} /></div>
                   <div><label style={lbl}>Email de contacto</label><input value={companyForm.contact_email || ""} onChange={e => setCompanyForm(f => ({ ...f, contact_email: e.target.value }))} style={inp} /></div>
+                </div>
+                <div>
+                  <label style={lbl}>Correo de contabilidad</label>
+                  <input
+                    value={companyForm.accounting_email || ""}
+                    onChange={e => setCompanyForm(f => ({ ...f, accounting_email: e.target.value }))}
+                    placeholder="contador@tudespacho.com"
+                    style={inp}
+                  />
+                  <div style={{ fontSize: 11, color: t.textLo, marginTop: 4 }}>
+                    Destino por defecto del reporte Z del cierre de turno POS y otros
+                    reportes automáticos a contabilidad.
+                  </div>
                 </div>
               </div>
             </div>

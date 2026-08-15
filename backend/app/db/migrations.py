@@ -471,6 +471,9 @@ _BRANCH_STATEMENTS = [
     "UPDATE company_profile SET is_active = TRUE WHERE is_active IS NULL",
     # Registro patronal IMSS — para avisos AFIL-02/04/08 y cédulas
     "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS imss_registro_patronal VARCHAR",
+    # Correo de contabilidad — destino por defecto de reportes automáticos
+    # (cierre de turno POS, cortes, etc.)
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS accounting_email VARCHAR",
     # Cierre de período contable
     """CREATE TABLE IF NOT EXISTS accounting_period_close (
         id            SERIAL PRIMARY KEY,
