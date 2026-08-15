@@ -25,6 +25,11 @@ from sqlalchemy.engine import Connection
 _CUSTOMER_STATEMENTS = [
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS client_number    VARCHAR",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS client_type      VARCHAR",
+    # Origen del cliente: b2b (empresa con RFC) | pos (particular walk-in)
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS source           VARCHAR DEFAULT 'b2b' NOT NULL",
+    "CREATE INDEX IF NOT EXISTS ix_customers_source ON customers(source)",
+    # Backfill: si no tiene RFC ni razón social, es probable un cliente POS
+    "UPDATE customers SET source = 'pos' WHERE source = 'b2b' AND (rfc IS NULL OR rfc = '') AND (razon_social IS NULL OR razon_social = '')",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS razon_social     VARCHAR",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS nombre_comercial VARCHAR",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS rfc              VARCHAR",

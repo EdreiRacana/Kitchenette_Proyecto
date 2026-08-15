@@ -345,7 +345,16 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
                     onMouseLeave={(e) => (e.currentTarget.style.background = i % 2 === 0 ? tk.panel : tk.panel2)}>
                     <td style={{ padding: "12px 16px", fontSize: 13, color: tk.accent, fontWeight: 700, whiteSpace: "nowrap" }}>{c.client_number ?? "—"}</td>
                     <td style={{ padding: "12px 16px", fontSize: 14, color: tk.textHi }}>
-                      <div style={{ fontWeight: 600 }}>{c.name}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: 600 }}>{c.name}</span>
+                        {(c as any).source === "pos" && (
+                          <span title="Cliente particular del punto de venta (no pertenece a una empresa)"
+                            style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4,
+                                     background: tk.warn + "22", color: tk.warn, letterSpacing: 0.3 }}>
+                            POS
+                          </span>
+                        )}
+                      </div>
                       {c.razon_social && c.razon_social !== c.name && <div style={{ fontSize: 12, color: tk.textLo }}>{c.razon_social}</div>}
                     </td>
                     <td style={{ padding: "12px 16px", fontSize: 13, color: tk.textMid, fontFamily: "monospace" }}>{c.rfc ?? "—"}</td>
