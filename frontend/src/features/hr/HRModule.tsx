@@ -333,8 +333,8 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", borderBottom: `1px solid ${t.border}`, marginBottom: 20, overflowX: "auto", gap: 2 }}>
+      {/* Tabs — 2 filas centradas cuando no caben en una */}
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", borderBottom: `1px solid ${t.border}`, marginBottom: 20, gap: 4, rowGap: 4 }}>
         {TABS.map(({ id, label, icon: Icon }) => (
           <button key={id} onClick={() => setTab(id as any)} style={tabBtn(tab === id)}>
             <Icon size={14} />{label}
