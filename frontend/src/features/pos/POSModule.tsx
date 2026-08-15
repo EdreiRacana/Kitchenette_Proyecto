@@ -1049,6 +1049,7 @@ function PayModal({ t, session, total, cart, customer, tierDiscount, tierDiscoun
   const [card, setCard] = useState<number>(0);
   const [transfer, setTransfer] = useState<number>(0);
   const [saving, setSaving] = useState(false);
+  const isMobile = useIsMobile(768);
 
   // Al cambiar de modo, resetear valores según el método elegido.
   useEffect(() => {
@@ -1117,19 +1118,57 @@ function PayModal({ t, session, total, cart, customer, tierDiscount, tierDiscoun
     { key: "transfer" as const, label: "Transferencia", ic: ArrowLeftRight, c: "#A78BFA" },
   ];
 
+  // Quick-tender: acelera capturar montos redondos comunes en efectivo, típico
+  // de POS profesionales (Square, Toast). En móvil vale oro: media pantalla
+  // menos de teclado numérico luchando.
+  const quickTenders = useMemo(() => {
+    const round = (v: number) => Math.ceil(v);
+    const base = round(total);
+    const chips: { label: string; value: number }[] = [
+      { label: `Exacto ${mxn(total)}`, value: total },
+    ];
+    // Los billetes más comunes (MX): 50, 100, 200, 500, 1000
+    for (const bill of [50, 100, 200, 500, 1000]) {
+      const rounded = Math.ceil(base / bill) * bill;
+      if (rounded > total && !chips.some(c => c.value === rounded)) {
+        chips.push({ label: mxn(rounded), value: rounded });
+      }
+    }
+    return chips.slice(0, 6);
+  }, [total]);
+
   return (
-    <div style={{ ...modalBg, zIndex: 9990 }} onClick={onCancel}>
-      <div style={{ ...modalPane, background: t.panel, border: `1px solid ${t.border}`, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+    <div style={{
+      ...modalBg, zIndex: 9990,
+      padding: isMobile ? 0 : 20,
+      alignItems: isMobile ? "stretch" : "center",
+    }} onClick={onCancel}>
+      <div style={{
+        ...modalPane,
+        background: t.panel, border: `1px solid ${t.border}`,
+        maxWidth: isMobile ? "100%" : 520,
+        width: "100%",
+        height: isMobile ? "100%" : undefined,
+        maxHeight: isMobile ? "100%" : "92vh",
+        borderRadius: isMobile ? 0 : 14,
+        display: "flex", flexDirection: "column",
+        overflow: "hidden",
+      }} onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2}, ${t.panel})` }}>
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2}, ${t.panel})`, flexShrink: 0 }}>
           <div style={{ fontSize: 11.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Total a cobrar</div>
           <div style={{ fontSize: 36, fontWeight: 900, color: t.textHi, fontVariantNumeric: "tabular-nums", lineHeight: 1.1, marginTop: 2 }}>{mxn(total)}</div>
         </div>
 
+        <div style={{ flex: 1, overflowY: "auto" }}>
         {/* Selector de método (botones grandes) */}
         <div style={{ padding: "18px 20px 8px" }}>
           <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 10, fontWeight: 700 }}>Método de pago</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr",
+            gap: 8,
+          }}>
             {methodDefs.map(m => {
               const on = mode === m.key;
               const Icon = m.ic;
@@ -1157,7 +1196,28 @@ function PayModal({ t, session, total, cart, customer, tierDiscount, tierDiscoun
         {/* Inputs de monto */}
         <div style={{ padding: "10px 20px 6px", display: "flex", flexDirection: "column", gap: 10 }}>
           {mode === "cash" && (
-            <MoneyInput t={t} label="Efectivo recibido" value={cash} onChange={setCash} color={t.good} icon={Banknote} big />
+            <>
+              <MoneyInput t={t} label="Efectivo recibido" value={cash} onChange={setCash} color={t.good} icon={Banknote} big />
+              {/* Quick-tender: chips con billetes redondeados hacia arriba */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 2 }}>
+                {quickTenders.map((c, i) => {
+                  const on = Math.abs(cash - c.value) < 0.005;
+                  return (
+                    <button key={i} onClick={() => setCash(c.value)}
+                      style={{
+                        padding: "10px 14px", borderRadius: 999,
+                        border: on ? `2px solid ${t.good}` : `1px solid ${t.border}`,
+                        background: on ? t.good + "22" : t.panel2,
+                        color: on ? t.good : t.textMid,
+                        cursor: "pointer", fontSize: 13, fontWeight: 700,
+                        fontVariantNumeric: "tabular-nums",
+                      }}>
+                      {c.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
           )}
           {mode === "card" && (
             <MoneyInput t={t} label="Monto con tarjeta" value={card} onChange={setCard} color={t.nova} icon={CreditCard} big />
@@ -1199,13 +1259,20 @@ function PayModal({ t, session, total, cart, customer, tierDiscount, tierDiscoun
           </div>
         </div>
 
-        {/* Footer */}
-        <div style={{ padding: "14px 20px", borderTop: `1px solid ${t.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: t.panel2 }}>
-          <button onClick={onCancel} style={{ padding: "11px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}>
-            Cancelar (Esc)
+        </div>{/* /scroller */}
+
+        {/* Footer pinneado — siempre visible incluso con teclado numérico */}
+        <div style={{
+          padding: "14px 20px calc(14px + env(safe-area-inset-bottom, 0px))",
+          borderTop: `1px solid ${t.border}`, display: "flex",
+          justifyContent: "space-between", alignItems: "center", gap: 8,
+          background: t.panel2, flexShrink: 0,
+        }}>
+          <button onClick={onCancel} style={{ padding: "12px 18px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}>
+            Cancelar
           </button>
           <button disabled={saving || !isValid} onClick={submit}
-            style={{ padding: "12px 28px", borderRadius: 10, border: "none", background: !isValid ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: !isValid ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14, display: "flex", alignItems: "center", gap: 8, boxShadow: isValid ? `0 4px 12px ${t.good}55` : "none" }}>
+            style={{ flex: isMobile ? 1 : undefined, padding: "14px 24px", borderRadius: 10, border: "none", background: !isValid ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: !isValid ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: isValid ? `0 4px 12px ${t.good}55` : "none" }}>
             <Check size={16} /> {saving ? "Procesando…" : `Cobrar ${mxn(total)}`}
           </button>
         </div>
@@ -1226,9 +1293,10 @@ function MoneyInput({ t, label, value, onChange, color, icon: Icon, big }:
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 11, color: t.textLo, marginBottom: 2, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>{label}</div>
         <input ref={inputRef} type="number" step={0.01} min={0} value={value || ""}
+          inputMode="decimal"
           onChange={e => onChange(parseFloat(e.target.value) || 0)}
           onFocus={e => e.target.select()}
-          style={{ width: "100%", padding: big ? "12px 14px" : "9px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: big ? 22 : 15, fontWeight: 800, outline: "none", fontVariantNumeric: "tabular-nums" }} />
+          style={{ width: "100%", padding: big ? "14px 16px" : "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: big ? 24 : 15, fontWeight: 800, outline: "none", fontVariantNumeric: "tabular-nums" }} />
       </div>
     </div>
   );
