@@ -83,6 +83,10 @@ class Customer(Base):
     # ── Identity / classification ────────────────────────────────────────
     client_number = Column(String, unique=True, index=True, nullable=True)  # CLI-00042
     client_type = Column(String, default="Contado", nullable=True, index=True)
+    # source: "b2b" (default — cliente empresa) | "pos" (particular del punto de venta)
+    # Los clientes creados via POS quedan marcados 'pos' y NO deben pertenecer
+    # a una empresa/RFC — son ventas al público (walk-in retail).
+    source = Column(String, default="b2b", nullable=False, index=True)
     razon_social = Column(String, nullable=True)        # legal name
     nombre_comercial = Column(String, nullable=True)    # trade name
     name = Column(String, index=True, nullable=False)   # display (kept for compat)

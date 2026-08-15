@@ -68,6 +68,8 @@ class CustomerBase(BaseModel):
     nombre_comercial: Optional[str] = None
     name: Optional[str] = None  # display; auto-filled if omitted
     client_type: Optional[str] = None
+    # b2b (empresa con RFC) | pos (walk-in particular del punto de venta)
+    source: Optional[str] = "b2b"
 
     # Tax / CFDI
     rfc: Optional[str] = None
