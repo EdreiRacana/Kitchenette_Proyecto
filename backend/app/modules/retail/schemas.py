@@ -22,6 +22,8 @@ class RetailChannelBase(BaseModel):
     alerts_enabled: bool = True
     is_active: bool = True
     notes: Optional[str] = None
+    # firme | consignacion | marketplace
+    sale_type: str = Field(default="consignacion")
 
 
 class RetailChannelCreate(RetailChannelBase):
@@ -41,6 +43,7 @@ class RetailChannelUpdate(BaseModel):
     alerts_enabled: Optional[bool] = None
     is_active: Optional[bool] = None
     notes: Optional[str] = None
+    sale_type: Optional[str] = None
 
 
 class RetailChannelOut(RetailChannelBase):

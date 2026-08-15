@@ -4,6 +4,7 @@ from typing import Optional, List
 from datetime import datetime
 import json
 
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -495,13 +496,25 @@ async def register_sale(db: AsyncSession, session_id: int,
                 oi.is_service = True
                 continue
             try:
+                # allow_negative=False: bloquea la venta si no hay stock
+                # suficiente en el warehouse del POS. Un punto de venta
+                # nunca debe vender lo que no tiene en piso.
                 result = await fifo_service.consume_stock(
                     db, variant_id=variant_id, warehouse_id=warehouse_id,
                     quantity=qty, reference=f"order:{order.id}",
                     user_id=user_id or s.cashier_id,
-                    allow_negative=True, commit=False,
+                    allow_negative=False, commit=False,
                 )
                 oi.unit_cost = float(result.get("unit_cost_avg") or 0.0)
+            except ValueError as e:
+                # Sin stock suficiente — abortar toda la venta.
+                await db.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail=(f"No hay stock suficiente para el producto "
+                            f"{oi.product_name or ('SKU '+ (oi.sku or ''))} en este "
+                            f"punto de venta. {str(e)}"),
+                )
             except Exception as e:
                 log.warning("consume_stock error en venta POS",
                             extra={"order_id": order.id, "variant_id": variant_id, "error": str(e)},

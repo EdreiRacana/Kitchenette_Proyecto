@@ -151,15 +151,27 @@ async def _apply_stock_for_items(db: AsyncSession, order: models.Order,
         ref = f"order:{order.id}"
         if direction == "out":
             try:
+                # allow_negative=False: bloquea el surtido si no hay stock
+                # suficiente. No se debe poder comprometer mercancía que no
+                # existe físicamente en el almacén de salida.
                 result = await fifo_service.consume_stock(
                     db, variant_id=it.variant_id, warehouse_id=wh,
                     quantity=qty, reference=ref, user_id=user_id,
-                    allow_negative=True, commit=False,
+                    allow_negative=False, commit=False,
                 )
                 it.unit_cost = float(result.get("unit_cost_avg") or 0.0)
+            except ValueError as e:
+                # Sin stock — no confirmamos la orden.
+                from fastapi import HTTPException as _HE
+                await db.rollback()
+                raise _HE(
+                    status_code=400,
+                    detail=(f"Stock insuficiente para surtir '{it.product_name or ''}' "
+                            f"(SKU {it.sku or '—'}). {str(e)}"),
+                )
             except Exception as e:
-                # Nunca tumbar la venta por un tropiezo de inventario.
                 log.warning("consume_stock error en venta", extra={"order_id": order.id, "variant_id": it.variant_id, "error": str(e)}, exc_info=True)
+                # Fallback solo para errores no relacionados con stock (DB, red, etc.)
                 await _move_stock(
                     db, variant_id=it.variant_id, warehouse_id=wh,
                     qty=qty, direction="out",

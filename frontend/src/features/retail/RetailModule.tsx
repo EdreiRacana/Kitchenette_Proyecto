@@ -226,7 +226,7 @@ export default function RetailModule({ t }: { t: Tokens }) {
 // Logo del cliente vinculado a la cadena. Muestra imagen si existe;
 // si no, iniciales del nombre en un chip cuadrado.
 function ChannelLogo({ channel, t }: { channel: RetailChannel | null; t: Tokens }) {
-  const size = 40;
+  const size = 80;
   const box: CSSProperties = {
     width: size, height: size, borderRadius: 8,
     border: `1px solid ${t.border}`, background: t.panel,
@@ -253,7 +253,7 @@ function ChannelLogo({ channel, t }: { channel: RetailChannel | null; t: Tokens 
   const source = channel.customer_name || channel.name || "?";
   const initials = source.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || "").join("") || "?";
   return (
-    <div style={{ ...box, background: t.nova + "18", color: t.nova, fontWeight: 800, fontSize: 14 }}
+    <div style={{ ...box, background: t.nova + "18", color: t.nova, fontWeight: 800, fontSize: 26 }}
       title={source}>
       {initials}
     </div>
@@ -556,6 +556,9 @@ function ChannelModal({ t, channel, onClose, onSaved }: {
   const [overW, setOverW] = useState(channel?.overstock_wos_weeks ?? 12);
   const [returnMaxPct, setReturnMaxPct] = useState(channel?.return_rate_max_pct ?? 5);
   const [active, setActive] = useState(channel?.is_active ?? true);
+  const [saleType, setSaleType] = useState<"firme" | "consignacion" | "marketplace">(
+    (channel?.sale_type as any) || "consignacion",
+  );
   const [notes, setNotes] = useState(channel?.notes || "");
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [saving, setSaving] = useState(false);
@@ -577,6 +580,7 @@ function ChannelModal({ t, channel, onClose, onSaved }: {
         customer_id: customerId || undefined,
         target_wos_weeks: targetW, critical_wos_weeks: critW, overstock_wos_weeks: overW,
         return_rate_max_pct: returnMaxPct,
+        sale_type: saleType,
         is_active: active, notes: notes || undefined,
       };
       if (channel) await retailApi.updateChannel(channel.id, payload);
@@ -651,6 +655,33 @@ function ChannelModal({ t, channel, onClose, onSaved }: {
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
             style={{ ...inputStyle(t), resize: "vertical", fontFamily: "inherit" }} />
         </div>
+        <div style={{ marginTop: 14 }}>
+          <label style={labelStyle(t)}>Tipo de venta *</label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 6 }}>
+            {([
+              { k: "firme", title: "En firme", d: "Se factura al enviar. No hay consignación." },
+              { k: "consignacion", title: "Consignación", d: "Nuestro stock hasta el sell-out." },
+              { k: "marketplace", title: "Marketplace", d: "Liverpool MP, Amazon, ML — guía por venta." },
+            ] as const).map(o => (
+              <button key={o.k} type="button" onClick={() => setSaleType(o.k)}
+                style={{
+                  textAlign: "left", padding: 10, borderRadius: 8, cursor: "pointer",
+                  border: `1px solid ${saleType === o.k ? t.nova : t.border}`,
+                  background: saleType === o.k ? t.nova + "1a" : t.panel2,
+                  color: t.textHi,
+                }}>
+                <div style={{ fontWeight: 700, fontSize: 12.5,
+                              color: saleType === o.k ? t.nova : t.textHi }}>{o.title}</div>
+                <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 3 }}>{o.d}</div>
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 6 }}>
+            Solo cadenas de tipo <b>consignación</b> generan almacenes de consignación
+            automáticos. En firme y marketplace jamás se auto-provisionan.
+          </div>
+        </div>
+
         <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
           <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} id="ch-active" />
           <label htmlFor="ch-active" style={{ fontSize: 12.5, color: t.textMid, cursor: "pointer" }}>Cadena activa</label>

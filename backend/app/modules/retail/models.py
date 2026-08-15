@@ -37,6 +37,16 @@ class RetailChannel(Base):
     code = Column(String, nullable=True, unique=False)
     # Enlazar a Customer si esa cadena ya existe como cliente facturable
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    # Modelo comercial de la cadena — determina cómo tratar el stock y las ventas.
+    #   firme:        venta en firme, mercancía vendida y facturada al mandarla;
+    #                 el sistema NO crea consignaciones ni descuenta sell-out del
+    #                 stock (solo sirve para tracking).
+    #   consignacion: la mercancía sigue siendo nuestra hasta que se venda al
+    #                 consumidor final; sell-out descuenta stock del consignment.
+    #   marketplace:  intermediario (Liverpool MP, Amazon, MercadoLibre, etc.)
+    #                 cada venta genera guía + pago diferido programado por la
+    #                 plataforma; NO hay stock en tienda física del cliente.
+    sale_type = Column(String, nullable=False, default="consignacion", index=True)
     # Umbrales de WOS — política comercial por cadena
     target_wos_weeks = Column(Float, default=4.0, nullable=False)
     critical_wos_weeks = Column(Float, default=2.0, nullable=False)
