@@ -12,7 +12,7 @@ import {
   Grid3x3, Barcode, Tablet, ShieldCheck, RotateCcw, Undo2, Mail,
   MessageCircle, Camera, Star,
 } from "lucide-react";
-import { openWhatsApp } from "../../utils/whatsapp";
+import { openWhatsApp, shareFile } from "../../utils/whatsapp";
 import {
   posApi, DENOMINATIONS,
   type POSTerminal, type POSSession, type POSProduct, type POSSaleItem, type SessionSale,
@@ -1421,11 +1421,31 @@ function SaleSuccessModal({ t, sale, onClose }: { t: any; sale: any; onClose: ()
     } finally { setEmailing(false); }
   };
   const doWhatsApp = async () => {
-    // Pide el texto del ticket al backend (lo arma con el mismo formato que
-    // ya usa el CRM: emojis, *bold*, saldo). El cajero solo confirma el
-    // número — se abre WhatsApp Web o app con el mensaje pre-cargado.
+    // Estrategia:
+    //  1. Intentar compartir el PDF real vía navigator.share (Web Share API
+    //     con archivos). En iOS Safari 15+ y Android Chrome abre el share
+    //     sheet nativo: el cajero elige WhatsApp y el PDF va como adjunto.
+    //  2. Si el navegador no soporta compartir archivos, fallback a wa.me
+    //     con el texto del ticket + link de descarga del PDF público.
     try {
-      const { text, phone: defaultPhone } = await salesApi.getTicketText(sale.order_id);
+      const [{ text, phone: defaultPhone }, blob] = await Promise.all([
+        salesApi.getTicketText(sale.order_id),
+        posApi.downloadTicket(sale.order_id, 80).catch(() => null as any),
+      ]);
+      const filename = `ticket_${sale.folio || sale.order_id}.pdf`;
+
+      // Intento 1: share sheet nativo con el PDF adjunto
+      if (blob) {
+        const file = new File([blob], filename, { type: "application/pdf" });
+        const shared = await shareFile(file, {
+          title: `Ticket ${sale.folio || sale.order_id}`,
+          text,
+        });
+        if (shared) return;
+      }
+
+      // Fallback: wa.me con el texto del ticket. Aquí no hay adjunto — es
+      // limitación de wa.me. Como mínimo el mensaje trae los items y total.
       const phone = prompt(
         "Enviar ticket por WhatsApp\n\nNúmero del cliente (10 dígitos):",
         sale.customer_phone || defaultPhone || "",

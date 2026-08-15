@@ -12,3 +12,23 @@ export function waLink(phone: string, message?: string): string {
 export function openWhatsApp(phone: string, message?: string) {
   window.open(waLink(phone, message), "_blank");
 }
+
+// Comparte un archivo (PDF de ticket, imagen, etc.) usando el share sheet
+// nativo del sistema — el usuario elige WhatsApp, Correo, AirDrop, etc. y
+// el PDF viaja como adjunto REAL. Funciona en iOS Safari 15+ y Android
+// Chrome. En navegadores sin `navigator.share` con archivos devuelve false
+// para que el caller haga fallback (por ejemplo, texto vía wa.me).
+export async function shareFile(file: File, opts: { title?: string; text?: string } = {}): Promise<boolean> {
+  const nav = navigator as any;
+  if (!nav.canShare || !nav.share) return false;
+  const shareData: any = { files: [file], title: opts.title, text: opts.text };
+  try {
+    if (!nav.canShare(shareData)) return false;
+    await nav.share(shareData);
+    return true;
+  } catch (e: any) {
+    // AbortError = el usuario canceló el share sheet — se considera manejado
+    if (e?.name === "AbortError") return true;
+    return false;
+  }
+}

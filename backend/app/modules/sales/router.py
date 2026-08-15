@@ -327,7 +327,10 @@ async def get_ticket_text(order_id: int, db: DB, _: CurrentUser):
 
 @router.post("/{order_id}/ticket/email", response_model=schemas.TicketEmailResult)
 async def send_ticket_email(order_id: int, payload: schemas.TicketSendRequest, db: DB, _: CurrentUser):
-    """Envía el ticket de la orden por correo (usa Resend/plataforma o SMTP)."""
+    """Envía el ticket de la orden por correo (usa Resend/plataforma o SMTP).
+    Adjunta el ticket térmico en PDF y renderiza el cuerpo HTML con logo
+    embebido en base64 — así se ve el ticket completo en cualquier cliente
+    de correo aunque las imágenes remotas estén bloqueadas."""
     from app.modules.sales import ticket as ticket_mod
     from app.modules.core_config.service import get_company_profile
     from app.core.email import send_email
@@ -343,9 +346,29 @@ async def send_ticket_email(order_id: int, payload: schemas.TicketSendRequest, d
     company = await get_company_profile(db)
     html = ticket_mod.render_ticket_html(order, company)
     biz = (company.legal_name if company and company.legal_name else "Sthenova")
-    subject = f"Ticket {order.folio or order.id} — {biz}"
+    folio_txt = order.folio or f"#{order.id}"
+    subject = f"Ticket {folio_txt} — {biz}"
 
-    ok = await send_email(db, to=recipient, subject=subject, body_html=html)
+    # Adjuntar PDF del ticket térmico (80mm) — el mismo que se imprimiría en
+    # una impresora de recibos. Si es una orden POS y hay datos completos.
+    attachments = []
+    try:
+        from app.modules.pos import service as pos_service, pdf_ticket
+        data = await pos_service.prepare_ticket_data(db, order_id)
+        if data:
+            pdf_bytes = pdf_ticket.build_thermal_ticket(
+                company=data["company"], order=data["order"],
+                items=data["items"], payments=data["payments"],
+                session=data["session"], width_mm=80,
+            )
+            attachments = [(f"ticket_{order.folio or order.id}.pdf", pdf_bytes, "pdf")]
+    except Exception as e:
+        # El HTML del correo ya trae el ticket completo, así que si el PDF
+        # falla no rompemos el envío — solo se pierde el adjunto.
+        print(f"[ticket-email] no se pudo generar PDF adjunto: {e}")
+
+    ok = await send_email(db, to=recipient, subject=subject, body_html=html,
+                          attachments=attachments or None)
     if not ok:
         return schemas.TicketEmailResult(sent=False, to=recipient,
                                          reason="No se pudo enviar el correo (revisa la configuración de correo)")
