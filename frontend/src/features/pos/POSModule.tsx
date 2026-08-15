@@ -283,6 +283,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   const [cart, setCart] = useState<CartItem[]>(() => loadPersistedPOS(session.id).cart);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<POSProduct[]>([]);
+  const resultsScrollRef = useRef<HTMLDivElement>(null);
   const [searching, setSearching] = useState(false);
   const [showPay, setShowPay] = useState(false);
   const [showClose, setShowClose] = useState(false);
@@ -396,6 +397,13 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
       try {
         const r = await posApi.searchProducts(query, 20);
         setResults(r);
+        // Al aparecer resultados, siempre subimos el scroll del contenedor
+        // para que la primera coincidencia sea inmediatamente visible.
+        // Sin esto, el scroll del grid de populares se quedaba abajo y
+        // los resultados quedaban ocultos "arriba" de la vista.
+        requestAnimationFrame(() => {
+          if (resultsScrollRef.current) resultsScrollRef.current.scrollTop = 0;
+        });
         // Si sólo hay un resultado exacto por SKU/barcode y viene de un escaneo
         // rápido (>=6 caracteres, típico de barcodes), agregar directamente.
         if (r.length === 1 && (r[0].sku === query.trim() || r[0].barcode === query.trim())) {
@@ -657,8 +665,11 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
           </div>
 
           {/* Resultados / vacío */}
-          <div style={{ flex: 1, overflowY: "auto", padding: results.length ? 12 : 0 }}>
-            {results.length === 0 && !searching && !customer && (
+          <div ref={resultsScrollRef} style={{ flex: 1, overflowY: "auto", padding: results.length ? 12 : 0 }}>
+            {/* Popular / placeholder solo cuando el buscador está vacío. En
+                cuanto el cajero teclea, ocultamos populares para que los
+                resultados no queden ocultos detrás del scroll del grid. */}
+            {!query.trim() && results.length === 0 && !searching && !customer && (
               popular.length > 0 ? (
                 <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 2px" }}>
@@ -713,7 +724,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                 </div>
               )
             )}
-            {results.length === 0 && !searching && customer && (
+            {!query.trim() && results.length === 0 && !searching && customer && (
               <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 18 }}>
                 {/* Sugerencias */}
                 {customerRecs.length > 0 && (
@@ -788,6 +799,17 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
             {searching && (
               <div style={{ padding: 30, textAlign: "center", color: t.textLo, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 <RefreshCw size={14} className="spin" /> Buscando…
+              </div>
+            )}
+            {/* Sin resultados para lo que escribieron — antes esto caía en un
+                estado vacío silencioso que se veia como si el buscador estuviera roto. */}
+            {query.trim() && !searching && results.length === 0 && (
+              <div style={{ padding: 30, textAlign: "center", color: t.textLo, fontSize: 13.5 }}>
+                <AlertTriangle size={20} color={t.warn} style={{ marginBottom: 8 }} />
+                <div style={{ fontWeight: 700, color: t.textMid, marginBottom: 4 }}>
+                  Sin resultados para "{query.trim()}"
+                </div>
+                <div style={{ fontSize: 12 }}>Prueba con otro nombre, SKU o escanea el código de barras.</div>
               </div>
             )}
             {results.length > 0 && (
