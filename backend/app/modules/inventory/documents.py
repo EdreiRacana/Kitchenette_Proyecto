@@ -82,7 +82,11 @@ def _info_box(ss, title: str, rows: list[tuple[str, str]]):
 
 
 def _items_table(ss, headers: list[str], rows: list[list[str]], col_widths: list[float]):
-    data = [[Paragraph(f"<b>{h}</b>", ss["Body"]) for h in headers]]
+    # Los headers van como strings simples (no Paragraph) para que TEXTCOLOR
+    # y FONTNAME de la TableStyle apliquen — con Paragraph se sobreescribia
+    # el color al DARK del estilo Body y quedaban ilegibles sobre el fondo
+    # oscuro (dark-on-dark, no se veian los titulos de las columnas).
+    data = [list(headers)]
     for r in rows:
         data.append([Paragraph(str(c), ss["Body"]) for c in r])
     t = Table(data, colWidths=col_widths, repeatRows=1)
@@ -152,7 +156,24 @@ def build_purchase_order_pdf(company, supplier, warehouse_name: str, po, item_ro
         elems.append(Paragraph("<b>Notas</b>", ss["SectionH"]))
         elems.append(Paragraph(po.notes, ss["Body"]))
 
-    elems.append(Spacer(1, 14 * mm))
+    # Términos y condiciones — texto editable a futuro desde CompanyProfile.
+    # Version simplificada default (art. 384 Codigo de Comercio + practicas
+    # comunes de contratos de suministro).
+    terms = (getattr(company, "purchase_order_terms", None) or (
+        "Términos y condiciones: El proveedor se compromete a entregar los "
+        "productos indicados en las cantidades, calidades y fechas aquí "
+        "especificadas. El pago se realizará según las condiciones acordadas "
+        "y previa verificación de la mercancía recibida. Cualquier "
+        "discrepancia deberá notificarse dentro de los 30 días naturales "
+        "posteriores a la recepción. En caso de retraso o incumplimiento, "
+        "favor de dar aviso oportuno al contacto autorizado para acordar "
+        "una solución antes de la fecha de vencimiento."
+    ))
+    elems.append(Spacer(1, 6 * mm))
+    elems.append(Paragraph("<b>Términos y condiciones</b>", ss["SectionH"]))
+    elems.append(Paragraph(terms, ss["Muted"]))
+
+    elems.append(Spacer(1, 10 * mm))
     elems.append(Paragraph("Documento generado por el sistema. Autorización: ______________________", ss["Muted"]))
 
     doc.build(elems)
