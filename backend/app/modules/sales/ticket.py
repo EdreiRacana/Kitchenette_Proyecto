@@ -69,46 +69,29 @@ def _logo_data_uri(company: Optional[CompanyProfile]) -> str:
 
 
 def _classify_customer_tone(order: models.Order) -> str:
-    """Determina el tono del correo y el tipo de PDF adjunto:
-      - "pos": mostrador / cliente casual → tono cálido + ticket térmico
-      - "b2b": distribuidor / mayorista / retail / marketplace → tono
-        institucional + remisión formal
+    """Determina el tono del correo y el tipo de PDF adjunto según
+    DÓNDE se originó la venta:
 
-    Reglas en orden de precedencia (la primera que aplique gana):
-      1. Sin cliente → pos (mostrador anónimo).
-      2. RFC o razón social presentes → b2b. Una empresa con datos fiscales
-         SIEMPRE recibe remisión formal, sin importar cómo se registró.
-      3. relationship_type es un tipo B2B explícito → b2b.
-      4. source == "pos" (registro por POS sin datos fiscales) → pos.
-      5. Default → b2b (asumimos empresa a menos que haya señal en contra).
+      - "pos": la orden se registró en el módulo POS (punto de venta
+        físico) → tono cálido personal + ticket térmico 80mm.
+      - "b2b": la orden se registró en CRM/Sales (empresas, cadenas,
+        mayoristas, marketplaces, distribuidores, ventas telefónicas,
+        etc.) → tono institucional + remisión formal en carta.
 
-    Antes las reglas 2 y 4 estaban invertidas: si un cliente tipo Walmart
-    fue registrado sin RFC, una migración vieja le ponía source='pos' y
-    caía como mostrador aunque el nombre indicara claramente empresa. El
-    fix prioriza los datos fiscales sobre el flag source.
+    Regla única y estable: `order.channel == "pos"` decide, nada más.
+    El POS setea explícitamente channel="pos" al registrar la venta
+    (pos/service.register_sale), y el módulo Sales usa otros valores
+    ("mostrador", "telefono", "whatsapp", "web", "marketplace", …) o
+    null. Así una misma cuenta cliente puede tener órdenes POS y CRM
+    y cada correo saldrá con el formato correcto según origen.
+
+    Antes esto se decidía por RFC/razón_social/source/relationship_type
+    del cliente, pero era frágil: la migración auto-marcaba source='pos'
+    para clientes sin datos fiscales y el default relationship_type era
+    'retail', dejando a Walmart y similares en la clasificación POS.
     """
-    cust = order.customer
-    if not cust:
-        return "pos"
-    # 1) Señal fiscal fuerte — cualquier empresa formal las tiene
-    if (getattr(cust, "razon_social", None) or "").strip():
-        return "b2b"
-    if (getattr(cust, "rfc", None) or "").strip():
-        return "b2b"
-    # 2) relationship_type explícito de B2B. Incluye TODOS los tipos que
-    # usa el CRM (types.ts): b2b_firm, b2b_consignment, marketplace,
-    # chain_physical, además de variantes históricas.
-    rel = (getattr(cust, "relationship_type", None) or "").lower()
-    if (rel.startswith("b2b") or rel.startswith("chain") or
-        rel in ("wholesale", "distributor", "marketplace", "retail_chain",
-                "reseller", "corporate", "mayorista")):
-        return "b2b"
-    # 3) POS explícito — cliente casual capturado en el punto de venta
-    src = (getattr(cust, "source", None) or "").lower()
-    if src == "pos":
-        return "pos"
-    # 4) Default conservador — asumimos B2B; si es mostrador, se marca así
-    return "b2b"
+    ch = (getattr(order, "channel", None) or "").lower()
+    return "pos" if ch == "pos" else "b2b"
 
 
 def render_ticket_html(order: models.Order, company: Optional[CompanyProfile] = None) -> str:
