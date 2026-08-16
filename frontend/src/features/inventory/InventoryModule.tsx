@@ -15,6 +15,7 @@ import {
   Users, ClipboardList, Factory, FlaskConical,
   FileText, Mail, MessageCircle,
   Sparkles, Calendar as CalendarIcon, Wand2, ArrowRightCircle,
+  Clock, ShieldAlert,
 } from "lucide-react";
 import {
   inventoryService,
@@ -98,7 +99,7 @@ const exportMovementsCSV = (movements: Movement[]) => {
   downloadCSV(`movimientos_${new Date().toISOString().slice(0, 10)}.csv`, [header, ...rows]);
 };
 
-type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "kardex" | "adjustments" | "purchase-orders" | "transfers" | "overstock" | "promotions" | "recipes" | "production" | "import";
+type Tab = "dashboard" | "products" | "warehouses" | "suppliers" | "entries" | "movements" | "kardex" | "adjustments" | "purchase-orders" | "transfers" | "overstock" | "expiring" | "promotions" | "recipes" | "production" | "import";
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any; initialQuery?: string }) {
@@ -302,6 +303,7 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
     { id: "purchase-orders", label: lang === "es" ? "Compras" : "Purchase orders", icon: ClipboardList },
     { id: "transfers", label: lang === "es" ? "Traspasos" : "Transfers", icon: ArrowLeftRight },
     { id: "overstock", label: lang === "es" ? "Sobreinventario" : "Overstock", icon: AlertTriangle },
+    { id: "expiring", label: lang === "es" ? "Perecederos" : "Expiring", icon: Clock },
     { id: "promotions", label: lang === "es" ? "Promociones" : "Promotions", icon: Sparkles },
     { id: "recipes", label: lang === "es" ? "Construcción" : "Recipes / BOM", icon: FlaskConical },
     { id: "production", label: lang === "es" ? "Producción" : "Production", icon: Factory },
@@ -1043,6 +1045,11 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
         <OverstockView t={t} warehouses={warehouses} />
       )}
 
+      {/* ── TAB: Perecederos (Próximo a caducar) ── */}
+      {tab === "expiring" && (
+        <ExpiringView t={t} warehouses={warehouses} />
+      )}
+
       {/* ── TAB: Planificador de promociones ── */}
       {tab === "promotions" && (
         <PromotionsView t={t} warehouses={warehouses} products={products} />
@@ -1351,7 +1358,14 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
           onSave={async (data: any) => {
             if (demo) { alert(lang === "es" ? "Modo demo: guardado simulado ✓" : "Demo mode: simulated save ✓"); setProductForm(false); setEditingProduct(null); return; }
             const { form, variants, stockInit } = data;
-            const productPayload = { name: form.name, description: form.description, category: form.category, image_url: form.image_url?.trim() || undefined, is_active: form.is_active, item_type: form.item_type };
+            const productPayload = {
+              name: form.name, description: form.description, category: form.category,
+              image_url: form.image_url?.trim() || undefined, is_active: form.is_active,
+              item_type: form.item_type,
+              tracks_batches: !!form.tracks_batches,
+              default_shelf_life_days: form.tracks_batches && form.default_shelf_life_days !== "" ? Number(form.default_shelf_life_days) : null,
+              expiry_alert_days: form.tracks_batches && form.expiry_alert_days !== "" ? Number(form.expiry_alert_days) : null,
+            };
             const product = editingProduct
               ? await inventoryService.updateProduct(editingProduct.id, productPayload)
               : await inventoryService.createProduct(productPayload);
@@ -1636,6 +1650,10 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
     category: editing?.category || "", image_url: editing?.image_url || "",
     is_active: editing?.is_active ?? true,
     item_type: editing?.item_type || "finished_good",
+    // Perecederos y trazabilidad por lote
+    tracks_batches: editing?.tracks_batches ?? false,
+    default_shelf_life_days: editing?.default_shelf_life_days ?? "",
+    expiry_alert_days: editing?.expiry_alert_days ?? 30,
   });
   const [uploadingImg, setUploadingImg] = useState(false);
   const [variants, setVariants] = useState(editing?.variants?.map((v: any) => ({
@@ -1703,6 +1721,53 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
                     <option value="other">{lang === "es" ? "Otro" : "Other"}</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Perecederos: activa lote + caducidad + FEFO + alertas */}
+              <div style={{ padding: 14, borderRadius: 10, border: `1px solid ${form.tracks_batches ? t.warn + "88" : t.border}`, background: form.tracks_batches ? t.warn + "12" : t.panel2 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 13.5, color: t.textHi }}>
+                  <input type="checkbox" checked={!!form.tracks_batches}
+                    onChange={e => setForm(f => ({ ...f, tracks_batches: e.target.checked }))}
+                    style={{ width: 18, height: 18, accentColor: t.warn }} />
+                  <div>
+                    <div style={{ fontWeight: 700 }}>
+                      {lang === "es" ? "Producto perecedero (con caducidad)" : "Perishable (tracks expiration)"}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 3, lineHeight: 1.45 }}>
+                      {lang === "es"
+                        ? "Al recibir se captura código de lote y fecha de caducidad. Al vender se despacha primero lo que caduca antes (FEFO). El ticket imprime la caducidad."
+                        : "On receive, capture batch code + expiration. On sell, dispatch first what expires first (FEFO). Ticket prints expiration."}
+                    </div>
+                  </div>
+                </label>
+                {form.tracks_batches && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+                    <div>
+                      <label style={label}>{lang === "es" ? "Vida útil (días)" : "Shelf life (days)"}</label>
+                      <input type="number" min={1} value={form.default_shelf_life_days}
+                        onChange={e => setForm(f => ({ ...f, default_shelf_life_days: e.target.value }))}
+                        placeholder={lang === "es" ? "Ej: 30" : "e.g. 30"}
+                        style={inp} />
+                      <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4 }}>
+                        {lang === "es"
+                          ? "Si se define, la caducidad se calcula sola al recibir sin fecha explícita."
+                          : "If set, expiration is auto-calculated on receive when not provided."}
+                      </div>
+                    </div>
+                    <div>
+                      <label style={label}>{lang === "es" ? "Alertar días antes" : "Alert days before"}</label>
+                      <input type="number" min={1} value={form.expiry_alert_days}
+                        onChange={e => setForm(f => ({ ...f, expiry_alert_days: e.target.value }))}
+                        placeholder="30"
+                        style={inp} />
+                      <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4 }}>
+                        {lang === "es"
+                          ? "Umbral para el dashboard 'Próximo a caducar'."
+                          : "Threshold for the 'Expiring soon' dashboard."}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
               <div>
                 <label style={label}>{lang === "es" ? "Imagen del producto" : "Product image"}</label>
@@ -3891,5 +3956,224 @@ function PromotionDetailModal({ t, promotion, warehouses, products, onClose, onC
       </div>
     </div>,
     document.body,
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ExpiringView — dashboard de lotes próximos a caducar (perecederos)
+// ═══════════════════════════════════════════════════════════════════════════
+function ExpiringView({ t, warehouses }: { t: any; warehouses: WarehouseT[] }) {
+  const [rows, setRows] = useState<import("./service").ExpiringLotRow[]>([]);
+  const [summary, setSummary] = useState<import("./service").ExpiringLotsResponse["summary"] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [days, setDays] = useState(30);
+  const [warehouseId, setWarehouseId] = useState<number | "">("");
+  const [bucketFilter, setBucketFilter] = useState<string>("all");
+  const [error, setError] = useState<string | null>(null);
+  const [sweeping, setSweeping] = useState(false);
+
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const res = await inventoryService.listExpiringLots({
+        days, warehouse_id: warehouseId === "" ? undefined : Number(warehouseId),
+        include_expired: true, limit: 500,
+      });
+      setRows(res.rows); setSummary(res.summary);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "No se pudo cargar la lista de lotes.");
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [days, warehouseId]);
+
+  const filtered = bucketFilter === "all" ? rows : rows.filter(r => r.bucket === bucketFilter);
+
+  const doRecall = async (lotId: number, batchCode?: string | null) => {
+    const reason = prompt(`Retiro sanitario del lote ${batchCode || `#${lotId}`}\n\nMotivo (obligatorio):`);
+    if (!reason || !reason.trim()) return;
+    try {
+      const res = await inventoryService.recallLot(lotId, reason.trim());
+      const n = (res.affected_orders || []).length;
+      alert(n > 0
+        ? `Lote bloqueado. ${n} pedido${n === 1 ? "" : "s"} afectado${n === 1 ? "" : "s"} — revisa el detalle en el audit log.`
+        : `Lote bloqueado. Sin pedidos afectados aún.`);
+      load();
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "No se pudo retirar el lote.");
+    }
+  };
+
+  const doQuarantine = async (lotId: number) => {
+    if (!confirm("¿Poner el lote en cuarentena? Deja de venderse pero conserva su stock.")) return;
+    try {
+      await inventoryService.setLotStatus(lotId, "quarantine");
+      load();
+    } catch (e: any) { alert(e?.response?.data?.detail || "Error"); }
+  };
+
+  const doReactivate = async (lotId: number) => {
+    try {
+      await inventoryService.setLotStatus(lotId, "active");
+      load();
+    } catch (e: any) { alert(e?.response?.data?.detail || "Error"); }
+  };
+
+  const doSweep = async () => {
+    if (!confirm("Barrer todos los lotes caducados hoy: sale del disponible y se marca como caducado. ¿Continuar?")) return;
+    setSweeping(true);
+    try {
+      const res = await inventoryService.sweepExpired();
+      alert(`Barrido completo: ${res.lots_expired} lote(s) caducado(s), valor $${(res.total_value_written_off || 0).toFixed(2)}.`);
+      load();
+    } catch (e: any) { alert(e?.response?.data?.detail || "Error"); }
+    finally { setSweeping(false); }
+  };
+
+  const bucketColor = (b: string): string => {
+    if (b === "expired") return "#7F1D1D";
+    if (b === "critical") return t.bad;
+    if (b === "alert") return t.warn;
+    if (b === "ok") return t.good;
+    return t.textLo;
+  };
+  const bucketLabel = (b: string): string => ({
+    expired: "Caducado", critical: "Crítico", alert: "Alerta", ok: "Vigente", no_expiry: "Sin fecha",
+  } as any)[b] || b;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}>
+            <Clock size={16} color={t.warn} /> Próximo a caducar
+          </div>
+          <div style={{ fontSize: 12, color: t.textLo, marginTop: 3 }}>
+            Lotes activos por vencer en los próximos {days} días. Los que ya caducaron aparecen primero.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <select value={warehouseId} onChange={e => setWarehouseId(e.target.value === "" ? "" : Number(e.target.value))}
+            style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, cursor: "pointer" }}>
+            <option value="">Todos los almacenes</option>
+            {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+          {[7, 15, 30, 60, 90].map(d => (
+            <button key={d} onClick={() => setDays(d)}
+              style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`,
+                background: days === d ? t.nova : "transparent", color: days === d ? "#fff" : t.textMid,
+                cursor: "pointer", fontSize: 12, fontWeight: 600 }}>{d}d</button>
+          ))}
+          <button onClick={load} title="Actualizar"
+            style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer" }}>
+            <RefreshCw size={13} />
+          </button>
+          <button onClick={doSweep} disabled={sweeping}
+            title="Mover a merma los lotes ya caducados"
+            style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: t.bad, color: "#fff", cursor: sweeping ? "wait" : "pointer", fontSize: 12.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
+            <Trash2 size={13} /> {sweeping ? "Barriendo…" : "Barrer caducados"}
+          </button>
+        </div>
+      </div>
+
+      {summary && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 14 }}>
+          {(["expired", "critical", "alert", "ok"] as const).map(k => (
+            <button key={k} onClick={() => setBucketFilter(bucketFilter === k ? "all" : k)}
+              style={{ padding: 12, borderRadius: 10,
+                       border: `1px solid ${bucketFilter === k ? bucketColor(k) : t.border}`,
+                       background: bucketFilter === k ? bucketColor(k) + "22" : t.panel2,
+                       color: t.textHi, cursor: "pointer", textAlign: "left" }}>
+              <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>{bucketLabel(k)}</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: bucketColor(k) }}>{summary[k]}</div>
+              <div style={{ fontSize: 11, color: t.textLo }}>lote{summary[k] === 1 ? "" : "s"}</div>
+            </button>
+          ))}
+          <div style={{ padding: 12, borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2 }}>
+            <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>Valor en riesgo</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: t.warn, fontVariantNumeric: "tabular-nums" }}>
+              ${(summary.total_value_at_risk || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: 11, color: t.textLo }}>expirado + crítico + alerta</div>
+          </div>
+        </div>
+      )}
+
+      {loading && <div style={{ padding: 30, textAlign: "center", color: t.textLo }}>Cargando…</div>}
+      {error && <div style={{ padding: 14, background: t.bad + "18", border: `1px solid ${t.bad}55`, color: t.bad, borderRadius: 10 }}>{error}</div>}
+      {!loading && !error && filtered.length === 0 && (
+        <div style={{ padding: 40, textAlign: "center", color: t.textLo, background: t.panel2, borderRadius: 10 }}>
+          Sin lotes en este rango. Todo bajo control.
+        </div>
+      )}
+
+      {!loading && filtered.length > 0 && (
+        <div style={{ overflow: "auto", background: t.panel, borderRadius: 10, border: `1px solid ${t.border}` }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ background: t.panel2, borderBottom: `1px solid ${t.border}` }}>
+                <th style={{ padding: "10px 12px", textAlign: "left", color: t.textLo, fontWeight: 700 }}>Producto / SKU</th>
+                <th style={{ padding: "10px 12px", textAlign: "left", color: t.textLo, fontWeight: 700 }}>Lote</th>
+                <th style={{ padding: "10px 12px", textAlign: "left", color: t.textLo, fontWeight: 700 }}>Almacén</th>
+                <th style={{ padding: "10px 12px", textAlign: "center", color: t.textLo, fontWeight: 700 }}>Caducidad</th>
+                <th style={{ padding: "10px 12px", textAlign: "right", color: t.textLo, fontWeight: 700 }}>Restante</th>
+                <th style={{ padding: "10px 12px", textAlign: "right", color: t.textLo, fontWeight: 700 }}>Valor</th>
+                <th style={{ padding: "10px 12px", textAlign: "center", color: t.textLo, fontWeight: 700 }}>Estado</th>
+                <th style={{ padding: "10px 12px", textAlign: "right", color: t.textLo, fontWeight: 700 }}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(r => (
+                <tr key={r.lot_id} style={{ borderBottom: `1px solid ${t.border}` }}>
+                  <td style={{ padding: "10px 12px", color: t.textHi }}>
+                    <div style={{ fontWeight: 600 }}>{r.product_name}</div>
+                    {r.sku && <div style={{ fontSize: 10.5, color: t.textLo, fontFamily: "monospace" }}>{r.sku}</div>}
+                  </td>
+                  <td style={{ padding: "10px 12px", color: t.textMid, fontFamily: "monospace", fontSize: 11.5 }}>{r.batch_code || "—"}</td>
+                  <td style={{ padding: "10px 12px", color: t.textMid }}>{r.warehouse_name}</td>
+                  <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                    <div style={{ color: t.textHi }}>{r.expiration_date ? new Date(r.expiration_date).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "2-digit" }) : "—"}</div>
+                    <div style={{ fontSize: 10.5, color: bucketColor(r.bucket), fontWeight: 700, marginTop: 2 }}>
+                      {r.days_left !== null && r.days_left !== undefined
+                        ? (r.days_left <= 0 ? `Caducó hace ${-r.days_left}d` : `en ${r.days_left}d`)
+                        : "sin fecha"}
+                    </div>
+                  </td>
+                  <td style={{ padding: "10px 12px", textAlign: "right", color: t.textHi, fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{r.quantity_remaining}</td>
+                  <td style={{ padding: "10px 12px", textAlign: "right", color: t.textMid, fontVariantNumeric: "tabular-nums" }}>
+                    ${(r.value_at_risk || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                    <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10.5, fontWeight: 700, background: bucketColor(r.bucket) + "22", color: bucketColor(r.bucket) }}>
+                      {r.status}
+                    </span>
+                  </td>
+                  <td style={{ padding: "10px 12px", textAlign: "right" }}>
+                    <div style={{ display: "flex", gap: 5, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                      {r.status === "quarantine" ? (
+                        <button onClick={() => doReactivate(r.lot_id)}
+                          title="Reactivar" style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${t.good}55`, background: t.good + "18", color: t.good, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                          Reactivar
+                        </button>
+                      ) : (
+                        <button onClick={() => doQuarantine(r.lot_id)}
+                          title="Cuarentena — bloquear venta sin borrar stock" style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${t.warn}55`, background: t.warn + "18", color: t.warn, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                          Cuarentena
+                        </button>
+                      )}
+                      <button onClick={() => doRecall(r.lot_id, r.batch_code)}
+                        title="Retiro sanitario — bloquear y listar clientes afectados"
+                        style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${t.bad}55`, background: t.bad + "18", color: t.bad, cursor: "pointer", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
+                        <ShieldAlert size={11} /> Retirar
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }

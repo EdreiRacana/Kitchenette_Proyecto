@@ -28,8 +28,43 @@ export interface Product {
     is_active: boolean;
     is_manufactured?: boolean;
     item_type?: ProductItemType;
+    // Perecederos: activa lote+caducidad, FEFO al vender, alertas y auto-merma
+    tracks_batches?: boolean;
+    default_shelf_life_days?: number | null;
+    expiry_alert_days?: number | null;
     created_at: string;
     variants: Variant[];
+}
+
+// Lote específico (para dashboard "Próximo a caducar" y modales de recepción)
+export interface ExpiringLotRow {
+    lot_id: number;
+    variant_id: number;
+    product_id: number | null;
+    product_name: string;
+    sku?: string | null;
+    warehouse_id: number;
+    warehouse_name?: string | null;
+    batch_code?: string | null;
+    expiration_date?: string | null;
+    manufacturing_date?: string | null;
+    days_left: number | null;
+    bucket: "expired" | "critical" | "alert" | "ok" | "no_expiry";
+    quantity_remaining: number;
+    unit_cost: number;
+    value_at_risk: number;
+    status: string;
+    supplier_id?: number | null;
+    supplier_name?: string | null;
+}
+export interface ExpiringLotsResponse {
+    as_of: string;
+    horizon_days: number;
+    rows: ExpiringLotRow[];
+    summary: {
+        expired: number; critical: number; alert: number; ok: number; no_expiry: number;
+        total_lots: number; total_value_at_risk: number;
+    };
 }
 
 export interface StockLevel {
@@ -369,6 +404,21 @@ export const inventoryService = {
     getReturns: async () => (await api.get<CustomerReturn[]>('/sales/returns')).data,
     createReturn: async (data: any) => (await api.post<CustomerReturn>('/sales/returns', data)).data,
     cancelReturn: async (id: number) => (await api.post<CustomerReturn>(`/sales/returns/${id}/cancel`)).data,
+
+    // Lotes / trazabilidad (perecederos)
+    receiveBatch: async (data: {
+        variant_id: number; warehouse_id: number; quantity: number; unit_cost: number;
+        batch_code?: string; expiration_date?: string; manufacturing_date?: string;
+        supplier_id?: number; reference?: string;
+    }) => (await api.post('/inventory/stock/receive-batch', data)).data,
+    listExpiringLots: async (params?: { days?: number; warehouse_id?: number; include_expired?: boolean; limit?: number }) =>
+        (await api.get<ExpiringLotsResponse>('/inventory/batches/expiring', { params })).data,
+    recallLot: async (lotId: number, reason: string) =>
+        (await api.post(`/inventory/batches/${lotId}/recall`, { reason })).data,
+    setLotStatus: async (lotId: number, status: string) =>
+        (await api.patch(`/inventory/batches/${lotId}/status`, { status })).data,
+    sweepExpired: async () =>
+        (await api.post('/inventory/batches/sweep-expired')).data,
 
     // Kardex FIFO
     getKardex: async (variantId: number, params?: { warehouse_id?: number; start?: string; end?: string; limit?: number }) =>
