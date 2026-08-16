@@ -376,28 +376,52 @@ async def send_ticket_email(order_id: int, payload: schemas.TicketSendRequest, d
     html = ticket_mod.render_ticket_html(order, company)
     biz = (company.legal_name if company and company.legal_name else "Sthenova")
     folio_txt = order.folio or f"#{order.id}"
-    subject = f"Ticket {folio_txt} — {biz}"
 
-    # Adjuntar PDF del ticket térmico (80mm) — el mismo que se imprimiría en
-    # una impresora de recibos. Si es una orden POS y hay datos completos.
+    # Clasificar cliente para elegir el PDF adjunto correcto:
+    #   • B2B (distribuidor, mayorista, retail, marketplace) → remisión
+    #     formal tamaño carta con datos del comprador y del emisor. Se
+    #     entrega junto con la mercancía; la factura CFDI se emite después
+    #     via Facturama u otro PAC.
+    #   • POS / mostrador → ticket térmico 80mm.
+    tone = ticket_mod._classify_customer_tone(order)
+    is_b2b = tone == "b2b"
+    subject = (
+        f"Remisión {folio_txt} — {biz}" if is_b2b
+        else f"Ticket {folio_txt} — {biz}"
+    )
+
     attachments = []
-    try:
-        from app.modules.pos import service as pos_service, pdf_ticket
-        from app.modules.inventory import batch_service as _bs
-        data = await pos_service.prepare_ticket_data(db, order_id)
-        if data:
-            batches_by_variant = await _bs.get_batches_for_order(db, order_id)
-            pdf_bytes = pdf_ticket.build_thermal_ticket(
-                company=data["company"], order=data["order"],
-                items=data["items"], payments=data["payments"],
-                session=data["session"], width_mm=80,
-                batches_by_variant=batches_by_variant,
-            )
-            attachments = [(f"ticket_{order.folio or order.id}.pdf", pdf_bytes, "pdf")]
-    except Exception as e:
-        # El HTML del correo ya trae el ticket completo, así que si el PDF
-        # falla no rompemos el envío — solo se pierde el adjunto.
-        print(f"[ticket-email] no se pudo generar PDF adjunto: {e}")
+    # 1) B2B → intenta la remisión formal primero
+    if is_b2b:
+        try:
+            from app.modules.sales import universal_service
+            pdf_bytes = await universal_service.generate_document_pdf(db, order_id, "remission")
+            if pdf_bytes:
+                attachments = [(f"remision_{order.folio or order.id}.pdf", pdf_bytes, "pdf")]
+        except Exception as e:
+            print(f"[b2b-email] no se pudo generar remisión, intento ticket como respaldo: {e}")
+
+    # 2) POS o fallback si la remisión falló → ticket térmico 80mm
+    if not attachments:
+        try:
+            from app.modules.pos import service as pos_service, pdf_ticket
+            from app.modules.inventory import batch_service as _bs
+            data = await pos_service.prepare_ticket_data(db, order_id)
+            if data:
+                batches_by_variant = await _bs.get_batches_for_order(db, order_id)
+                pdf_bytes = pdf_ticket.build_thermal_ticket(
+                    company=data["company"], order=data["order"],
+                    items=data["items"], payments=data["payments"],
+                    session=data["session"], width_mm=80,
+                    batches_by_variant=batches_by_variant,
+                )
+                fname = (f"remision_{order.folio or order.id}.pdf" if is_b2b
+                         else f"ticket_{order.folio or order.id}.pdf")
+                attachments = [(fname, pdf_bytes, "pdf")]
+        except Exception as e:
+            # El HTML del correo ya trae el resumen, así que si el PDF
+            # falla no rompemos el envío — solo se pierde el adjunto.
+            print(f"[ticket-email] no se pudo generar PDF adjunto: {e}")
 
     ok = await send_email(db, to=recipient, subject=subject, body_html=html,
                           attachments=attachments or None)
