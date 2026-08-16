@@ -277,6 +277,39 @@ async def recall_lot(
     }
 
 
+async def get_batches_for_order(db: AsyncSession, order_id: int) -> Dict[int, List[dict]]:
+    """Devuelve, por variant_id, los lotes que se despacharon en la orden
+    (con código y caducidad). Se lee de stock_movements.reference='order:{id}'
+    e implementa el requisito legal de imprimir la caducidad en el ticket."""
+    ref = f"order:{order_id}"
+    res = await db.execute(
+        select(models.StockMovement, models.StockLot)
+        .join(models.StockLot, models.StockLot.id == models.StockMovement.stock_lot_id, isouter=True)
+        .where(
+            models.StockMovement.reference == ref,
+            models.StockMovement.movement_type == "out",
+            models.StockMovement.stock_lot_id.isnot(None),
+        )
+    )
+    out: Dict[int, List[dict]] = {}
+    for mv, lot in res.all():
+        if not lot:
+            continue
+        # Solo incluir si el lote tiene datos de trazabilidad relevantes
+        if not (lot.batch_code or lot.expiration_date):
+            continue
+        row = {
+            "batch_code": lot.batch_code,
+            "expiration_date": lot.expiration_date.isoformat() if lot.expiration_date else None,
+            "quantity": abs(mv.quantity or 0),
+        }
+        out.setdefault(mv.variant_id, []).append(row)
+    # Ordenar cada lista por caducidad ASC (el que caduca primero primero)
+    for vid, rows in out.items():
+        rows.sort(key=lambda r: (r.get("expiration_date") or "9999-99-99"))
+    return out
+
+
 async def set_lot_status(
     db: AsyncSession, lot_id: int, *,
     status: str, user_id: Optional[int] = None,

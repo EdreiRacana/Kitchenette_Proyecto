@@ -2,11 +2,35 @@
 from __future__ import annotations
 
 import base64
-from typing import Optional
+from datetime import date, datetime
+from typing import Optional, Dict, List
 from urllib.parse import quote
 
 from app.modules.sales import models
 from app.modules.core_config.models import CompanyProfile
+
+
+def _format_batches(batches: Optional[List[dict]]) -> str:
+    """Convierte la lista de lotes despachados en una línea legible tipo
+    'Cad: 20/08/2026 · Lote L2026-A' — máx 2 lotes visibles para no saturar."""
+    if not batches:
+        return ""
+    parts = []
+    for b in batches[:2]:
+        exp = b.get("expiration_date")
+        code = b.get("batch_code")
+        bits = []
+        if exp:
+            try:
+                bits.append(f"Cad: {datetime.fromisoformat(exp).strftime('%d/%m/%Y')}")
+            except Exception:
+                bits.append(f"Cad: {exp}")
+        if code:
+            bits.append(f"Lote {code}")
+        if bits:
+            parts.append(" · ".join(bits))
+    extra = "" if len(batches) <= 2 else f" (+{len(batches) - 2} lotes)"
+    return " · ".join(parts) + extra
 
 
 PAYMENT_LABEL = {
@@ -168,8 +192,11 @@ def render_ticket_html(order: models.Order, company: Optional[CompanyProfile] = 
 </body></html>"""
 
 
-def render_ticket_text(order: models.Order, company: Optional[CompanyProfile] = None) -> str:
-    """Ticket en texto plano, optimizado para WhatsApp (con emojis y bold *…*)."""
+def render_ticket_text(order: models.Order, company: Optional[CompanyProfile] = None,
+                        batches_by_variant: Optional[Dict[int, List[dict]]] = None) -> str:
+    """Ticket en texto plano, optimizado para WhatsApp (con emojis y bold *…*).
+    Si viene batches_by_variant, imprime "Cad: dd/mm/yyyy · Lote X" bajo cada
+    producto perecedero — requisito legal para alimentos y farmacéuticos."""
     biz = _biz_name(company)
     kind_label = "Cotización" if order.kind == "quote" else "Pedido"
     folio = order.folio or f"#{order.id}"
@@ -187,6 +214,9 @@ def render_ticket_text(order: models.Order, company: Optional[CompanyProfile] = 
     for it in order.items:
         sub = it.subtotal or (it.unit_price * it.quantity)
         lines.append(f"• {it.product_name or ''} x{it.quantity} — {_money(sub, currency)}")
+        batch_line = _format_batches((batches_by_variant or {}).get(it.variant_id))
+        if batch_line:
+            lines.append(f"    _{batch_line}_")
     lines += [
         "",
         f"Subtotal: {_money(order.subtotal, currency)}",

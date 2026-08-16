@@ -312,12 +312,16 @@ async def get_ticket_text(order_id: int, db: DB, _: CurrentUser):
     *bold* y saldo). Pensado para pre-llenar wa.me?text=... desde el POS."""
     from app.modules.sales import ticket as ticket_mod
     from app.modules.core_config.service import get_company_profile
+    from app.modules.inventory import batch_service
 
     order = await service.get_order_detail(db, order_id)
     if not order:
         raise HTTPException(404, "Pedido no encontrado")
     company = await get_company_profile(db)
-    text = ticket_mod.render_ticket_text(order, company)
+    # Caducidades por variant (imprime "Cad: dd/mm/yyyy · Lote X" bajo cada
+    # perecedero — requisito legal en varios países para alimentos y farma)
+    batches_by_variant = await batch_service.get_batches_for_order(db, order_id)
+    text = ticket_mod.render_ticket_text(order, company, batches_by_variant)
     return {
         "text": text,
         "phone": order.customer.phone if order.customer else None,
@@ -354,12 +358,15 @@ async def send_ticket_email(order_id: int, payload: schemas.TicketSendRequest, d
     attachments = []
     try:
         from app.modules.pos import service as pos_service, pdf_ticket
+        from app.modules.inventory import batch_service as _bs
         data = await pos_service.prepare_ticket_data(db, order_id)
         if data:
+            batches_by_variant = await _bs.get_batches_for_order(db, order_id)
             pdf_bytes = pdf_ticket.build_thermal_ticket(
                 company=data["company"], order=data["order"],
                 items=data["items"], payments=data["payments"],
                 session=data["session"], width_mm=80,
+                batches_by_variant=batches_by_variant,
             )
             attachments = [(f"ticket_{order.folio or order.id}.pdf", pdf_bytes, "pdf")]
     except Exception as e:

@@ -321,10 +321,14 @@ async def download_ticket(order_id: int, db: DB, _: CurrentUser,
     data = await service.prepare_ticket_data(db, order_id)
     if not data:
         raise HTTPException(404, "Venta no encontrada")
+    # Caducidades y lotes despachados en la orden (para perecederos)
+    from app.modules.inventory import batch_service
+    batches_by_variant = await batch_service.get_batches_for_order(db, order_id)
     pdf = pdf_ticket.build_thermal_ticket(
         company=data["company"], order=data["order"],
         items=data["items"], payments=data["payments"],
         session=data["session"], width_mm=width,
+        batches_by_variant=batches_by_variant,
     )
     fname = f"ticket_{data['order'].get('folio') or order_id}.pdf"
     return Response(content=pdf, media_type="application/pdf",

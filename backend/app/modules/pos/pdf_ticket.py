@@ -56,9 +56,13 @@ def build_thermal_ticket(
     company: dict, order: dict, items: List[dict],
     payments: List[dict], session: Optional[dict] = None,
     width_mm: int = 80,
+    batches_by_variant: Optional[Dict[int, List[dict]]] = None,
 ) -> bytes:
     """Ticket térmico (58 o 80mm ancho) para impresora POS.
-    El alto crece según el número de partidas."""
+    El alto crece según el número de partidas.
+    Si batches_by_variant viene, para cada partida con lote imprime una línea
+    extra 'Cad: dd/mm/yyyy · Lote X' — requisito NOM-051 para alimentos y
+    farmacéuticos en México."""
     # Ancho: 58mm o 80mm → páginas verticales muy angostas
     page_w = width_mm * mm
     # Alturas aproximadas por sección — mejor pecar de largos que cortar el
@@ -167,6 +171,21 @@ def build_thermal_ticket(
         line(f"  {qty} x {_mxn(it.get('unit_price') or 0)}", size=6, spacing=1)
         c.setFont("Helvetica", 7)
         c.drawRightString(page_w - margin, y + 8, total)
+        # Caducidad / lote — solo si el producto es perecedero
+        vid = it.get("variant_id")
+        for b in (batches_by_variant or {}).get(vid or -1, [])[:2]:
+            exp = b.get("expiration_date")
+            code = b.get("batch_code")
+            bits = []
+            if exp:
+                try:
+                    bits.append(f"Cad {datetime.fromisoformat(exp).strftime('%d/%m/%Y')}")
+                except Exception:
+                    bits.append(f"Cad {exp}")
+            if code:
+                bits.append(f"L:{_truncate(str(code), 14)}")
+            if bits:
+                line(f"  {' · '.join(bits)}", size=6, spacing=1)
 
     separator()
 

@@ -595,6 +595,7 @@ async def prepare_ticket_data(db: AsyncSession, order_id: int) -> Optional[dict]
         sales_models.OrderItem.order_id == order_id
     ))
     items = [{
+        "variant_id": it.variant_id,
         "product_name": it.product_name, "sku": it.sku,
         "quantity": it.quantity, "unit_price": it.unit_price,
         "subtotal": it.subtotal, "total": it.total,
