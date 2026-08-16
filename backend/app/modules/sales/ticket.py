@@ -45,153 +45,123 @@ def _logo_data_uri(company: Optional[CompanyProfile]) -> str:
 
 
 def render_ticket_html(order: models.Order, company: Optional[CompanyProfile] = None) -> str:
-    """HTML del ticket para correo. Layout de tabla (compatible con Gmail,
-    Outlook, iOS Mail) — flex y grid rompen en muchos clientes de correo.
-    Logo va embebido como data URI para que se pinte siempre."""
+    """Cuerpo del correo que acompaña al PDF adjunto.
+
+    Es una nota profesional de agradecimiento con saludo personalizado,
+    referencia al folio + total, mención de que el ticket va adjunto en PDF
+    y despedida cordial. NO es otro ticket — el PDF ya cumple ese rol.
+    """
     biz = _biz_name(company)
     logo_uri = _logo_data_uri(company)
+    # width HTML attribute + height auto — Outlook y Gmail ignoran max-width
+    # de CSS en imágenes data:base64, pero SÍ respetan el width del <img>.
+    # Sin esto el logo se muestra a su tamaño intrínseco (1200x1200 o lo que
+    # sea) y explota el correo.
     logo_html = (
-        f'<img src="{logo_uri}" alt="{biz}" '
-        f'style="max-height:56px;max-width:180px;display:block;margin:0 auto 8px" />'
+        f'<img src="{logo_uri}" alt="{biz}" width="130" '
+        f'style="width:130px;height:auto;max-width:130px;display:block;margin:0 auto"/>'
     ) if logo_uri else ""
 
-    accent = (company.brand_color if company and company.brand_color else "#111")
-    kind_label = "Cotización" if order.kind == "quote" else "Ticket de compra"
+    accent = (company.brand_color if company and company.brand_color else "#111827")
     folio = order.folio or f"#{order.id}"
-    fecha = order.created_at.strftime("%d/%m/%Y %H:%M") if order.created_at else ""
-    customer_name = order.customer.name if order.customer else "Público general"
-    pago = PAYMENT_LABEL.get(order.payment_method or "", order.payment_method or "—")
-    estado = STATUS_LABEL.get(order.status or "", order.status or "—")
     currency = order.currency or "MXN"
+    total_txt = _money(order.total_amount, currency)
 
-    def _row(it):
-        sku_html = (
-            f'<div style="color:#888;font-size:11px;font-family:monospace;margin-top:2px">{it.sku}</div>'
-            if it.sku else ""
-        )
-        line_total = it.subtotal or (it.unit_price * it.quantity)
-        # Cada celda con anchos explícitos — Gmail respeta width en <td>,
-        # no en <th> o inline flex. Sin esto los headers se acomodan mal.
-        return (
-            "<tr>"
-            f'<td style="padding:10px 6px;border-bottom:1px solid #eee;vertical-align:top">'
-            f'<div style="font-weight:600;color:#111;font-size:13.5px">{it.product_name or ""}</div>'
-            f'{sku_html}</td>'
-            f'<td style="padding:10px 6px;border-bottom:1px solid #eee;text-align:right;'
-            f'vertical-align:top;width:44px;font-variant-numeric:tabular-nums">{it.quantity}</td>'
-            f'<td style="padding:10px 6px;border-bottom:1px solid #eee;text-align:right;'
-            f'vertical-align:top;width:90px;font-variant-numeric:tabular-nums">'
-            f'{_money(it.unit_price, currency)}</td>'
-            f'<td style="padding:10px 6px;border-bottom:1px solid #eee;text-align:right;'
-            f'vertical-align:top;width:100px;font-weight:700;font-variant-numeric:tabular-nums">'
-            f'{_money(line_total, currency)}</td>'
-            "</tr>"
-        )
+    # Saludo personalizado — usamos SOLO el primer nombre. "Estimado Sr. López"
+    # se siente frío; "Hola Carlos" es cálido pero profesional. Si es público
+    # en general, saludo genérico.
+    if order.customer and order.customer.name:
+        first_name = order.customer.name.strip().split()[0]
+        greeting = f"Hola {first_name},"
+    else:
+        greeting = "Hola,"
 
-    rows = "".join(_row(it) for it in order.items)
-
-    def _tot_row(label: str, value: str, *, bold: bool = False, big: bool = False,
-                 color: str = "#111") -> str:
-        weight = 800 if big else (700 if bold else 400)
-        size = "17px" if big else "13px"
-        border = "border-top:2px solid #111;" if big else ""
-        return (
-            f'<tr><td colspan="3" style="{border}padding:{"10px" if big else "5px"} 6px;'
-            f'text-align:right;color:{color};font-size:{size};font-weight:{weight}">{label}</td>'
-            f'<td style="{border}padding:{"10px" if big else "5px"} 6px;text-align:right;'
-            f'color:{color};font-size:{size};font-weight:{weight};'
-            f'font-variant-numeric:tabular-nums;width:100px">{value}</td></tr>'
-        )
-
-    totals_rows = [_tot_row("Subtotal", _money(order.subtotal, currency))]
-    if (order.discount_amount or 0) > 0:
-        totals_rows.append(_tot_row("Descuento",
-                                    f"− {_money(order.discount_amount, currency)}",
-                                    color="#DC2626"))
-    if (order.tax_amount or 0) > 0:
-        totals_rows.append(_tot_row(f"IVA ({order.tax_rate}%)",
-                                    _money(order.tax_amount, currency)))
-    if (order.shipping_amount or 0) > 0:
-        totals_rows.append(_tot_row("Envío", _money(order.shipping_amount, currency)))
-    totals_rows.append(_tot_row("TOTAL", _money(order.total_amount, currency), big=True))
-    if order.kind != "quote":
-        totals_rows.append(_tot_row("Pagado", _money(order.paid_amount, currency),
-                                    bold=True, color="#059669"))
-        saldo = (order.total_amount or 0) - (order.paid_amount or 0)
-        if abs(saldo) > 0.005:
-            totals_rows.append(_tot_row("Saldo", _money(saldo, currency),
-                                        bold=True,
-                                        color="#DC2626" if saldo > 0 else "#059669"))
-
+    # Datos de contacto del negocio para el pie
+    contact_bits = []
+    if company:
+        if company.contact_phone:
+            contact_bits.append(company.contact_phone)
+        if company.contact_email:
+            contact_bits.append(company.contact_email)
+        if company.address:
+            contact_bits.append(company.address)
+    contact_line = " · ".join(contact_bits)
     footer_txt = (company.document_footer if company and company.document_footer else "")
+
+    kind_word = "cotización" if order.kind == "quote" else "compra"
 
     return f"""<!doctype html>
 <html><head><meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{folio} — {biz}</title>
+  <title>Gracias por tu {kind_word} — {biz}</title>
 </head>
-<body style="margin:0;padding:0;background:#F3F4F6;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111">
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111827;line-height:1.55">
   <table role="presentation" cellpadding="0" cellspacing="0" border="0"
          style="width:100%;background:#F3F4F6;padding:24px 0">
     <tr><td align="center">
       <table role="presentation" cellpadding="0" cellspacing="0" border="0"
-             style="width:100%;max-width:520px;background:#fff;border-radius:14px;
-                    box-shadow:0 4px 16px rgba(0,0,0,0.08);overflow:hidden">
-        <!-- Encabezado con logo -->
-        <tr><td style="padding:24px 24px 16px;text-align:center;
-                       border-bottom:3px solid {accent}">
+             style="width:100%;max-width:520px;background:#ffffff;border-radius:14px;
+                    box-shadow:0 4px 16px rgba(0,0,0,0.06);overflow:hidden">
+
+        <!-- Encabezado con logo pequeño -->
+        <tr><td style="padding:28px 32px 16px;text-align:center;border-bottom:3px solid {accent}">
           {logo_html}
-          <div style="font-size:20px;font-weight:800;color:#111;margin-top:4px">{biz}</div>
-          <div style="font-size:12px;color:#6B7280;margin-top:4px;text-transform:uppercase;
-                      letter-spacing:0.6px">{kind_label}</div>
+          <div style="font-size:16px;font-weight:800;color:#111827;margin-top:{'10px' if logo_html else '0'}">{biz}</div>
         </td></tr>
 
-        <!-- Datos del ticket -->
-        <tr><td style="padding:16px 24px;background:#F9FAFB;border-bottom:1px solid #E5E7EB">
-          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;font-size:12.5px;color:#374151">
+        <!-- Cuerpo del mensaje -->
+        <tr><td style="padding:28px 32px 8px;font-size:15px;color:#1F2937">
+          <p style="margin:0 0 14px">{greeting}</p>
+          <p style="margin:0 0 14px">
+            Gracias por tu {kind_word}. Fue un gusto atenderte.
+          </p>
+          <p style="margin:0 0 14px">
+            Encontrarás tu ticket completo en el <b>archivo PDF adjunto</b> a este correo,
+            con el detalle de los productos, cantidades y totales.
+            Te sugerimos guardarlo por si necesitas hacer alguna aclaración o devolución.
+          </p>
+        </td></tr>
+
+        <!-- Resumen breve (solo folio + total, sin duplicar la tabla del PDF) -->
+        <tr><td style="padding:0 32px 20px">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+                 style="width:100%;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px">
             <tr>
-              <td style="padding:2px 0"><b>Folio:</b> <span style="font-family:monospace">{folio}</span></td>
-              <td style="padding:2px 0;text-align:right">{fecha}</td>
-            </tr>
-            <tr>
-              <td colspan="2" style="padding:2px 0"><b>Cliente:</b> {customer_name}</td>
-            </tr>
-            <tr>
-              <td style="padding:2px 0"><b>Pago:</b> {pago}</td>
-              <td style="padding:2px 0;text-align:right"><b>Estado:</b> {estado}</td>
+              <td style="padding:12px 16px;font-size:12.5px;color:#6B7280">
+                Folio
+                <div style="font-family:monospace;font-size:14px;color:#111827;font-weight:700;margin-top:2px">{folio}</div>
+              </td>
+              <td style="padding:12px 16px;text-align:right;font-size:12.5px;color:#6B7280">
+                Total
+                <div style="font-size:18px;color:#111827;font-weight:800;margin-top:2px;font-variant-numeric:tabular-nums">{total_txt}</div>
+              </td>
             </tr>
           </table>
         </td></tr>
 
-        <!-- Tabla de productos -->
-        <tr><td style="padding:8px 24px 0">
-          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;font-size:12.5px">
-            <thead>
-              <tr style="background:#F3F4F6">
-                <th align="left"   style="padding:8px 6px;color:#6B7280;text-transform:uppercase;letter-spacing:0.4px;font-size:10.5px;font-weight:700">Producto</th>
-                <th align="right"  style="padding:8px 6px;color:#6B7280;text-transform:uppercase;letter-spacing:0.4px;font-size:10.5px;font-weight:700;width:44px">Cant</th>
-                <th align="right"  style="padding:8px 6px;color:#6B7280;text-transform:uppercase;letter-spacing:0.4px;font-size:10.5px;font-weight:700;width:90px">P.U.</th>
-                <th align="right"  style="padding:8px 6px;color:#6B7280;text-transform:uppercase;letter-spacing:0.4px;font-size:10.5px;font-weight:700;width:100px">Importe</th>
-              </tr>
-            </thead>
-            <tbody>{rows}</tbody>
-          </table>
+        <!-- Cierre y despedida -->
+        <tr><td style="padding:0 32px 28px;font-size:15px;color:#1F2937">
+          <p style="margin:0 0 14px">
+            Si necesitas cualquier cosa, no dudes en escribirnos o llamarnos —
+            estamos para ayudarte.
+          </p>
+          <p style="margin:0">
+            Un cordial saludo,<br>
+            <b style="color:#111827">Equipo {biz}</b>
+          </p>
         </td></tr>
 
-        <!-- Totales -->
-        <tr><td style="padding:8px 24px 24px">
-          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%">
-            {"".join(totals_rows)}
-          </table>
-        </td></tr>
-
-        <!-- Pie -->
-        <tr><td style="padding:18px 24px;background:#F9FAFB;text-align:center;
-                       border-top:1px solid #E5E7EB;color:#6B7280;font-size:12px">
-          ¡Gracias por su compra! 🙌<br>
-          <span style="font-size:11px">Se adjunta este ticket en PDF.</span>
-          {f'<div style="margin-top:8px;font-size:11px;color:#9CA3AF">{footer_txt}</div>' if footer_txt else ""}
-        </td></tr>
+        <!-- Pie con contacto -->
+        {(
+          '<tr><td style="padding:16px 32px;background:#F9FAFB;border-top:1px solid #E5E7EB;'
+          'text-align:center;color:#6B7280;font-size:11.5px">' +
+          contact_line +
+          '</td></tr>'
+        ) if contact_line else ""}
+        {(
+          f'<tr><td style="padding:10px 32px;background:#F9FAFB;text-align:center;'
+          f'color:#9CA3AF;font-size:11px">{footer_txt}</td></tr>'
+        ) if footer_txt else ""}
       </table>
     </td></tr>
   </table>
