@@ -135,6 +135,39 @@ async def startup():
     except Exception as e:
         logger.warning("Sweep de caducados omitido: %s", e)
 
+    # Alerta diaria de perecederos por correo — solo lotes ya caducados o en
+    # los próximos 7 días (críticos). Se dispara a lo mucho una vez cada 20h
+    # para no spammear si el backend reinicia varias veces al día.
+    try:
+        import os, time
+        marker = "/tmp/sthenova_expiry_alert.ts"  # efímero en Render, perfecto
+        should_run = True
+        try:
+            if os.path.exists(marker):
+                last = float(open(marker).read().strip() or "0")
+                if time.time() - last < 20 * 3600:
+                    should_run = False
+        except Exception:
+            pass
+        if should_run:
+            from app.db.session import AsyncSessionLocal
+            from app.modules.inventory import batch_service
+            async with AsyncSessionLocal() as session:
+                res = await batch_service.notify_expiring_by_email(
+                    session, only_critical=True, days=7,
+                )
+                if res.get("sent"):
+                    logger.info("Alerta perecederos enviada a %s (%s lotes)",
+                                res.get("to"), res.get("rows_notified"))
+                    try:
+                        open(marker, "w").write(str(time.time()))
+                    except Exception:
+                        pass
+                elif res.get("reason") and res.get("reason") != "Sin lotes por avisar":
+                    logger.warning("Alerta perecederos no enviada: %s", res.get("reason"))
+    except Exception as e:
+        logger.warning("Alerta diaria perecederos omitida: %s", e)
+
     # Seed Contabilidad (catálogo de cuentas + mapeo para pólizas automáticas).
     # Sin esto, una venta no genera póliza contable (falla en silencio). Debe
     # existir out-of-the-box tras un reset o instalación nueva. Idempotente.

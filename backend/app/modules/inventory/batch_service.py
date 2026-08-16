@@ -310,6 +310,243 @@ async def get_batches_for_order(db: AsyncSession, order_id: int) -> Dict[int, Li
     return out
 
 
+def _fmt_date(v) -> str:
+    if not v:
+        return "—"
+    try:
+        return v.strftime("%d/%m/%Y")
+    except Exception:
+        return str(v)
+
+
+def render_expiry_alert_html(company: dict, rows: List[dict], summary: Dict) -> str:
+    """HTML para el correo de alerta de perecederos — solo lotes en bucket
+    expired/critical/alert. Cuerpo profesional con logo, tabla y sugerencias
+    de acción; el detalle completo sigue en el dashboard del ERP."""
+    import base64
+    biz = (company or {}).get("legal_name") or "Sthenova"
+    accent = (company or {}).get("brand_color") or "#111827"
+    logo_uri = ""
+    if company and company.get("logo_bytes"):
+        try:
+            mime = company.get("logo_mime") or "image/png"
+            b64 = base64.b64encode(company["logo_bytes"]).decode("ascii")
+            logo_uri = f"data:{mime};base64,{b64}"
+        except Exception:
+            pass
+    logo_html = (
+        f'<img src="{logo_uri}" alt="{biz}" width="130" '
+        f'style="width:130px;height:auto;max-width:130px;display:block;margin:0 auto"/>'
+    ) if logo_uri else ""
+
+    def _row(r: dict) -> str:
+        bucket = r.get("bucket", "no_expiry")
+        color = {
+            "expired": "#7F1D1D", "critical": "#DC2626",
+            "alert": "#D97706", "ok": "#059669",
+        }.get(bucket, "#6B7280")
+        badge = {
+            "expired": "CADUCADO", "critical": "CRÍTICO",
+            "alert": "ALERTA", "ok": "OK", "no_expiry": "S/F",
+        }.get(bucket, bucket.upper())
+        days_txt = ""
+        d = r.get("days_left")
+        if d is not None:
+            days_txt = f"Caducó hace {-d}d" if d <= 0 else f"en {d}d"
+        return (
+            "<tr>"
+            f'<td style="padding:8px 6px;border-bottom:1px solid #E5E7EB">'
+            f'<div style="font-weight:600;color:#111827;font-size:12.5px">{r.get("product_name") or "?"}</div>'
+            f'<div style="font-family:monospace;font-size:10.5px;color:#6B7280;margin-top:1px">'
+            f'Lote {r.get("batch_code") or "—"} · {r.get("warehouse_name") or ""}</div></td>'
+            f'<td style="padding:8px 6px;border-bottom:1px solid #E5E7EB;text-align:center;font-size:11.5px;color:#374151">'
+            f'{r.get("expiration_date","—")}<br>'
+            f'<span style="color:{color};font-weight:700">{days_txt}</span></td>'
+            f'<td style="padding:8px 6px;border-bottom:1px solid #E5E7EB;text-align:right;font-variant-numeric:tabular-nums;font-weight:700;color:#111827">'
+            f'{r.get("quantity_remaining") or 0}</td>'
+            f'<td style="padding:8px 6px;border-bottom:1px solid #E5E7EB;text-align:center">'
+            f'<span style="padding:2px 8px;border-radius:999px;font-size:10px;font-weight:800;'
+            f'background:{color}22;color:{color}">{badge}</span></td>'
+            "</tr>"
+        )
+
+    rows_html = "".join(_row(r) for r in rows[:60]) or (
+        '<tr><td colspan="4" style="padding:20px;text-align:center;color:#6B7280">Sin lotes por avisar</td></tr>'
+    )
+    more_html = ""
+    if len(rows) > 60:
+        more_html = f'<div style="text-align:center;margin-top:10px;color:#6B7280;font-size:12px">y {len(rows) - 60} lote(s) más — revísalos en el ERP</div>'
+
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111827">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:#F3F4F6;padding:24px 0">
+    <tr><td align="center">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:640px;background:#fff;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,0.06);overflow:hidden">
+        <tr><td style="padding:24px 32px 16px;text-align:center;border-bottom:3px solid {accent}">
+          {logo_html}
+          <div style="font-size:16px;font-weight:800;margin-top:{'10px' if logo_html else '0'}">{biz}</div>
+          <div style="font-size:11.5px;color:#6B7280;margin-top:4px;text-transform:uppercase;letter-spacing:0.6px">Alerta de productos por caducar</div>
+        </td></tr>
+
+        <tr><td style="padding:22px 32px 8px;font-size:14.5px;color:#1F2937">
+          <p style="margin:0 0 12px">Hola,</p>
+          <p style="margin:0 0 12px">
+            Estos son los lotes que requieren tu atención hoy —
+            <b style="color:#7F1D1D">{summary.get("expired", 0)} caducado(s)</b>,
+            <b style="color:#DC2626">{summary.get("critical", 0)} crítico(s)</b> y
+            <b style="color:#D97706">{summary.get("alert", 0)} en alerta</b>.
+            Valor en riesgo: <b style="font-variant-numeric:tabular-nums">${summary.get("total_value_at_risk", 0):,.2f}</b>.
+          </p>
+        </td></tr>
+
+        <tr><td style="padding:8px 32px 22px">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;font-size:12px;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden">
+            <thead>
+              <tr style="background:#F9FAFB">
+                <th align="left" style="padding:8px 6px;font-size:10.5px;color:#6B7280;text-transform:uppercase;letter-spacing:0.4px">Producto / Lote</th>
+                <th align="center" style="padding:8px 6px;font-size:10.5px;color:#6B7280;text-transform:uppercase;letter-spacing:0.4px">Caducidad</th>
+                <th align="right" style="padding:8px 6px;font-size:10.5px;color:#6B7280;text-transform:uppercase;letter-spacing:0.4px">Unid.</th>
+                <th align="center" style="padding:8px 6px;font-size:10.5px;color:#6B7280;text-transform:uppercase;letter-spacing:0.4px">Estado</th>
+              </tr>
+            </thead>
+            <tbody>{rows_html}</tbody>
+          </table>
+          {more_html}
+        </td></tr>
+
+        <tr><td style="padding:0 32px 22px;font-size:13.5px;color:#374151">
+          <div style="padding:12px 14px;background:#FEF3C7;border-left:3px solid #D97706;border-radius:6px;font-size:12.5px;line-height:1.55">
+            <b>Acciones sugeridas:</b>
+            para los <b>caducados</b> usa "Barrer" en Perecederos.
+            Para los <b>críticos</b> considera promoción, transferencia a otra tienda,
+            o notificar a la demostradora para que rote el producto al frente.
+            Para los de <b>alerta</b>, planifica reabastecimiento a menor ritmo.
+          </div>
+        </td></tr>
+
+        <tr><td style="padding:0 32px 28px;font-size:14px;color:#1F2937">
+          <p style="margin:0">Un cordial saludo,<br><b>Equipo {biz}</b></p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+
+
+def render_expiry_alert_text(rows: List[dict], summary: Dict) -> str:
+    """Versión texto para WhatsApp / SMS. Compacto, con emojis y bold *…*."""
+    lines = [
+        "🕐 *Alerta perecederos*",
+        (f"Caducados: {summary.get('expired', 0)} · Críticos: {summary.get('critical', 0)}"
+         f" · Alerta: {summary.get('alert', 0)}"),
+        f"Valor en riesgo: ${summary.get('total_value_at_risk', 0):,.2f}",
+        "",
+    ]
+    shown = 0
+    for r in rows:
+        if shown >= 15:
+            break
+        d = r.get("days_left")
+        if d is None:
+            days_txt = ""
+        elif d <= 0:
+            days_txt = f"caducó hace {-d}d"
+        else:
+            days_txt = f"en {d}d"
+        lines.append(
+            f"• {r.get('product_name') or '?'} — {r.get('quantity_remaining') or 0} unid. "
+            f"(Cad {_fmt_date_iso(r.get('expiration_date'))}, {days_txt})"
+        )
+        if r.get("batch_code"):
+            lines.append(f"    _Lote {r['batch_code']} · {r.get('warehouse_name') or ''}_")
+        shown += 1
+    if len(rows) > shown:
+        lines.append(f"…y {len(rows) - shown} lote(s) más")
+    return "\n".join(lines)
+
+
+def _fmt_date_iso(s):
+    if not s:
+        return "—"
+    try:
+        return date.fromisoformat(s).strftime("%d/%m/%Y")
+    except Exception:
+        return str(s)
+
+
+async def notify_expiring_by_email(
+    db: AsyncSession, *,
+    to: Optional[str] = None,
+    days: int = 30,
+    warehouse_id: Optional[int] = None,
+    only_critical: bool = False,
+) -> Dict:
+    """Genera el resumen y lo manda por correo. Si `to` no viene, usa
+    accounting_email de la empresa. Si only_critical, solo incluye lotes
+    con days_left <= 7 (para el cronjob diario)."""
+    from app.core.email import send_email
+    from app.modules.core_config.service import get_company_profile
+    from app.modules.sales.universal_service import _get_company_dict
+
+    data = await list_expiring_lots(db, days=days, warehouse_id=warehouse_id,
+                                     include_expired=True, limit=500)
+    rows = data["rows"]
+    if only_critical:
+        rows = [r for r in rows if r.get("bucket") in ("expired", "critical")]
+    if not rows:
+        return {"sent": False, "reason": "Sin lotes por avisar"}
+
+    company_obj = await get_company_profile(db)
+    company_dict = await _get_company_dict(db)
+    recipient = (to or "").strip() or (
+        (getattr(company_obj, "accounting_email", None) or "").strip()
+        if company_obj else ""
+    )
+    if not recipient:
+        return {"sent": False, "reason": "No hay destinatario configurado"}
+
+    # Recalcular summary sobre las filas filtradas
+    counters = {"expired": 0, "critical": 0, "alert": 0, "ok": 0, "no_expiry": 0}
+    value = 0.0
+    for r in rows:
+        counters[r.get("bucket", "no_expiry")] = counters.get(r.get("bucket", "no_expiry"), 0) + 1
+        if r.get("bucket") in ("expired", "critical", "alert"):
+            value += float(r.get("value_at_risk") or 0)
+    summary = {**counters, "total_lots": len(rows), "total_value_at_risk": round(value, 2)}
+
+    html = render_expiry_alert_html(company_dict, rows, summary)
+    biz = (company_obj.legal_name if company_obj and company_obj.legal_name else "Sthenova")
+    subject_bits = []
+    if summary["expired"]:
+        subject_bits.append(f"{summary['expired']} caducado(s)")
+    if summary["critical"]:
+        subject_bits.append(f"{summary['critical']} crítico(s)")
+    if not subject_bits:
+        subject_bits.append(f"{summary['alert']} en alerta")
+    subject = f"[{biz}] Perecederos — {', '.join(subject_bits)}"
+    ok = await send_email(db, to=recipient, subject=subject, body_html=html)
+    return {"sent": ok, "to": recipient, "rows_notified": len(rows),
+            "summary": summary,
+            "reason": None if ok else "No se pudo enviar el correo"}
+
+
+async def build_expiring_whatsapp_text(
+    db: AsyncSession, *,
+    days: int = 30,
+    warehouse_id: Optional[int] = None,
+    only_critical: bool = False,
+) -> Dict:
+    """Devuelve texto para WhatsApp (wa.me) con el resumen de perecederos."""
+    data = await list_expiring_lots(db, days=days, warehouse_id=warehouse_id,
+                                     include_expired=True, limit=200)
+    rows = data["rows"]
+    if only_critical:
+        rows = [r for r in rows if r.get("bucket") in ("expired", "critical")]
+    text = render_expiry_alert_text(rows, data["summary"])
+    return {"text": text, "count": len(rows)}
+
+
 async def set_lot_status(
     db: AsyncSession, lot_id: int, *,
     status: str, user_id: Optional[int] = None,

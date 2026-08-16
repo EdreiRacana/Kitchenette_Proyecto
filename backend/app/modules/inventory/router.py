@@ -466,6 +466,37 @@ async def sweep_expired_endpoint(db: DB, current_user: CurrentUser):
     return await batch_service.sweep_expired_to_scrap(db, user_id=current_user.id)
 
 
+class _NotifyExpiringIn(_BM):
+    to: Optional[str] = None                 # correo destino (opcional; cae a accounting_email)
+    days: int = 30
+    warehouse_id: Optional[int] = None
+    only_critical: bool = False              # true = solo expired + critical (cronjob diario)
+
+
+@router.post("/batches/notify-email")
+async def notify_expiring_email(data: _NotifyExpiringIn, db: DB, current_user: CurrentUser):
+    """Manda por correo el resumen de lotes por caducar. Usado por el
+    gerente para reenviar a un demostrador / comprador, y por el cronjob
+    diario que llama con only_critical=true."""
+    res = await batch_service.notify_expiring_by_email(
+        db, to=data.to, days=data.days,
+        warehouse_id=data.warehouse_id, only_critical=data.only_critical,
+    )
+    if not res.get("sent"):
+        raise HTTPException(400, res.get("reason", "No se pudo enviar"))
+    return res
+
+
+@router.get("/batches/notify-text")
+async def notify_expiring_text(db: DB, current_user: CurrentUser,
+                                days: int = 30, warehouse_id: Optional[int] = None,
+                                only_critical: bool = False):
+    """Devuelve el resumen como texto plano para pegar en WhatsApp o SMS."""
+    return await batch_service.build_expiring_whatsapp_text(
+        db, days=days, warehouse_id=warehouse_id, only_critical=only_critical,
+    )
+
+
 # ── Traspasos entre almacenes (Stock Transfer Orders) ────────────────────
 
 @router.post("/transfers", response_model=schemas.StockTransferInDB, status_code=201)

@@ -64,6 +64,42 @@ async def build_digest(db: AsyncSession) -> schemas.NotificationDigest:
     except Exception as exc:
         log.warning("Inventory alerts failed", extra={"error": str(exc)})
 
+    # ── Perecederos: lotes por caducar (críticos y ya caducados) ─────────
+    # Solo entran a la campana los lotes que caducan en <= 7 días o ya
+    # caducaron. Los "alerta" (8-30d) se ven en el dashboard sin ruido de
+    # notificación — el objetivo es que la campana sea accionable, no ruidosa.
+    try:
+        from app.modules.inventory import batch_service
+        expiring = await batch_service.list_expiring_lots(
+            db, days=7, include_expired=True, limit=100,
+        )
+        for r in expiring.get("rows", []):
+            b = r.get("bucket")
+            if b not in ("expired", "critical"):
+                continue
+            days_left = r.get("days_left")
+            if b == "expired":
+                sev = "critical"
+                if days_left is None or days_left == 0:
+                    detail = "Caducó hoy"
+                else:
+                    detail = f"Caducó hace {-int(days_left)}d"
+            else:
+                sev = "critical" if (days_left or 99) <= 3 else "warning"
+                detail = f"Caduca en {days_left}d"
+            batch = r.get("batch_code") or f"lote #{r.get('lot_id')}"
+            items.append(schemas.Notification(
+                kind="inventory",
+                severity=sev,
+                title=f"{r.get('product_name', '?')} — {batch}",
+                detail=(f"{detail} · {r.get('quantity_remaining', 0)} unid. "
+                        f"· {r.get('warehouse_name', '')}"),
+                page="inventario", query=r.get('product_name') or "",
+                id=f"expiry_{r.get('lot_id')}",
+            ))
+    except Exception as exc:
+        log.warning("Expiring lots alerts failed", extra={"error": str(exc)})
+
     horizon = (datetime.now(timezone.utc) + timedelta(days=REMINDER_LEAD_DAYS)).date()
 
     def _due_soon_or_overdue(aging_item) -> bool:

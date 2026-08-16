@@ -419,6 +419,10 @@ export const inventoryService = {
         (await api.patch(`/inventory/batches/${lotId}/status`, { status })).data,
     sweepExpired: async () =>
         (await api.post('/inventory/batches/sweep-expired')).data,
+    notifyExpiringEmail: async (data: { to?: string; days?: number; warehouse_id?: number; only_critical?: boolean }) =>
+        (await api.post('/inventory/batches/notify-email', data)).data,
+    notifyExpiringText: async (params: { days?: number; warehouse_id?: number; only_critical?: boolean }) =>
+        (await api.get<{ text: string; count: number }>('/inventory/batches/notify-text', { params })).data,
 
     // Kardex FIFO
     getKardex: async (variantId: number, params?: { warehouse_id?: number; start?: string; end?: string; limit?: number }) =>

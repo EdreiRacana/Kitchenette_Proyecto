@@ -4178,6 +4178,48 @@ function ExpiringView({ t, warehouses }: { t: any; warehouses: WarehouseT[] }) {
         </div>
       </div>
 
+      {/* Fila de acciones de notificacion — para reenviar a demostradoras,
+          compradores, gerentes que no están adentro del ERP en el momento. */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, padding: 12, background: t.panel2, borderRadius: 10, border: `1px solid ${t.border}`, alignItems: "center" }}>
+        <div style={{ fontSize: 12, color: t.textLo, marginRight: 4 }}>
+          Notificar a alguien fuera del ERP:
+        </div>
+        <button onClick={async () => {
+          const to = prompt("Enviar alerta por correo\n\nCorreo destino (deja vacío para usar el de contabilidad configurado):", "");
+          try {
+            const res = await inventoryService.notifyExpiringEmail({
+              to: to?.trim() || undefined,
+              days, warehouse_id: warehouseId === "" ? undefined : Number(warehouseId),
+              only_critical: false,
+            });
+            alert(res.sent ? `Alerta enviada a ${res.to} (${res.rows_notified} lote${res.rows_notified === 1 ? "" : "s"}).` : (res.reason || "No se pudo enviar"));
+          } catch (e: any) { alert(e?.response?.data?.detail || "Error"); }
+        }}
+          style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.nova}55`, background: t.nova + "18", color: t.nova, cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
+          <Mail size={12} /> Enviar por correo
+        </button>
+        <button onClick={async () => {
+          try {
+            const { text, count } = await inventoryService.notifyExpiringText({
+              days, warehouse_id: warehouseId === "" ? undefined : Number(warehouseId),
+              only_critical: false,
+            });
+            if (count === 0) { alert("Sin lotes por avisar."); return; }
+            const phone = prompt("Enviar alerta por WhatsApp\n\nNúmero de la persona (10 dígitos MX o con lada):", "");
+            if (!phone || !phone.trim()) return;
+            const digits = phone.replace(/\D/g, "");
+            const withCode = digits.length === 10 ? "52" + digits : digits;
+            window.open(`https://wa.me/${withCode}?text=${encodeURIComponent(text)}`, "_blank");
+          } catch (e: any) { alert(e?.response?.data?.detail || "Error"); }
+        }}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #25D36655", background: "#25D36618", color: "#25D366", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
+          <MessageCircle size={12} /> Compartir por WhatsApp
+        </button>
+        <div style={{ fontSize: 11, color: t.textLo, marginLeft: "auto" }}>
+          Automático diario: se envía por correo al de contabilidad si hay lotes críticos.
+        </div>
+      </div>
+
       {summary && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 14 }}>
           {(["expired", "critical", "alert", "ok"] as const).map(k => (
