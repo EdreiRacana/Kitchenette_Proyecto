@@ -118,6 +118,23 @@ async def startup():
     except Exception as e:
         logger.warning("RBAC seed skipped", extra={"error": str(e)})
 
+    # Barrido de lotes caducados en el arranque — cada vez que Render reinicia
+    # el backend (frecuente en free tier) se auto-mueven a merma los lotes que
+    # cruzaron su expiration_date. Complementa un cron externo eventual. No
+    # rompe el startup si algo falla.
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.modules.inventory import batch_service
+        async with AsyncSessionLocal() as session:
+            r = await batch_service.sweep_expired_to_scrap(session, user_id=None)
+            if r.get("lots_expired", 0) > 0:
+                logger.info(
+                    "Auto-merma perecederos al arranque: %s lote(s), $%s",
+                    r["lots_expired"], r.get("total_value_written_off", 0.0),
+                )
+    except Exception as e:
+        logger.warning("Sweep de caducados omitido: %s", e)
+
     # Seed Contabilidad (catálogo de cuentas + mapeo para pólizas automáticas).
     # Sin esto, una venta no genera póliza contable (falla en silencio). Debe
     # existir out-of-the-box tras un reset o instalación nueva. Idempotente.
