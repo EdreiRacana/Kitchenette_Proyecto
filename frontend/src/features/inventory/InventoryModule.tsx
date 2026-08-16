@@ -1399,14 +1399,31 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
       {/* ── MODAL: Entry Form ── */}
       {entryForm && (
         <EntryFormModal
-          t={t} lang={lang} products={products} warehouses={warehouses}
+          t={t} lang={lang} products={products} warehouses={warehouses} suppliers={suppliers}
           onClose={() => setEntryForm(false)}
           onSave={async (form: any) => {
             if (demo) { alert(lang === "es" ? "Modo demo: entrada simulada ✓" : "Demo mode: simulated entry ✓"); setEntryForm(false); return; }
-            await inventoryService.adjustStock({
-              variant_id: Number(form.variant_id), warehouse_id: Number(form.warehouse_id), quantity: Number(form.quantity),
-              movement_type: "in", reference: form.reference || undefined, notes: form.notes || undefined,
-            });
+            // Producto perecedero → usar el endpoint con lote (crea StockLot
+            // con batch_code + expiration_date + supplier). Sin lote, cae en
+            // el flujo tradicional de ajuste de stock.
+            if (form.isPerishable) {
+              await inventoryService.receiveBatch({
+                variant_id: Number(form.variant_id),
+                warehouse_id: Number(form.warehouse_id),
+                quantity: Number(form.quantity),
+                unit_cost: form.unit_cost ? Number(form.unit_cost) : 0,
+                batch_code: form.batch_code.trim() || undefined,
+                expiration_date: form.expiration_date || undefined,
+                manufacturing_date: form.manufacturing_date || undefined,
+                supplier_id: form.supplier_id ? Number(form.supplier_id) : undefined,
+                reference: form.reference || undefined,
+              });
+            } else {
+              await inventoryService.adjustStock({
+                variant_id: Number(form.variant_id), warehouse_id: Number(form.warehouse_id), quantity: Number(form.quantity),
+                movement_type: "in", reference: form.reference || undefined, notes: form.notes || undefined,
+              });
+            }
             setEntryForm(false);
             await load();
           }}
@@ -1880,13 +1897,16 @@ function ProductFormModal({ t, s, lang, warehouses, suppliers, editing, onClose,
 }
 
 // ── Entry Form Modal ───────────────────────────────────────────────────────
-function EntryFormModal({ t, lang, products, warehouses, onClose, onSave }: any) {
+function EntryFormModal({ t, lang, products, warehouses, suppliers, onClose, onSave }: any) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ variant_id: "", warehouse_id: "", quantity: "", reference: "", notes: "", entry_type: "purchase" });
+  const [form, setForm] = useState({
+    variant_id: "", warehouse_id: "", quantity: "", reference: "", notes: "", entry_type: "purchase",
+    unit_cost: "", batch_code: "", expiration_date: "", manufacturing_date: "", supplier_id: "",
+  });
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
-  const allVariants = products.flatMap((p: Product) => p.variants.map((v: Variant) => ({ ...v, product_name: p.name })));
+  const allVariants = products.flatMap((p: Product) => p.variants.map((v: Variant) => ({ ...v, product_name: p.name, product_tracks_batches: p.tracks_batches, product_shelf_life: p.default_shelf_life_days })));
   const ENTRY_TYPES = [
     { value: "purchase", label: lang === "es" ? "Compra a proveedor" : "Purchase from supplier" },
     { value: "return", label: lang === "es" ? "Devolución de cliente" : "Customer return" },
@@ -1894,9 +1914,38 @@ function EntryFormModal({ t, lang, products, warehouses, onClose, onSave }: any)
     { value: "consignment", label: lang === "es" ? "Consignación recibida" : "Consignment received" },
     { value: "transfer", label: lang === "es" ? "Transferencia entre almacenes" : "Warehouse transfer" },
   ];
+
+  // Detectar si el variant seleccionado es perecedero — activa los campos de
+  // lote y caducidad y cambia el endpoint que llamamos al guardar.
+  const selectedVariant = allVariants.find((v: any) => String(v.id) === String(form.variant_id));
+  const isPerishable = !!selectedVariant?.product_tracks_batches;
+  const shelfLife = selectedVariant?.product_shelf_life;
+
+  // Al elegir un producto perecedero con vida útil, pre-llenar la caducidad
+  // (hoy + shelf_life) para que el almacenista solo confirme.
+  useEffect(() => {
+    if (isPerishable && shelfLife && !form.expiration_date) {
+      const d = new Date();
+      d.setDate(d.getDate() + Number(shelfLife));
+      setForm(f => ({ ...f, expiration_date: d.toISOString().slice(0, 10) }));
+    }
+    if (!isPerishable) {
+      setForm(f => ({ ...f, batch_code: "", expiration_date: "", manufacturing_date: "" }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.variant_id]);
+
   const handleSave = async () => {
+    if (isPerishable && !form.batch_code.trim()) {
+      setError(lang === "es" ? "El código de lote es obligatorio para productos perecederos." : "Batch code is required for perishable products.");
+      return;
+    }
+    if (isPerishable && !form.expiration_date) {
+      setError(lang === "es" ? "La fecha de caducidad es obligatoria para productos perecederos." : "Expiration date is required for perishable products.");
+      return;
+    }
     setSaving(true); setError("");
-    try { await onSave(form); }
+    try { await onSave({ ...form, isPerishable }); }
     catch (err: any) { setError(err?.response?.data?.detail || (lang === "es" ? "Error al registrar la entrada" : "Error registering entry")); }
     finally { setSaving(false); }
   };
@@ -1932,6 +1981,59 @@ function EntryFormModal({ t, lang, products, warehouses, onClose, onSave }: any)
             <div><label style={label}>{lang === "es" ? "Cantidad *" : "Quantity *"}</label><input type="number" min={1} value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))} style={inp} /></div>
             <div><label style={label}>{lang === "es" ? "Referencia" : "Reference"}</label><input value={form.reference} onChange={e => setForm(f => ({ ...f, reference: e.target.value }))} placeholder={lang === "es" ? "Folio, factura…" : "Invoice, order…"} style={inp} /></div>
           </div>
+
+          {isPerishable && (
+            <div style={{ padding: 14, borderRadius: 10, background: t.warn + "12", border: `1px solid ${t.warn}55`, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: t.warn, fontWeight: 700, fontSize: 12.5 }}>
+                <Clock size={14} /> {lang === "es" ? "Producto perecedero — datos del lote" : "Perishable — batch details"}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={label}>{lang === "es" ? "Código de lote *" : "Batch code *"}</label>
+                  <input value={form.batch_code}
+                    onChange={e => setForm(f => ({ ...f, batch_code: e.target.value }))}
+                    placeholder={lang === "es" ? "Ej: L20260315-A" : "e.g. L20260315-A"}
+                    style={{ ...inp, fontFamily: "monospace" }} />
+                </div>
+                <div>
+                  <label style={label}>{lang === "es" ? "Fecha de caducidad *" : "Expiration date *"}</label>
+                  <input type="date" value={form.expiration_date}
+                    onChange={e => setForm(f => ({ ...f, expiration_date: e.target.value }))}
+                    style={inp} />
+                </div>
+                <div>
+                  <label style={label}>{lang === "es" ? "Fecha de fabricación" : "Manufacturing date"}</label>
+                  <input type="date" value={form.manufacturing_date}
+                    onChange={e => setForm(f => ({ ...f, manufacturing_date: e.target.value }))}
+                    style={inp} />
+                </div>
+                <div>
+                  <label style={label}>{lang === "es" ? "Proveedor" : "Supplier"}</label>
+                  <select value={form.supplier_id}
+                    onChange={e => setForm(f => ({ ...f, supplier_id: e.target.value }))}
+                    style={{ ...inp, cursor: "pointer" }}>
+                    <option value="">{lang === "es" ? "Sin especificar" : "Unspecified"}</option>
+                    {(suppliers || []).map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ fontSize: 11.5, color: t.textLo }}>
+                {lang === "es"
+                  ? "El sistema despachará primero los lotes que caduquen antes (FEFO) al vender."
+                  : "The system will dispatch first the lots that expire soonest (FEFO) when selling."}
+              </div>
+            </div>
+          )}
+
+          {(isPerishable || form.entry_type === "purchase") && (
+            <div><label style={label}>{lang === "es" ? "Costo unitario" : "Unit cost"}</label>
+              <input type="number" step="0.01" min={0} value={form.unit_cost}
+                onChange={e => setForm(f => ({ ...f, unit_cost: e.target.value }))}
+                placeholder={lang === "es" ? "Se usa para el costeo FIFO / P&L" : "Used for FIFO cost / P&L"}
+                style={inp} />
+            </div>
+          )}
+
           <div><label style={label}>{lang === "es" ? "Notas" : "Notes"}</label><textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2} style={{ ...inp, resize: "vertical" }} /></div>
         </div>
         <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", flexDirection: "column", gap: 8 }}>

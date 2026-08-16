@@ -306,6 +306,31 @@ async def invoice_payload(order_id: int, db: DB, _: CurrentUser):
     return service.build_invoice_payload(order)
 
 
+@router.get("/{order_id}/batches")
+async def get_order_batches(order_id: int, db: DB, _: CurrentUser):
+    """Devuelve los lotes específicos que se despacharon en esta orden, con
+    código y caducidad — para el panel 'Lotes despachados' en el OrderDrawer
+    y para recall retroactivo. Solo aplica a productos perecederos."""
+    from app.modules.inventory import batch_service
+    order = await service.get_order_detail(db, order_id)
+    if not order:
+        raise HTTPException(404, "Pedido no encontrado")
+    batches = await batch_service.get_batches_for_order(db, order_id)
+    # Enriquecer con nombre del producto por comodidad del frontend
+    variant_names: dict = {}
+    for it in order.items:
+        variant_names[it.variant_id] = it.product_name
+    out = []
+    for vid, rows in batches.items():
+        for r in rows:
+            out.append({
+                "variant_id": vid,
+                "product_name": variant_names.get(vid, "?"),
+                **r,
+            })
+    return {"order_id": order_id, "batches": out}
+
+
 @router.get("/{order_id}/ticket/text")
 async def get_ticket_text(order_id: int, db: DB, _: CurrentUser):
     """Devuelve el ticket como texto plano listo para WhatsApp (con emojis,

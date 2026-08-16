@@ -295,6 +295,13 @@ export const salesApi = {
     const { data } = await api.get(`/sales/${orderId}/ticket/text`);
     return data;
   },
+  async getOrderBatches(orderId: number): Promise<{ order_id: number; batches: Array<{
+    variant_id: number; product_name: string; batch_code?: string | null;
+    expiration_date?: string | null; quantity: number;
+  }> }> {
+    const { data } = await api.get(`/sales/${orderId}/batches`);
+    return data;
+  },
 
   // ── Universal ERP ──────────────────────────────────────
   async downloadDocument(orderId: number, kind: "quote" | "remission" | "proforma"): Promise<Blob> {

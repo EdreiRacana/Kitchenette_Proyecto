@@ -1,7 +1,7 @@
 // Slide-over detail panel for an order/quote: info, items, payments, audit log,
 // and all lifecycle actions + printable ticket.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   X, CreditCard, CheckCircle, XCircle, Pencil, ArrowRightLeft, Printer, FileText, MessageCircle, Mail,
 } from "lucide-react";
@@ -113,6 +113,22 @@ export function OrderDrawer({
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
+
+  // Lotes despachados (solo perecederos). Se cargan lazy al abrir la orden
+  // — así el CRM ve exactamente qué caducidades le van a llegar al cliente
+  // antes de imprimir la remisión o antes de un recall.
+  const [batches, setBatches] = useState<Array<{
+    variant_id: number; product_name: string; batch_code?: string | null;
+    expiration_date?: string | null; quantity: number;
+  }>>([]);
+  useEffect(() => {
+    if (!order) { setBatches([]); return; }
+    let cancelled = false;
+    salesApi.getOrderBatches(order.id)
+      .then(r => { if (!cancelled) setBatches(r.batches || []); })
+      .catch(() => { if (!cancelled) setBatches([]); });
+    return () => { cancelled = true; };
+  }, [order?.id]);
 
   if (!order) return null;
   const sc = statusColors(tk, order.status);
@@ -234,6 +250,46 @@ export function OrderDrawer({
               )}
             </div>
           </Section>
+
+          {/* Lotes despachados (perecederos) — trazabilidad para recall */}
+          {batches.length > 0 && (
+            <Section tk={tk} title={tr("sales_lots_dispatched", "Lotes despachados") + " · " + tr("sales_expiry_short", "Caducidad")}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {batches.map((b, i) => {
+                  const days = b.expiration_date ? Math.floor((new Date(b.expiration_date).getTime() - Date.now()) / 86400000) : null;
+                  const color = days == null ? tk.textLo : days < 0 ? tk.bad : days <= 7 ? tk.bad : days <= 30 ? tk.warn : tk.good;
+                  return (
+                    <div key={i} style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      background: tk.panel2, borderRadius: 8, padding: "10px 12px",
+                      borderLeft: `3px solid ${color}`,
+                    }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 13, color: tk.textHi, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.product_name}</div>
+                        <div style={{ fontSize: 11, color: tk.textLo, marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                          {b.batch_code && <span style={{ fontFamily: "monospace" }}>Lote {b.batch_code}</span>}
+                          {b.expiration_date && (
+                            <span style={{ color }}>
+                              Cad: {new Date(b.expiration_date).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "2-digit" })}
+                              {days !== null && (days < 0 ? ` · caducó hace ${-days}d` : ` · en ${days}d`)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 12 }}>
+                        <div style={{ fontSize: 15, fontWeight: 800, color: tk.textHi, fontVariantNumeric: "tabular-nums" }}>{b.quantity}</div>
+                        <div style={{ fontSize: 10.5, color: tk.textLo }}>unid.</div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{ fontSize: 11, color: tk.textLo, marginTop: 4, lineHeight: 1.5 }}>
+                  {tr("sales_lots_hint",
+                    "Se despachó por FEFO (primero los que caducan antes). Estas caducidades ya aparecen en la remisión / ticket / correo.")}
+                </div>
+              </div>
+            </Section>
+          )}
 
           {/* Payments */}
           {order.payments.length > 0 && (
