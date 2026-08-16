@@ -17,6 +17,8 @@ class CompanyProfileBase(BaseModel):
     # Correo de contabilidad (destino por defecto para reportes automáticos:
     # cierre de turno POS, cortes, etc.).
     accounting_email: Optional[EmailStr] = None
+    # Lista separada por coma: comprador, gerente, supervisor…
+    alerts_recipients: Optional[str] = None
     # ── Branding para documentos PDF ─────────────────
     commercial_name: Optional[str] = None
     brand_color: Optional[str] = "#33B2F5"

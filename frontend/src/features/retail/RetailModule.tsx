@@ -834,6 +834,9 @@ function StoreModal({ t, channels, store, defaultChannel, onClose, onSaved }: {
     address: store?.address || "",
     contact_name: store?.contact_name || "",
     contact_phone: store?.contact_phone || "",
+    demonstrator_name: (store as any)?.demonstrator_name || "",
+    demonstrator_phone: (store as any)?.demonstrator_phone || "",
+    demonstrator_email: (store as any)?.demonstrator_email || "",
     consignment_warehouse_id: store?.consignment_warehouse_id ?? null as number | null,
     is_active: store?.is_active ?? true,
     notes: store?.notes || "",
@@ -923,6 +926,37 @@ function StoreModal({ t, channels, store, defaultChannel, onClose, onSaved }: {
             <input value={f.contact_phone} onChange={e => update("contact_phone", e.target.value)} style={inputStyle(t)} />
           </div>
         </div>
+
+        {/* Agenda de demostradora — usada para alertas automáticas de perecederos */}
+        <div style={{ marginTop: 14, padding: 12, background: "#A78BFA12", borderRadius: 8, border: "1px solid #A78BFA55" }}>
+          <div style={{ fontSize: 12, color: "#A78BFA", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4, fontWeight: 700 }}>
+            Demostradora / Promotora en piso
+          </div>
+          <div style={{ fontSize: 11, color: t.textLo, marginBottom: 8 }}>
+            Con estos datos el sistema puede notificar directo a la demostradora cuando un lote de esta tienda esté por caducar (WhatsApp o correo).
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={labelStyle(t)}>Nombre</label>
+              <input value={f.demonstrator_name}
+                onChange={e => update("demonstrator_name", e.target.value)}
+                placeholder="Ej: María López" style={inputStyle(t)} />
+            </div>
+            <div>
+              <label style={labelStyle(t)}>WhatsApp (10 dígitos)</label>
+              <input value={f.demonstrator_phone}
+                onChange={e => update("demonstrator_phone", e.target.value)}
+                placeholder="5512345678" style={inputStyle(t)} />
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={labelStyle(t)}>Correo (opcional)</label>
+              <input value={f.demonstrator_email}
+                onChange={e => update("demonstrator_email", e.target.value)}
+                placeholder="demostradora@…" style={inputStyle(t)} />
+            </div>
+          </div>
+        </div>
+
         <div style={{ marginTop: 14, padding: 12, background: t.panel2, borderRadius: 8, border: `1px solid ${t.border}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
             <Warehouse size={13} color={t.nova} />

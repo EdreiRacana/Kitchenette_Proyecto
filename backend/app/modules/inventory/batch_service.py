@@ -475,6 +475,24 @@ def _fmt_date_iso(s):
         return str(s)
 
 
+def _parse_recipients(raw: Optional[str]) -> List[str]:
+    """Convierte una cadena 'a@x.com, b@y.com; c@z.com' en lista limpia."""
+    if not raw:
+        return []
+    import re
+    parts = re.split(r"[,;\s]+", raw)
+    out = []
+    seen = set()
+    for p in parts:
+        p = p.strip().lower()
+        if not p or p in seen:
+            continue
+        if "@" in p:
+            out.append(p)
+            seen.add(p)
+    return out
+
+
 async def notify_expiring_by_email(
     db: AsyncSession, *,
     to: Optional[str] = None,
@@ -482,9 +500,12 @@ async def notify_expiring_by_email(
     warehouse_id: Optional[int] = None,
     only_critical: bool = False,
 ) -> Dict:
-    """Genera el resumen y lo manda por correo. Si `to` no viene, usa
-    accounting_email de la empresa. Si only_critical, solo incluye lotes
-    con days_left <= 7 (para el cronjob diario)."""
+    """Genera el resumen y lo manda por correo a los destinatarios operativos:
+      - Si `to` viene, se usa esa lista (permite override desde la UI).
+      - Si no, usa CompanyProfile.alerts_recipients (lista separada por coma
+        con comprador + gerente + supervisor).
+      - Fallback final: accounting_email (una sola dirección).
+    """
     from app.core.email import send_email
     from app.modules.core_config.service import get_company_profile
     from app.modules.sales.universal_service import _get_company_dict
@@ -499,12 +520,17 @@ async def notify_expiring_by_email(
 
     company_obj = await get_company_profile(db)
     company_dict = await _get_company_dict(db)
-    recipient = (to or "").strip() or (
-        (getattr(company_obj, "accounting_email", None) or "").strip()
-        if company_obj else ""
-    )
-    if not recipient:
-        return {"sent": False, "reason": "No hay destinatario configurado"}
+
+    # Resolver destinatarios: override > alerts_recipients > accounting_email
+    recipients = _parse_recipients(to)
+    if not recipients and company_obj:
+        recipients = _parse_recipients(getattr(company_obj, "alerts_recipients", None))
+        if not recipients:
+            acc = (getattr(company_obj, "accounting_email", None) or "").strip().lower()
+            if acc:
+                recipients = [acc]
+    if not recipients:
+        return {"sent": False, "reason": "No hay destinatarios configurados"}
 
     # Recalcular summary sobre las filas filtradas
     counters = {"expired": 0, "critical": 0, "alert": 0, "ok": 0, "no_expiry": 0}
@@ -525,10 +551,109 @@ async def notify_expiring_by_email(
     if not subject_bits:
         subject_bits.append(f"{summary['alert']} en alerta")
     subject = f"[{biz}] Perecederos — {', '.join(subject_bits)}"
-    ok = await send_email(db, to=recipient, subject=subject, body_html=html)
-    return {"sent": ok, "to": recipient, "rows_notified": len(rows),
-            "summary": summary,
-            "reason": None if ok else "No se pudo enviar el correo"}
+
+    # Envío individual — un send_email por destinatario para máxima
+    # entregabilidad (no todos los proveedores manejan bien el multi-to).
+    sent_to: List[str] = []
+    failed: List[str] = []
+    for r in recipients:
+        ok = await send_email(db, to=r, subject=subject, body_html=html)
+        (sent_to if ok else failed).append(r)
+    return {
+        "sent": len(sent_to) > 0,
+        "to": ", ".join(sent_to) if sent_to else None,
+        "failed": failed or None,
+        "rows_notified": len(rows),
+        "summary": summary,
+        "reason": None if sent_to else "No se pudo enviar el correo a ningún destinatario",
+    }
+
+
+async def get_store_demonstrator_for_warehouse(
+    db: AsyncSession, warehouse_id: int,
+) -> Optional[dict]:
+    """Devuelve la demostradora de la tienda de retail cuyo warehouse de
+    consignación es el que se le pasa. Sirve para el enrutamiento
+    automático de alertas de perecederos por punto de venta."""
+    try:
+        from app.modules.retail.models import RetailStore
+        res = await db.execute(
+            select(RetailStore).where(
+                RetailStore.consignment_warehouse_id == warehouse_id,
+                RetailStore.is_active == True,  # noqa: E712
+            ).limit(1)
+        )
+        s = res.scalars().first()
+    except Exception:
+        s = None
+    if not s:
+        return None
+    return {
+        "store_id": s.id, "store_name": s.name,
+        "demonstrator_name": s.demonstrator_name,
+        "demonstrator_phone": s.demonstrator_phone,
+        "demonstrator_email": s.demonstrator_email,
+    }
+
+
+async def notify_store_demonstrator(
+    db: AsyncSession, warehouse_id: int, *,
+    days: int = 30, prefer_channel: str = "whatsapp",
+) -> Dict:
+    """Genera el resumen filtrado por almacén de la tienda y lo enruta a la
+    demostradora. Devuelve wa.me link si prefer_channel='whatsapp', o intenta
+    correo si prefer_channel='email' (o si no hay teléfono)."""
+    demo = await get_store_demonstrator_for_warehouse(db, warehouse_id)
+    if not demo or (not demo.get("demonstrator_phone") and not demo.get("demonstrator_email")):
+        return {"ok": False, "reason": "No hay demostradora configurada para esta tienda"}
+
+    data = await list_expiring_lots(db, days=days, warehouse_id=warehouse_id,
+                                     include_expired=True, limit=100)
+    if not data.get("rows"):
+        return {"ok": False, "reason": "Sin lotes por avisar en esta tienda"}
+
+    text = render_expiry_alert_text(data["rows"], data["summary"])
+    # Encabezado personalizado para la demostradora
+    intro = (f"Hola {demo['demonstrator_name'] or ''}, "
+             f"estos son los productos de {demo['store_name']} que necesitan atención hoy:")
+    full_text = f"{intro}\n\n{text}\n\nGracias — Equipo de piso"
+
+    if prefer_channel == "whatsapp" and demo.get("demonstrator_phone"):
+        # Devolver link wa.me pre-cargado para que el gerente lo abra
+        phone = demo["demonstrator_phone"]
+        digits = "".join(ch for ch in phone if ch.isdigit())
+        if len(digits) == 10:
+            digits = "52" + digits
+        from urllib.parse import quote
+        return {
+            "ok": True, "channel": "whatsapp",
+            "store_name": demo["store_name"],
+            "demonstrator_name": demo["demonstrator_name"],
+            "phone": phone,
+            "url": f"https://wa.me/{digits}?text={quote(full_text)}",
+            "count": len(data["rows"]),
+        }
+
+    if demo.get("demonstrator_email"):
+        from app.core.email import send_email
+        from app.modules.core_config.service import get_company_profile
+        from app.modules.sales.universal_service import _get_company_dict
+        company_obj = await get_company_profile(db)
+        company_dict = await _get_company_dict(db)
+        biz = (company_obj.legal_name if company_obj and company_obj.legal_name else "Sthenova")
+        html = render_expiry_alert_html(company_dict, data["rows"], data["summary"])
+        subject = f"[{biz}] Perecederos en {demo['store_name']} — {len(data['rows'])} lote(s)"
+        ok = await send_email(db, to=demo["demonstrator_email"], subject=subject, body_html=html)
+        return {
+            "ok": ok, "channel": "email",
+            "store_name": demo["store_name"],
+            "demonstrator_name": demo["demonstrator_name"],
+            "to": demo["demonstrator_email"],
+            "count": len(data["rows"]),
+            "reason": None if ok else "No se pudo enviar el correo",
+        }
+
+    return {"ok": False, "reason": "Sin canal disponible para notificar"}
 
 
 async def build_expiring_whatsapp_text(

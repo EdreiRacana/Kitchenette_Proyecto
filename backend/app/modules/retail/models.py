@@ -87,6 +87,13 @@ class RetailStore(Base):
     address = Column(Text, nullable=True)
     contact_name = Column(String, nullable=True)
     contact_phone = Column(String, nullable=True)
+    # ── Agenda de demostradora / promotora en piso ─────────────────────
+    # Se usa para el enrutamiento automático de alertas: cuando un lote va
+    # a caducar en el consignment de esta tienda, el sistema le puede
+    # WhatsAppear directo a la demostradora que rota el producto en piso.
+    demonstrator_name = Column(String, nullable=True)
+    demonstrator_phone = Column(String, nullable=True)  # 10 dígitos MX ó con lada
+    demonstrator_email = Column(String, nullable=True)
     # Almacén de consignación asociado. Si viene, cada sell-out reportado
     # descuenta stock de este warehouse. Debe ser un Warehouse con
     # type=CONSIGNMENT (validado en la UI, no forzado en DB).

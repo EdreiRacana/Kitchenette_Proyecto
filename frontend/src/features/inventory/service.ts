@@ -423,6 +423,11 @@ export const inventoryService = {
         (await api.post('/inventory/batches/notify-email', data)).data,
     notifyExpiringText: async (params: { days?: number; warehouse_id?: number; only_critical?: boolean }) =>
         (await api.get<{ text: string; count: number }>('/inventory/batches/notify-text', { params })).data,
+    notifyStoreDemonstrator: async (warehouseId: number, opts: { days?: number; prefer?: "whatsapp" | "email" } = {}) =>
+        (await api.post<{ ok: boolean; channel?: string; store_name?: string; demonstrator_name?: string; phone?: string; url?: string; to?: string; count?: number; reason?: string }>(
+            `/inventory/batches/notify-store-demonstrator/${warehouseId}`,
+            null, { params: { days: opts.days, prefer: opts.prefer || "whatsapp" } }
+        )).data,
 
     // Kardex FIFO
     getKardex: async (variantId: number, params?: { warehouse_id?: number; start?: string; end?: string; limit?: number }) =>

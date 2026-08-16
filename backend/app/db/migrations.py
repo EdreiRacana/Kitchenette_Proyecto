@@ -494,6 +494,8 @@ _BRANCH_STATEMENTS = [
     # Correo de contabilidad — destino por defecto de reportes automáticos
     # (cierre de turno POS, cortes, etc.)
     "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS accounting_email VARCHAR",
+    # Correos operativos separados por coma — reciben alertas de perecederos
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS alerts_recipients VARCHAR",
     # Cierre de período contable
     """CREATE TABLE IF NOT EXISTS accounting_period_close (
         id            SERIAL PRIMARY KEY,
@@ -705,6 +707,10 @@ _RETAIL_STATEMENTS = [
     "ALTER TABLE retail_channels ADD COLUMN IF NOT EXISTS alerts_enabled       BOOLEAN DEFAULT TRUE NOT NULL",
     # Consignación (Fase 4)
     "ALTER TABLE retail_stores          ADD COLUMN IF NOT EXISTS consignment_warehouse_id INTEGER REFERENCES warehouses(id)",
+    # Agenda de demostradora / promotora por tienda (Fase perecederos)
+    "ALTER TABLE retail_stores          ADD COLUMN IF NOT EXISTS demonstrator_name  VARCHAR",
+    "ALTER TABLE retail_stores          ADD COLUMN IF NOT EXISTS demonstrator_phone VARCHAR",
+    "ALTER TABLE retail_stores          ADD COLUMN IF NOT EXISTS demonstrator_email VARCHAR",
     "ALTER TABLE retail_sellout_reports ADD COLUMN IF NOT EXISTS stock_consumed           INTEGER DEFAULT 0 NOT NULL",
     # Perfiles de importación por cadena (Fase 7)
     """CREATE TABLE IF NOT EXISTS retail_import_profiles (

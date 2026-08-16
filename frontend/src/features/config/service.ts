@@ -23,6 +23,7 @@ export interface CompanyProfile {
     timezone?: string;
     logo_url?: string;
     accounting_email?: string;
+    alerts_recipients?: string;
     commercial_name?: string;
     brand_color?: string;
     document_footer?: string;

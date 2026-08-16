@@ -168,7 +168,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const [companyForm, setCompanyForm] = useState<CompanyProfile>({
     legal_name: "", tax_id: "", contact_email: "", contact_phone: "", address: "",
     base_currency: "MXN", timezone: "America/Mexico_City", logo_url: "",
-    accounting_email: "",
+    accounting_email: "", alerts_recipients: "",
     commercial_name: "", brand_color: "#33B2F5", document_footer: "",
     business_mode: "product",
   });
@@ -201,6 +201,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
         address: data.address || "", base_currency: data.base_currency || "MXN",
         timezone: data.timezone || "America/Mexico_City", logo_url: data.logo_url || "",
         accounting_email: data.accounting_email || "",
+        alerts_recipients: data.alerts_recipients || "",
         commercial_name: data.commercial_name || "", brand_color: data.brand_color || "#33B2F5",
         document_footer: data.document_footer || "",
         business_mode: (data.business_mode as any) || "product",
@@ -218,6 +219,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
         ...companyForm,
         contact_email: companyForm.contact_email?.trim() || undefined,
         accounting_email: companyForm.accounting_email?.trim() || undefined,
+        alerts_recipients: companyForm.alerts_recipients?.trim() || undefined,
       };
       if (companyExists) await configService.updateCompanyProfile(payload);
       else await configService.createCompanyProfile(payload);
@@ -466,6 +468,19 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                   <div style={{ fontSize: 11, color: t.textLo, marginTop: 4 }}>
                     Destino por defecto del reporte Z del cierre de turno POS y otros
                     reportes automáticos a contabilidad.
+                  </div>
+                </div>
+                <div>
+                  <label style={lbl}>Correos de alertas operativas (perecederos)</label>
+                  <input
+                    value={companyForm.alerts_recipients || ""}
+                    onChange={e => setCompanyForm(f => ({ ...f, alerts_recipients: e.target.value }))}
+                    placeholder="comprador@empresa.com, gerente@empresa.com, supervisor@empresa.com"
+                    style={inp}
+                  />
+                  <div style={{ fontSize: 11, color: t.textLo, marginTop: 4 }}>
+                    Lista separada por comas. Reciben la alerta diaria de lotes por caducar.
+                    Si se deja vacío, se usa el correo de contabilidad.
                   </div>
                 </div>
               </div>

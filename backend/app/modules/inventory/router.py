@@ -497,6 +497,22 @@ async def notify_expiring_text(db: DB, current_user: CurrentUser,
     )
 
 
+@router.post("/batches/notify-store-demonstrator/{warehouse_id}")
+async def notify_store_demonstrator(warehouse_id: int, db: DB, current_user: CurrentUser,
+                                     days: int = 30, prefer: str = "whatsapp"):
+    """Enrutamiento automático: notifica a la demostradora de la tienda cuyo
+    warehouse de consignación es el `warehouse_id`. prefer=whatsapp devuelve
+    el link wa.me listo para abrir; prefer=email envía correo directo."""
+    if prefer not in ("whatsapp", "email"):
+        raise HTTPException(400, "prefer debe ser whatsapp o email")
+    res = await batch_service.notify_store_demonstrator(
+        db, warehouse_id, days=days, prefer_channel=prefer,
+    )
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("reason", "Error"))
+    return res
+
+
 # ── Traspasos entre almacenes (Stock Transfer Orders) ────────────────────
 
 @router.post("/transfers", response_model=schemas.StockTransferInDB, status_code=201)

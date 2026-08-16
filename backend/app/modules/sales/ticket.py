@@ -68,13 +68,47 @@ def _logo_data_uri(company: Optional[CompanyProfile]) -> str:
         return ""
 
 
+def _classify_customer_tone(order: models.Order) -> str:
+    """Determina el tono del correo según el cliente:
+      - "pos": mostrador / cliente casual → tono cálido personal
+      - "b2b": distribuidor, mayorista, retail, marketplace → tono institucional
+
+    Reglas (en orden de precedencia):
+      1. Sin cliente → pos (mostrador anónimo).
+      2. customer.source == "pos" → pos (registrado en el POS, casual).
+      3. relationship_type en marketplace/wholesale/distributor/chain → b2b.
+      4. Default → b2b (asumimos que un cliente con RFC y razón social es empresa).
+    """
+    cust = order.customer
+    if not cust:
+        return "pos"
+    src = (getattr(cust, "source", None) or "").lower()
+    if src == "pos":
+        return "pos"
+    rel = (getattr(cust, "relationship_type", None) or "").lower()
+    # Cualquiera de estos = flujo B2B claro
+    if rel in ("wholesale", "distributor", "marketplace", "retail_chain",
+               "chain", "reseller", "b2b", "corporate"):
+        return "b2b"
+    # Con razón social y RFC = casi seguro empresa (retail formal)
+    if getattr(cust, "razon_social", None) or getattr(cust, "rfc", None):
+        return "b2b"
+    return "b2b"
+
+
 def render_ticket_html(order: models.Order, company: Optional[CompanyProfile] = None) -> str:
     """Cuerpo del correo que acompaña al PDF adjunto.
-
-    Es una nota profesional de agradecimiento con saludo personalizado,
-    referencia al folio + total, mención de que el ticket va adjunto en PDF
-    y despedida cordial. NO es otro ticket — el PDF ya cumple ese rol.
+    Elige tono POS (cálido personal) o B2B (institucional) según el cliente.
+    NO es otro ticket — el PDF ya cumple ese rol; este HTML solo introduce.
     """
+    tone = _classify_customer_tone(order)
+    if tone == "b2b":
+        return _render_ticket_html_b2b(order, company)
+    return _render_ticket_html_pos(order, company)
+
+
+def _render_ticket_html_pos(order: models.Order, company: Optional[CompanyProfile] = None) -> str:
+    """Versión mostrador / POS: 'Hola Carlos, gracias por tu compra…'."""
     biz = _biz_name(company)
     logo_uri = _logo_data_uri(company)
     # width HTML attribute + height auto — Outlook y Gmail ignoran max-width
@@ -182,6 +216,132 @@ def render_ticket_html(order: models.Order, company: Optional[CompanyProfile] = 
           contact_line +
           '</td></tr>'
         ) if contact_line else ""}
+        {(
+          f'<tr><td style="padding:10px 32px;background:#F9FAFB;text-align:center;'
+          f'color:#9CA3AF;font-size:11px">{footer_txt}</td></tr>'
+        ) if footer_txt else ""}
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+
+
+def _render_ticket_html_b2b(order: models.Order, company: Optional[CompanyProfile] = None) -> str:
+    """Versión institucional B2B: para distribuidores, mayoristas, cadenas
+    de retail (Walmart, Soriana, HEB) y marketplaces. Tono formal, referencia
+    al pedido con folio + orden de compra si aplica, términos de pago y
+    persona de contacto para logística."""
+    biz = _biz_name(company)
+    logo_uri = _logo_data_uri(company)
+    logo_html = (
+        f'<img src="{logo_uri}" alt="{biz}" width="130" '
+        f'style="width:130px;height:auto;max-width:130px;display:block;margin:0 auto"/>'
+    ) if logo_uri else ""
+
+    accent = (company.brand_color if company and company.brand_color else "#111827")
+    folio = order.folio or f"#{order.id}"
+    currency = order.currency or "MXN"
+    total_txt = _money(order.total_amount, currency)
+
+    cust = order.customer
+    # Dirigirnos a la razón social si la tenemos (más formal en B2B), o al
+    # nombre comercial. Para saludo del cuerpo usamos "Estimado equipo de X".
+    razon = (cust.razon_social if cust and cust.razon_social else None)
+    nombre_comercial = (cust.name if cust else None)
+    display_name = razon or nombre_comercial or "cliente"
+    salutation = f"Estimado equipo de {nombre_comercial or razon},"
+
+    kind_word = "cotización" if order.kind == "quote" else "pedido"
+    kind_word_cap = "Cotización" if order.kind == "quote" else "Pedido"
+
+    # Términos de pago si aplican
+    pay_line = ""
+    if order.kind != "quote":
+        pay_method_label = {
+            "cash": "Efectivo", "card": "Tarjeta", "transfer": "Transferencia",
+            "check": "Cheque", "credit": "Crédito",
+        }.get(order.payment_method or "", None)
+        credit_days = getattr(cust, "credit_days", None) if cust else None
+        if credit_days and credit_days > 0:
+            pay_line = f"Términos: crédito a {credit_days} días naturales."
+        elif pay_method_label:
+            pay_line = f"Forma de pago: {pay_method_label}."
+
+    # Contacto de la empresa remitente para logística / aclaraciones
+    contact_bits = []
+    if company:
+        if company.contact_phone:
+            contact_bits.append(f"Tel. {company.contact_phone}")
+        if company.contact_email:
+            contact_bits.append(company.contact_email)
+    contact_line = " · ".join(contact_bits)
+    footer_txt = (company.document_footer if company and company.document_footer else "")
+
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{kind_word_cap} {folio} — {biz}</title>
+</head>
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111827;line-height:1.55">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:#F3F4F6;padding:24px 0">
+    <tr><td align="center">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             style="width:100%;max-width:560px;background:#ffffff;border-radius:14px;
+                    box-shadow:0 4px 16px rgba(0,0,0,0.06);overflow:hidden">
+
+        <!-- Header con logo pequeño y razón social -->
+        <tr><td style="padding:26px 32px 14px;text-align:center;border-bottom:3px solid {accent}">
+          {logo_html}
+          <div style="font-size:16px;font-weight:800;color:#111827;margin-top:{'10px' if logo_html else '0'}">{biz}</div>
+          <div style="font-size:11.5px;color:#6B7280;margin-top:4px;text-transform:uppercase;letter-spacing:0.6px">
+            {kind_word_cap} {folio}
+          </div>
+        </td></tr>
+
+        <!-- Cuerpo institucional -->
+        <tr><td style="padding:28px 32px 8px;font-size:14.5px;color:#1F2937">
+          <p style="margin:0 0 14px">{salutation}</p>
+          <p style="margin:0 0 14px">
+            Por medio del presente, adjuntamos el <b>{kind_word}</b> con folio
+            <b style="font-family:monospace">{folio}</b> emitido a nombre de
+            <b>{display_name}</b>. El detalle formal — productos, cantidades,
+            precios unitarios, impuestos y totales — se encuentra en el
+            <b>archivo PDF adjunto</b>, que también sirve como documento
+            respaldo para cualquier proceso de recepción o conciliación.
+          </p>
+          {f'<p style="margin:0 0 14px">{pay_line}</p>' if pay_line else ''}
+        </td></tr>
+
+        <!-- Card con folio + total -->
+        <tr><td style="padding:0 32px 20px">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+                 style="width:100%;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:10px">
+            <tr>
+              <td style="padding:14px 16px;font-size:12.5px;color:#6B7280">
+                Folio
+                <div style="font-family:monospace;font-size:14px;color:#111827;font-weight:700;margin-top:2px">{folio}</div>
+              </td>
+              <td style="padding:14px 16px;text-align:right;font-size:12.5px;color:#6B7280">
+                Total
+                <div style="font-size:18px;color:#111827;font-weight:800;margin-top:2px;font-variant-numeric:tabular-nums">{total_txt}</div>
+              </td>
+            </tr>
+          </table>
+        </td></tr>
+
+        <!-- Cierre institucional -->
+        <tr><td style="padding:0 32px 28px;font-size:14.5px;color:#1F2937">
+          <p style="margin:0 0 12px">
+            Para cualquier aclaración, ajuste o coordinación logística respecto
+            a este {kind_word}, quedamos a sus órdenes por los medios habituales.
+          </p>
+          <p style="margin:0">
+            Atentamente,<br>
+            <b style="color:#111827">{biz}</b>
+            {f'<br><span style="font-size:12.5px;color:#6B7280">{contact_line}</span>' if contact_line else ''}
+          </p>
+        </td></tr>
+
         {(
           f'<tr><td style="padding:10px 32px;background:#F9FAFB;text-align:center;'
           f'color:#9CA3AF;font-size:11px">{footer_txt}</td></tr>'

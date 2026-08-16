@@ -39,6 +39,10 @@ class CompanyProfile(Base):
     # como el cierre de turno POS (reporte Z). Se puede sobreescribir por
     # envío. Nullable: si no está seteado, la UI pide el correo cada vez.
     accounting_email = Column(String, nullable=True)
+    # Correos (separados por coma) que reciben las alertas operativas de
+    # perecederos por caducar (comprador + gerente + supervisor de tienda,
+    # etc.). Si está vacío, se cae a accounting_email como respaldo.
+    alerts_recipients = Column(String, nullable=True)
     # Bytes del logo — persistente cross-deploy. El filesystem de Render es
     # efímero, así que /uploads/ se pierde en cada deploy y sólo confiar en
     # `logo_url` rompe los PDFs. `logo_bytes` es la fuente de verdad para PDFs.

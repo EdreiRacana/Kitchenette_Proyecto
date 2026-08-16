@@ -15,7 +15,7 @@ import {
   Users, ClipboardList, Factory, FlaskConical,
   FileText, Mail, MessageCircle,
   Sparkles, Calendar as CalendarIcon, Wand2, ArrowRightCircle,
-  Clock, ShieldAlert,
+  Clock, ShieldAlert, User,
 } from "lucide-react";
 import {
   inventoryService,
@@ -4215,8 +4215,31 @@ function ExpiringView({ t, warehouses }: { t: any; warehouses: WarehouseT[] }) {
           style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #25D36655", background: "#25D36618", color: "#25D366", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
           <MessageCircle size={12} /> Compartir por WhatsApp
         </button>
+
+        {/* Ruta directa a la demostradora — solo visible cuando se filtra
+            por almacén (porque necesitamos saber a qué tienda pertenece). */}
+        {warehouseId !== "" && (
+          <button onClick={async () => {
+            try {
+              const res = await inventoryService.notifyStoreDemonstrator(Number(warehouseId), { days, prefer: "whatsapp" });
+              if (res.url) {
+                // Abre wa.me con el mensaje pre-cargado a la demostradora
+                window.open(res.url, "_blank");
+              } else if (res.ok && res.channel === "email") {
+                alert(`Correo enviado a la demostradora ${res.demonstrator_name || ""} <${res.to}> con ${res.count} lote(s).`);
+              } else {
+                alert(res.reason || "No se pudo notificar");
+              }
+            } catch (e: any) { alert(e?.response?.data?.detail || "No hay demostradora configurada. Ve a Retail → Tiendas para capturar sus datos."); }
+          }}
+            title="Enruta automáticamente a la demostradora asignada a esta tienda"
+            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #A78BFA55", background: "#A78BFA18", color: "#A78BFA", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
+            <User size={12} /> Notificar demostradora
+          </button>
+        )}
+
         <div style={{ fontSize: 11, color: t.textLo, marginLeft: "auto" }}>
-          Automático diario: se envía por correo al de contabilidad si hay lotes críticos.
+          Diario automático a los correos operativos configurados en Configuración → Empresa.
         </div>
       </div>
 
