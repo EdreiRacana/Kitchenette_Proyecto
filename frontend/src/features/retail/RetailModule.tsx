@@ -223,20 +223,38 @@ export default function RetailModule({ t }: { t: Tokens }) {
 }
 
 
-// Logo del cliente vinculado a la cadena. Muestra imagen si existe;
-// si no, iniciales del nombre en un chip cuadrado.
+// Logo del cliente vinculado a la cadena. Prioridad de renderizado:
+//   1. Imagen del logo si existe → se muestra tal cual.
+//   2. Iniciales del nombre del cliente/cadena (si hay canal seleccionado).
+//   3. Placeholder con icono de tienda cuando no hay canal seleccionado
+//      o no hay logo — con la palabra "LOGO" discreta abajo a la derecha
+//      para invitar al usuario a subir uno.
 function ChannelLogo({ channel, t }: { channel: RetailChannel | null; t: Tokens }) {
   const size = 80;
   const box: CSSProperties = {
     width: size, height: size, borderRadius: 8,
     border: `1px solid ${t.border}`, background: t.panel,
     display: "flex", alignItems: "center", justifyContent: "center",
-    overflow: "hidden", flexShrink: 0,
+    overflow: "hidden", flexShrink: 0, position: "relative",
   };
+  // Etiqueta discreta "LOGO" para el placeholder — misma tipografía que
+  // usan los uploaders del ERP (mayúscula chica, letter-spacing).
+  const logoTag = (
+    <div style={{
+      position: "absolute", bottom: 2, right: 4,
+      fontSize: 8.5, color: t.textLo, opacity: 0.55,
+      textTransform: "uppercase", letterSpacing: 0.6,
+      fontWeight: 700, pointerEvents: "none",
+    }}>logo</div>
+  );
+
+  // Sin canal — placeholder neutro con icono de tienda
   if (!channel) {
     return (
-      <div style={{ ...box, background: t.panel2, color: t.textLo, fontSize: 11 }}>
-        —
+      <div style={{ ...box, background: t.panel2, color: t.textLo }}
+           title="Selecciona una cadena para ver su logo">
+        <Store size={30} strokeWidth={1.5} style={{ opacity: 0.55 }} />
+        {logoTag}
       </div>
     );
   }
@@ -249,13 +267,13 @@ function ChannelLogo({ channel, t }: { channel: RetailChannel | null; t: Tokens 
       </div>
     );
   }
-  // Iniciales
-  const source = channel.customer_name || channel.name || "?";
-  const initials = source.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || "").join("") || "?";
+  // Canal seleccionado sin logo — icono de tienda + tag "logo" que sugiere
+  // subir uno desde el módulo Clientes.
   return (
-    <div style={{ ...box, background: t.nova + "18", color: t.nova, fontWeight: 800, fontSize: 26 }}
-      title={source}>
-      {initials}
+    <div style={{ ...box, background: t.nova + "12", color: t.nova }}
+         title={`${channel.customer_name || channel.name} — sube el logo desde Clientes`}>
+      <Store size={30} strokeWidth={1.5} style={{ opacity: 0.75 }} />
+      {logoTag}
     </div>
   );
 }
