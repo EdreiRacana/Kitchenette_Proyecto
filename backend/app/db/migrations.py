@@ -315,6 +315,26 @@ _INVENTORY_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS ix_product_variants_must_have ON product_variants (is_must_have) WHERE is_must_have = true",
     "ALTER TABLE stock_levels ADD COLUMN IF NOT EXISTS reserved_quantity INTEGER DEFAULT 0",
     "ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
+    # ── Trazabilidad por lote + caducidad (perecederos) ──────────────────
+    # Producto: flag y política de vida útil / alertas
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS tracks_batches BOOLEAN DEFAULT false NOT NULL",
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS default_shelf_life_days INTEGER",
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS expiry_alert_days INTEGER DEFAULT 30",
+    "CREATE INDEX IF NOT EXISTS ix_products_tracks_batches ON products (tracks_batches) WHERE tracks_batches = true",
+    # Lote: código, caducidad, fabricación, proveedor y estado
+    "ALTER TABLE stock_lots ADD COLUMN IF NOT EXISTS batch_code VARCHAR",
+    "ALTER TABLE stock_lots ADD COLUMN IF NOT EXISTS expiration_date DATE",
+    "ALTER TABLE stock_lots ADD COLUMN IF NOT EXISTS manufacturing_date DATE",
+    "ALTER TABLE stock_lots ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id)",
+    "ALTER TABLE stock_lots ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'active' NOT NULL",
+    "UPDATE stock_lots SET status = 'active' WHERE status IS NULL",
+    "CREATE INDEX IF NOT EXISTS ix_stock_lots_batch_code ON stock_lots (batch_code) WHERE batch_code IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS ix_stock_lots_expiration ON stock_lots (expiration_date) WHERE expiration_date IS NOT NULL AND status = 'active'",
+    "CREATE INDEX IF NOT EXISTS ix_stock_lots_status ON stock_lots (status)",
+    "CREATE INDEX IF NOT EXISTS ix_stock_lots_variant_wh_exp ON stock_lots (variant_id, warehouse_id, expiration_date)",
+    # Movimiento: referencia al lote consumido/generado (para recall + kardex)
+    "ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS stock_lot_id INTEGER REFERENCES stock_lots(id)",
+    "CREATE INDEX IF NOT EXISTS ix_stock_movements_lot ON stock_movements (stock_lot_id) WHERE stock_lot_id IS NOT NULL",
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS total_amount DOUBLE PRECISION DEFAULT 0",
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS paid_amount  DOUBLE PRECISION DEFAULT 0",
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS due_date     TIMESTAMPTZ",

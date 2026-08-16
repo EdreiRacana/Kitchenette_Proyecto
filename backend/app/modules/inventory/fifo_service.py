@@ -43,31 +43,56 @@ async def receive_stock(
     reference: Optional[str] = None,
     user_id: Optional[int] = None,
     commit: bool = True,
+    # ── Trazabilidad para productos perecederos ─────────────────────────
+    batch_code: Optional[str] = None,
+    expiration_date=None,                # datetime.date
+    manufacturing_date=None,             # datetime.date
+    supplier_id: Optional[int] = None,
 ) -> models.StockLot:
-    """Entrada de stock: crea un lote FIFO con su costo propio.
-    También registra un StockMovement de tipo IN.
-    Si commit=False, el caller es dueño de la transacción (útil al integrar
-    con la creación de una orden que aún no se ha comprometido)."""
+    """Entrada de stock: crea un lote con costo, código y caducidad (si
+    aplica) y registra un StockMovement IN referenciando el lote.
+    Si el producto tiene default_shelf_life_days y no viene expiration_date,
+    se calcula automáticamente."""
     if quantity <= 0:
         raise ValueError("quantity debe ser positiva")
+
+    # Auto-calcular caducidad si el producto tiene shelf_life definido y no
+    # nos pasaron una explícita — evita que el almacenista tenga que sumar
+    # manualmente cuando la vida útil es fija (yogur 30 días, etc.)
+    if expiration_date is None:
+        try:
+            res = await db.execute(
+                select(models.Product.default_shelf_life_days, models.Product.tracks_batches)
+                .join(models.ProductVariant, models.ProductVariant.product_id == models.Product.id)
+                .where(models.ProductVariant.id == variant_id)
+            )
+            row = res.first()
+            if row and row.tracks_batches and row.default_shelf_life_days:
+                from datetime import date, timedelta
+                expiration_date = date.today() + timedelta(days=int(row.default_shelf_life_days))
+        except Exception:
+            pass
+
     lot = models.StockLot(
         variant_id=variant_id, warehouse_id=warehouse_id,
         quantity_received=quantity, quantity_remaining=quantity,
         unit_cost=unit_cost, reference=reference,
+        batch_code=batch_code, expiration_date=expiration_date,
+        manufacturing_date=manufacturing_date, supplier_id=supplier_id,
+        status="active",
     )
     db.add(lot)
+    await db.flush()  # obtener lot.id para el movimiento
     db.add(models.StockMovement(
         variant_id=variant_id, warehouse_id=warehouse_id,
         quantity=quantity, movement_type="in",
         unit_cost=unit_cost, reference=reference,
-        user_id=user_id,
+        user_id=user_id, stock_lot_id=lot.id,
     ))
     await _adjust_stock_level(db, variant_id, warehouse_id, quantity)
     if commit:
         await db.commit()
         await db.refresh(lot)
-    else:
-        await db.flush()
     return lot
 
 
@@ -85,16 +110,46 @@ async def consume_stock(
     if quantity <= 0:
         raise ValueError("quantity debe ser positiva")
 
-    # Lotes con remanente ordenados por antigüedad
-    res = await db.execute(
+    # Decidir orden de consumo: FEFO si el producto es perecedero, FIFO clásico
+    # si no. Para perecederos, un lote que caduca en 3 días es más urgente que
+    # uno que llegó primero pero caduca en 60. Ignora lotes recalled/quarantine.
+    tracks = False
+    try:
+        res_p = await db.execute(
+            select(models.Product.tracks_batches)
+            .join(models.ProductVariant, models.ProductVariant.product_id == models.Product.id)
+            .where(models.ProductVariant.id == variant_id)
+        )
+        row = res_p.first()
+        tracks = bool(row and row.tracks_batches)
+    except Exception:
+        tracks = False
+
+    lot_query = (
         select(models.StockLot)
         .where(
             models.StockLot.variant_id == variant_id,
             models.StockLot.warehouse_id == warehouse_id,
             models.StockLot.quantity_remaining > 0,
+            # active vende; recalled/quarantine/expired NO. Toleramos NULL para
+            # lotes pre-existentes que no traen status seteado todavía.
+            (models.StockLot.status == "active") | (models.StockLot.status.is_(None)),
         )
-        .order_by(models.StockLot.received_at.asc(), models.StockLot.id.asc())
     )
+    if tracks:
+        # FEFO: caducidad ASC (NULL al final por si algún lote no la tiene),
+        # empate por antigüedad (recibido primero).
+        lot_query = lot_query.order_by(
+            models.StockLot.expiration_date.asc().nulls_last(),
+            models.StockLot.received_at.asc(),
+            models.StockLot.id.asc(),
+        )
+    else:
+        lot_query = lot_query.order_by(
+            models.StockLot.received_at.asc(),
+            models.StockLot.id.asc(),
+        )
+    res = await db.execute(lot_query)
     lots = res.scalars().all()
     available = sum(l.quantity_remaining for l in lots)
 
@@ -104,6 +159,9 @@ async def consume_stock(
     to_consume = quantity
     total_cost = 0.0
     lots_used: List[dict] = []
+    # Un solo StockMovement por lote consumido — habilita trazabilidad: si
+    # hay que retirar un lote sabremos exactamente en qué venta se despachó.
+    movements_to_add: List[models.StockMovement] = []
 
     for lot in lots:
         if to_consume <= 0:
@@ -113,25 +171,38 @@ async def consume_stock(
         total_cost += take * lot.unit_cost
         lots_used.append({
             "lot_id": lot.id, "qty": take, "unit_cost": lot.unit_cost,
+            "batch_code": lot.batch_code,
+            "expiration_date": lot.expiration_date.isoformat() if lot.expiration_date else None,
         })
+        movements_to_add.append(models.StockMovement(
+            variant_id=variant_id, warehouse_id=warehouse_id,
+            quantity=-take, movement_type="out",
+            unit_cost=lot.unit_cost, reference=reference,
+            user_id=user_id, stock_lot_id=lot.id,
+        ))
+        # Marcar el lote como consumido si ya se acabó — ayuda al dashboard
+        # y a los reportes a no listar lotes vacíos.
+        if lot.quantity_remaining == 0:
+            lot.status = "consumed"
         to_consume -= take
 
     # Si allow_negative y quedó faltante, se registra con costo 0 (advertencia
-    # explícita en el kardex)
+    # explícita en el kardex).
     if to_consume > 0 and allow_negative:
         lots_used.append({
             "lot_id": None, "qty": to_consume, "unit_cost": 0.0,
             "warning": "sin_lote_disponible",
         })
+        movements_to_add.append(models.StockMovement(
+            variant_id=variant_id, warehouse_id=warehouse_id,
+            quantity=-to_consume, movement_type="out",
+            unit_cost=0.0, reference=reference,
+            user_id=user_id, notes="Consumo negativo sin lote disponible",
+        ))
 
-    # Movement OUT con el costo unitario promedio real
+    for m in movements_to_add:
+        db.add(m)
     unit_cost_avg = round(total_cost / quantity, 4) if quantity > 0 else 0.0
-    db.add(models.StockMovement(
-        variant_id=variant_id, warehouse_id=warehouse_id,
-        quantity=-quantity, movement_type="out",
-        unit_cost=unit_cost_avg, reference=reference,
-        user_id=user_id,
-    ))
     await _adjust_stock_level(db, variant_id, warehouse_id, -quantity)
     if commit:
         await db.commit()

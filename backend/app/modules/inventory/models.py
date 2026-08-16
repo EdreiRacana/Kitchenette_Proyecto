@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Float, Enum, Text, JSON
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, ForeignKey, Float, Enum, Text, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
@@ -80,6 +80,20 @@ class Product(Base):
     # Clasificación de inventario: producto terminado, insumo, consumible u otro
     item_type = Column(String, default=ProductItemType.FINISHED_GOOD.value, nullable=False)
 
+    # ── Perecederos y trazabilidad por lote (FEFO) ────────────────────────
+    # Activa la captura de código de lote + fecha de caducidad al recibir,
+    # el consumo por First-Expired-First-Out en las salidas, alertas de
+    # próximo a caducar y auto-merma al vencer. Productos sin este flag
+    # siguen operando como hoy (FIFO tradicional). Ideal para lácteos,
+    # farmacéuticos, cosméticos, químicos.
+    tracks_batches = Column(Boolean, default=False, nullable=False)
+    # Vida útil típica del producto en días. Al recibir sin fecha explícita,
+    # se calcula expiration = received_at + shelf_life. Nullable = obligar
+    # a capturar la fecha manualmente.
+    default_shelf_life_days = Column(Integer, nullable=True)
+    # Días antes de la caducidad para empezar a alertar (default 30).
+    expiry_alert_days = Column(Integer, default=30, nullable=True)
+
     # Simple media support for now (URLs)
     image_url = Column(String, nullable=True)
     video_url = Column(String, nullable=True)
@@ -160,8 +174,10 @@ class StockLevel(Base):
     warehouse = relationship("Warehouse")
 
 class StockLot(Base):
-    """Lote de costeo FIFO: cada entrada (compra/producción) crea un lote con su
-    costo unitario propio; las salidas consumen lotes en orden de llegada."""
+    """Lote físico + de costeo. Cada entrada (compra/producción) crea un lote
+    con su costo, y para productos perecederos también su código y caducidad.
+    Las salidas consumen lotes por FIFO (llegada) o FEFO (caducidad) según
+    Product.tracks_batches."""
     __tablename__ = "stock_lots"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -173,8 +189,24 @@ class StockLot(Base):
     reference = Column(String, nullable=True)  # OC-xxxx, PROD-xxxx
     received_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # ── Trazabilidad y caducidad ────────────────────────────────────────
+    # Código del lote productivo del proveedor o de manufactura interna.
+    # Lo captura el almacenista al recibir; también viene embebido en
+    # códigos GS1-128 farmacéuticos (AI 10).
+    batch_code = Column(String, nullable=True, index=True)
+    # Cuándo caduca este lote. Índice para el dashboard "Próximo a caducar"
+    # y para elegir por FEFO al vender.
+    expiration_date = Column(Date, nullable=True, index=True)
+    manufacturing_date = Column(Date, nullable=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
+    # Estado del lote — active vende normal, quarantine bloquea pero deja
+    # existencia, recalled bloquea por retiro sanitario, expired = ya
+    # caducó y se movió a merma, consumed = se acabó.
+    status = Column(String, default="active", nullable=False, index=True)
+
     variant = relationship("ProductVariant")
     warehouse = relationship("Warehouse")
+    supplier = relationship("Supplier")
 
 class StockMovement(Base):
     __tablename__ = "stock_movements"
@@ -189,9 +221,13 @@ class StockMovement(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True) # Linked to Auth module if user is logged in
+    # Lote específico consumido/generado — habilita traceabilidad para recall
+    # ("¿a quién le vendí el lote X?") y para imprimir caducidad en el ticket.
+    stock_lot_id = Column(Integer, ForeignKey("stock_lots.id"), nullable=True, index=True)
 
     variant = relationship("ProductVariant")
     warehouse = relationship("Warehouse")
+    stock_lot = relationship("StockLot")
 
 
 # ── Proveedores / Compras ───────────────────────────────────────────────────

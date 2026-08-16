@@ -74,6 +74,12 @@ class ProductBase(BaseModel):
     is_active: Optional[bool] = True
     is_manufactured: Optional[bool] = False
     item_type: Optional[str] = "finished_good"
+    # Perecederos + trazabilidad por lote (FEFO). Cuando tracks_batches=True,
+    # las salidas del inventario consumen lotes que caduquen primero y el
+    # ticket/remisión imprime "Cad: dd/mm/yyyy · Lote X".
+    tracks_batches: Optional[bool] = False
+    default_shelf_life_days: Optional[int] = None
+    expiry_alert_days: Optional[int] = 30
 
 class ProductCreate(ProductBase):
     pass
