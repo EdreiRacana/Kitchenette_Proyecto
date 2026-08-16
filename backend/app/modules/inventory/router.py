@@ -369,6 +369,103 @@ async def get_variant_valuation(variant_id: int, db: DB, current_user: CurrentUs
     return {"variant_id": variant_id, "per_warehouse": per_wh}
 
 
+# ── Lotes / trazabilidad (perecederos) ──────────────────────────────────
+from app.modules.inventory import batch_service
+from pydantic import BaseModel as _BM
+from datetime import date as _date
+
+
+class _ReceiveBatchIn(_BM):
+    variant_id: int
+    warehouse_id: int
+    quantity: int
+    unit_cost: float
+    batch_code: Optional[str] = None
+    expiration_date: Optional[_date] = None
+    manufacturing_date: Optional[_date] = None
+    supplier_id: Optional[int] = None
+    reference: Optional[str] = None
+
+
+@router.post("/stock/receive-batch")
+async def receive_batch(data: _ReceiveBatchIn, db: DB, current_user: CurrentUser):
+    """Recibe stock de un producto perecedero capturando el código de lote y
+    la caducidad. Si el producto tiene default_shelf_life_days y no se pasa
+    expiration_date, se calcula automáticamente."""
+    try:
+        lot = await fifo_service.receive_stock(
+            db, variant_id=data.variant_id, warehouse_id=data.warehouse_id,
+            quantity=data.quantity, unit_cost=data.unit_cost,
+            reference=data.reference, user_id=current_user.id,
+            batch_code=data.batch_code, expiration_date=data.expiration_date,
+            manufacturing_date=data.manufacturing_date, supplier_id=data.supplier_id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "lot_id": lot.id, "batch_code": lot.batch_code,
+        "expiration_date": lot.expiration_date.isoformat() if lot.expiration_date else None,
+        "quantity": lot.quantity_received,
+    }
+
+
+@router.get("/batches/expiring")
+async def list_expiring(db: DB, current_user: CurrentUser,
+                        days: int = 30, warehouse_id: Optional[int] = None,
+                        include_expired: bool = True, limit: int = 500):
+    """Dashboard 'Próximo a caducar' con buckets (expired/critical/alert/ok)
+    y total del valor en riesgo. Base para el widget de Retail y las
+    alertas por correo."""
+    return await batch_service.list_expiring_lots(
+        db, days=days, warehouse_id=warehouse_id,
+        include_expired=include_expired, limit=limit,
+    )
+
+
+class _RecallLotIn(_BM):
+    reason: str
+
+
+@router.post("/batches/{lot_id}/recall")
+async def recall_lot_endpoint(lot_id: int, data: _RecallLotIn,
+                               db: DB, current_user: CurrentUser):
+    """Retiro sanitario de un lote. Bloquea el lote y devuelve la lista de
+    órdenes / clientes afectados para poder contactarlos."""
+    if not data.reason.strip():
+        raise HTTPException(400, "El motivo del retiro es obligatorio")
+    res = await batch_service.recall_lot(db, lot_id, reason=data.reason,
+                                          user_id=current_user.id)
+    if not res.get("ok"):
+        raise HTTPException(404, res.get("reason", "Lote no encontrado"))
+    return res
+
+
+class _LotStatusIn(_BM):
+    status: str  # active | quarantine | recalled | expired | consumed
+
+
+@router.patch("/batches/{lot_id}/status")
+async def set_lot_status_endpoint(lot_id: int, data: _LotStatusIn,
+                                    db: DB, current_user: CurrentUser):
+    """Cambia manualmente el estado de un lote (cuarentena, reactivar, etc.)."""
+    try:
+        lot = await batch_service.set_lot_status(
+            db, lot_id, status=data.status, user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not lot:
+        raise HTTPException(404, "Lote no encontrado")
+    return {"lot_id": lot.id, "status": lot.status}
+
+
+@router.post("/batches/sweep-expired")
+async def sweep_expired_endpoint(db: DB, current_user: CurrentUser):
+    """Barre lotes caducados hoy o antes: los mueve fuera del disponible
+    y marca status='expired'. Manual — se llamará también desde un cron."""
+    return await batch_service.sweep_expired_to_scrap(db, user_id=current_user.id)
+
+
 # ── Traspasos entre almacenes (Stock Transfer Orders) ────────────────────
 
 @router.post("/transfers", response_model=schemas.StockTransferInDB, status_code=201)
