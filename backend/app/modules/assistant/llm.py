@@ -129,6 +129,113 @@ TOOLS_SCHEMA: List[Dict[str, Any]] = [
         "description": "Corte del día del POS: total, tickets, ticket promedio, diferencias de arqueo.",
         "input_schema": {"type": "object", "properties": {}},
     },
+    # ── Ampliaciones Fase 2/3 ─────────────────────────────────────────
+    {"name": "concentracion_clientes",
+     "description": "Pareto de clientes: cuántos concentran el 80% del ingreso.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "sin_movimiento",
+     "description": "SKUs con stock que no se han vendido en los últimos N días.",
+     "input_schema": {"type": "object",
+                       "properties": {"dias": {"type": "integer", "minimum": 1, "maximum": 365, "default": 30}}}},
+    {"name": "rotacion_producto",
+     "description": "Weeks of Supply (WoS) de los SKUs — cuáles rotan rápido y cuáles lento.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "desempeno_tienda",
+     "description": "Top y bottom tiendas por sell-out en el periodo.",
+     "input_schema": {"type": "object", "properties": {"periodo": {"type": "string"}, "limite": {"type": "integer"}}}},
+    {"name": "sell_through_por_tienda",
+     "description": "Sell-out por tienda del periodo (para calcular sell-through).",
+     "input_schema": {"type": "object", "properties": {"periodo": {"type": "string"}}}},
+    {"name": "ventas_pos_hora",
+     "description": "Histograma de ventas del POS por hora del día — identifica la hora pico.",
+     "input_schema": {"type": "object", "properties": {"fecha": {"type": "string"}}}},
+    {"name": "utilidad_bruta",
+     "description": "Utilidad bruta del periodo (revenue - costo) y margen %.",
+     "input_schema": {"type": "object", "properties": {"periodo": {"type": "string"}}}},
+    {"name": "cotizaciones_abiertas",
+     "description": "Cotizaciones sin convertirse a pedido y monto potencial.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "clientes_inactivos",
+     "description": "Clientes que no han comprado en N días (default 60).",
+     "input_schema": {"type": "object", "properties": {"dias": {"type": "integer", "minimum": 7, "maximum": 730, "default": 60}}}},
+    {"name": "ticket_promedio_ventas",
+     "description": "Ticket promedio de ventas en el periodo.",
+     "input_schema": {"type": "object", "properties": {"periodo": {"type": "string"}}}},
+    {"name": "devoluciones_periodo",
+     "description": "Devoluciones de cliente registradas en el periodo (count y monto).",
+     "input_schema": {"type": "object", "properties": {"periodo": {"type": "string"}}}},
+    {"name": "cxc_vencen_semana",
+     "description": "Cuentas por cobrar cuyo vencimiento cae en los próximos 7 días.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "cxp_vencen_semana",
+     "description": "Cuentas por pagar cuyo vencimiento cae en los próximos 7 días.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "flujo_neto_30d",
+     "description": "Flujo neto proyectado a 30 días: CxC esperada − CxP esperada.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "oc_abiertas",
+     "description": "Órdenes de compra en estado draft u ordered (no recibidas).",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "oc_atrasadas",
+     "description": "Órdenes de compra ordered cuya fecha esperada ya pasó.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "top_proveedores",
+     "description": "Top proveedores por gasto (facturas emitidas) en el periodo.",
+     "input_schema": {"type": "object", "properties": {"periodo": {"type": "string"}, "limite": {"type": "integer"}}}},
+    {"name": "valor_inventario",
+     "description": "Valor total del inventario a costo.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "merma_mes",
+     "description": "Merma del mes (unidades y valor).",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "ingresos_vs_egresos",
+     "description": "P&L express del periodo: ingresos, egresos y neto.",
+     "input_schema": {"type": "object", "properties": {"periodo": {"type": "string"}}}},
+    {"name": "gastos_por_categoria",
+     "description": "Top categorías de gasto en el periodo.",
+     "input_schema": {"type": "object", "properties": {"periodo": {"type": "string"}, "limite": {"type": "integer"}}}},
+    {"name": "movimientos_no_conciliados",
+     "description": "Bank transactions sin conciliar (count y monto).",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "nomina_periodo",
+     "description": "Totales de la nómina más reciente calculada/aprobada/dispersada.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "empleados_activos",
+     "description": "Empleados activos y altas del mes.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "incapacidades_mes",
+     "description": "Incapacidades del mes desglosadas por subtipo.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "contratos_por_vencer",
+     "description": "Contratos que vencen en los próximos N días.",
+     "input_schema": {"type": "object", "properties": {"dias": {"type": "integer", "minimum": 7, "maximum": 365, "default": 30}}}},
+    {"name": "cumpleanos_mes",
+     "description": "Empleados que cumplen años este mes.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "isr_nomina_mes",
+     "description": "ISR retenido en las nóminas pagadas este mes.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "corte_caja_actual",
+     "description": "Sesiones POS abiertas ahora mismo con efectivo esperado.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "formas_pago_pos",
+     "description": "Desglose por método de pago (efectivo/tarjeta/transfer) del día.",
+     "input_schema": {"type": "object", "properties": {"fecha": {"type": "string"}}}},
+    {"name": "top_cajeros_dia",
+     "description": "Cajeros con más ventas hoy en el POS.",
+     "input_schema": {"type": "object", "properties": {"fecha": {"type": "string"}}}},
+    {"name": "flujo_efectivo_proyectado",
+     "description": "KPI ejecutivo: saldo actual + cobranza esperada − pagos esperados (30 días).",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "nomina_vs_ventas",
+     "description": "KPI ejecutivo: % del costo laboral sobre las ventas del mes.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "top_deudores",
+     "description": "Top 10 clientes por saldo pendiente de cobro.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "top_acreedores",
+     "description": "Top 10 proveedores por saldo pendiente de pago.",
+     "input_schema": {"type": "object", "properties": {}}},
 ]
 
 
@@ -143,20 +250,31 @@ SYSTEM_ROUTER = (
 
 async def route_with_llm(
     db: AsyncSession, question: str, user_id: Optional[int] = None,
+    allowed_tools: Optional[set[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Pregunta libre → LLM decide qué tool llamar. Devuelve
     {tool_name, tool_input} o None si el LLM no encuentra match o si
     se pasó el presupuesto.
+
+    allowed_tools: si se pasa, se filtra el catálogo entregado al LLM
+    para que solo sugiera tools permitidas por el rol del usuario.
     """
     if not _has_key():
         return None
     if await budget.is_over_budget(db):
         return None
+    tools_for_call = TOOLS_SCHEMA
+    if allowed_tools is not None:
+        tools_for_call = [t for t in TOOLS_SCHEMA if t.get("name") in allowed_tools]
+        if not tools_for_call:
+            # El usuario no tiene ninguna tool disponible — no vale la
+            # pena gastar un token del presupuesto.
+            return None
     payload = {
         "model": MODEL,
         "max_tokens": 400,
         "system": SYSTEM_ROUTER,
-        "tools": TOOLS_SCHEMA,
+        "tools": tools_for_call,
         "tool_choice": {"type": "auto"},
         "messages": [{"role": "user", "content": question}],
     }

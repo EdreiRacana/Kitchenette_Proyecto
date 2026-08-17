@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
 from app.modules.auth.models import User
-from app.modules.assistant import tools, intent, templates, budget, llm
+from app.modules.assistant import tools, intent, templates, budget, llm, permissions
 
 router = APIRouter()
 DB = Annotated[AsyncSession, Depends(deps.get_db)]
@@ -68,9 +68,15 @@ async def ask(payload: AskRequest, db: DB, current_user: CurrentUser) -> AskResp
     used_llm = False
     llm_purpose: Optional[str] = None
 
-    # Capa 2: si router local no matcheó, escalar a LLM (si hay presupuesto)
+    # Capa 2: si router local no matcheó, escalar a LLM (si hay presupuesto).
+    # Se le pasa SOLO el catálogo de tools que el usuario puede ejecutar —
+    # de lo más eficiente: el LLM ni siquiera sugiere algo que se le va a
+    # bloquear después.
     if not routed:
-        llm_choice = await llm.route_with_llm(db, q, user_id=user_id)
+        allowed = set(permissions.allowed_tools_for(current_user))
+        llm_choice = await llm.route_with_llm(
+            db, q, user_id=user_id, allowed_tools=allowed,
+        )
         if llm_choice:
             routed = (llm_choice["tool_name"], llm_choice.get("tool_input") or {})
             used_llm = True
@@ -93,6 +99,18 @@ async def ask(payload: AskRequest, db: DB, current_user: CurrentUser) -> AskResp
         )
 
     tool_name, kwargs = routed
+
+    # Guardarraíl RBAC: si el router local (regex) matcheó una tool que el
+    # usuario no puede consumir, devolvemos mensaje suave. Sin ejecutar
+    # queries, sin llamar al LLM: cero fugas de datos por chat.
+    if not permissions.user_can_use_tool(current_user, tool_name):
+        return AskResponse(
+            text=permissions.permission_denied_message(tool_name),
+            matched=True, used_llm=used_llm, llm_purpose=llm_purpose,
+            tool=tool_name,
+            ms=int((time.perf_counter() - t0) * 1000),
+        )
+
     tool_fn = tools.TOOLS_REGISTRY.get(tool_name)
     if not tool_fn:
         return AskResponse(
