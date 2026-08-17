@@ -18,71 +18,98 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-// ── Silueta NovaMark normalizada (idéntica a TrianglesCanvas) ──────────
-// Triángulo con muesca inferior — logo de la marca. Se dibuja centrado en
-// un viewBox 100×100 con margen para respirar.
-function trianglePath(size: number = 100, margin: number = 6): string {
-  const cx = size / 2;
-  const cy = size / 2;
-  const r = size / 2 - margin;
+// ── Silueta NovaMark tipo "punta de flecha" ────────────────────────────
+// Basado en el logo Sthenova, con proporciones acentuadas para que el
+// silhouette lea claramente como flecha: viewBox más alto que ancho,
+// pico superior sostenido y muesca inferior profunda ("fletching").
+// Ancho: 100 unidades. Alto: 120 unidades. Origen en centro (50, 60).
+function trianglePath(size: number = 100, margin: number = 4): string {
+  const cx = 50;
+  const cy = 60;                 // centro vertical del viewBox 100x120
+  const halfW = 50 - margin;
+  const halfH = 60 - margin;
+  // Coordenadas normalizadas (-1 a 1) del NovaMark, con muesca más profunda
+  // para reforzar la sensación de flecha:
   const pts: [number, number][] = [
-    [0, -1.00],
-    [1, 0.7419],
-    [0, 0.3871],
-    [-1, 0.7419],
+    [0, -1.00],     // pico superior (agudo)
+    [1, 0.85],      // esquina inferior derecha (más ancha)
+    [0, 0.15],      // muesca central (más profunda → arrow feathers marcadas)
+    [-1, 0.85],     // esquina inferior izquierda
   ];
   return pts.map(([x, y], i) => {
-    const px = cx + x * r;
-    const py = cy + y * r;
+    const px = cx + x * halfW;
+    const py = cy + y * halfH;
     return `${i === 0 ? "M" : "L"} ${px.toFixed(2)} ${py.toFixed(2)}`;
   }).join(" ") + " Z";
 }
 
-// ── Triángulo metálico ─────────────────────────────────────────────────
-// Gradientes múltiples simulan superficie metálica pulida:
-//   1. Base linearGradient de acero (plata + azul acero)
-//   2. Highlight superior (luz de estudio)
-//   3. Rim glow para dar volumen y separación del fondo
-// Cada instancia genera IDs únicos para evitar colisión de <defs>.
+// ── Triángulo holográfico ──────────────────────────────────────────────
+// Look inspirado en holograma cian-blanco tipo Sthenova brand: acabado
+// glassy translúcido, luz interna sutil, wireframe interior apenas visible.
+// Sin brillo agresivo — solo un halo bajísimo. Respira en vez de girar.
 let _gid = 0;
-function MetallicTriangle({ size = 32, glow = true, spin = false }: {
-  size?: number; glow?: boolean; spin?: boolean;
+function MetallicTriangle({ size = 32, glow = true, breathe = false }: {
+  size?: number; glow?: boolean; breathe?: boolean;
 }) {
   const gid = useMemo(() => `mt${++_gid}`, []);
-  const filter = glow ? `drop-shadow(0 0 ${size * 0.28}px rgba(120,170,255,0.35))` : undefined;
+  // Halo bajísimo — 8% de tamaño en blur, opacidad ~0.28
+  const filter = glow ? `drop-shadow(0 0 ${size * 0.09}px rgba(140,200,255,0.28))` : undefined;
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" style={{ filter, transformOrigin: "center", animation: spin ? "assistant-slow-spin 24s linear infinite" : undefined }} aria-hidden="true">
+    <svg
+      width={size}
+      height={size * 1.2}
+      viewBox="0 0 100 120"
+      style={{
+        filter,
+        transformOrigin: "center",
+        animation: breathe ? "assistant-breathe 4.2s ease-in-out infinite" : undefined,
+      }}
+      aria-hidden="true"
+    >
       <defs>
-        {/* Base metálica — pasa por tonos plateados/azulados con highlight */}
-        <linearGradient id={`${gid}-metal`} x1="20%" y1="0%" x2="80%" y2="100%">
-          <stop offset="0%" stopColor="#F0F5FF" />
-          <stop offset="18%" stopColor="#C7D5EE" />
-          <stop offset="42%" stopColor="#8A9DC0" />
-          <stop offset="62%" stopColor="#546A93" />
-          <stop offset="82%" stopColor="#7A93BE" />
-          <stop offset="100%" stopColor="#B3C4E2" />
+        {/* Cuerpo glassy azul-cian, translúcido */}
+        <linearGradient id={`${gid}-body`} x1="30%" y1="0%" x2="70%" y2="100%">
+          <stop offset="0%"  stopColor="rgba(210,235,255,0.85)" />
+          <stop offset="35%" stopColor="rgba(130,180,235,0.55)" />
+          <stop offset="70%" stopColor="rgba(70,120,190,0.45)" />
+          <stop offset="100%" stopColor="rgba(100,150,215,0.6)" />
         </linearGradient>
-        {/* Highlight superior — barrido de luz sobre la cara */}
+        {/* Núcleo interno con luz — como la del holograma */}
+        <radialGradient id={`${gid}-core`} cx="50%" cy="42%" r="45%">
+          <stop offset="0%"  stopColor="rgba(240,250,255,0.85)" />
+          <stop offset="45%" stopColor="rgba(140,200,255,0.28)" />
+          <stop offset="100%" stopColor="rgba(80,140,220,0)" />
+        </radialGradient>
+        {/* Highlight superior — reflejo suave sobre la cara delantera */}
         <linearGradient id={`${gid}-shine`} x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" stopColor="rgba(255,255,255,0.75)" />
-          <stop offset="40%" stopColor="rgba(255,255,255,0.10)" />
+          <stop offset="0%"  stopColor="rgba(255,255,255,0.55)" />
+          <stop offset="50%" stopColor="rgba(255,255,255,0.05)" />
           <stop offset="100%" stopColor="rgba(255,255,255,0)" />
         </linearGradient>
-        {/* Halo interno translúcido */}
-        <radialGradient id={`${gid}-halo`} cx="50%" cy="35%" r="60%">
-          <stop offset="0%" stopColor="rgba(180,215,255,0.55)" />
-          <stop offset="60%" stopColor="rgba(120,155,220,0.10)" />
-          <stop offset="100%" stopColor="rgba(60,90,140,0)" />
-        </radialGradient>
       </defs>
-      {/* Sombra sutil hacia abajo para dar peso */}
-      <path d={trianglePath(100, 4)} fill={`url(#${gid}-metal)`}
-        stroke="rgba(255,255,255,0.35)" strokeWidth="0.6"
-        strokeLinejoin="round" />
-      <path d={trianglePath(100, 4)} fill={`url(#${gid}-halo)`}
-        strokeLinejoin="round" />
-      <path d={trianglePath(100, 8)} fill={`url(#${gid}-shine)`}
-        opacity="0.85" strokeLinejoin="round" />
+
+      {/* Silueta principal glassy */}
+      <path
+        d={trianglePath(100, 3)}
+        fill={`url(#${gid}-body)`}
+        stroke="rgba(180,220,255,0.55)"
+        strokeWidth="0.7"
+        strokeLinejoin="round"
+      />
+      {/* Núcleo luminoso interior */}
+      <path d={trianglePath(100, 3)} fill={`url(#${gid}-core)`} strokeLinejoin="round" />
+      {/* Highlight superior */}
+      <path
+        d={trianglePath(100, 6)}
+        fill={`url(#${gid}-shine)`}
+        opacity="0.75"
+        strokeLinejoin="round"
+      />
+      {/* Wireframe interior — líneas del pico hacia esquinas y muesca.
+          Muy tenues, dan la sensación de estructura holográfica sin invadir. */}
+      <line x1="50" y1="0"   x2="50" y2="69" stroke="rgba(200,230,255,0.18)" strokeWidth="0.5" />
+      <line x1="50" y1="0"   x2="97" y2="111" stroke="rgba(200,230,255,0.12)" strokeWidth="0.4" />
+      <line x1="50" y1="0"   x2="3"  y2="111" stroke="rgba(200,230,255,0.12)" strokeWidth="0.4" />
     </svg>
   );
 }
@@ -185,6 +212,22 @@ export default function Assistant() {
   // Presupuesto simulado (0 a 1). En fase B esto lee del backend real.
   // 0.24 = verde relajado; cambia a amarillo >0.60; a rojo >0.85.
   const [budget] = useState(0.24);
+  // Bienvenida de primera vez — se muestra una sola vez y se recuerda en
+  // localStorage. Se cierra sola a los 8 s o al primer click en el FAB.
+  const [showWelcome, setShowWelcome] = useState<boolean>(() => {
+    try { return localStorage.getItem("assistant:welcomed") !== "1"; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    if (!showWelcome) return;
+    const t = setTimeout(() => dismissWelcome(), 8000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showWelcome]);
+  const dismissWelcome = () => {
+    setShowWelcome(false);
+    try { localStorage.setItem("assistant:welcomed", "1"); } catch { /* noop */ }
+  };
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -265,10 +308,12 @@ export default function Assistant() {
   return createPortal(
     <>
       <style>{`
-        @keyframes assistant-slow-spin { to { transform: rotate(360deg); } }
+        @keyframes assistant-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.035); } }
+        @keyframes assistant-label-pulse { 0%,100% { opacity: 0.42; } 50% { opacity: 0.82; } }
         @keyframes assistant-pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.05); opacity: 0.85; } }
         @keyframes assistant-slide-in { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         @keyframes assistant-fade-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes assistant-welcome-in { from { transform: translateX(12px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         .assistant-fab:hover .assistant-fab-inner { transform: scale(1.06); }
         .assistant-chip:hover { background: rgba(120,170,255,0.18) !important; border-color: rgba(160,200,255,0.35) !important; }
         .assistant-action-btn:hover { background: rgba(255,255,255,0.08) !important; color: rgba(220,235,255,0.95) !important; }
@@ -276,34 +321,75 @@ export default function Assistant() {
         .assistant-scroll::-webkit-scrollbar-thumb { background: rgba(148,178,245,0.12); border-radius: 3px; }
       `}</style>
 
-      {/* FAB flotante — bottom right, no invasivo */}
-      <button
-        onClick={() => setOpen(o => !o)}
-        title="Asistente (Ctrl+K)"
-        aria-label="Abrir asistente"
-        className="assistant-fab"
-        style={{
-          position: "fixed", right: 24, bottom: 24, zIndex: 9998,
-          width: 56, height: 56, borderRadius: 16,
-          background: open
-            ? "linear-gradient(135deg, rgba(30,45,80,0.95) 0%, rgba(15,25,50,0.95) 100%)"
-            : "linear-gradient(135deg, rgba(30,45,80,0.72) 0%, rgba(15,25,50,0.72) 100%)",
-          border: "1px solid rgba(148,178,245,0.28)",
-          backdropFilter: "blur(20px) saturate(150%)",
-          WebkitBackdropFilter: "blur(20px) saturate(150%)",
-          boxShadow: "0 8px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-          cursor: "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          transition: "background .2s, transform .2s",
-          opacity: open ? 1 : 0.78,
-        }}
-        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
-        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = open ? "1" : "0.78"; }}
-      >
-        <span className="assistant-fab-inner" style={{ display: "flex", transition: "transform .2s" }}>
-          <MetallicTriangle size={30} glow={true} spin={!open && !streaming} />
-        </span>
-      </button>
+      {/* Burbuja de bienvenida — solo primera vez, discreta, auto-cierra */}
+      {showWelcome && !open && (
+        <div
+          style={{
+            position: "fixed", right: 88, bottom: 34, zIndex: 9998,
+            maxWidth: 240, padding: "10px 14px",
+            background: "rgba(15,22,41,0.55)",
+            backdropFilter: "blur(24px) saturate(150%)",
+            WebkitBackdropFilter: "blur(24px) saturate(150%)",
+            border: "1px solid rgba(148,178,245,0.22)",
+            borderRadius: 12,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.32)",
+            color: "#E4ECFB", fontSize: 12.5, lineHeight: 1.45,
+            animation: "assistant-welcome-in .3s ease-out",
+            display: "flex", alignItems: "flex-start", gap: 10,
+          }}
+        >
+          <div style={{ flex: 1 }}>
+            Hola. Soy tu <b style={{ color: "#B5CDF3" }}>asistente</b>.<br/>
+            <span style={{ color: "rgba(200,215,240,0.62)", fontSize: 11.5 }}>
+              Tócame o presiona Ctrl+K.
+            </span>
+          </div>
+          <button
+            onClick={dismissWelcome}
+            aria-label="Cerrar bienvenida"
+            style={{
+              background: "transparent", border: "none", color: "rgba(200,215,240,0.55)",
+              cursor: "pointer", fontSize: 13, padding: 0, lineHeight: 1,
+            }}
+          >✕</button>
+        </div>
+      )}
+
+      {/* FAB flotante — triángulo cristalino sin fondo, con label debajo */}
+      <div style={{
+        position: "fixed", right: 24, bottom: 22, zIndex: 9998,
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+      }}>
+        <button
+          onClick={() => { setOpen(o => !o); if (showWelcome) dismissWelcome(); }}
+          title="Asistente (Ctrl+K)"
+          aria-label="Abrir asistente"
+          className="assistant-fab"
+          style={{
+            width: 52, height: 60, borderRadius: 14,
+            background: "transparent",
+            border: "none", padding: 0,
+            cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "opacity .2s, transform .2s",
+            opacity: open ? 1 : 0.85,
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = open ? "1" : "0.85"; }}
+        >
+          <span className="assistant-fab-inner" style={{ display: "flex", transition: "transform .2s" }}>
+            <MetallicTriangle size={40} glow={true} breathe={!open && !streaming} />
+          </span>
+        </button>
+        {/* Label "Asistente" — pulsa muy suave y discreto */}
+        <div style={{
+          fontSize: 9.5, letterSpacing: 1.2, textTransform: "uppercase",
+          color: "rgba(200,215,240,0.72)", fontWeight: 500,
+          animation: "assistant-label-pulse 3.4s ease-in-out infinite",
+          userSelect: "none", marginTop: 1,
+          textShadow: "0 0 6px rgba(120,170,255,0.35)",
+        }}>Asistente</div>
+      </div>
 
       {/* Backdrop translúcido — cierra al tocar fuera */}
       {open && (
@@ -323,17 +409,20 @@ export default function Assistant() {
         <div
           onClick={e => e.stopPropagation()}
           style={{
-            position: "fixed", right: 20, bottom: 92, zIndex: 9999,
+            position: "fixed", right: 20, bottom: 96, zIndex: 9999,
             width: 440, maxWidth: "calc(100vw - 40px)",
-            height: "min(720px, calc(100vh - 120px))",
-            background: "rgba(15, 22, 41, 0.72)",
-            backdropFilter: "blur(28px) saturate(150%)",
-            WebkitBackdropFilter: "blur(28px) saturate(150%)",
-            border: "1px solid rgba(148,178,245,0.16)",
-            borderRadius: 20,
-            boxShadow: "0 24px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06)",
+            height: "min(720px, calc(100vh - 130px))",
+            // Cristal muy translúcido (~30% opaco) + blur fuerte para
+            // legibilidad. El fondo del ERP se ve a través pero el texto
+            // permanece nítido gracias al backdrop-filter saturado.
+            background: "rgba(12, 20, 38, 0.32)",
+            backdropFilter: "blur(40px) saturate(180%)",
+            WebkitBackdropFilter: "blur(40px) saturate(180%)",
+            border: "1px solid rgba(180,215,255,0.18)",
+            borderRadius: 22,
+            boxShadow: "0 28px 70px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08)",
             display: "flex", flexDirection: "column", overflow: "hidden",
-            animation: "assistant-slide-in .22s ease-out",
+            animation: "assistant-slide-in .24s ease-out",
             color: "#E4ECFB",
           }}
         >
@@ -343,7 +432,7 @@ export default function Assistant() {
             padding: "16px 18px", borderBottom: "1px solid rgba(148,178,245,0.10)",
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <MetallicTriangle size={30} glow={true} spin={streaming} />
+              <MetallicTriangle size={30} glow={true} breathe={streaming} />
               <div>
                 <div style={{ fontSize: 14.5, fontWeight: 500, letterSpacing: 0.1 }}>Asistente</div>
                 <div style={{ fontSize: 11, color: "rgba(180,200,235,0.55)", marginTop: 1 }}>
