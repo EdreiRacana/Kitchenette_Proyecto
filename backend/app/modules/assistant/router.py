@@ -1,14 +1,15 @@
 """Endpoint del asistente. Sprint 2: router determinista + fallback LLM."""
 from __future__ import annotations
 import time
-from typing import Annotated, Optional
-from fastapi import APIRouter, Depends
+from typing import Annotated, Any, Dict, Optional
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
 from app.modules.auth.models import User
-from app.modules.assistant import tools, intent, templates, budget, llm, permissions
+from app.modules.assistant import tools, intent, templates, budget, llm, permissions, export
 
 router = APIRouter()
 DB = Annotated[AsyncSession, Depends(deps.get_db)]
@@ -38,11 +39,40 @@ class BudgetResponse(BaseModel):
     over_budget: bool
 
 
+class ExportRequest(BaseModel):
+    tool_name: str
+    data: Dict[str, Any]
+    question: Optional[str] = None
+
+
 @router.get("/budget", response_model=BudgetResponse)
 async def get_budget(db: DB, current_user: CurrentUser):
     """Estado actual del presupuesto mensual de LLM.
     La UI la usa para colorear la barra sin exponer cifras al usuario."""
     return await budget.budget_status(db)
+
+
+@router.post("/export-xlsx")
+async def export_xlsx(payload: ExportRequest, current_user: CurrentUser):
+    """Convierte la respuesta de una tool a XLSX descargable.
+
+    Guardarraíl RBAC: si la tool no está en el ámbito del rol del usuario,
+    se rechaza — no se puede exportar lo que no se puede consultar.
+    """
+    if not permissions.user_can_use_tool(current_user, payload.tool_name):
+        raise HTTPException(status_code=403, detail="No autorizado para exportar esta consulta.")
+    if not export.is_exportable(payload.data):
+        raise HTTPException(status_code=400, detail="Esta respuesta no tiene datos exportables.")
+    try:
+        blob = export.build_xlsx(payload.tool_name, payload.data, question=payload.question)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No pude generar el Excel: {e}")
+    filename = export.safe_filename(payload.tool_name)
+    return Response(
+        content=blob,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/ask", response_model=AskResponse)

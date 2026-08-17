@@ -168,7 +168,17 @@ function useSpeechRecognition(onResult: (text: string, isFinal: boolean) => void
 }
 
 // ── Estado global de la conversación ───────────────────────────────────
-type Msg = { role: "user" | "assistant"; text: string; source?: string; ms?: number };
+type Msg = {
+  role: "user" | "assistant";
+  text: string;
+  source?: string;
+  ms?: number;
+  // Payload crudo devuelto por la tool — usado para exportar a Excel.
+  tool?: string;
+  data?: any;
+  // Pregunta original que originó esta respuesta (se copia en el XLSX).
+  question?: string;
+};
 
 // Chips sugeridos según el módulo actual — se calculan al abrir el panel.
 // Como en fase A no consumimos el path del router, van 4 preguntas de las
@@ -181,17 +191,75 @@ const DEFAULT_CHIPS = [
 ];
 
 // Llama al endpoint real /assistant/ask. Sprint 1: cero LLM, todo Python.
-async function fetchAnswer(question: string): Promise<{ text: string; source: string; ms: number }> {
+async function fetchAnswer(question: string): Promise<{
+  text: string; source: string; ms: number; tool?: string; data?: any;
+}> {
   try {
     const { data } = await api.post("/assistant/ask", { question });
     return {
       text: data?.text || "Sin respuesta.",
       source: data?.source || "Sistema",
       ms: data?.ms ?? 0,
+      tool: data?.tool,
+      data: data?.data,
     };
   } catch (e: any) {
     const msg = e?.response?.data?.detail || e?.message || "Error de conexión";
     return { text: `No pude consultar el asistente: ${msg}`, source: "Error", ms: 0 };
+  }
+}
+
+// Heurística: la respuesta es descargable a Excel si trae un array con
+// datos (items, top_debtors, horas, etc.) o al menos 2 escalares.
+// Refleja assistant/export.py::is_exportable() del backend para no
+// mostrar el botón cuando el backend igual va a rechazar.
+const TABLE_KEYS = [
+  "items", "top_debtors", "top_creditors", "accounts", "horas",
+  "top", "sesiones", "recientes", "rapidos", "mas_lentos", "bottom",
+];
+function isExportable(data: any): boolean {
+  if (!data || typeof data !== "object") return false;
+  for (const k of TABLE_KEYS) {
+    const v = (data as any)[k];
+    if (Array.isArray(v) && v.length > 0) return true;
+  }
+  // Escalares suficientes: ≥3 claves no vacías (evita exportar respuestas
+  // triviales de una sola cifra).
+  const filled = Object.entries(data).filter(
+    ([_k, v]) => v !== null && v !== undefined && v !== "" && !Array.isArray(v)
+  ).length;
+  return filled >= 3;
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  }, 100);
+}
+
+async function downloadExcel(tool: string, data: any, question?: string) {
+  try {
+    const res = await api.post(
+      "/assistant/export-xlsx",
+      { tool_name: tool, data, question },
+      { responseType: "blob" }
+    );
+    const blob = res.data as Blob;
+    // Extraer filename del Content-Disposition si viene.
+    let filename = `asistente_${tool}.xlsx`;
+    const cd = res.headers?.["content-disposition"];
+    if (cd) {
+      const m = /filename="?([^"]+)"?/i.exec(cd);
+      if (m) filename = m[1];
+    }
+    triggerDownload(blob, filename);
+  } catch (e: any) {
+    alert("No pude generar el Excel: " + (e?.response?.data?.detail || e?.message || "error desconocido"));
   }
 }
 
@@ -288,7 +356,10 @@ export default function Assistant() {
       acc += ch;
       setMsgs(prev => {
         const copy = [...prev];
-        copy[copy.length - 1] = { role: "assistant", text: acc, source: answer.source, ms: answer.ms };
+        copy[copy.length - 1] = {
+          role: "assistant", text: acc, source: answer.source, ms: answer.ms,
+          tool: answer.tool, data: answer.data, question,
+        };
         return copy;
       });
     }
@@ -678,6 +749,11 @@ export default function Assistant() {
                         <button className="assistant-action-btn"
                           onClick={() => navigator.clipboard?.writeText(m.text).catch(() => {})}
                           style={actionBtn}>📋 Copiar</button>
+                        {m.tool && isExportable(m.data) && (
+                          <button className="assistant-action-btn"
+                            onClick={() => downloadExcel(m.tool!, m.data, m.question)}
+                            style={actionBtn}>📊 Descargar Excel</button>
+                        )}
                         {m.source && (
                           <div style={{ marginLeft: "auto", fontSize: 10.5,
                                         color: "rgba(160,180,220,0.5)",

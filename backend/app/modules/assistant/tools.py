@@ -36,10 +36,16 @@ from sqlalchemy import select, func, and_, or_
 
 
 # ── Helpers de periodo ────────────────────────────────────────────────
+_MONTH_ES = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio",
+             "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
 def _period_bounds(periodo: str = "mes") -> tuple[datetime, datetime, str]:
     """Convierte una etiqueta legible en (inicio, fin, etiqueta_humana).
-    Soporta: hoy, ayer, semana, mes, mes_pasado, año, ytd. Devuelve
-    datetimes tz-aware para que coincidan con columnas DateTime(timezone=True)."""
+    Soporta: hoy, ayer, semana, mes, mes_pasado, año, ytd, y mes:N (mes
+    específico del año, ej. 'mes:7' = julio; si N está en el futuro
+    respecto a hoy, se asume del año anterior). Devuelve datetimes
+    tz-aware para que coincidan con columnas DateTime(timezone=True)."""
     now = _now()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     p = (periodo or "mes").lower().strip()
@@ -56,6 +62,23 @@ def _period_bounds(periodo: str = "mes") -> tuple[datetime, datetime, str]:
         return start, end, "mes pasado"
     if p in ("año", "year", "ytd"):
         return today.replace(month=1, day=1), now, "este año"
+    # Mes específico: 'mes:N' donde N=1..12. Año actual, o anterior si
+    # todavía no llegamos a ese mes este año.
+    if p.startswith("mes:"):
+        try:
+            n = int(p.split(":", 1)[1])
+            if 1 <= n <= 12:
+                year = now.year if n <= now.month else now.year - 1
+                start = today.replace(year=year, month=n, day=1,
+                                       hour=0, minute=0, second=0, microsecond=0)
+                if n == 12:
+                    end = start.replace(year=year + 1, month=1)
+                else:
+                    end = start.replace(month=n + 1)
+                label = f"{_MONTH_ES[n]} {year}"
+                return start, end, label
+        except Exception:
+            pass
     # default: mes en curso
     return today.replace(day=1), now, "este mes"
 
@@ -1173,11 +1196,11 @@ async def valor_inventario(db: AsyncSession, **k) -> Dict[str, Any]:
             "empty": (row.valor or 0) <= 0}
 
 
-async def merma_mes(db: AsyncSession, **k) -> Dict[str, Any]:
-    """Salidas de tipo ADJUSTMENT con cantidad negativa en el mes —
+async def merma_mes(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Salidas de tipo ADJUSTMENT con cantidad negativa en el periodo —
     proxy de merma. Distingue por reference si menciona 'merma' o 'expired'."""
     from app.modules.inventory import models as im
-    start, end, label = _period_bounds("mes")
+    start, end, label = _period_bounds(periodo)
     stmt = (
         select(
             func.count(im.StockMovement.id),
@@ -1265,20 +1288,38 @@ async def movimientos_no_conciliados(db: AsyncSession, **k) -> Dict[str, Any]:
 
 # ─── RH / Nómina (5 tools nuevas) ─────────────────────────────────────
 
-async def nomina_periodo(db: AsyncSession, **k) -> Dict[str, Any]:
-    """Total bruto + neto de la nómina más reciente (aprobada o calculada)."""
+async def nomina_periodo(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Total bruto + neto de la nómina del periodo (default: mes en curso).
+    Suma TODAS las nóminas cerradas cuyo payment_date cae dentro del rango
+    — así 'nómina de julio' agrega la 1a y 2a quincena de julio."""
     from app.modules.hr import models as hm
+    start, _, label = _period_bounds(periodo)
+    prefix = start.strftime("%Y-%m")
     stmt = (
         select(hm.PayrollPeriod.id, hm.PayrollPeriod.name,
                hm.PayrollPeriod.status, hm.PayrollPeriod.kind)
-        .where(hm.PayrollPeriod.status.in_(["calculated", "approved", "dispersed"]))
+        .where(
+            hm.PayrollPeriod.status.in_(["calculated", "approved", "dispersed"]),
+            hm.PayrollPeriod.payment_date.like(f"{prefix}%"),
+        )
         .order_by(hm.PayrollPeriod.created_at.desc())
-        .limit(1)
     )
-    period = (await db.execute(stmt)).first()
-    if not period:
-        return {"tool": "nomina_periodo", "empty": True,
-                "reason": "no hay periodos de nómina calculados"}
+    periods = (await db.execute(stmt)).all()
+    if not periods:
+        # Fallback: si no hay del periodo pedido, toma la más reciente
+        # (comportamiento previo, para que "cuánto es la nómina" siga funcionando).
+        fb = (await db.execute(
+            select(hm.PayrollPeriod.id, hm.PayrollPeriod.name,
+                    hm.PayrollPeriod.status, hm.PayrollPeriod.kind)
+            .where(hm.PayrollPeriod.status.in_(["calculated", "approved", "dispersed"]))
+            .order_by(hm.PayrollPeriod.created_at.desc()).limit(1)
+        )).first()
+        if not fb:
+            return {"tool": "nomina_periodo", "empty": True}
+        periods = [fb]
+        label = fb.name
+    period = periods[0]
+    period_ids = [p.id for p in periods]
     agg_stmt = (
         select(
             func.count(hm.PayrollDetail.id),
@@ -1286,12 +1327,13 @@ async def nomina_periodo(db: AsyncSession, **k) -> Dict[str, Any]:
             func.coalesce(func.sum(hm.PayrollDetail.total_net), 0.0),
             func.coalesce(func.sum(hm.PayrollDetail.imss_employer), 0.0),
         )
-        .where(hm.PayrollDetail.period_id == period.id)
+        .where(hm.PayrollDetail.period_id.in_(period_ids))
     )
     n, bruto, neto, imss_p = (await db.execute(agg_stmt)).one()
     return {"tool": "nomina_periodo",
-            "periodo": period.name, "status": period.status,
+            "periodo": label, "status": period.status,
             "kind": period.kind, "empleados": int(n or 0),
+            "periodos_agregados": len(period_ids),
             "bruto": _money(bruto), "neto": _money(neto),
             "imss_patronal": _money(imss_p),
             "empty": int(n or 0) == 0}
@@ -1316,10 +1358,10 @@ async def empleados_activos(db: AsyncSession, **k) -> Dict[str, Any]:
             "empty": int(activos or 0) == 0}
 
 
-async def incapacidades_mes(db: AsyncSession, **k) -> Dict[str, Any]:
-    """Incapacidades registradas en Attendance en el mes."""
+async def incapacidades_mes(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Incapacidades registradas en Attendance en el periodo (default: este mes)."""
     from app.modules.hr import models as hm
-    start, _, label = _period_bounds("mes")
+    start, _, label = _period_bounds(periodo)
     prefix = start.strftime("%Y-%m")
     stmt = (
         select(hm.Attendance.incapacity_subtype,
@@ -1393,10 +1435,10 @@ async def cumpleanos_mes(db: AsyncSession, **k) -> Dict[str, Any]:
             "items": items[:15], "empty": len(items) == 0}
 
 
-async def isr_nomina_mes(db: AsyncSession, **k) -> Dict[str, Any]:
-    """Total ISR retenido en nóminas cerradas del mes."""
+async def isr_nomina_mes(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Total ISR retenido en nóminas cerradas del periodo (default: este mes)."""
     from app.modules.hr import models as hm
-    start, end, label = _period_bounds("mes")
+    start, end, label = _period_bounds(periodo)
     prefix = start.strftime("%Y-%m")
     stmt = (
         select(func.coalesce(func.sum(hm.PayrollDetail.isr), 0.0))
@@ -1859,11 +1901,12 @@ async def vacaciones_pendientes(db: AsyncSession, **k) -> Dict[str, Any]:
             "empty": len(items) == 0}
 
 
-async def imss_a_pagar(db: AsyncSession, **k) -> Dict[str, Any]:
-    """Cuotas IMSS del mes (empleado + patrón) desde los detalles de
-    las nóminas pagadas este mes."""
+async def imss_a_pagar(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Cuotas IMSS del periodo (empleado + patrón) desde los detalles de
+    las nóminas pagadas. Acepta 'mes', 'mes_pasado' o 'mes:N' para un
+    mes específico (ej. 'mes:7' = julio)."""
     from app.modules.hr import models as hm
-    start, _, label = _period_bounds("mes")
+    start, _, label = _period_bounds(periodo)
     prefix = start.strftime("%Y-%m")
     stmt = (
         select(
@@ -1910,14 +1953,14 @@ async def ptu_estimado(db: AsyncSession, **k) -> Dict[str, Any]:
 
 # ─── Contador · IVA (1) ───────────────────────────────────────────────
 
-async def iva_mes(db: AsyncSession, **k) -> Dict[str, Any]:
-    """IVA del mes en aproximación fiscal: acreditable = suma de
+async def iva_mes(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """IVA del periodo en aproximación fiscal: acreditable = suma de
     tax_amount de facturas de proveedor emitidas y trasladado = 16%
-    de las ventas del mes (para clientes con RFC — aproximación).
+    de las ventas (aproximación).
     Para cifra exacta al SAT usar módulo de contabilidad electrónica."""
     from app.modules.finance.models import SupplierBill
     from app.modules.sales import models as sm
-    start, end, label = _period_bounds("mes")
+    start, end, label = _period_bounds(periodo)
 
     acr_stmt = select(
         func.coalesce(func.sum(SupplierBill.tax_amount), 0.0),
