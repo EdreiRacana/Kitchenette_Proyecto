@@ -298,15 +298,65 @@ export default function Assistant() {
     setStreaming(false);
   };
 
+  // ── Voces del sistema (Web Speech API) ─────────────────────────────
+  // Los navegadores exponen las voces del OS + voces cloud del propio
+  // navegador (Chrome/Edge). Todas gratuitas. Filtramos a español y
+  // dejamos al usuario elegir. La lista suele venir vacía en el primer
+  // llamado; hay que escuchar 'voiceschanged' para completarla.
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceName, setSelectedVoiceName] = useState<string>(() => {
+    try { return localStorage.getItem("assistant:voice") || ""; } catch { return ""; }
+  });
+  const [voicePickerOpen, setVoicePickerOpen] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const load = () => {
+      const all = window.speechSynthesis.getVoices();
+      const es = all.filter(v => v.lang.toLowerCase().startsWith("es"));
+      setVoices(es);
+    };
+    load();
+    window.speechSynthesis.addEventListener?.("voiceschanged", load);
+    return () => window.speechSynthesis.removeEventListener?.("voiceschanged", load);
+  }, []);
+
+  // Etiqueta corta y legible por voz — quita el "Microsoft"/"Google"
+  // repetitivo y muestra el nombre + acento entre paréntesis.
+  const formatVoiceLabel = (v: SpeechSynthesisVoice): string => {
+    const name = v.name
+      .replace(/^Microsoft\s+/i, "")
+      .replace(/^Google\s+/i, "")
+      .replace(/\s+Online.*$/i, "")
+      .replace(/\s+\(Natural\)/i, " · natural")
+      .trim();
+    const region = v.lang.split("-")[1]?.toUpperCase() || "";
+    return region ? `${name} (${region})` : name;
+  };
+
   // Texto a voz nativo (SpeechSynthesis). Sin costo, calidad del sistema.
-  const speak = (text: string) => {
+  const speak = (text: string, voiceOverride?: SpeechSynthesisVoice) => {
     try {
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = "es-MX";
+      const chosen = voiceOverride
+        || voices.find(v => v.name === selectedVoiceName)
+        || voices.find(v => v.lang.toLowerCase().startsWith("es-mx"))
+        || voices[0];
+      if (chosen) { u.voice = chosen; u.lang = chosen.lang; }
+      else { u.lang = "es-MX"; }
       u.rate = 1.02;
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(u);
     } catch { /* navegador sin TTS */ }
+  };
+
+  const previewVoice = (v: SpeechSynthesisVoice) => {
+    speak("Hola, soy tu asistente. Puedo ayudarte a analizar tu negocio.", v);
+  };
+
+  const selectVoice = (v: SpeechSynthesisVoice) => {
+    setSelectedVoiceName(v.name);
+    try { localStorage.setItem("assistant:voice", v.name); } catch { /* noop */ }
   };
 
   // Color de la barra según nivel de consumo del presupuesto
@@ -453,11 +503,111 @@ export default function Assistant() {
                 </div>
               </div>
             </div>
-            <div style={{ display: "flex", gap: 4 }}>
+            <div style={{ display: "flex", gap: 4, position: "relative" }}>
+              <button title="Cambiar voz del asistente"
+                onClick={() => setVoicePickerOpen(o => !o)}
+                style={{ ...iconBtn,
+                  background: voicePickerOpen ? "rgba(120,170,255,0.16)" : iconBtn.background,
+                  color: voicePickerOpen ? "#B5CDF3" : iconBtn.color,
+                }}>⚙</button>
               <button title="Nueva conversación"
                 onClick={() => setMsgs([])}
                 style={iconBtn}>↻</button>
               <button title="Cerrar" onClick={() => setOpen(false)} style={iconBtn}>✕</button>
+
+              {/* Popover de voces — cristal, ancla al engranaje */}
+              {voicePickerOpen && (
+                <div
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    position: "absolute", top: 40, right: 0, zIndex: 10,
+                    width: 296, maxHeight: 360, overflowY: "auto",
+                    padding: 12,
+                    background: "rgba(12, 20, 38, 0.55)",
+                    backdropFilter: "blur(32px) saturate(180%)",
+                    WebkitBackdropFilter: "blur(32px) saturate(180%)",
+                    border: "1px solid rgba(180,215,255,0.20)",
+                    borderRadius: 14,
+                    boxShadow: "0 12px 32px rgba(0,0,0,0.4)",
+                  }}
+                  className="assistant-scroll"
+                >
+                  <div style={{
+                    fontSize: 11, letterSpacing: 0.8, textTransform: "uppercase",
+                    color: "rgba(180,200,235,0.7)", fontWeight: 500, marginBottom: 8,
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                  }}>
+                    <span>Voz del asistente</span>
+                    <span style={{ opacity: 0.5, fontSize: 10, textTransform: "none", letterSpacing: 0 }}>
+                      {voices.length} {voices.length === 1 ? "disponible" : "disponibles"}
+                    </span>
+                  </div>
+                  {voices.length === 0 ? (
+                    <div style={{ padding: 10, fontSize: 12, color: "rgba(200,215,240,0.6)", textAlign: "center", lineHeight: 1.5 }}>
+                      No se detectaron voces en español en este navegador.<br/>
+                      <span style={{ fontSize: 11, color: "rgba(180,200,235,0.45)" }}>
+                        Prueba con Chrome, Edge o Safari.
+                      </span>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {voices.map(v => {
+                        const isSelected = v.name === selectedVoiceName
+                          || (!selectedVoiceName && v.lang.toLowerCase().startsWith("es-mx") && v === voices.find(x => x.lang.toLowerCase().startsWith("es-mx")));
+                        return (
+                          <div key={v.name}
+                            onClick={() => selectVoice(v)}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 8,
+                              padding: "8px 10px", borderRadius: 8, cursor: "pointer",
+                              background: isSelected ? "rgba(120,170,255,0.14)" : "transparent",
+                              border: `1px solid ${isSelected ? "rgba(160,200,255,0.25)" : "transparent"}`,
+                              transition: "background .12s",
+                            }}
+                            onMouseEnter={e => {
+                              if (!isSelected) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.04)";
+                            }}
+                            onMouseLeave={e => {
+                              if (!isSelected) (e.currentTarget as HTMLElement).style.background = "transparent";
+                            }}
+                          >
+                            <div style={{
+                              width: 14, height: 14, borderRadius: "50%",
+                              border: `1px solid ${isSelected ? "#B5CDF3" : "rgba(148,178,245,0.25)"}`,
+                              background: isSelected ? "radial-gradient(circle, #B5CDF3 0%, #B5CDF3 40%, transparent 55%)" : "transparent",
+                              flexShrink: 0,
+                            }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 12.5, color: "#E4ECFB", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {formatVoiceLabel(v)}
+                              </div>
+                              <div style={{ fontSize: 10, color: "rgba(180,200,235,0.5)" }}>
+                                {v.localService ? "Sistema" : "Cloud del navegador"}
+                              </div>
+                            </div>
+                            <button
+                              onClick={e => { e.stopPropagation(); previewVoice(v); }}
+                              title="Escuchar muestra"
+                              style={{
+                                width: 26, height: 26, borderRadius: 6,
+                                background: "rgba(255,255,255,0.06)",
+                                border: "1px solid rgba(148,178,245,0.20)",
+                                color: "rgba(200,215,240,0.85)",
+                                cursor: "pointer", flexShrink: 0,
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                fontSize: 11,
+                              }}
+                            >▶</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div style={{ marginTop: 10, fontSize: 10.5, color: "rgba(160,180,220,0.5)", textAlign: "center", lineHeight: 1.5 }}>
+                    Todas las voces son gratuitas y viven en tu navegador. Cero consumo del presupuesto.
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
