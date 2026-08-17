@@ -18,74 +18,77 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-// ── Silueta NovaMark tipo "punta de flecha" ────────────────────────────
-// Basado en el logo Sthenova, con proporciones acentuadas para que el
-// silhouette lea claramente como flecha: viewBox más alto que ancho,
-// pico superior sostenido y muesca inferior profunda ("fletching").
-// Ancho: 100 unidades. Alto: 120 unidades. Origen en centro (50, 60).
+// ── Silueta NovaMark — logo oficial Sthenova ───────────────────────────
+// Coordenadas exactas del NovaMark tal como viven en TrianglesCanvas.tsx
+// (usado en el login y en toda la marca). NO se altera — es la identidad.
 function trianglePath(size: number = 100, margin: number = 4): string {
-  const cx = 50;
-  const cy = 60;                 // centro vertical del viewBox 100x120
-  const halfW = 50 - margin;
-  const halfH = 60 - margin;
-  // Coordenadas normalizadas (-1 a 1) del NovaMark, con muesca más profunda
-  // para reforzar la sensación de flecha:
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size / 2 - margin;
   const pts: [number, number][] = [
-    [0, -1.00],     // pico superior (agudo)
-    [1, 0.85],      // esquina inferior derecha (más ancha)
-    [0, 0.15],      // muesca central (más profunda → arrow feathers marcadas)
-    [-1, 0.85],     // esquina inferior izquierda
+    [0, -1.00],     // pico superior
+    [1, 0.7419],    // esquina inferior derecha
+    [0, 0.3871],    // muesca central inferior (profundidad oficial)
+    [-1, 0.7419],   // esquina inferior izquierda
   ];
   return pts.map(([x, y], i) => {
-    const px = cx + x * halfW;
-    const py = cy + y * halfH;
+    const px = cx + x * r;
+    const py = cy + y * r;
     return `${i === 0 ? "M" : "L"} ${px.toFixed(2)} ${py.toFixed(2)}`;
   }).join(" ") + " Z";
 }
 
-// ── Triángulo holográfico ──────────────────────────────────────────────
-// Look inspirado en holograma cian-blanco tipo Sthenova brand: acabado
-// glassy translúcido, luz interna sutil, wireframe interior apenas visible.
-// Sin brillo agresivo — solo un halo bajísimo. Respira en vez de girar.
+// Path para el core pulsante — más pequeño y centrado hacia arriba, donde
+// se ve la mayor "carne" del triángulo (encima de la muesca).
+function coreCirclePath(size: number = 100): { cx: number; cy: number; r: number } {
+  return { cx: size / 2, cy: size * 0.42, r: size * 0.20 };
+}
+
+// ── Triángulo holográfico Sthenova ─────────────────────────────────────
+// Cuerpo glassy translúcido azul-cian sobre la silueta OFICIAL del logo,
+// con un núcleo luminoso central que PULSA — brilla y se apaga cíclica-
+// mente cada 2.4s. Ese pulso es lo que le da la sensación de "presencia
+// viva" tipo holograma, sin ser invasivo.
 let _gid = 0;
-function MetallicTriangle({ size = 32, glow = true, breathe = false }: {
-  size?: number; glow?: boolean; breathe?: boolean;
+function MetallicTriangle({ size = 32, glow = true, pulse = false }: {
+  size?: number; glow?: boolean; pulse?: boolean;
 }) {
   const gid = useMemo(() => `mt${++_gid}`, []);
-  // Halo bajísimo — 8% de tamaño en blur, opacidad ~0.28
   const filter = glow ? `drop-shadow(0 0 ${size * 0.09}px rgba(140,200,255,0.28))` : undefined;
+  const core = coreCirclePath(100);
   return (
     <svg
       width={size}
-      height={size * 1.2}
-      viewBox="0 0 100 120"
-      style={{
-        filter,
-        transformOrigin: "center",
-        animation: breathe ? "assistant-breathe 4.2s ease-in-out infinite" : undefined,
-      }}
+      height={size}
+      viewBox="0 0 100 100"
+      style={{ filter, transformOrigin: "center" }}
       aria-hidden="true"
     >
       <defs>
-        {/* Cuerpo glassy azul-cian, translúcido */}
+        {/* Cuerpo glassy azul-cian translúcido */}
         <linearGradient id={`${gid}-body`} x1="30%" y1="0%" x2="70%" y2="100%">
-          <stop offset="0%"  stopColor="rgba(210,235,255,0.85)" />
-          <stop offset="35%" stopColor="rgba(130,180,235,0.55)" />
-          <stop offset="70%" stopColor="rgba(70,120,190,0.45)" />
-          <stop offset="100%" stopColor="rgba(100,150,215,0.6)" />
+          <stop offset="0%"   stopColor="rgba(210,235,255,0.75)" />
+          <stop offset="40%"  stopColor="rgba(130,180,235,0.42)" />
+          <stop offset="100%" stopColor="rgba(70,120,190,0.55)" />
         </linearGradient>
-        {/* Núcleo interno con luz — como la del holograma */}
-        <radialGradient id={`${gid}-core`} cx="50%" cy="42%" r="45%">
-          <stop offset="0%"  stopColor="rgba(240,250,255,0.85)" />
-          <stop offset="45%" stopColor="rgba(140,200,255,0.28)" />
-          <stop offset="100%" stopColor="rgba(80,140,220,0)" />
+        {/* Núcleo interno luminoso — pulsa */}
+        <radialGradient id={`${gid}-core`} cx="50%" cy="50%" r="50%">
+          <stop offset="0%"   stopColor="rgba(240,250,255,0.95)" />
+          <stop offset="35%"  stopColor="rgba(160,215,255,0.55)" />
+          <stop offset="70%"  stopColor="rgba(100,170,240,0.15)" />
+          <stop offset="100%" stopColor="rgba(60,120,200,0)" />
         </radialGradient>
-        {/* Highlight superior — reflejo suave sobre la cara delantera */}
+        {/* Reflejo superior */}
         <linearGradient id={`${gid}-shine`} x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"  stopColor="rgba(255,255,255,0.55)" />
-          <stop offset="50%" stopColor="rgba(255,255,255,0.05)" />
+          <stop offset="0%"   stopColor="rgba(255,255,255,0.55)" />
+          <stop offset="50%"  stopColor="rgba(255,255,255,0.04)" />
           <stop offset="100%" stopColor="rgba(255,255,255,0)" />
         </linearGradient>
+        {/* Máscara con la forma del triángulo — para que el núcleo pulsante
+            NO se salga por los bordes al brillar. */}
+        <clipPath id={`${gid}-clip`}>
+          <path d={trianglePath(100, 3)} />
+        </clipPath>
       </defs>
 
       {/* Silueta principal glassy */}
@@ -96,20 +99,27 @@ function MetallicTriangle({ size = 32, glow = true, breathe = false }: {
         strokeWidth="0.7"
         strokeLinejoin="round"
       />
-      {/* Núcleo luminoso interior */}
-      <path d={trianglePath(100, 3)} fill={`url(#${gid}-core)`} strokeLinejoin="round" />
-      {/* Highlight superior */}
+
+      {/* Núcleo pulsante — clippeado al triángulo, opacidad animada */}
+      <g style={{
+        transformOrigin: `${core.cx}px ${core.cy}px`,
+        animation: pulse ? "assistant-core-pulse 2.4s ease-in-out infinite" : undefined,
+      }} clipPath={`url(#${gid}-clip)`}>
+        <circle cx={core.cx} cy={core.cy} r={core.r * 1.8} fill={`url(#${gid}-core)`} />
+      </g>
+
+      {/* Reflejo superior encima */}
       <path
         d={trianglePath(100, 6)}
         fill={`url(#${gid}-shine)`}
         opacity="0.75"
         strokeLinejoin="round"
       />
-      {/* Wireframe interior — líneas del pico hacia esquinas y muesca.
-          Muy tenues, dan la sensación de estructura holográfica sin invadir. */}
-      <line x1="50" y1="0"   x2="50" y2="69" stroke="rgba(200,230,255,0.18)" strokeWidth="0.5" />
-      <line x1="50" y1="0"   x2="97" y2="111" stroke="rgba(200,230,255,0.12)" strokeWidth="0.4" />
-      <line x1="50" y1="0"   x2="3"  y2="111" stroke="rgba(200,230,255,0.12)" strokeWidth="0.4" />
+
+      {/* Wireframe interior — líneas de pico a esquinas y muesca */}
+      <line x1="50" y1="4"  x2="50" y2="69" stroke="rgba(200,230,255,0.18)" strokeWidth="0.5" />
+      <line x1="50" y1="4"  x2="93" y2="87" stroke="rgba(200,230,255,0.12)" strokeWidth="0.4" />
+      <line x1="50" y1="4"  x2="7"  y2="87" stroke="rgba(200,230,255,0.12)" strokeWidth="0.4" />
     </svg>
   );
 }
@@ -308,7 +318,10 @@ export default function Assistant() {
   return createPortal(
     <>
       <style>{`
-        @keyframes assistant-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.035); } }
+        @keyframes assistant-core-pulse {
+          0%,100% { opacity: 0.35; transform: scale(0.85); }
+          50%     { opacity: 1.00; transform: scale(1.15); }
+        }
         @keyframes assistant-label-pulse { 0%,100% { opacity: 0.42; } 50% { opacity: 0.82; } }
         @keyframes assistant-pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.05); opacity: 0.85; } }
         @keyframes assistant-slide-in { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
@@ -378,7 +391,7 @@ export default function Assistant() {
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = open ? "1" : "0.85"; }}
         >
           <span className="assistant-fab-inner" style={{ display: "flex", transition: "transform .2s" }}>
-            <MetallicTriangle size={40} glow={true} breathe={!open && !streaming} />
+            <MetallicTriangle size={40} glow={true} pulse={!open} />
           </span>
         </button>
         {/* Label "Asistente" — pulsa muy suave y discreto */}
@@ -432,7 +445,7 @@ export default function Assistant() {
             padding: "16px 18px", borderBottom: "1px solid rgba(148,178,245,0.10)",
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <MetallicTriangle size={30} glow={true} breathe={streaming} />
+              <MetallicTriangle size={30} glow={true} pulse={streaming} />
               <div>
                 <div style={{ fontSize: 14.5, fontWeight: 500, letterSpacing: 0.1 }}>Asistente</div>
                 <div style={{ fontSize: 11, color: "rgba(180,200,235,0.55)", marginTop: 1 }}>
