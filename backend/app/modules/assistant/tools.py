@@ -1538,6 +1538,729 @@ async def nomina_vs_ventas(db: AsyncSession, **k) -> Dict[str, Any]:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# FASE 6 · Tools restantes por departamento
+# ══════════════════════════════════════════════════════════════════════
+
+# ─── Retail avanzado (4) ──────────────────────────────────────────────
+
+async def _wos_por_tienda(db: AsyncSession):
+    """Helper: devuelve [{store_id, name, cadena, wos, on_hand, vel_sem,
+    critical_wos, overstock_wos}]. Se calcula solo para tiendas con
+    consignment_warehouse — el WoS solo tiene sentido con stock físico."""
+    from app.modules.retail import models as rm
+    from app.modules.inventory import models as im
+    ahora = _now()
+    cutoff = ahora - timedelta(weeks=4)
+    stores_stmt = (
+        select(
+            rm.RetailStore.id, rm.RetailStore.name,
+            rm.RetailStore.consignment_warehouse_id,
+            rm.RetailChannel.name.label("cadena"),
+            rm.RetailChannel.critical_wos_weeks,
+            rm.RetailChannel.overstock_wos_weeks,
+        )
+        .join(rm.RetailChannel, rm.RetailChannel.id == rm.RetailStore.channel_id)
+        .where(
+            rm.RetailStore.is_active == True,  # noqa: E712
+            rm.RetailStore.consignment_warehouse_id.isnot(None),
+        )
+    )
+    stores = (await db.execute(stores_stmt)).all()
+    out = []
+    for s in stores:
+        stock_stmt = select(
+            func.coalesce(func.sum(im.StockLevel.quantity), 0),
+        ).where(im.StockLevel.warehouse_id == s.consignment_warehouse_id)
+        on_hand = int((await db.execute(stock_stmt)).scalar() or 0)
+        vel_stmt = select(
+            func.coalesce(func.sum(rm.SellOutReport.units_sold), 0),
+        ).where(
+            rm.SellOutReport.store_id == s.id,
+            rm.SellOutReport.period_start >= cutoff,
+        )
+        vendido_4sem = int((await db.execute(vel_stmt)).scalar() or 0)
+        vel_sem = vendido_4sem / 4.0 if vendido_4sem else 0.0
+        wos = round(on_hand / vel_sem, 1) if vel_sem > 0 else None
+        out.append({
+            "store_id": s.id, "name": s.name, "cadena": s.cadena,
+            "on_hand": on_hand, "vel_sem": round(vel_sem, 2),
+            "wos": wos,
+            "critical_wos": float(s.critical_wos_weeks or 2.0),
+            "overstock_wos": float(s.overstock_wos_weeks or 12.0),
+        })
+    return out
+
+
+async def tiendas_wos_critico(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Tiendas cuyo WoS está por debajo del umbral crítico de su cadena.
+    Dispara reabasto urgente."""
+    try:
+        datos = await _wos_por_tienda(db)
+    except Exception as e:
+        return {"tool": "tiendas_wos_critico", "empty": True, "reason": str(e)}
+    criticas = [d for d in datos
+                if d["wos"] is not None and d["wos"] < d["critical_wos"]]
+    criticas.sort(key=lambda x: x["wos"])
+    return {
+        "tool": "tiendas_wos_critico",
+        "count": len(criticas),
+        "items": [{"name": c["name"], "cadena": c["cadena"],
+                    "wos": c["wos"], "on_hand": c["on_hand"],
+                    "umbral": c["critical_wos"]}
+                  for c in criticas[:10]],
+        "empty": len(criticas) == 0,
+    }
+
+
+async def tiendas_sobrestock(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Tiendas cuyo WoS supera el umbral de sobre-stock. Candidatas a
+    traslado hacia tiendas con demanda."""
+    try:
+        datos = await _wos_por_tienda(db)
+    except Exception as e:
+        return {"tool": "tiendas_sobrestock", "empty": True, "reason": str(e)}
+    sobre = [d for d in datos
+             if d["wos"] is not None and d["wos"] > d["overstock_wos"]]
+    sobre.sort(key=lambda x: -x["wos"])
+    return {
+        "tool": "tiendas_sobrestock",
+        "count": len(sobre),
+        "items": [{"name": s["name"], "cadena": s["cadena"],
+                    "wos": s["wos"], "on_hand": s["on_hand"],
+                    "umbral": s["overstock_wos"]}
+                  for s in sobre[:10]],
+        "empty": len(sobre) == 0,
+    }
+
+
+async def fill_rate_cadena(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Fill rate aproximado por cadena = 1 − (unidades no surtidas ÷
+    demanda total). Aproximación: unidades vendidas por consumidor ÷
+    (unidades vendidas + unidades devueltas) sobre el periodo."""
+    from app.modules.retail import models as rm
+    start, end, label = _period_bounds(periodo)
+    stmt = (
+        select(
+            rm.RetailChannel.name,
+            func.coalesce(func.sum(rm.SellOutReport.units_sold), 0).label("sold"),
+            func.coalesce(func.sum(rm.SellOutReport.units_returned), 0).label("ret"),
+        )
+        .join(rm.RetailStore, rm.RetailStore.channel_id == rm.RetailChannel.id)
+        .join(rm.SellOutReport, rm.SellOutReport.store_id == rm.RetailStore.id)
+        .where(
+            rm.SellOutReport.period_start >= start,
+            rm.SellOutReport.period_start < end,
+        )
+        .group_by(rm.RetailChannel.id, rm.RetailChannel.name)
+    )
+    try:
+        rows = (await db.execute(stmt)).all()
+    except Exception:
+        rows = []
+    items = []
+    for r in rows:
+        sold = int(r.sold or 0)
+        ret = int(r.ret or 0)
+        demanda = sold + ret
+        pct = round((sold / demanda) * 100, 1) if demanda > 0 else None
+        items.append({"cadena": r.name, "vendido": sold,
+                       "devuelto": ret, "fill_rate_pct": pct})
+    return {"tool": "fill_rate_cadena", "periodo": label,
+            "items": items, "empty": len(items) == 0}
+
+
+async def return_rate_cadena(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Return rate por cadena vs el umbral configurado (RetailChannel.
+    return_rate_max_pct). Marca las que exceden."""
+    from app.modules.retail import models as rm
+    start, end, label = _period_bounds(periodo)
+    stmt = (
+        select(
+            rm.RetailChannel.name, rm.RetailChannel.return_rate_max_pct,
+            func.coalesce(func.sum(rm.SellOutReport.revenue), 0.0).label("rev"),
+            func.coalesce(func.sum(rm.SellOutReport.returns_amount), 0.0).label("ret_amount"),
+        )
+        .join(rm.RetailStore, rm.RetailStore.channel_id == rm.RetailChannel.id)
+        .join(rm.SellOutReport, rm.SellOutReport.store_id == rm.RetailStore.id)
+        .where(
+            rm.SellOutReport.period_start >= start,
+            rm.SellOutReport.period_start < end,
+        )
+        .group_by(rm.RetailChannel.id, rm.RetailChannel.name,
+                   rm.RetailChannel.return_rate_max_pct)
+    )
+    try:
+        rows = (await db.execute(stmt)).all()
+    except Exception:
+        rows = []
+    items = []
+    for r in rows:
+        rev = float(r.rev or 0)
+        ret_amt = float(r.ret_amount or 0)
+        pct = round((ret_amt / (rev + ret_amt)) * 100, 1) if (rev + ret_amt) > 0 else 0.0
+        umbral = float(r.return_rate_max_pct or 5.0)
+        items.append({"cadena": r.name, "return_rate_pct": pct,
+                       "umbral": umbral, "excede": pct > umbral})
+    items.sort(key=lambda x: -x["return_rate_pct"])
+    return {"tool": "return_rate_cadena", "periodo": label,
+            "items": items, "empty": len(items) == 0}
+
+
+# ─── Finanzas restantes (3) ───────────────────────────────────────────
+
+async def aging_cxc(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Aging explícito de CxC como su propia tool. Formato limpio para
+    pregunta 'muéstrame el aging'."""
+    r = await cxc_resumen(db)
+    return {"tool": "aging_cxc", "total": r.get("total", 0),
+            "buckets": r.get("buckets", {}),
+            "empty": r.get("empty", True)}
+
+
+async def dso_dpo(db: AsyncSession, **k) -> Dict[str, Any]:
+    """DSO = CxC actual ÷ ventas diarias promedio (últimos 90d).
+    DPO = CxP actual ÷ compras diarias promedio (últimos 90d)."""
+    from app.modules.sales import models as sm
+    from app.modules.finance.models import SupplierBill
+    ahora = _now()
+    cutoff = ahora - timedelta(days=90)
+
+    ventas_stmt = select(
+        func.coalesce(func.sum(sm.Order.total_amount), 0.0),
+    ).where(
+        sm.Order.kind == "order", sm.Order.status != "cancelled",
+        sm.Order.created_at >= cutoff,
+    )
+    ventas_90 = _money((await db.execute(ventas_stmt)).scalar())
+    compras_stmt = select(
+        func.coalesce(func.sum(SupplierBill.total_amount), 0.0),
+    ).where(
+        SupplierBill.status != "cancelled",
+        SupplierBill.issue_date >= cutoff,
+    )
+    compras_90 = _money((await db.execute(compras_stmt)).scalar())
+
+    cxc_r = await cxc_resumen(db)
+    cxp_r = await cxp_resumen(db)
+    cxc_total = cxc_r.get("total", 0.0)
+    cxp_total = cxp_r.get("total", 0.0)
+
+    dso = round(cxc_total / (ventas_90 / 90), 1) if ventas_90 > 0 else None
+    dpo = round(cxp_total / (compras_90 / 90), 1) if compras_90 > 0 else None
+    return {"tool": "dso_dpo",
+            "dso_dias": dso, "dpo_dias": dpo,
+            "cxc": cxc_total, "cxp": cxp_total,
+            "ventas_90d": ventas_90, "compras_90d": compras_90,
+            "empty": dso is None and dpo is None}
+
+
+async def pagos_programados(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Pagos programados pendientes ordenados por fecha."""
+    from app.modules.finance.models import ScheduledPayment
+    ahora = _now()
+    stmt = (
+        select(ScheduledPayment.kind, ScheduledPayment.target_name,
+                ScheduledPayment.amount, ScheduledPayment.scheduled_date,
+                ScheduledPayment.method)
+        .where(ScheduledPayment.status == "pending",
+                ScheduledPayment.scheduled_date >= ahora)
+        .order_by(ScheduledPayment.scheduled_date.asc())
+        .limit(15)
+    )
+    rows = (await db.execute(stmt)).all()
+    items, total = [], 0.0
+    for r in rows:
+        items.append({
+            "tipo": r.kind, "concepto": r.target_name or "?",
+            "monto": _money(r.amount), "metodo": r.method or "?",
+            "fecha": _aware(r.scheduled_date).strftime("%d/%m") if r.scheduled_date else "?",
+        })
+        total += _money(r.amount)
+    return {"tool": "pagos_programados", "count": len(items),
+            "total": _money(total), "items": items[:10],
+            "empty": len(items) == 0}
+
+
+# ─── RH extra (4) ─────────────────────────────────────────────────────
+
+async def aguinaldo_devengado(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Aguinaldo devengado al día por empleado activo. LFT art. 87:
+    mínimo 15 días de salario, se prorratea por días laborados desde
+    el inicio del año en curso."""
+    from app.modules.hr import models as hm
+    hoy = date.today()
+    inicio_anio = date(hoy.year, 1, 1)
+    dias_transcurridos = (hoy - inicio_anio).days + 1
+    factor = (15.0 / 365.0) * dias_transcurridos
+    stmt = select(hm.Employee.id, hm.Employee.name, hm.Employee.last_name,
+                   hm.Employee.base_salary, hm.Employee.pay_frequency,
+                   hm.Employee.hire_date).where(
+        hm.Employee.is_active == True,  # noqa: E712
+    )
+    rows = (await db.execute(stmt)).all()
+    total = 0.0
+    detalle = []
+    for r in rows:
+        # Estimar salario diario según frecuencia
+        base = float(r.base_salary or 0)
+        freq = (r.pay_frequency or "quincenal").lower()
+        if freq == "mensual":
+            diario = base / 30
+        elif freq == "quincenal":
+            diario = base / 15
+        elif freq == "semanal":
+            diario = base / 7
+        else:
+            diario = base / 15
+        # Reducir factor si empleado se contrató este año
+        hire = _parse_iso_date(r.hire_date)
+        dias_empleado = dias_transcurridos
+        if hire and hire > inicio_anio:
+            dias_empleado = (hoy - hire).days + 1
+        factor_emp = (15.0 / 365.0) * max(dias_empleado, 0)
+        aguinaldo = round(diario * factor_emp, 2)
+        total += aguinaldo
+        detalle.append({
+            "empleado": f"{r.name} {r.last_name}".strip(),
+            "aguinaldo": aguinaldo,
+        })
+    detalle.sort(key=lambda x: -x["aguinaldo"])
+    return {"tool": "aguinaldo_devengado",
+            "empleados": len(detalle),
+            "total": _money(total),
+            "top": detalle[:5],
+            "empty": len(detalle) == 0}
+
+
+async def vacaciones_pendientes(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Días de vacaciones no gozados por empleado activo."""
+    from app.modules.hr import models as hm
+    stmt = select(
+        hm.Employee.name, hm.Employee.last_name,
+        hm.Employee.vacation_days, hm.Employee.vacation_used,
+    ).where(hm.Employee.is_active == True)  # noqa: E712
+    rows = (await db.execute(stmt)).all()
+    items = []
+    total_pendientes = 0
+    for r in rows:
+        pendientes = int((r.vacation_days or 0) - (r.vacation_used or 0))
+        if pendientes <= 0:
+            continue
+        total_pendientes += pendientes
+        items.append({
+            "empleado": f"{r.name} {r.last_name}".strip(),
+            "pendientes": pendientes,
+        })
+    items.sort(key=lambda x: -x["pendientes"])
+    return {"tool": "vacaciones_pendientes",
+            "empleados_con_saldo": len(items),
+            "total_dias": total_pendientes,
+            "top": items[:10],
+            "empty": len(items) == 0}
+
+
+async def imss_a_pagar(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Cuotas IMSS del mes (empleado + patrón) desde los detalles de
+    las nóminas pagadas este mes."""
+    from app.modules.hr import models as hm
+    start, _, label = _period_bounds("mes")
+    prefix = start.strftime("%Y-%m")
+    stmt = (
+        select(
+            func.coalesce(func.sum(hm.PayrollDetail.imss_employee), 0.0),
+            func.coalesce(func.sum(hm.PayrollDetail.imss_employer), 0.0),
+            func.coalesce(func.sum(hm.PayrollDetail.infonavit_employer), 0.0),
+        )
+        .join(hm.PayrollPeriod, hm.PayrollPeriod.id == hm.PayrollDetail.period_id)
+        .where(hm.PayrollPeriod.payment_date.like(f"{prefix}%"))
+    )
+    obr, pat, inf = (await db.execute(stmt)).one()
+    obr = _money(obr); pat = _money(pat); inf = _money(inf)
+    return {"tool": "imss_a_pagar", "periodo": label,
+            "obrero": obr, "patronal": pat,
+            "infonavit_patronal": inf,
+            "total": _money(obr + pat + inf),
+            "empty": (obr + pat + inf) == 0}
+
+
+async def ptu_estimado(db: AsyncSession, **k) -> Dict[str, Any]:
+    """PTU más reciente calculada."""
+    from app.modules.hr import models as hm
+    stmt = (
+        select(hm.PTUCalculation.period_year,
+                hm.PTUCalculation.utilidad_repartible,
+                hm.PTUCalculation.total_ptu_paid,
+                hm.PTUCalculation.total_excluded,
+                hm.PTUCalculation.status)
+        .order_by(hm.PTUCalculation.period_year.desc())
+        .limit(1)
+    )
+    r = (await db.execute(stmt)).first()
+    if not r:
+        return {"tool": "ptu_estimado", "empty": True,
+                "reason": "no hay cálculo de PTU registrado"}
+    return {"tool": "ptu_estimado",
+            "anio": int(r.period_year),
+            "utilidad_repartible": _money(r.utilidad_repartible),
+            "ptu_pagado": _money(r.total_ptu_paid),
+            "excluidos": int(r.total_excluded or 0),
+            "status": r.status,
+            "empty": False}
+
+
+# ─── Contador · IVA (1) ───────────────────────────────────────────────
+
+async def iva_mes(db: AsyncSession, **k) -> Dict[str, Any]:
+    """IVA del mes en aproximación fiscal: acreditable = suma de
+    tax_amount de facturas de proveedor emitidas y trasladado = 16%
+    de las ventas del mes (para clientes con RFC — aproximación).
+    Para cifra exacta al SAT usar módulo de contabilidad electrónica."""
+    from app.modules.finance.models import SupplierBill
+    from app.modules.sales import models as sm
+    start, end, label = _period_bounds("mes")
+
+    acr_stmt = select(
+        func.coalesce(func.sum(SupplierBill.tax_amount), 0.0),
+    ).where(
+        SupplierBill.status != "cancelled",
+        SupplierBill.issue_date >= start,
+        SupplierBill.issue_date < end,
+    )
+    acreditable = _money((await db.execute(acr_stmt)).scalar())
+
+    ventas_stmt = select(
+        func.coalesce(func.sum(sm.Order.total_amount), 0.0),
+    ).where(
+        sm.Order.kind == "order", sm.Order.status != "cancelled",
+        sm.Order.created_at >= start, sm.Order.created_at < end,
+    )
+    ventas = _money((await db.execute(ventas_stmt)).scalar())
+    # Aproximación: 16% del subtotal (ventas ÷ 1.16 × 0.16)
+    trasladado = _money(ventas / 1.16 * 0.16) if ventas > 0 else 0.0
+    saldo = _money(trasladado - acreditable)
+    return {"tool": "iva_mes", "periodo": label,
+            "trasladado": trasladado, "acreditable": acreditable,
+            "saldo": saldo,
+            "nota": "aproximación — cifra oficial en módulo de contabilidad electrónica",
+            "empty": ventas == 0 and acreditable == 0}
+
+
+# ─── Compras extra (3) ────────────────────────────────────────────────
+
+async def lead_time_proveedor(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Lead time promedio configurado por proveedor activo."""
+    from app.modules.inventory import models as im
+    stmt = select(im.Supplier.name, im.Supplier.lead_time_days).where(
+        im.Supplier.is_active == True,  # noqa: E712
+        im.Supplier.lead_time_days.isnot(None),
+    ).order_by(im.Supplier.lead_time_days.desc())
+    rows = (await db.execute(stmt)).all()
+    items = [{"name": r.name, "dias": int(r.lead_time_days or 0)} for r in rows]
+    prom = round(sum(x["dias"] for x in items) / len(items), 1) if items else 0.0
+    return {"tool": "lead_time_proveedor",
+            "promedio_dias": prom,
+            "count": len(items),
+            "mas_lentos": items[:5],
+            "empty": len(items) == 0}
+
+
+async def reordenar_sin_oc(db: AsyncSession, **k) -> Dict[str, Any]:
+    """SKUs bajo punto de reorden que NO tienen OC 'ordered' abierta —
+    los que urge lanzar orden de compra."""
+    from app.modules.inventory import models as im
+    # variantes en stock <= reorder
+    bajo_stmt = (
+        select(
+            im.ProductVariant.id, im.ProductVariant.sku,
+            im.Product.name, im.StockLevel.quantity,
+            im.ProductVariant.reorder_point,
+        )
+        .join(im.ProductVariant, im.ProductVariant.product_id == im.Product.id)
+        .join(im.StockLevel, im.StockLevel.variant_id == im.ProductVariant.id)
+        .where(
+            im.Product.is_active == True,  # noqa: E712
+            im.ProductVariant.is_active == True,  # noqa: E712
+            im.ProductVariant.reorder_point.isnot(None),
+            im.StockLevel.quantity <= im.ProductVariant.reorder_point,
+        )
+    )
+    bajo = (await db.execute(bajo_stmt)).all()
+    # variantes con OC ordered abierta
+    oc_stmt = (
+        select(im.PurchaseOrderItem.variant_id)
+        .join(im.PurchaseOrder, im.PurchaseOrder.id == im.PurchaseOrderItem.purchase_order_id)
+        .where(im.PurchaseOrder.status.in_(["draft", "ordered"]))
+    )
+    en_oc = {row[0] for row in (await db.execute(oc_stmt)).all()}
+    items = [
+        {"sku": r.sku, "name": r.name,
+         "stock": int(r.quantity or 0),
+         "reorder": int(r.reorder_point or 0)}
+        for r in bajo if r.id not in en_oc
+    ]
+    return {"tool": "reordenar_sin_oc",
+            "count": len(items), "items": items[:10],
+            "empty": len(items) == 0}
+
+
+async def variacion_costo(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Variación de costo unitario entre el último lote recibido y el
+    anterior por SKU — detecta subidas fuertes de proveedor."""
+    from app.modules.inventory import models as im
+    ahora = _now()
+    cutoff = ahora - timedelta(days=60)
+    stmt = (
+        select(im.ProductVariant.sku, im.Product.name,
+                im.StockLot.unit_cost, im.StockLot.received_at)
+        .join(im.ProductVariant, im.ProductVariant.id == im.StockLot.variant_id)
+        .join(im.Product, im.Product.id == im.ProductVariant.product_id)
+        .where(im.StockLot.received_at >= cutoff)
+        .order_by(im.ProductVariant.id, im.StockLot.received_at.desc())
+    )
+    rows = (await db.execute(stmt)).all()
+    per_sku: dict[str, list] = {}
+    for r in rows:
+        per_sku.setdefault(r.sku, []).append(
+            {"name": r.name, "cost": float(r.unit_cost or 0),
+             "when": r.received_at},
+        )
+    cambios = []
+    for sku, lotes in per_sku.items():
+        if len(lotes) < 2:
+            continue
+        actual = lotes[0]["cost"]
+        anterior = lotes[1]["cost"]
+        if anterior <= 0:
+            continue
+        var = round(((actual - anterior) / anterior) * 100, 1)
+        if abs(var) < 5:
+            continue
+        cambios.append({"sku": sku, "name": lotes[0]["name"],
+                         "anterior": _money(anterior),
+                         "actual": _money(actual),
+                         "variacion_pct": var})
+    cambios.sort(key=lambda x: -abs(x["variacion_pct"]))
+    return {"tool": "variacion_costo", "count": len(cambios),
+            "items": cambios[:10], "empty": len(cambios) == 0}
+
+
+# ─── Inventario extra (2) ─────────────────────────────────────────────
+
+async def top_valor_inmovilizado(db: AsyncSession, limite: int = 5, **k) -> Dict[str, Any]:
+    """SKUs con más valor a costo en almacén (qty × cost_price)."""
+    from app.modules.inventory import models as im
+    stmt = (
+        select(
+            im.ProductVariant.sku, im.Product.name,
+            func.sum(im.StockLevel.quantity).label("qty"),
+            im.ProductVariant.cost_price,
+        )
+        .join(im.Product, im.Product.id == im.ProductVariant.product_id)
+        .join(im.StockLevel, im.StockLevel.variant_id == im.ProductVariant.id)
+        .where(
+            im.ProductVariant.is_active == True,  # noqa: E712
+            im.ProductVariant.cost_price.isnot(None),
+            im.StockLevel.quantity > 0,
+        )
+        .group_by(im.ProductVariant.id, im.ProductVariant.sku,
+                   im.Product.name, im.ProductVariant.cost_price)
+        .order_by((func.sum(im.StockLevel.quantity) * im.ProductVariant.cost_price).desc())
+        .limit(max(1, min(limite, 20)))
+    )
+    rows = (await db.execute(stmt)).all()
+    items = [{"sku": r.sku, "name": r.name,
+              "unidades": int(r.qty or 0),
+              "valor": _money((r.qty or 0) * (r.cost_price or 0))}
+             for r in rows]
+    return {"tool": "top_valor_inmovilizado",
+            "items": items, "empty": len(items) == 0}
+
+
+async def faltantes_para_pedidos(db: AsyncSession, **k) -> Dict[str, Any]:
+    """SKUs con pedidos pending/partial cuya cantidad requerida excede
+    el stock disponible."""
+    from app.modules.sales import models as sm
+    from app.modules.inventory import models as im
+    # Requerido: suma de qty de OrderItems de pedidos abiertos
+    req_stmt = (
+        select(
+            sm.OrderItem.variant_id, sm.OrderItem.sku, sm.OrderItem.product_name,
+            func.sum(sm.OrderItem.quantity).label("req"),
+        )
+        .join(sm.Order, sm.Order.id == sm.OrderItem.order_id)
+        .where(
+            sm.Order.kind == "order",
+            sm.Order.status.in_(["pending", "partial"]),
+            sm.OrderItem.variant_id.isnot(None),
+        )
+        .group_by(sm.OrderItem.variant_id, sm.OrderItem.sku, sm.OrderItem.product_name)
+    )
+    req = {r.variant_id: {"sku": r.sku, "name": r.product_name,
+                            "req": int(r.req or 0)}
+           for r in (await db.execute(req_stmt)).all()}
+    if not req:
+        return {"tool": "faltantes_para_pedidos", "empty": True}
+    stock_stmt = (
+        select(im.StockLevel.variant_id,
+                func.sum(im.StockLevel.quantity).label("stock"))
+        .where(im.StockLevel.variant_id.in_(list(req.keys())))
+        .group_by(im.StockLevel.variant_id)
+    )
+    stocks = {r.variant_id: int(r.stock or 0)
+              for r in (await db.execute(stock_stmt)).all()}
+    faltantes = []
+    for vid, info in req.items():
+        stock = stocks.get(vid, 0)
+        faltan = info["req"] - stock
+        if faltan > 0:
+            faltantes.append({
+                "sku": info["sku"], "name": info["name"],
+                "requerido": info["req"], "stock": stock,
+                "faltan": faltan,
+            })
+    faltantes.sort(key=lambda x: -x["faltan"])
+    return {"tool": "faltantes_para_pedidos",
+            "count": len(faltantes), "items": faltantes[:10],
+            "empty": len(faltantes) == 0}
+
+
+# ─── POS extra (4) ────────────────────────────────────────────────────
+
+async def descuentos_pos_dia(db: AsyncSession, fecha: Optional[str] = None, **k) -> Dict[str, Any]:
+    """Suma de descuentos aplicados hoy en ventas del POS."""
+    from app.modules.pos import models as pm
+    from app.modules.sales import models as sm
+    today = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+    if fecha:
+        try:
+            today = _aware(datetime.fromisoformat(fecha))
+        except Exception:
+            pass
+    tomorrow = today + timedelta(days=1)
+    stmt = (
+        select(
+            func.count(sm.Order.id),
+            func.coalesce(func.sum(sm.Order.discount_amount), 0.0),
+        )
+        .join(pm.POSTransaction, pm.POSTransaction.order_id == sm.Order.id)
+        .where(
+            pm.POSTransaction.type == "sale",
+            pm.POSTransaction.created_at >= today,
+            pm.POSTransaction.created_at < tomorrow,
+            sm.Order.discount_amount > 0,
+        )
+    )
+    try:
+        n, monto = (await db.execute(stmt)).one()
+    except Exception:
+        n, monto = 0, 0.0
+    return {"tool": "descuentos_pos_dia",
+            "fecha": today.strftime("%d/%m/%Y"),
+            "tickets_con_descuento": int(n or 0),
+            "monto_descontado": _money(monto),
+            "empty": int(n or 0) == 0}
+
+
+async def devoluciones_pos_dia(db: AsyncSession, fecha: Optional[str] = None, **k) -> Dict[str, Any]:
+    """Reembolsos del POS del día — POSTransaction type=refund."""
+    from app.modules.pos import models as pm
+    today = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+    if fecha:
+        try:
+            today = _aware(datetime.fromisoformat(fecha))
+        except Exception:
+            pass
+    tomorrow = today + timedelta(days=1)
+    stmt = (
+        select(
+            func.count(pm.POSTransaction.id),
+            func.coalesce(func.sum(pm.POSTransaction.amount), 0.0),
+        )
+        .where(
+            pm.POSTransaction.type == "refund",
+            pm.POSTransaction.created_at >= today,
+            pm.POSTransaction.created_at < tomorrow,
+        )
+    )
+    n, monto = (await db.execute(stmt)).one()
+    return {"tool": "devoluciones_pos_dia",
+            "fecha": today.strftime("%d/%m/%Y"),
+            "count": int(n or 0), "monto": _money(monto),
+            "empty": int(n or 0) == 0}
+
+
+async def cancelaciones_pos_dia(db: AsyncSession, fecha: Optional[str] = None, **k) -> Dict[str, Any]:
+    """Órdenes del canal POS canceladas hoy."""
+    from app.modules.sales import models as sm
+    today = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+    if fecha:
+        try:
+            today = _aware(datetime.fromisoformat(fecha))
+        except Exception:
+            pass
+    tomorrow = today + timedelta(days=1)
+    stmt = (
+        select(
+            func.count(sm.Order.id),
+            func.coalesce(func.sum(sm.Order.total_amount), 0.0),
+        )
+        .where(
+            sm.Order.status == "cancelled",
+            sm.Order.updated_at >= today,
+            sm.Order.updated_at < tomorrow,
+        )
+    )
+    try:
+        n, monto = (await db.execute(stmt)).one()
+    except Exception:
+        n, monto = 0, 0.0
+    return {"tool": "cancelaciones_pos_dia",
+            "fecha": today.strftime("%d/%m/%Y"),
+            "count": int(n or 0), "monto": _money(monto),
+            "empty": int(n or 0) == 0}
+
+
+async def top_producto_pos_dia(db: AsyncSession, fecha: Optional[str] = None, **k) -> Dict[str, Any]:
+    """Producto más vendido en el POS del día."""
+    from app.modules.pos import models as pm
+    from app.modules.sales import models as sm
+    today = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+    if fecha:
+        try:
+            today = _aware(datetime.fromisoformat(fecha))
+        except Exception:
+            pass
+    tomorrow = today + timedelta(days=1)
+    stmt = (
+        select(
+            sm.OrderItem.product_name, sm.OrderItem.sku,
+            func.sum(sm.OrderItem.quantity).label("qty"),
+            func.sum(sm.OrderItem.subtotal).label("revenue"),
+        )
+        .join(sm.Order, sm.Order.id == sm.OrderItem.order_id)
+        .join(pm.POSTransaction, pm.POSTransaction.order_id == sm.Order.id)
+        .where(
+            pm.POSTransaction.type == "sale",
+            pm.POSTransaction.created_at >= today,
+            pm.POSTransaction.created_at < tomorrow,
+        )
+        .group_by(sm.OrderItem.product_name, sm.OrderItem.sku)
+        .order_by(func.sum(sm.OrderItem.quantity).desc())
+        .limit(5)
+    )
+    try:
+        rows = (await db.execute(stmt)).all()
+    except Exception:
+        rows = []
+    items = [{"name": r.product_name or "?", "sku": r.sku,
+              "unidades": int(r.qty or 0), "revenue": _money(r.revenue)}
+             for r in rows]
+    return {"tool": "top_producto_pos_dia",
+            "fecha": today.strftime("%d/%m/%Y"),
+            "items": items, "empty": len(items) == 0}
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Registro de tools disponibles — usado por el intent router y el LLM
 # ══════════════════════════════════════════════════════════════════════
 
@@ -1597,4 +2320,32 @@ TOOLS_REGISTRY = {
     # KPI ejecutivo
     "flujo_efectivo_proyectado": flujo_efectivo_proyectado,
     "nomina_vs_ventas": nomina_vs_ventas,
+    # Fase 6 · Retail avanzado
+    "tiendas_wos_critico": tiendas_wos_critico,
+    "tiendas_sobrestock": tiendas_sobrestock,
+    "fill_rate_cadena": fill_rate_cadena,
+    "return_rate_cadena": return_rate_cadena,
+    # Fase 6 · Finanzas
+    "aging_cxc": aging_cxc,
+    "dso_dpo": dso_dpo,
+    "pagos_programados": pagos_programados,
+    # Fase 6 · RH extra
+    "aguinaldo_devengado": aguinaldo_devengado,
+    "vacaciones_pendientes": vacaciones_pendientes,
+    "imss_a_pagar": imss_a_pagar,
+    "ptu_estimado": ptu_estimado,
+    # Fase 6 · Contabilidad
+    "iva_mes": iva_mes,
+    # Fase 6 · Compras
+    "lead_time_proveedor": lead_time_proveedor,
+    "reordenar_sin_oc": reordenar_sin_oc,
+    "variacion_costo": variacion_costo,
+    # Fase 6 · Inventario
+    "top_valor_inmovilizado": top_valor_inmovilizado,
+    "faltantes_para_pedidos": faltantes_para_pedidos,
+    # Fase 6 · POS extra
+    "descuentos_pos_dia": descuentos_pos_dia,
+    "devoluciones_pos_dia": devoluciones_pos_dia,
+    "cancelaciones_pos_dia": cancelaciones_pos_dia,
+    "top_producto_pos_dia": top_producto_pos_dia,
 }

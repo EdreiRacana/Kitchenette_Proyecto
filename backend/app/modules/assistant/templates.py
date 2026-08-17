@@ -465,6 +465,177 @@ def _t_nomina_vs_ventas(r: Dict[str, Any]) -> str:
             f"Ventas {_mxn(r['ventas'])} · Nómina bruta {_mxn(r['nomina'])}.")
 
 
+# ═════════════ formatters Fase 6 ═════════════
+
+def _t_wos_critico(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** tienda{'s' if r['count'] != 1 else ''} en WoS crítico."
+    if r["items"]:
+        t += "\n\nUrgentes:"
+        for it in r["items"][:5]:
+            t += f"\n• **{it['name']}** ({it['cadena']}) — {it['wos']}sem · {it['on_hand']} uds. (umbral {it['umbral']})"
+    return t
+
+
+def _t_sobrestock(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** tienda{'s' if r['count'] != 1 else ''} con sobre-stock."
+    if r["items"]:
+        t += "\n\nCandidatas a traslado:"
+        for it in r["items"][:5]:
+            t += f"\n• **{it['name']}** ({it['cadena']}) — {it['wos']}sem · {it['on_hand']} uds. (umbral {it['umbral']})"
+    return t
+
+
+def _t_fill_rate(r: Dict[str, Any]) -> str:
+    lines = [f"Fill rate por cadena {r['periodo']}:"]
+    for it in r["items"]:
+        pct = it["fill_rate_pct"]
+        pct_txt = f"**{pct}%**" if pct is not None else "s/d"
+        lines.append(f"• {it['cadena']} — {pct_txt} ({it['vendido']} vend / {it['devuelto']} dev)")
+    return "\n".join(lines)
+
+
+def _t_return_rate(r: Dict[str, Any]) -> str:
+    lines = [f"Return rate por cadena {r['periodo']}:"]
+    for it in r["items"]:
+        marca = " ⚠️" if it["excede"] else ""
+        lines.append(f"• {it['cadena']} — **{it['return_rate_pct']}%** (umbral {it['umbral']}%){marca}")
+    return "\n".join(lines)
+
+
+def _t_aging_cxc(r: Dict[str, Any]) -> str:
+    b = r["buckets"]
+    return (f"Aging CxC — total **{_mxn(r['total'])}**:\n"
+            f"• Al día: {_mxn(b.get('al_dia', 0))}\n"
+            f"• 1-30 días: {_mxn(b.get('1_30', 0))}\n"
+            f"• 31-60 días: {_mxn(b.get('31_60', 0))}\n"
+            f"• +60 días: **{_mxn(b.get('mas_60', 0))}**")
+
+
+def _t_dso_dpo(r: Dict[str, Any]) -> str:
+    dso = r["dso_dias"]
+    dpo = r["dpo_dias"]
+    dso_t = f"**{dso}d**" if dso is not None else "s/d"
+    dpo_t = f"**{dpo}d**" if dpo is not None else "s/d"
+    return (f"DSO (días de cobro): {dso_t}\n"
+            f"DPO (días de pago): {dpo_t}\n"
+            f"CxC {_mxn(r['cxc'])} · CxP {_mxn(r['cxp'])}")
+
+
+def _t_pagos_prog(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** pago{'s' if r['count'] != 1 else ''} programado{'s' if r['count'] != 1 else ''} — total **{_mxn(r['total'])}**."
+    if r["items"]:
+        t += "\n\nPróximos:"
+        for it in r["items"][:5]:
+            t += f"\n• {it['fecha']} · {it['concepto']} ({it['tipo']}) — {_mxn(it['monto'])}"
+    return t
+
+
+def _t_aguinaldo(r: Dict[str, Any]) -> str:
+    t = (f"Aguinaldo devengado al día: **{_mxn(r['total'])}** "
+         f"para {r['empleados']} empleado{'s' if r['empleados'] != 1 else ''}.")
+    if r.get("top"):
+        t += "\n\nMayor devengado:"
+        for it in r["top"][:5]:
+            t += f"\n• {it['empleado']} — {_mxn(it['aguinaldo'])}"
+    return t
+
+
+def _t_vacaciones(r: Dict[str, Any]) -> str:
+    t = (f"**{r['empleados_con_saldo']}** empleado{'s' if r['empleados_con_saldo'] != 1 else ''} "
+         f"con vacaciones pendientes ({r['total_dias']} días en total).")
+    if r.get("top"):
+        t += "\n\nMayor saldo:"
+        for it in r["top"][:5]:
+            t += f"\n• {it['empleado']} — {it['pendientes']} días"
+    return t
+
+
+def _t_imss(r: Dict[str, Any]) -> str:
+    return (f"IMSS {r['periodo']} — total a pagar **{_mxn(r['total'])}**:\n"
+            f"• Cuota obrero: {_mxn(r['obrero'])}\n"
+            f"• Cuota patronal: {_mxn(r['patronal'])}\n"
+            f"• INFONAVIT patronal (5%): {_mxn(r['infonavit_patronal'])}")
+
+
+def _t_ptu(r: Dict[str, Any]) -> str:
+    return (f"PTU {r['anio']} ({r['status']}):\n"
+            f"• Utilidad repartible: **{_mxn(r['utilidad_repartible'])}**\n"
+            f"• PTU pagado: {_mxn(r['ptu_pagado'])}\n"
+            f"• Empleados excluidos: {r['excluidos']}")
+
+
+def _t_iva(r: Dict[str, Any]) -> str:
+    return (f"IVA {r['periodo']} (aproximación):\n"
+            f"• Trasladado: **{_mxn(r['trasladado'])}**\n"
+            f"• Acreditable: {_mxn(r['acreditable'])}\n"
+            f"• Saldo: **{_mxn(r['saldo'])}**\n"
+            f"_{r.get('nota', '')}_")
+
+
+def _t_lead_time(r: Dict[str, Any]) -> str:
+    t = f"Lead time promedio: **{r['promedio_dias']}d** ({r['count']} proveedores configurados)."
+    if r.get("mas_lentos"):
+        t += "\n\nMás lentos:"
+        for it in r["mas_lentos"][:5]:
+            t += f"\n• {it['name']} — {it['dias']}d"
+    return t
+
+
+def _t_reordenar_sin_oc(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** SKU{'s' if r['count'] != 1 else ''} bajo punto de reorden SIN orden de compra abierta."
+    if r["items"]:
+        t += "\n\nUrgentes:"
+        for it in r["items"][:5]:
+            t += f"\n• **{it['name']}** ({it['sku']}) — {it['stock']} uds (reorden a {it['reorder']})"
+    return t
+
+
+def _t_variacion_costo(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** SKU{'s' if r['count'] != 1 else ''} con variación >5% en costo (últimos 60 días)."
+    if r["items"]:
+        t += "\n\nMayores cambios:"
+        for it in r["items"][:5]:
+            arrow = "↑" if it["variacion_pct"] > 0 else "↓"
+            t += f"\n• **{it['name']}** ({it['sku']}) — {arrow}{abs(it['variacion_pct'])}% ({_mxn(it['anterior'])} → {_mxn(it['actual'])})"
+    return t
+
+
+def _t_top_inmovilizado(r: Dict[str, Any]) -> str:
+    lines = ["Top SKUs por valor inmovilizado:"]
+    for i, it in enumerate(r["items"], 1):
+        lines.append(f"{i}. **{it['name']}** ({it['sku']}) — {_mxn(it['valor'])} ({it['unidades']} uds)")
+    return "\n".join(lines)
+
+
+def _t_faltantes(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** SKU{'s' if r['count'] != 1 else ''} con demanda pendiente que excede el stock."
+    if r["items"]:
+        t += "\n\nMayores faltantes:"
+        for it in r["items"][:5]:
+            t += f"\n• **{it['name']}** ({it['sku']}) — faltan **{it['faltan']}** uds. (req {it['requerido']} / stock {it['stock']})"
+    return t
+
+
+def _t_descuentos_pos(r: Dict[str, Any]) -> str:
+    return (f"Descuentos POS ({r['fecha']}): **{_mxn(r['monto_descontado'])}** "
+            f"en {r['tickets_con_descuento']} ticket{'s' if r['tickets_con_descuento'] != 1 else ''}.")
+
+
+def _t_devoluciones_pos(r: Dict[str, Any]) -> str:
+    return (f"Devoluciones POS ({r['fecha']}): **{r['count']}** — total **{_mxn(r['monto'])}**.")
+
+
+def _t_cancelaciones_pos(r: Dict[str, Any]) -> str:
+    return (f"Cancelaciones ({r['fecha']}): **{r['count']}** órdenes por {_mxn(r['monto'])}.")
+
+
+def _t_top_prod_pos(r: Dict[str, Any]) -> str:
+    lines = [f"Top productos POS ({r['fecha']}):"]
+    for i, it in enumerate(r["items"], 1):
+        lines.append(f"{i}. **{it['name']}** — {it['unidades']} uds. ({_mxn(it['revenue'])})")
+    return "\n".join(lines)
+
+
 _FORMATTERS = {
     "ventas_periodo": _t_ventas_periodo,
     "top_productos": _t_top_productos,
@@ -514,4 +685,26 @@ _FORMATTERS = {
     "top_cajeros_dia": _t_top_cajeros,
     "flujo_efectivo_proyectado": _t_flujo_proyectado,
     "nomina_vs_ventas": _t_nomina_vs_ventas,
+    # Fase 6
+    "tiendas_wos_critico": _t_wos_critico,
+    "tiendas_sobrestock": _t_sobrestock,
+    "fill_rate_cadena": _t_fill_rate,
+    "return_rate_cadena": _t_return_rate,
+    "aging_cxc": _t_aging_cxc,
+    "dso_dpo": _t_dso_dpo,
+    "pagos_programados": _t_pagos_prog,
+    "aguinaldo_devengado": _t_aguinaldo,
+    "vacaciones_pendientes": _t_vacaciones,
+    "imss_a_pagar": _t_imss,
+    "ptu_estimado": _t_ptu,
+    "iva_mes": _t_iva,
+    "lead_time_proveedor": _t_lead_time,
+    "reordenar_sin_oc": _t_reordenar_sin_oc,
+    "variacion_costo": _t_variacion_costo,
+    "top_valor_inmovilizado": _t_top_inmovilizado,
+    "faltantes_para_pedidos": _t_faltantes,
+    "descuentos_pos_dia": _t_descuentos_pos,
+    "devoluciones_pos_dia": _t_devoluciones_pos,
+    "cancelaciones_pos_dia": _t_cancelaciones_pos,
+    "top_producto_pos_dia": _t_top_prod_pos,
 }

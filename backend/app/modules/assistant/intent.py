@@ -180,6 +180,62 @@ _PATTERNS: list = [
         "nomina_vs_ventas", None),
     (r"(%|porcentaje).{0,20}(costo\s+laboral|nomina\s+sobre)",
         "nomina_vs_ventas", None),
+
+    # ── Retail avanzado ───────────────────────────────────────────────
+    (r"(tiendas?|stores?).{0,20}(cr[ií]tic|urgent|wos\s+bajo|reabast)",
+        "tiendas_wos_critico", None),
+    (r"(tiendas?|stores?).{0,20}(sobre.?stock|overstock|exceso)",
+        "tiendas_sobrestock", None),
+    (r"(fill\s+rate|nivel\s+de\s+servicio|surtido)",
+        "fill_rate_cadena", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(return\s+rate|tasa\s+de\s+devoluciones?)",
+        "return_rate_cadena", lambda m, q: {"periodo": _detect_period(q)}),
+
+    # ── Finanzas restantes ────────────────────────────────────────────
+    (r"^(aging|antig[uü]edad)\s+(de\s+)?(cxc|por\s+cobrar|cartera)",
+        "aging_cxc", None),
+    (r"(dso|dpo|d[ií]as\s+de\s+(cobro|pago)|d[ií]as\s+promedio)",
+        "dso_dpo", None),
+    (r"(pagos?\s+programad|calendario\s+de\s+pagos)",
+        "pagos_programados", None),
+
+    # ── RH extra ──────────────────────────────────────────────────────
+    (r"aguinaldo",
+        "aguinaldo_devengado", None),
+    (r"vacaciones?",
+        "vacaciones_pendientes", None),
+    (r"(imss).{0,20}(pagar|mes|cuota)",
+        "imss_a_pagar", None),
+    (r"\bptu\b|(reparto\s+de\s+utilidad)",
+        "ptu_estimado", None),
+
+    # ── Contabilidad ──────────────────────────────────────────────────
+    (r"\biva\b",
+        "iva_mes", None),
+
+    # ── Compras extra ─────────────────────────────────────────────────
+    (r"(lead\s*time|tiempo\s+de\s+entrega)",
+        "lead_time_proveedor", None),
+    (r"(reordenar|necesitan?\s+oc|falta\s+oc|hay\s+que\s+pedir)",
+        "reordenar_sin_oc", None),
+    (r"(variaci[oó]n|cambio|subi[oó]).{0,15}(costo|precio\s+proveedor)",
+        "variacion_costo", None),
+
+    # ── Inventario extra ──────────────────────────────────────────────
+    (r"(top|mayor).{0,20}(valor|inmovilizad|invertid).{0,15}(inventario|almac[eé]n)?",
+        "top_valor_inmovilizado", lambda m, q: {"limite": _detect_limit(q)}),
+    (r"(falt|no\s+alcanza|insuficient).{0,20}(pedid|surt|orden)",
+        "faltantes_para_pedidos", None),
+
+    # ── POS extra ─────────────────────────────────────────────────────
+    (r"(descuent).{0,20}(hoy|pos|d[ií]a)",
+        "descuentos_pos_dia", None),
+    (r"(devoluci[oó]n|refund|reembols).{0,20}(pos|hoy|caja|d[ií]a)",
+        "devoluciones_pos_dia", None),
+    (r"(cancelaci[oó]n|anulaci[oó]n).{0,20}(hoy|pos|d[ií]a)",
+        "cancelaciones_pos_dia", None),
+    (r"(producto|art[ií]cul).{0,20}(m[aá]s\s+vendid|top).{0,15}(pos|hoy|d[ií]a|caja)",
+        "top_producto_pos_dia", None),
 ]
 
 

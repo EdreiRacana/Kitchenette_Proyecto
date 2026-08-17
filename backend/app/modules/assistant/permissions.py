@@ -92,6 +92,35 @@ TOOL_MODULE: dict[str, str] = {
     # que por default solo Administrador/Contador ven en el seed RBAC).
     "flujo_efectivo_proyectado": "reports",
     "nomina_vs_ventas": "reports",
+
+    # Fase 6 · Retail avanzado
+    "tiendas_wos_critico": "sales",
+    "tiendas_sobrestock": "sales",
+    "fill_rate_cadena": "sales",
+    "return_rate_cadena": "sales",
+    # Fase 6 · Finanzas
+    "aging_cxc": "finance",
+    "dso_dpo": "finance",
+    "pagos_programados": "finance",
+    # Fase 6 · RH extra
+    "aguinaldo_devengado": "hr",
+    "vacaciones_pendientes": "hr",
+    "imss_a_pagar": "hr",
+    "ptu_estimado": "hr",
+    # Fase 6 · Contabilidad
+    "iva_mes": "accounting",
+    # Fase 6 · Compras
+    "lead_time_proveedor": "inventory",
+    "reordenar_sin_oc": "inventory",
+    "variacion_costo": "inventory",
+    # Fase 6 · Inventario
+    "top_valor_inmovilizado": "inventory",
+    "faltantes_para_pedidos": "inventory",
+    # Fase 6 · POS extra
+    "descuentos_pos_dia": "sales",
+    "devoluciones_pos_dia": "sales",
+    "cancelaciones_pos_dia": "sales",
+    "top_producto_pos_dia": "sales",
 }
 
 
