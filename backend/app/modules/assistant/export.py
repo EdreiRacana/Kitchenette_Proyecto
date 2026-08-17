@@ -538,49 +538,76 @@ _SPEC: Dict[str, Dict[str, Any]] = {
                      ("total", "Total"), ("ticket_promedio", "Ticket promedio")],
     },
     "ventas_cliente": {
-        "title": "Ficha de cliente",
-        "scalars": [("cliente", "Cliente"), ("pedidos", "Pedidos"),
-                     ("total_historico", "Total histórico"),
-                     ("saldo_pendiente", "Saldo pendiente"),
-                     ("ultima_compra", "Última compra")],
-        "table": {"key": "otras_coincidencias", "headers": [
-            ("name", "Otra coincidencia", "str"),
-            ("total", "Total histórico", "money"),
-        ]},
+        "title": "Ficha por nombre",
+        "scalars": [("nombre_busqueda", "Nombre buscado")],
+        "tables": [
+            {"key": "vendedores", "title": "Como vendedor", "headers": [
+                ("nombre", "Vendedor", "str"),
+                ("pedidos", "Pedidos", "int"),
+                ("total_vendido", "Total vendido", "money"),
+                ("ultima_venta", "Última venta", "str"),
+            ]},
+            {"key": "clientes", "title": "Como cliente", "headers": [
+                ("nombre", "Cliente", "str"),
+                ("pedidos", "Pedidos", "int"),
+                ("total_comprado", "Total comprado", "money"),
+                ("saldo_pendiente", "Saldo pendiente", "money"),
+                ("ultima_compra", "Última compra", "str"),
+            ]},
+        ],
     },
     "ventas_persona": {
         "title": "Ficha por nombre (vendedor / cliente)",
         "scalars": [("nombre_busqueda", "Nombre buscado")],
-        # Elegimos la tabla más útil — la de vendedores. Si el usuario
-        # quiere ambas en el XLSX podemos abrir dos sheets en el futuro.
-        "table": {"key": "vendedores", "headers": [
-            ("nombre", "Vendedor", "str"),
-            ("pedidos", "Pedidos", "int"),
-            ("total_vendido", "Total vendido", "money"),
-            ("ultima_venta", "Última venta", "str"),
-        ]},
+        # Dos tablas: una por rol. Cada una se imprime solo si tiene
+        # filas — así cuando el nombre solo aparece como cliente (ej.
+        # Argelia), la tabla de vendedores se omite silenciosamente y
+        # el XLSX igual sale con datos.
+        "tables": [
+            {"key": "vendedores", "title": "Como vendedor", "headers": [
+                ("nombre", "Vendedor", "str"),
+                ("pedidos", "Pedidos", "int"),
+                ("total_vendido", "Total vendido", "money"),
+                ("ultima_venta", "Última venta", "str"),
+            ]},
+            {"key": "clientes", "title": "Como cliente", "headers": [
+                ("nombre", "Cliente", "str"),
+                ("pedidos", "Pedidos", "int"),
+                ("total_comprado", "Total comprado", "money"),
+                ("saldo_pendiente", "Saldo pendiente", "money"),
+                ("ultima_compra", "Última compra", "str"),
+            ]},
+        ],
     },
 }
 
 
+def _tables_of(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Normaliza spec.table (dict, único) o spec.tables (list) → siempre
+    lista de dicts. Vacía si no hay ninguna."""
+    if spec.get("tables"):
+        return list(spec["tables"])
+    tbl = spec.get("table")
+    return [tbl] if tbl else []
+
+
 def is_exportable(data: Optional[Dict[str, Any]]) -> bool:
     """True si la respuesta tiene contenido que valga la pena exportar
-    (una tabla con al menos una fila, o suficientes escalares para armar
-    una hoja significativa). Usado por el frontend para decidir mostrar
-    el botón 'Descargar Excel'."""
+    (al menos una tabla con al menos una fila, o suficientes escalares
+    para armar una hoja significativa). Usado por el frontend para
+    decidir mostrar el botón 'Descargar Excel'."""
     if not data or not isinstance(data, dict):
         return False
     tool = data.get("tool")
     spec = _SPEC.get(tool)
     if not spec:
         return False
-    tbl = spec.get("table")
-    if tbl:
+    for tbl in _tables_of(spec):
         rows = data.get(tbl["key"]) or []
         if isinstance(rows, list) and len(rows) > 0:
             return True
-    # Si no hay tabla pero sí escalares, dejamos exportar solo si hay ≥2
-    # escalares con valor no-nulo — para no exportar una sola cifra suelta.
+    # Si no hay tabla con filas pero sí escalares, dejamos exportar solo si
+    # hay ≥2 escalares con valor no-nulo — evita exportar una sola cifra.
     scalars = spec.get("scalars", [])
     non_null = sum(1 for k, _ in scalars if data.get(k) is not None)
     return non_null >= 2
@@ -674,29 +701,35 @@ def build_xlsx(tool_name: str, data: Dict[str, Any],
             row += 1
         row += 1  # línea en blanco
 
-    # Bloque de tabla (si aplica)
-    tbl = spec.get("table")
-    if tbl:
+    # Bloque(s) de tabla — soporta spec.table (dict, único) y spec.tables (lista).
+    for tbl in _tables_of(spec):
         rows_data = data.get(tbl["key"]) or []
-        if rows_data:
-            headers = tbl["headers"]
-            for i, (_field, label, _tipo) in enumerate(headers, 1):
-                c = ws.cell(row=row, column=i, value=label)
-                c.font = _HEADER_FONT
-                c.fill = _HEADER_FILL
-                c.alignment = _CENTER
-                c.border = _BORDER
+        if not rows_data:
+            continue
+        # Sub-título opcional por tabla (útil cuando hay varias).
+        if tbl.get("title"):
+            c = ws.cell(row=row, column=1, value=tbl["title"])
+            c.font = Font(bold=True, size=11, color="1E3A5F")
             row += 1
-            for item in rows_data:
-                if not isinstance(item, dict):
-                    continue
-                for i, (field, _label, tipo) in enumerate(headers, 1):
-                    v = _fmt(item.get(field), tipo)
-                    c = ws.cell(row=row, column=i, value=v)
-                    c.font = _CELL_FONT
-                    c.border = _BORDER
-                    _apply_number_format(c, tipo)
-                row += 1
+        headers = tbl["headers"]
+        for i, (_field, label, _tipo) in enumerate(headers, 1):
+            c = ws.cell(row=row, column=i, value=label)
+            c.font = _HEADER_FONT
+            c.fill = _HEADER_FILL
+            c.alignment = _CENTER
+            c.border = _BORDER
+        row += 1
+        for item in rows_data:
+            if not isinstance(item, dict):
+                continue
+            for i, (field, _label, tipo) in enumerate(headers, 1):
+                v = _fmt(item.get(field), tipo)
+                c = ws.cell(row=row, column=i, value=v)
+                c.font = _CELL_FONT
+                c.border = _BORDER
+                _apply_number_format(c, tipo)
+            row += 1
+        row += 1  # separador entre tablas
 
     # Ajuste de anchos: mide contenido de cada columna, cap 45.
     for col_idx in range(1, ws.max_column + 1):
