@@ -2304,6 +2304,123 @@ async def top_producto_pos_dia(db: AsyncSession, fecha: Optional[str] = None, **
 
 
 # ══════════════════════════════════════════════════════════════════════
+# FASE 8 · Nuevas tools por feedback de uso real
+# ══════════════════════════════════════════════════════════════════════
+
+async def top_vendedores(db: AsyncSession, periodo: str = "mes",
+                          limite: int = 5, **k) -> Dict[str, Any]:
+    """Top vendedores por revenue en el periodo (Order.user_id → User)."""
+    from app.modules.sales import models as sm
+    from app.modules.auth.models import User
+    start, end, label = _period_bounds(periodo)
+    stmt = (
+        select(
+            User.id, User.full_name, User.email,
+            func.count(sm.Order.id).label("pedidos"),
+            func.coalesce(func.sum(sm.Order.total_amount), 0.0).label("revenue"),
+        )
+        .join(sm.Order, sm.Order.user_id == User.id)
+        .where(
+            sm.Order.kind == "order",
+            sm.Order.status != "cancelled",
+            sm.Order.created_at >= start,
+            sm.Order.created_at < end,
+        )
+        .group_by(User.id, User.full_name, User.email)
+        .order_by(func.coalesce(func.sum(sm.Order.total_amount), 0.0).desc())
+        .limit(max(1, min(limite, 20)))
+    )
+    rows = (await db.execute(stmt)).all()
+    items = [{"vendedor": r.full_name or r.email or "?",
+              "pedidos": int(r.pedidos or 0),
+              "revenue": _money(r.revenue)} for r in rows]
+    return {"tool": "top_vendedores", "periodo": label,
+            "items": items, "empty": len(items) == 0}
+
+
+async def ventas_pos_periodo(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Total de ventas POS en un periodo — no solo hoy. Complementa a
+    ventas_pos_dia para preguntas como 'cuánto se vendió en el POS en julio'."""
+    from app.modules.pos import models as pm
+    start, end, label = _period_bounds(periodo)
+    stmt = (
+        select(
+            func.count(pm.POSTransaction.id),
+            func.coalesce(func.sum(pm.POSTransaction.amount), 0.0),
+        )
+        .where(
+            pm.POSTransaction.type == "sale",
+            pm.POSTransaction.created_at >= start,
+            pm.POSTransaction.created_at < end,
+        )
+    )
+    n, total = (await db.execute(stmt)).one()
+    n = int(n or 0)
+    total = _money(total)
+    ticket = round(total / n, 2) if n > 0 else 0.0
+    return {"tool": "ventas_pos_periodo", "periodo": label,
+            "tickets": n, "total": total, "ticket_promedio": ticket,
+            "empty": n == 0}
+
+
+async def ventas_cliente(db: AsyncSession, nombre: str = "", **k) -> Dict[str, Any]:
+    """Busca un cliente por nombre (fuzzy ILIKE) y devuelve su resumen
+    de compras: total histórico, pedidos, saldo pendiente y última compra."""
+    from app.modules.sales import models as sm
+    from app.modules.customers.models import Customer
+    nombre = (nombre or "").strip()
+    if len(nombre) < 2:
+        return {"tool": "ventas_cliente", "empty": True,
+                "reason": "no se especificó nombre de cliente"}
+    like = f"%{nombre}%"
+    cust_stmt = (
+        select(Customer.id, Customer.name, Customer.razon_social)
+        .where(or_(Customer.name.ilike(like), Customer.razon_social.ilike(like)))
+        .limit(5)
+    )
+    matches = (await db.execute(cust_stmt)).all()
+    if not matches:
+        return {"tool": "ventas_cliente", "nombre": nombre, "empty": True,
+                "reason": f"no encontré un cliente con nombre parecido a '{nombre}'"}
+    # Si hay múltiples matches, tomamos el que más ha comprado en historia.
+    ids = [m.id for m in matches]
+    agg_stmt = (
+        select(
+            Customer.id, Customer.name, Customer.razon_social,
+            func.count(sm.Order.id).label("pedidos"),
+            func.coalesce(func.sum(sm.Order.total_amount), 0.0).label("total_hist"),
+            func.coalesce(func.sum(sm.Order.total_amount - sm.Order.paid_amount), 0.0).label("saldo"),
+            func.max(sm.Order.created_at).label("ultima"),
+        )
+        .join(sm.Order, sm.Order.customer_id == Customer.id, isouter=True)
+        .where(Customer.id.in_(ids),
+                or_(sm.Order.kind.is_(None), sm.Order.kind == "order"),
+                or_(sm.Order.status.is_(None), sm.Order.status != "cancelled"))
+        .group_by(Customer.id, Customer.name, Customer.razon_social)
+        .order_by(func.coalesce(func.sum(sm.Order.total_amount), 0.0).desc())
+    )
+    rows = (await db.execute(agg_stmt)).all()
+    if not rows:
+        return {"tool": "ventas_cliente", "nombre": nombre, "empty": True}
+    top = rows[0]
+    ultima = _aware(top.ultima)
+    return {
+        "tool": "ventas_cliente",
+        "nombre_busqueda": nombre,
+        "cliente": top.razon_social or top.name or "?",
+        "pedidos": int(top.pedidos or 0),
+        "total_historico": _money(top.total_hist),
+        "saldo_pendiente": _money(top.saldo),
+        "ultima_compra": ultima.strftime("%d/%m/%Y") if ultima else "sin compras",
+        "otras_coincidencias": [
+            {"name": r.razon_social or r.name or "?", "total": _money(r.total_hist)}
+            for r in rows[1:5]
+        ],
+        "empty": int(top.pedidos or 0) == 0,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Registro de tools disponibles — usado por el intent router y el LLM
 # ══════════════════════════════════════════════════════════════════════
 
@@ -2391,4 +2508,8 @@ TOOLS_REGISTRY = {
     "devoluciones_pos_dia": devoluciones_pos_dia,
     "cancelaciones_pos_dia": cancelaciones_pos_dia,
     "top_producto_pos_dia": top_producto_pos_dia,
+    # Fase 8 · Feedback de uso real
+    "top_vendedores": top_vendedores,
+    "ventas_pos_periodo": ventas_pos_periodo,
+    "ventas_cliente": ventas_cliente,
 }

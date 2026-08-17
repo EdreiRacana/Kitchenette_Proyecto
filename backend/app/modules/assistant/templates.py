@@ -110,6 +110,10 @@ def _empty_msg(tool: str, reason: str | None) -> str:
         "devoluciones_pos_dia": "No hay devoluciones registradas en el POS hoy.",
         "cancelaciones_pos_dia": "No hay órdenes canceladas hoy.",
         "top_producto_pos_dia": "No hay ventas registradas en el POS hoy.",
+        # Fase 8
+        "top_vendedores": "No hay ventas asignadas a vendedores en el periodo consultado.",
+        "ventas_pos_periodo": "No hay ventas registradas en el POS para el periodo consultado.",
+        "ventas_cliente": "No encontré un cliente con ese nombre, o no tiene compras registradas.",
     }
     base = friendly.get(tool, "No hay datos que mostrar para esta consulta.")
     if reason and "construcción" in reason:
@@ -695,6 +699,35 @@ def _t_top_prod_pos(r: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# ═════════════ formatters Fase 8 ═════════════
+
+def _t_top_vendedores(r: Dict[str, Any]) -> str:
+    lines = [f"Top vendedores {r['periodo']}:"]
+    for i, it in enumerate(r["items"], 1):
+        lines.append(f"{i}. **{it['vendedor']}** — {_mxn(it['revenue'])} en {it['pedidos']} pedido{'s' if it['pedidos'] != 1 else ''}")
+    return "\n".join(lines)
+
+
+def _t_ventas_pos_periodo(r: Dict[str, Any]) -> str:
+    return (f"POS {r['periodo']}: **{_mxn(r['total'])}** en {r['tickets']} ticket"
+            f"{'s' if r['tickets'] != 1 else ''}"
+            f" (promedio {_mxn(r['ticket_promedio'])}).")
+
+
+def _t_ventas_cliente(r: Dict[str, Any]) -> str:
+    t = (f"Cliente encontrado: **{r['cliente']}**\n"
+         f"• Pedidos históricos: {r['pedidos']}\n"
+         f"• Total comprado: **{_mxn(r['total_historico'])}**\n"
+         f"• Saldo pendiente: {_mxn(r['saldo_pendiente'])}\n"
+         f"• Última compra: {r['ultima_compra']}")
+    otros = r.get("otras_coincidencias") or []
+    if otros:
+        t += "\n\nOtras coincidencias:"
+        for o in otros:
+            t += f"\n• {o['name']} ({_mxn(o['total'])})"
+    return t
+
+
 _FORMATTERS = {
     "ventas_periodo": _t_ventas_periodo,
     "top_productos": _t_top_productos,
@@ -766,4 +799,8 @@ _FORMATTERS = {
     "devoluciones_pos_dia": _t_devoluciones_pos,
     "cancelaciones_pos_dia": _t_cancelaciones_pos,
     "top_producto_pos_dia": _t_top_prod_pos,
+    # Fase 8
+    "top_vendedores": _t_top_vendedores,
+    "ventas_pos_periodo": _t_ventas_pos_periodo,
+    "ventas_cliente": _t_ventas_cliente,
 }
