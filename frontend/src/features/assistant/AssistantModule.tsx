@@ -201,9 +201,22 @@ export default function Assistant() {
   const [input, setInput] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [streaming, setStreaming] = useState(false);
-  // Presupuesto simulado (0 a 1). En fase B esto lee del backend real.
-  // 0.24 = verde relajado; cambia a amarillo >0.60; a rojo >0.85.
-  const [budget] = useState(0.24);
+  // Presupuesto real leído del backend: /assistant/budget devuelve
+  // { pct, level, over_budget }. Se refresca al abrir y tras cada mensaje.
+  const [budget, setBudget] = useState<{ pct: number; level: "green" | "amber" | "red"; over: boolean }>(
+    { pct: 0, level: "green", over: false }
+  );
+  const refreshBudget = async () => {
+    try {
+      const { data } = await api.get("/assistant/budget");
+      setBudget({
+        pct: data?.pct ?? 0,
+        level: (data?.level as "green" | "amber" | "red") || "green",
+        over: !!data?.over_budget,
+      });
+    } catch { /* silencio — la barra queda como esté */ }
+  };
+  useEffect(() => { if (open) refreshBudget(); }, [open]);
   // Bienvenida de primera vez — se muestra una sola vez y se recuerda en
   // localStorage. Se cierra sola a los 8 s o al primer click en el FAB.
   const [showWelcome, setShowWelcome] = useState<boolean>(() => {
@@ -280,6 +293,8 @@ export default function Assistant() {
       });
     }
     setStreaming(false);
+    // Refresca la barra por si la respuesta consumió LLM (Sprint 2+)
+    refreshBudget();
   };
 
   // ── Voces del sistema (Web Speech API) ─────────────────────────────
@@ -343,11 +358,13 @@ export default function Assistant() {
     try { localStorage.setItem("assistant:voice", v.name); } catch { /* noop */ }
   };
 
-  // Color de la barra según nivel de consumo del presupuesto
+  // Color de la barra según nivel del backend (green/amber/red)
   const budgetColor =
-    budget >= 0.85 ? "#EF4444" :
-    budget >= 0.60 ? "#F0B740" :
-                     "#4ADE80";
+    budget.level === "red"   ? "#EF4444" :
+    budget.level === "amber" ? "#F0B740" :
+                                "#4ADE80";
+  // Ancho mínimo 4% para que la barra sea visible aún si el gasto es 0
+  const budgetWidthPct = Math.max(4, Math.round(budget.pct * 100));
 
   return createPortal(
     <>
@@ -751,7 +768,7 @@ export default function Assistant() {
               title="Consumo del presupuesto mensual del asistente"
             >
               <div style={{
-                width: `${Math.max(4, budget * 100)}%`, height: "100%",
+                width: `${budgetWidthPct}%`, height: "100%",
                 background: budgetColor, borderRadius: 999,
                 transition: "width .6s, background .6s",
               }} />

@@ -1,4 +1,4 @@
-"""Endpoint del asistente. Sprint 1: solo router determinista Python."""
+"""Endpoint del asistente. Sprint 2: router determinista + fallback LLM."""
 from __future__ import annotations
 import time
 from typing import Annotated, Optional
@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
 from app.modules.auth.models import User
-from app.modules.assistant import tools, intent, templates
+from app.modules.assistant import tools, intent, templates, budget, llm
 
 router = APIRouter()
 DB = Annotated[AsyncSession, Depends(deps.get_db)]
@@ -26,29 +26,69 @@ class AskResponse(BaseModel):
     ms: int
     matched: bool
     used_llm: bool = False
+    llm_purpose: Optional[str] = None  # "route" | "narrate" | None
     data: Optional[dict] = None
+
+
+class BudgetResponse(BaseModel):
+    spent_usd: float
+    limit_usd: float
+    pct: float
+    level: str            # "green" | "amber" | "red"
+    over_budget: bool
+
+
+@router.get("/budget", response_model=BudgetResponse)
+async def get_budget(db: DB, current_user: CurrentUser):
+    """Estado actual del presupuesto mensual de LLM.
+    La UI la usa para colorear la barra sin exponer cifras al usuario."""
+    return await budget.budget_status(db)
 
 
 @router.post("/ask", response_model=AskResponse)
 async def ask(payload: AskRequest, db: DB, current_user: CurrentUser) -> AskResponse:
-    """Recibe pregunta, resuelve con router determinista, devuelve respuesta.
+    """Pipeline:
 
-    Sprint 1 flow:
-      1) intent.route(q) → (tool_name, kwargs) o None
-      2) Si matcheó → ejecuta la tool → template → respuesta
-      3) Si no matcheó → mensaje explicando que aún no lo entiende (en
-         Sprint 2 aquí entra el LLM decidiendo qué tool llamar).
+      1) intent.route(q) → si matchea patrón conocido, ejecuta tool + template.
+         Cero LLM. 60-70% del tráfico cae aquí.
+      2) Si NO matchea → llm.route_with_llm decide qué tool llamar.
+         Ejecuta tool + template. 1 llamada Haiku (~$0.0005).
+      3) Si la pregunta es interpretativa ("por qué / sugiere / analiza")
+         → después de ejecutar la tool, llm.narrate_with_llm redacta
+         interpretación en vez de usar el template. +1 llamada (~$0.001).
+      4) Budget guard: si mes >= $5, se salta el LLM y responde con
+         template o mensaje de "presupuesto agotado".
     """
     q = payload.question.strip()
     t0 = time.perf_counter()
+    user_id = getattr(current_user, "id", None)
 
+    # Capa 1: router determinista
     routed = intent.route(q)
+    used_llm = False
+    llm_purpose: Optional[str] = None
+
+    # Capa 2: si router local no matcheó, escalar a LLM (si hay presupuesto)
     if not routed:
+        llm_choice = await llm.route_with_llm(db, q, user_id=user_id)
+        if llm_choice:
+            routed = (llm_choice["tool_name"], llm_choice.get("tool_input") or {})
+            used_llm = True
+            llm_purpose = "route"
+
+    if not routed:
+        # No entendimos, o LLM tampoco encontró tool aplicable, o presupuesto agotado
+        over = await budget.is_over_budget(db)
+        base = ("Aún no puedo entender esa pregunta con precisión. "
+                "Prueba con: ventas del mes, top productos, cartera vencida, "
+                "stock crítico, caducidades, cadena Walmart, POS del día.")
+        if over:
+            base = ("Se agotó el presupuesto mensual del asistente. "
+                    "Aún puedo responder preguntas frecuentes (ventas del mes, "
+                    "cxc, top productos, stock crítico...) con el motor "
+                    "determinista sin costo.")
         return AskResponse(
-            text=("Aún no puedo entender esa pregunta con precisión. "
-                  "Prueba con: ventas del mes, top productos, cartera vencida, "
-                  "stock crítico, caducidades, cadena Walmart, POS del día."),
-            matched=False, used_llm=False,
+            text=base, matched=False, used_llm=used_llm, llm_purpose=llm_purpose,
             ms=int((time.perf_counter() - t0) * 1000),
         )
 
@@ -57,7 +97,7 @@ async def ask(payload: AskRequest, db: DB, current_user: CurrentUser) -> AskResp
     if not tool_fn:
         return AskResponse(
             text=f"Tool '{tool_name}' no está disponible en esta versión.",
-            matched=True, used_llm=False, tool=tool_name,
+            matched=True, used_llm=used_llm, llm_purpose=llm_purpose, tool=tool_name,
             ms=int((time.perf_counter() - t0) * 1000),
         )
 
@@ -66,16 +106,26 @@ async def ask(payload: AskRequest, db: DB, current_user: CurrentUser) -> AskResp
     except Exception as e:
         return AskResponse(
             text=f"No pude ejecutar la consulta: {e}",
-            matched=True, used_llm=False, tool=tool_name,
+            matched=True, used_llm=used_llm, llm_purpose=llm_purpose, tool=tool_name,
             ms=int((time.perf_counter() - t0) * 1000),
         )
 
-    text = templates.format_response(result)
+    # Capa 3: ¿el usuario pide interpretación? → narrar con LLM.
+    # Solo si el tool devolvió datos reales, no si viene vacío o es stub.
+    narrative: Optional[str] = None
+    if llm.wants_narrative(q) and not result.get("empty"):
+        narrative = await llm.narrate_with_llm(db, q, result, user_id=user_id)
+        if narrative:
+            used_llm = True
+            llm_purpose = "narrate" if llm_purpose != "route" else "route+narrate"
+
+    text = narrative if narrative else templates.format_response(result)
+
     return AskResponse(
         text=text,
         source=_source_label(tool_name),
         tool=tool_name,
-        matched=True, used_llm=False,
+        matched=True, used_llm=used_llm, llm_purpose=llm_purpose,
         data=result,
         ms=int((time.perf_counter() - t0) * 1000),
     )

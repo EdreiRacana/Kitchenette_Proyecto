@@ -787,6 +787,22 @@ _SALES_AGENTS_STATEMENTS = [
 ]
 
 
+# ── Asistente conversacional — tracking de gasto LLM ─────────────────
+_ASSISTANT_STATEMENTS = [
+    """CREATE TABLE IF NOT EXISTS assistant_llm_usage (
+        id             SERIAL PRIMARY KEY,
+        created_at     TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        user_id        INTEGER,
+        purpose        VARCHAR NOT NULL,
+        model          VARCHAR NOT NULL,
+        input_tokens   INTEGER DEFAULT 0 NOT NULL,
+        output_tokens  INTEGER DEFAULT 0 NOT NULL,
+        cost_usd       DOUBLE PRECISION DEFAULT 0 NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_assistant_usage_created ON assistant_llm_usage (created_at)",
+]
+
+
 def _apply(sync_conn: Connection) -> None:
     if sync_conn.dialect.name != "postgresql":
         return
@@ -805,6 +821,7 @@ def _apply(sync_conn: Connection) -> None:
         ("retail",     _RETAIL_STATEMENTS),
         ("promotions", _PROMOTIONS_STATEMENTS),
         ("loyalty",    _LOYALTY_STATEMENTS),
+        ("assistant",  _ASSISTANT_STATEMENTS),
     ]
 
     for label, statements in all_statements:
