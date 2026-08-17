@@ -25,6 +25,7 @@ import ConfigModule from "./features/config/ConfigModule";
 import ForecastModule from "./features/forecast/ForecastModule";
 import RetailModule from "./features/retail/RetailModule";
 import POSModule from "./features/pos/POSModule";
+import Assistant from "./features/assistant/AssistantModule";
 import { TrianglesCanvas } from "./components/TrianglesCanvas";
 import CompanySwitcher from "./components/CompanySwitcher";
 import api, { onUnauthorized } from "./services/api";
@@ -3117,6 +3118,9 @@ export default function App() {
           <div style={{ position: "relative", zIndex: 1 }}>{canView(page) ? PAGES[page] : null}</div>
         </main>
       </div>
+      {/* Asistente flotante — capa por encima de todos los módulos,
+          no invasivo, se abre con click al FAB o Ctrl+K. */}
+      <Assistant />
     </div>
   );
 }
