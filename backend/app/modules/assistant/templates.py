@@ -717,12 +717,12 @@ def _t_ventas_pos_periodo(r: Dict[str, Any]) -> str:
 
 
 def _t_ventas_persona(r: Dict[str, Any]) -> str:
-    """Formato con secciones — vendedor y/o cliente según qué se
-    encontró bajo el nombre buscado."""
+    """Formato con secciones — vendedor, cliente y/o empleado según qué
+    se encontró bajo el nombre buscado."""
     vends = r.get("vendedores") or []
     custs = r.get("clientes") or []
-    parts = []
-    parts.append(f"Búsqueda: **{r['nombre_busqueda']}**")
+    emps = r.get("empleados") or []
+    parts = [f"Búsqueda: **{r['nombre_busqueda']}**"]
     if vends:
         parts.append("\n**Como vendedor:**")
         for v in vends:
@@ -738,6 +738,14 @@ def _t_ventas_persona(r: Dict[str, Any]) -> str:
                 f"• **{c['nombre']}** — compró {_mxn(c['total_comprado'])} "
                 f"({c['pedidos']} pedido{'s' if c['pedidos'] != 1 else ''}, "
                 f"saldo {_mxn(c['saldo_pendiente'])}, última {c['ultima_compra']})"
+            )
+    if emps:
+        parts.append("\n**Como empleado:**")
+        for e in emps:
+            num = f" ({e['numero']})" if e.get("numero") else ""
+            parts.append(
+                f"• **{e['nombre']}**{num} — {e['puesto']} · {e['departamento']}"
+                f" (ingreso {e['ingreso']}, estado {e['estado']})"
             )
     return "\n".join(parts)
 

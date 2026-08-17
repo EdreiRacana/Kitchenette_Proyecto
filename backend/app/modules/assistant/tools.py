@@ -2364,18 +2364,24 @@ async def ventas_pos_periodo(db: AsyncSession, periodo: str = "mes", **k) -> Dic
 
 
 async def ventas_persona(db: AsyncSession, nombre: str = "", **k) -> Dict[str, Any]:
-    """Búsqueda unificada por nombre: revisa TANTO vendedores (User.full_name
-    con Order.user_id) COMO clientes (Customer.name / razon_social). Devuelve
-    lo que encuentre en cada rol — si Francisco es a la vez un vendedor y un
-    cliente, aparecen ambas secciones."""
+    """Búsqueda unificada por nombre: revisa TRES tablas — usuarios/
+    vendedores (User + Order.user_id), clientes (Customer) y empleados
+    de RH (Employee). Devuelve una sección por cada rol donde aparezca
+    el nombre; si es solo empleado (sin cuenta de vendedor ni compras),
+    aparece únicamente la sección de RH con datos NO sensibles
+    (puesto, depto, ingreso, estado). Salario/SBC/datos fiscales
+    quedan fuera por diseño — para eso están las tools específicas
+    de nómina bajo permiso HR."""
     from app.modules.sales import models as sm
     from app.modules.customers.models import Customer
     from app.modules.auth.models import User
+    from app.modules.hr import models as hm
     nombre = (nombre or "").strip()
     if len(nombre) < 2:
         return {"tool": "ventas_persona", "empty": True,
                 "reason": ("no capté un nombre. Prueba con 'ventas de <nombre>' "
-                            "o 'cómo va <nombre>' — funciona para vendedores y clientes.")}
+                            "o 'cómo va <nombre>' — funciona para vendedores, "
+                            "clientes y empleados.")}
     like = f"%{nombre}%"
 
     # ── Sección 1: como vendedor (User) ────────────────────────────
@@ -2438,14 +2444,49 @@ async def ventas_persona(db: AsyncSession, nombre: str = "", **k) -> Dict[str, A
                 "ultima_compra": _aware(r.ultima).strftime("%d/%m/%Y") if r.ultima else "sin compras",
             })
 
-    empty = len(vendedores) == 0 and len(clientes) == 0
+    # ── Sección 3: como empleado (Employee — plantilla RH) ─────────
+    # Info organizacional NO sensible únicamente. Salario, SBC, RFC,
+    # CURP, NSS y datos fiscales quedan fuera — para eso están las
+    # tools específicas de RH (nomina_periodo, etc.) bajo permiso HR.
+    emp_stmt = (
+        select(
+            hm.Employee.name, hm.Employee.last_name, hm.Employee.email,
+            hm.Employee.position, hm.Employee.department,
+            hm.Employee.hire_date, hm.Employee.status,
+            hm.Employee.employee_number,
+        )
+        .where(
+            or_(
+                hm.Employee.name.ilike(like),
+                hm.Employee.last_name.ilike(like),
+                hm.Employee.email.ilike(like),
+                func.concat(hm.Employee.name, " ", hm.Employee.last_name).ilike(like),
+            )
+        )
+        .limit(5)
+    )
+    try:
+        emp_rows = (await db.execute(emp_stmt)).all()
+    except Exception:
+        emp_rows = []
+    empleados = [{
+        "nombre": f"{r.name} {r.last_name}".strip(),
+        "numero": r.employee_number,
+        "puesto": r.position or "?",
+        "departamento": r.department or "?",
+        "estado": r.status or "activo",
+        "ingreso": r.hire_date or "?",
+    } for r in emp_rows]
+
+    empty = len(vendedores) == 0 and len(clientes) == 0 and len(empleados) == 0
     return {
         "tool": "ventas_persona",
         "nombre_busqueda": nombre,
         "vendedores": vendedores,
         "clientes": clientes,
+        "empleados": empleados,
         "empty": empty,
-        "reason": (f"no encontré vendedor ni cliente con nombre parecido a '{nombre}'"
+        "reason": (f"no encontré vendedor, cliente ni empleado con nombre parecido a '{nombre}'"
                     if empty else None),
     }
 
