@@ -206,6 +206,436 @@ def _t_ventas_pos_dia(r: Dict[str, Any]) -> str:
     return txt
 
 
+# ═════════════ formatters de tools Fase 2/3 ═════════════
+
+def _t_concentracion(r: Dict[str, Any]) -> str:
+    t = (f"Tienes {r['n_clientes']} clientes activos {r['periodo']}. "
+         f"**{r['clientes_hasta_80']}** concentran el 80% del ingreso.")
+    if r.get("top1"):
+        t += (f"\n\nTop cliente: **{r['top1']['name']}** — "
+              f"{_mxn(r['top1']['revenue'])} ({r['top1']['pct']}% del total).")
+    t += f"\nLos 3 principales pesan **{r['top3_pct']}%**."
+    return t
+
+
+def _t_sin_movimiento(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** SKU activo{'s' if r['count'] != 1 else ''} sin ventas en {r['dias']} días."
+    if r["items"]:
+        t += "\n\nCon más stock parado:"
+        for it in r["items"][:5]:
+            t += f"\n• **{it['name']}** ({it['sku']}) — {it['stock']} uds."
+    return t
+
+
+def _t_rotacion(r: Dict[str, Any]) -> str:
+    t = (f"WoS promedio: **{r['wos_promedio']} semanas** "
+         f"({r['n_evaluados']} SKUs evaluados con ventas recientes).")
+    if r.get("rapidos"):
+        t += "\n\nRápidos:"
+        for it in r["rapidos"][:3]:
+            t += f"\n• {it['name']} — {it['wos']}sem (vel {it['vel_sem']}/sem)"
+    if r.get("lentos"):
+        t += "\n\nLentos:"
+        for it in r["lentos"][:3]:
+            t += f"\n• {it['name']} — {it['wos']}sem"
+    return t
+
+
+def _t_desempeno_tienda(r: Dict[str, Any]) -> str:
+    lines = [f"Desempeño de tiendas {r['periodo']}:"]
+    if r.get("top"):
+        lines.append("\nTop:")
+        for i, it in enumerate(r["top"], 1):
+            lines.append(f"{i}. **{it['name']}** ({it['cadena']}) — {_mxn(it['revenue'])} · {it['unidades']} uds.")
+    if r.get("bottom"):
+        lines.append("\nBottom:")
+        for it in r["bottom"]:
+            lines.append(f"• {it['name']} ({it['cadena']}) — {_mxn(it['revenue'])}")
+    return "\n".join(lines)
+
+
+def _t_sell_through(r: Dict[str, Any]) -> str:
+    lines = [f"Sell-out por tienda {r['periodo']}:"]
+    for it in r["items"]:
+        lines.append(f"• **{it['name']}** — {it['units_out']} uds.")
+    if r.get("nota"):
+        lines.append(f"\n_{r['nota']}_")
+    return "\n".join(lines)
+
+
+def _t_pos_hora(r: Dict[str, Any]) -> str:
+    lines = [f"POS por hora ({r['fecha']}):"]
+    for h in r["horas"]:
+        bar = "▇" * min(20, int(h["monto"] / 500)) if h["monto"] else ""
+        lines.append(f"{h['hora']:02d}:00 — {_mxn(h['monto'])} · {h['tickets']}t  {bar}")
+    if r.get("pico"):
+        lines.append(f"\nHora pico: **{r['pico']['hora']:02d}:00** con {_mxn(r['pico']['monto'])}")
+    return "\n".join(lines)
+
+
+def _t_utilidad_bruta(r: Dict[str, Any]) -> str:
+    return (f"Utilidad bruta {r['periodo']}: **{_mxn(r['utilidad'])}** "
+            f"({r['margen_pct']}% de margen).\n"
+            f"Ingreso {_mxn(r['ingreso'])} − Costo {_mxn(r['costo'])}.")
+
+
+def _t_cotizaciones(r: Dict[str, Any]) -> str:
+    t = (f"**{r['count']}** cotizaci{'ones abiertas' if r['count'] != 1 else 'ón abierta'} "
+         f"por un total de **{_mxn(r['monto_total'])}**.")
+    if r.get("recientes"):
+        t += "\n\nRecientes:"
+        for it in r["recientes"]:
+            t += f"\n• {it['folio']} — {_mxn(it['monto'])}"
+    return t
+
+
+def _t_clientes_inactivos(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** cliente{'s' if r['count'] != 1 else ''} sin comprar en {r['dias']}+ días."
+    if r.get("items"):
+        t += "\n\nMás recientes en volverse inactivos:"
+        for it in r["items"][:5]:
+            d = it.get("dias_sin_comprar")
+            t += f"\n• **{it['name']}** — {d or '?'}d sin comprar"
+    return t
+
+
+def _t_ticket_promedio(r: Dict[str, Any]) -> str:
+    return (f"Ticket promedio {r['periodo']}: **{_mxn(r['ticket'])}** "
+            f"(sobre {r['count']} pedidos).")
+
+
+def _t_devoluciones(r: Dict[str, Any]) -> str:
+    return (f"**{r['count']}** devoluci{'ones' if r['count'] != 1 else 'ón'} {r['periodo']} — "
+            f"**{_mxn(r['monto'])}** reembolsados.")
+
+
+def _t_venc_semana(r: Dict[str, Any], quien: str) -> str:
+    t = (f"**{r['count']}** {quien}{'s' if r['count'] != 1 else ''} "
+         f"vencen esta semana — total **{_mxn(r['total'])}**.")
+    if r["items"]:
+        t += "\n\nDetalle:"
+        for it in r["items"][:5]:
+            who = it.get("cliente") or it.get("proveedor") or "?"
+            t += f"\n• {it['folio']} · {who} — {_mxn(it['monto'])} ({it['vence']})"
+    return t
+
+
+def _t_flujo_neto(r: Dict[str, Any]) -> str:
+    signo = "positivo" if r["neto"] >= 0 else "**negativo**"
+    return (f"Flujo neto proyectado 30 días: {signo} **{_mxn(r['neto'])}**.\n"
+            f"CxC esperada {_mxn(r['cxc'])} − CxP esperada {_mxn(r['cxp'])}.")
+
+
+def _t_oc_abiertas(r: Dict[str, Any]) -> str:
+    t = (f"**{r['count']}** OC abierta{'s' if r['count'] != 1 else ''} — "
+         f"total **{_mxn(r['monto_total'])}**.")
+    if r["items"]:
+        t += "\n\nRecientes:"
+        for it in r["items"][:5]:
+            t += f"\n• {it['folio']} · {it['proveedor']} — {_mxn(it['monto'])} ({it['status']}, {it['vence']})"
+    return t
+
+
+def _t_oc_atrasadas(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** OC atrasada{'s' if r['count'] != 1 else ''}."
+    if r["items"]:
+        t += "\n\nMás críticas:"
+        for it in r["items"][:5]:
+            t += f"\n• {it['folio']} · {it['proveedor']} — {_mxn(it['monto'])} (**{it['dias_retraso']}d de retraso**)"
+    return t
+
+
+def _t_top_proveedores(r: Dict[str, Any]) -> str:
+    lines = [f"Top proveedores {r['periodo']} por gasto:"]
+    for i, it in enumerate(r["items"], 1):
+        lines.append(f"{i}. **{it['name']}** — {_mxn(it['gasto'])} ({it['facturas']} facturas)")
+    return "\n".join(lines)
+
+
+def _t_valor_inventario(r: Dict[str, Any]) -> str:
+    return (f"Inventario valorizado en **{_mxn(r['valor_total'])}** "
+            f"sobre {r['skus_con_stock']} SKUs con stock.")
+
+
+def _t_merma(r: Dict[str, Any]) -> str:
+    return (f"Merma del mes: **{r['unidades']} uds.** por **{_mxn(r['valor'])}** "
+            f"en {r['movimientos']} movimiento{'s' if r['movimientos'] != 1 else ''}.")
+
+
+def _t_ing_vs_egr(r: Dict[str, Any]) -> str:
+    resultado = "utilidad" if r["neto"] >= 0 else "**pérdida**"
+    return (f"P&L {r['periodo']}:\n"
+            f"• Ingresos: **{_mxn(r['ingresos'])}**\n"
+            f"• Egresos: {_mxn(r['egresos'])}\n"
+            f"• Resultado: {resultado} de **{_mxn(abs(r['neto']))}**")
+
+
+def _t_gastos_cat(r: Dict[str, Any]) -> str:
+    lines = [f"Gastos {r['periodo']} — total {_mxn(r['total'])}:"]
+    for it in r["items"]:
+        lines.append(f"• {it['categoria']} — **{_mxn(it['monto'])}**")
+    return "\n".join(lines)
+
+
+def _t_no_conciliados(r: Dict[str, Any]) -> str:
+    return (f"**{r['count']}** movimiento{'s' if r['count'] != 1 else ''} bancario"
+            f"{'s' if r['count'] != 1 else ''} sin conciliar por **{_mxn(r['monto'])}**.")
+
+
+def _t_nomina_periodo(r: Dict[str, Any]) -> str:
+    t = (f"Nómina **{r['periodo']}** ({r['status']}, {r['kind']}):\n"
+         f"• Empleados: {r['empleados']}\n"
+         f"• Bruto: **{_mxn(r['bruto'])}**\n"
+         f"• Neto pagado: **{_mxn(r['neto'])}**\n"
+         f"• IMSS patronal: {_mxn(r['imss_patronal'])}")
+    return t
+
+
+def _t_empleados(r: Dict[str, Any]) -> str:
+    return (f"Plantilla activa: **{r['activos']}** empleado"
+            f"{'s' if r['activos'] != 1 else ''}. "
+            f"Altas este mes: {r['altas_mes']}.")
+
+
+def _t_incapacidades(r: Dict[str, Any]) -> str:
+    t = f"**{r['total']}** incapacidad{'es' if r['total'] != 1 else ''} en {r['periodo']}."
+    if r.get("desglose"):
+        t += "\n\nDesglose:"
+        for k, v in r["desglose"].items():
+            t += f"\n• {k}: {v}"
+    return t
+
+
+def _t_contratos(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** contrato{'s' if r['count'] != 1 else ''} vencen en {r['dias']} días."
+    if r["items"]:
+        t += "\n\nPróximos:"
+        for it in r["items"][:5]:
+            t += f"\n• **{it['empleado']}** ({it['tipo']}) — vence {it['vence']} (en {it['dias']}d)"
+    return t
+
+
+def _t_cumpleanos(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** cumpleaños este mes."
+    if r["items"]:
+        for it in r["items"][:10]:
+            t += f"\n• {it['dia']} — {it['nombre']}"
+    return t
+
+
+def _t_isr_nomina(r: Dict[str, Any]) -> str:
+    return f"ISR retenido de nómina {r['periodo']}: **{_mxn(r['isr_retenido'])}**."
+
+
+def _t_corte_caja(r: Dict[str, Any]) -> str:
+    t = f"**{r['abiertas']}** sesión{'es' if r['abiertas'] != 1 else ''} POS abierta{'s' if r['abiertas'] != 1 else ''}."
+    if r["sesiones"]:
+        t += "\n\nEsperado en caja:"
+        for s in r["sesiones"]:
+            t += f"\n• {s['terminal']} (desde {s['abierta']}) — **{_mxn(s['esperado'])}**"
+    return t
+
+
+def _t_formas_pago(r: Dict[str, Any]) -> str:
+    t = f"Formas de pago del POS ({r['fecha']}) — total **{_mxn(r['total'])}**:"
+    for it in r["items"]:
+        t += f"\n• {it['metodo']}: **{_mxn(it['monto'])}** ({it['tickets']}t)"
+    return t
+
+
+def _t_top_cajeros(r: Dict[str, Any]) -> str:
+    lines = [f"Top cajeros del día ({r['fecha']}):"]
+    for i, it in enumerate(r["items"], 1):
+        lines.append(f"{i}. **{it['cajero']}** — {_mxn(it['monto'])} ({it['tickets']}t)")
+    return "\n".join(lines)
+
+
+def _t_flujo_proyectado(r: Dict[str, Any]) -> str:
+    return (f"Proyección de caja 30 días:\n"
+            f"• Saldo actual bancos: **{_mxn(r['saldo_actual'])}**\n"
+            f"• Cobranza esperada: {_mxn(r['cobranza_esperada'])}\n"
+            f"• Pagos esperados: {_mxn(r['pagos_esperados'])}\n"
+            f"• **Proyección: {_mxn(r['proyeccion_30d'])}**")
+
+
+def _t_nomina_vs_ventas(r: Dict[str, Any]) -> str:
+    pct = r.get("pct_costo_laboral")
+    pct_txt = f"**{pct}%**" if pct is not None else "s/d"
+    return (f"Costo laboral del mes: {pct_txt} de las ventas.\n"
+            f"Ventas {_mxn(r['ventas'])} · Nómina bruta {_mxn(r['nomina'])}.")
+
+
+# ═════════════ formatters Fase 6 ═════════════
+
+def _t_wos_critico(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** tienda{'s' if r['count'] != 1 else ''} en WoS crítico."
+    if r["items"]:
+        t += "\n\nUrgentes:"
+        for it in r["items"][:5]:
+            t += f"\n• **{it['name']}** ({it['cadena']}) — {it['wos']}sem · {it['on_hand']} uds. (umbral {it['umbral']})"
+    return t
+
+
+def _t_sobrestock(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** tienda{'s' if r['count'] != 1 else ''} con sobre-stock."
+    if r["items"]:
+        t += "\n\nCandidatas a traslado:"
+        for it in r["items"][:5]:
+            t += f"\n• **{it['name']}** ({it['cadena']}) — {it['wos']}sem · {it['on_hand']} uds. (umbral {it['umbral']})"
+    return t
+
+
+def _t_fill_rate(r: Dict[str, Any]) -> str:
+    lines = [f"Fill rate por cadena {r['periodo']}:"]
+    for it in r["items"]:
+        pct = it["fill_rate_pct"]
+        pct_txt = f"**{pct}%**" if pct is not None else "s/d"
+        lines.append(f"• {it['cadena']} — {pct_txt} ({it['vendido']} vend / {it['devuelto']} dev)")
+    return "\n".join(lines)
+
+
+def _t_return_rate(r: Dict[str, Any]) -> str:
+    lines = [f"Return rate por cadena {r['periodo']}:"]
+    for it in r["items"]:
+        marca = " ⚠️" if it["excede"] else ""
+        lines.append(f"• {it['cadena']} — **{it['return_rate_pct']}%** (umbral {it['umbral']}%){marca}")
+    return "\n".join(lines)
+
+
+def _t_aging_cxc(r: Dict[str, Any]) -> str:
+    b = r["buckets"]
+    return (f"Aging CxC — total **{_mxn(r['total'])}**:\n"
+            f"• Al día: {_mxn(b.get('al_dia', 0))}\n"
+            f"• 1-30 días: {_mxn(b.get('1_30', 0))}\n"
+            f"• 31-60 días: {_mxn(b.get('31_60', 0))}\n"
+            f"• +60 días: **{_mxn(b.get('mas_60', 0))}**")
+
+
+def _t_dso_dpo(r: Dict[str, Any]) -> str:
+    dso = r["dso_dias"]
+    dpo = r["dpo_dias"]
+    dso_t = f"**{dso}d**" if dso is not None else "s/d"
+    dpo_t = f"**{dpo}d**" if dpo is not None else "s/d"
+    return (f"DSO (días de cobro): {dso_t}\n"
+            f"DPO (días de pago): {dpo_t}\n"
+            f"CxC {_mxn(r['cxc'])} · CxP {_mxn(r['cxp'])}")
+
+
+def _t_pagos_prog(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** pago{'s' if r['count'] != 1 else ''} programado{'s' if r['count'] != 1 else ''} — total **{_mxn(r['total'])}**."
+    if r["items"]:
+        t += "\n\nPróximos:"
+        for it in r["items"][:5]:
+            t += f"\n• {it['fecha']} · {it['concepto']} ({it['tipo']}) — {_mxn(it['monto'])}"
+    return t
+
+
+def _t_aguinaldo(r: Dict[str, Any]) -> str:
+    t = (f"Aguinaldo devengado al día: **{_mxn(r['total'])}** "
+         f"para {r['empleados']} empleado{'s' if r['empleados'] != 1 else ''}.")
+    if r.get("top"):
+        t += "\n\nMayor devengado:"
+        for it in r["top"][:5]:
+            t += f"\n• {it['empleado']} — {_mxn(it['aguinaldo'])}"
+    return t
+
+
+def _t_vacaciones(r: Dict[str, Any]) -> str:
+    t = (f"**{r['empleados_con_saldo']}** empleado{'s' if r['empleados_con_saldo'] != 1 else ''} "
+         f"con vacaciones pendientes ({r['total_dias']} días en total).")
+    if r.get("top"):
+        t += "\n\nMayor saldo:"
+        for it in r["top"][:5]:
+            t += f"\n• {it['empleado']} — {it['pendientes']} días"
+    return t
+
+
+def _t_imss(r: Dict[str, Any]) -> str:
+    return (f"IMSS {r['periodo']} — total a pagar **{_mxn(r['total'])}**:\n"
+            f"• Cuota obrero: {_mxn(r['obrero'])}\n"
+            f"• Cuota patronal: {_mxn(r['patronal'])}\n"
+            f"• INFONAVIT patronal (5%): {_mxn(r['infonavit_patronal'])}")
+
+
+def _t_ptu(r: Dict[str, Any]) -> str:
+    return (f"PTU {r['anio']} ({r['status']}):\n"
+            f"• Utilidad repartible: **{_mxn(r['utilidad_repartible'])}**\n"
+            f"• PTU pagado: {_mxn(r['ptu_pagado'])}\n"
+            f"• Empleados excluidos: {r['excluidos']}")
+
+
+def _t_iva(r: Dict[str, Any]) -> str:
+    return (f"IVA {r['periodo']} (aproximación):\n"
+            f"• Trasladado: **{_mxn(r['trasladado'])}**\n"
+            f"• Acreditable: {_mxn(r['acreditable'])}\n"
+            f"• Saldo: **{_mxn(r['saldo'])}**\n"
+            f"_{r.get('nota', '')}_")
+
+
+def _t_lead_time(r: Dict[str, Any]) -> str:
+    t = f"Lead time promedio: **{r['promedio_dias']}d** ({r['count']} proveedores configurados)."
+    if r.get("mas_lentos"):
+        t += "\n\nMás lentos:"
+        for it in r["mas_lentos"][:5]:
+            t += f"\n• {it['name']} — {it['dias']}d"
+    return t
+
+
+def _t_reordenar_sin_oc(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** SKU{'s' if r['count'] != 1 else ''} bajo punto de reorden SIN orden de compra abierta."
+    if r["items"]:
+        t += "\n\nUrgentes:"
+        for it in r["items"][:5]:
+            t += f"\n• **{it['name']}** ({it['sku']}) — {it['stock']} uds (reorden a {it['reorder']})"
+    return t
+
+
+def _t_variacion_costo(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** SKU{'s' if r['count'] != 1 else ''} con variación >5% en costo (últimos 60 días)."
+    if r["items"]:
+        t += "\n\nMayores cambios:"
+        for it in r["items"][:5]:
+            arrow = "↑" if it["variacion_pct"] > 0 else "↓"
+            t += f"\n• **{it['name']}** ({it['sku']}) — {arrow}{abs(it['variacion_pct'])}% ({_mxn(it['anterior'])} → {_mxn(it['actual'])})"
+    return t
+
+
+def _t_top_inmovilizado(r: Dict[str, Any]) -> str:
+    lines = ["Top SKUs por valor inmovilizado:"]
+    for i, it in enumerate(r["items"], 1):
+        lines.append(f"{i}. **{it['name']}** ({it['sku']}) — {_mxn(it['valor'])} ({it['unidades']} uds)")
+    return "\n".join(lines)
+
+
+def _t_faltantes(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** SKU{'s' if r['count'] != 1 else ''} con demanda pendiente que excede el stock."
+    if r["items"]:
+        t += "\n\nMayores faltantes:"
+        for it in r["items"][:5]:
+            t += f"\n• **{it['name']}** ({it['sku']}) — faltan **{it['faltan']}** uds. (req {it['requerido']} / stock {it['stock']})"
+    return t
+
+
+def _t_descuentos_pos(r: Dict[str, Any]) -> str:
+    return (f"Descuentos POS ({r['fecha']}): **{_mxn(r['monto_descontado'])}** "
+            f"en {r['tickets_con_descuento']} ticket{'s' if r['tickets_con_descuento'] != 1 else ''}.")
+
+
+def _t_devoluciones_pos(r: Dict[str, Any]) -> str:
+    return (f"Devoluciones POS ({r['fecha']}): **{r['count']}** — total **{_mxn(r['monto'])}**.")
+
+
+def _t_cancelaciones_pos(r: Dict[str, Any]) -> str:
+    return (f"Cancelaciones ({r['fecha']}): **{r['count']}** órdenes por {_mxn(r['monto'])}.")
+
+
+def _t_top_prod_pos(r: Dict[str, Any]) -> str:
+    lines = [f"Top productos POS ({r['fecha']}):"]
+    for i, it in enumerate(r["items"], 1):
+        lines.append(f"{i}. **{it['name']}** — {it['unidades']} uds. ({_mxn(it['revenue'])})")
+    return "\n".join(lines)
+
+
 _FORMATTERS = {
     "ventas_periodo": _t_ventas_periodo,
     "top_productos": _t_top_productos,
@@ -220,4 +650,61 @@ _FORMATTERS = {
     "caducidades_proximas": _t_caducidades_proximas,
     "desempeno_cadena": _t_desempeno_cadena,
     "ventas_pos_dia": _t_ventas_pos_dia,
+    # Fase 2 (stubs → real)
+    "concentracion_clientes": _t_concentracion,
+    "sin_movimiento": _t_sin_movimiento,
+    "rotacion_producto": _t_rotacion,
+    "desempeno_tienda": _t_desempeno_tienda,
+    "sell_through_por_tienda": _t_sell_through,
+    "ventas_pos_hora": _t_pos_hora,
+    "utilidad_bruta": _t_utilidad_bruta,
+    # Fase 3 (tools nuevas)
+    "cotizaciones_abiertas": _t_cotizaciones,
+    "clientes_inactivos": _t_clientes_inactivos,
+    "ticket_promedio_ventas": _t_ticket_promedio,
+    "devoluciones_periodo": _t_devoluciones,
+    "cxc_vencen_semana": lambda r: _t_venc_semana(r, "cobro"),
+    "cxp_vencen_semana": lambda r: _t_venc_semana(r, "pago"),
+    "flujo_neto_30d": _t_flujo_neto,
+    "oc_abiertas": _t_oc_abiertas,
+    "oc_atrasadas": _t_oc_atrasadas,
+    "top_proveedores": _t_top_proveedores,
+    "valor_inventario": _t_valor_inventario,
+    "merma_mes": _t_merma,
+    "ingresos_vs_egresos": _t_ing_vs_egr,
+    "gastos_por_categoria": _t_gastos_cat,
+    "movimientos_no_conciliados": _t_no_conciliados,
+    "nomina_periodo": _t_nomina_periodo,
+    "empleados_activos": _t_empleados,
+    "incapacidades_mes": _t_incapacidades,
+    "contratos_por_vencer": _t_contratos,
+    "cumpleanos_mes": _t_cumpleanos,
+    "isr_nomina_mes": _t_isr_nomina,
+    "corte_caja_actual": _t_corte_caja,
+    "formas_pago_pos": _t_formas_pago,
+    "top_cajeros_dia": _t_top_cajeros,
+    "flujo_efectivo_proyectado": _t_flujo_proyectado,
+    "nomina_vs_ventas": _t_nomina_vs_ventas,
+    # Fase 6
+    "tiendas_wos_critico": _t_wos_critico,
+    "tiendas_sobrestock": _t_sobrestock,
+    "fill_rate_cadena": _t_fill_rate,
+    "return_rate_cadena": _t_return_rate,
+    "aging_cxc": _t_aging_cxc,
+    "dso_dpo": _t_dso_dpo,
+    "pagos_programados": _t_pagos_prog,
+    "aguinaldo_devengado": _t_aguinaldo,
+    "vacaciones_pendientes": _t_vacaciones,
+    "imss_a_pagar": _t_imss,
+    "ptu_estimado": _t_ptu,
+    "iva_mes": _t_iva,
+    "lead_time_proveedor": _t_lead_time,
+    "reordenar_sin_oc": _t_reordenar_sin_oc,
+    "variacion_costo": _t_variacion_costo,
+    "top_valor_inmovilizado": _t_top_inmovilizado,
+    "faltantes_para_pedidos": _t_faltantes,
+    "descuentos_pos_dia": _t_descuentos_pos,
+    "devoluciones_pos_dia": _t_devoluciones_pos,
+    "cancelaciones_pos_dia": _t_cancelaciones_pos,
+    "top_producto_pos_dia": _t_top_prod_pos,
 }

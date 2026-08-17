@@ -96,6 +96,146 @@ _PATTERNS: list = [
     # Rotación
     (r"(rotaci[oó]n|weeks?\s+of\s+supply|wos|d[ií]as?\s+de\s+inventario)",
         "rotacion_producto", None),
+
+    # ── Ventas / CRM (nuevas) ─────────────────────────────────────────
+    (r"(cotizaci[oó]n|quote|presupuesto).{0,20}(abiert|pendient|potencial|pipeline)?",
+        "cotizaciones_abiertas", None),
+    (r"(client|customer).{0,30}(inactiv|dejar|no\s+compran?|sin\s+compra|perdid)",
+        "clientes_inactivos", lambda m, q: {"dias": _detect_days(q, default=60)}),
+    (r"ticket\s+promedio",
+        "ticket_promedio_ventas", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(devoluci[oó]n(es)?|refund|reembols|retorn[oa]s?)",
+        "devoluciones_periodo", lambda m, q: {"periodo": _detect_period(q)}),
+
+    # ── Finanzas (nuevas) ─────────────────────────────────────────────
+    (r"(cxc|por\s+cobrar|cobros?).{0,20}(esta\s+semana|pr[oó]xim|siguient)",
+        "cxc_vencen_semana", None),
+    (r"(cxp|por\s+pagar|pagos?).{0,20}(esta\s+semana|pr[oó]xim|siguient)",
+        "cxp_vencen_semana", None),
+    (r"(flujo|cash\s*flow|efectivo).{0,25}(proyec|30|mes|neto)",
+        "flujo_neto_30d", None),
+
+    # ── Compras ───────────────────────────────────────────────────────
+    (r"(oc|[oó]rdenes?\s+de\s+compra|purchase\s+order).{0,20}(abiert|pendient|activ)",
+        "oc_abiertas", None),
+    (r"(oc|[oó]rdenes?\s+de\s+compra).{0,20}(atrasad|retras|vencid|tarde)",
+        "oc_atrasadas", None),
+    (r"(top|mejor(es)?).{0,20}proveedor",
+        "top_proveedores", lambda m, q: {"periodo": _detect_period(q), "limite": _detect_limit(q)}),
+
+    # ── Inventario avanzado ───────────────────────────────────────────
+    (r"(valor|monto|cu[aá]nto\s+vale).{0,20}inventario",
+        "valor_inventario", None),
+    (r"(merma|caduc.{0,10}consumid|desperdicio|p[eé]rdida\s+inventario)",
+        "merma_mes", None),
+
+    # ── Contabilidad ──────────────────────────────────────────────────
+    (r"(utilidad|margen|rentabilidad|ganancia)\s*(bruta)?",
+        "utilidad_bruta", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(ingresos?|entradas?).{0,15}(vs|contra|versus).{0,15}(egresos?|salidas?|gastos?)",
+        "ingresos_vs_egresos", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"^(p&?l|pyl|estado\s+de\s+resultados)",
+        "ingresos_vs_egresos", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(gastos?).{0,15}(por|categor[ií]as?)",
+        "gastos_por_categoria", lambda m, q: {"periodo": _detect_period(q), "limite": _detect_limit(q)}),
+    (r"(no\s+conciliad|sin\s+conciliar|conciliaci[oó]n\s+pendient)",
+        "movimientos_no_conciliados", None),
+
+    # ── RH / Nómina ───────────────────────────────────────────────────
+    (r"(n[oó]mina|payroll).{0,20}(mes|actual|periodo|reciente|[uú]ltim)",
+        "nomina_periodo", None),
+    (r"^(cu[aá]nto\s+pago(?:mos)?\s+de\s+n[oó]mina|total\s+n[oó]mina)",
+        "nomina_periodo", None),
+    (r"(empleados?\s+activ|plantilla|headcount|altas?\s+del\s+mes)",
+        "empleados_activos", None),
+    (r"(incapacid|permisos?\s+m[eé]dicos?|imss\s+incap)",
+        "incapacidades_mes", None),
+    (r"(contrato).{0,25}(vence|por\s+vencer|renovar|termin)",
+        "contratos_por_vencer", lambda m, q: {"dias": _detect_days(q, default=30)}),
+    (r"(cumplea[nñ]os|birthday|aniversari)",
+        "cumpleanos_mes", None),
+    (r"(isr).{0,20}(n[oó]mina|retenid)",
+        "isr_nomina_mes", None),
+
+    # ── POS avanzado ──────────────────────────────────────────────────
+    (r"(corte\s+de\s+caja|caja\s+actual|sesi[oó]n(es)?\s+abiert)",
+        "corte_caja_actual", None),
+    (r"(formas?\s+de\s+pago|m[eé]todo\s+de\s+pago|efectivo\s+vs\s+tarjeta)",
+        "formas_pago_pos", None),
+    (r"(top\s+cajer|mejor(es)?\s+cajer|cajer.{0,15}(m[aá]s\s+vend|top))",
+        "top_cajeros_dia", None),
+    (r"(ventas?|pos).{0,20}(por\s+hora|hora\s+pico|franja)",
+        "ventas_pos_hora", None),
+
+    # ── Retail avanzado ───────────────────────────────────────────────
+    (r"(tienda|store).{0,20}(top|mejor|desempe[nñ]o|revenue)",
+        "desempeno_tienda", lambda m, q: {"periodo": _detect_period(q), "limite": _detect_limit(q)}),
+    (r"(sell\s*through|sell-through)",
+        "sell_through_por_tienda", lambda m, q: {"periodo": _detect_period(q)}),
+
+    # ── KPI ejecutivo (Administrador) ─────────────────────────────────
+    (r"(flujo\s+de\s+efectivo|cash\s*flow\s+proyec|proyecci[oó]n\s+de\s+caja)",
+        "flujo_efectivo_proyectado", None),
+    (r"(n[oó]mina).{0,15}(vs|contra|sobre).{0,15}(ventas?|ingresos?)",
+        "nomina_vs_ventas", None),
+    (r"(%|porcentaje).{0,20}(costo\s+laboral|nomina\s+sobre)",
+        "nomina_vs_ventas", None),
+
+    # ── Retail avanzado ───────────────────────────────────────────────
+    (r"(tiendas?|stores?).{0,20}(cr[ií]tic|urgent|wos\s+bajo|reabast)",
+        "tiendas_wos_critico", None),
+    (r"(tiendas?|stores?).{0,20}(sobre.?stock|overstock|exceso)",
+        "tiendas_sobrestock", None),
+    (r"(fill\s+rate|nivel\s+de\s+servicio|surtido)",
+        "fill_rate_cadena", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(return\s+rate|tasa\s+de\s+devoluciones?)",
+        "return_rate_cadena", lambda m, q: {"periodo": _detect_period(q)}),
+
+    # ── Finanzas restantes ────────────────────────────────────────────
+    (r"^(aging|antig[uü]edad)\s+(de\s+)?(cxc|por\s+cobrar|cartera)",
+        "aging_cxc", None),
+    (r"(dso|dpo|d[ií]as\s+de\s+(cobro|pago)|d[ií]as\s+promedio)",
+        "dso_dpo", None),
+    (r"(pagos?\s+programad|calendario\s+de\s+pagos)",
+        "pagos_programados", None),
+
+    # ── RH extra ──────────────────────────────────────────────────────
+    (r"aguinaldo",
+        "aguinaldo_devengado", None),
+    (r"vacaciones?",
+        "vacaciones_pendientes", None),
+    (r"(imss).{0,20}(pagar|mes|cuota)",
+        "imss_a_pagar", None),
+    (r"\bptu\b|(reparto\s+de\s+utilidad)",
+        "ptu_estimado", None),
+
+    # ── Contabilidad ──────────────────────────────────────────────────
+    (r"\biva\b",
+        "iva_mes", None),
+
+    # ── Compras extra ─────────────────────────────────────────────────
+    (r"(lead\s*time|tiempo\s+de\s+entrega)",
+        "lead_time_proveedor", None),
+    (r"(reordenar|necesitan?\s+oc|falta\s+oc|hay\s+que\s+pedir)",
+        "reordenar_sin_oc", None),
+    (r"(variaci[oó]n|cambio|subi[oó]).{0,15}(costo|precio\s+proveedor)",
+        "variacion_costo", None),
+
+    # ── Inventario extra ──────────────────────────────────────────────
+    (r"(top|mayor).{0,20}(valor|inmovilizad|invertid).{0,15}(inventario|almac[eé]n)?",
+        "top_valor_inmovilizado", lambda m, q: {"limite": _detect_limit(q)}),
+    (r"(falt|no\s+alcanza|insuficient).{0,20}(pedid|surt|orden)",
+        "faltantes_para_pedidos", None),
+
+    # ── POS extra ─────────────────────────────────────────────────────
+    (r"(descuent).{0,20}(hoy|pos|d[ií]a)",
+        "descuentos_pos_dia", None),
+    (r"(devoluci[oó]n|refund|reembols).{0,20}(pos|hoy|caja|d[ií]a)",
+        "devoluciones_pos_dia", None),
+    (r"(cancelaci[oó]n|anulaci[oó]n).{0,20}(hoy|pos|d[ií]a)",
+        "cancelaciones_pos_dia", None),
+    (r"(producto|art[ií]cul).{0,20}(m[aá]s\s+vendid|top).{0,15}(pos|hoy|d[ií]a|caja)",
+        "top_producto_pos_dia", None),
 ]
 
 
