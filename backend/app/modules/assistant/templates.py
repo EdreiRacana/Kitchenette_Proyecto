@@ -114,6 +114,8 @@ def _empty_msg(tool: str, reason: str | None) -> str:
         "top_vendedores": "No hay ventas asignadas a vendedores en el periodo consultado.",
         "ventas_pos_periodo": "No hay ventas registradas en el POS para el periodo consultado.",
         "ventas_cliente": "No encontré un cliente con ese nombre, o no tiene compras registradas.",
+        # Fase 9
+        "ventas_persona": "No encontré vendedor ni cliente con ese nombre.",
     }
     base = friendly.get(tool, "No hay datos que mostrar para esta consulta.")
     if reason and "construcción" in reason:
@@ -714,18 +716,35 @@ def _t_ventas_pos_periodo(r: Dict[str, Any]) -> str:
             f" (promedio {_mxn(r['ticket_promedio'])}).")
 
 
-def _t_ventas_cliente(r: Dict[str, Any]) -> str:
-    t = (f"Cliente encontrado: **{r['cliente']}**\n"
-         f"• Pedidos históricos: {r['pedidos']}\n"
-         f"• Total comprado: **{_mxn(r['total_historico'])}**\n"
-         f"• Saldo pendiente: {_mxn(r['saldo_pendiente'])}\n"
-         f"• Última compra: {r['ultima_compra']}")
-    otros = r.get("otras_coincidencias") or []
-    if otros:
-        t += "\n\nOtras coincidencias:"
-        for o in otros:
-            t += f"\n• {o['name']} ({_mxn(o['total'])})"
-    return t
+def _t_ventas_persona(r: Dict[str, Any]) -> str:
+    """Formato con secciones — vendedor y/o cliente según qué se
+    encontró bajo el nombre buscado."""
+    vends = r.get("vendedores") or []
+    custs = r.get("clientes") or []
+    parts = []
+    parts.append(f"Búsqueda: **{r['nombre_busqueda']}**")
+    if vends:
+        parts.append("\n**Como vendedor:**")
+        for v in vends:
+            parts.append(
+                f"• **{v['nombre']}** — {_mxn(v['total_vendido'])} en "
+                f"{v['pedidos']} pedido{'s' if v['pedidos'] != 1 else ''}"
+                f" (última venta {v['ultima_venta']})"
+            )
+    if custs:
+        parts.append("\n**Como cliente:**")
+        for c in custs:
+            parts.append(
+                f"• **{c['nombre']}** — compró {_mxn(c['total_comprado'])} "
+                f"({c['pedidos']} pedido{'s' if c['pedidos'] != 1 else ''}, "
+                f"saldo {_mxn(c['saldo_pendiente'])}, última {c['ultima_compra']})"
+            )
+    return "\n".join(parts)
+
+
+# Retrocompat: ventas_cliente ya no se usa de la regex, pero el alias en
+# tools.py sigue devolviendo el mismo shape que ventas_persona.
+_t_ventas_cliente = _t_ventas_persona
 
 
 _FORMATTERS = {
@@ -803,4 +822,6 @@ _FORMATTERS = {
     "top_vendedores": _t_top_vendedores,
     "ventas_pos_periodo": _t_ventas_pos_periodo,
     "ventas_cliente": _t_ventas_cliente,
+    # Fase 9
+    "ventas_persona": _t_ventas_persona,
 }

@@ -2363,61 +2363,98 @@ async def ventas_pos_periodo(db: AsyncSession, periodo: str = "mes", **k) -> Dic
             "empty": n == 0}
 
 
-async def ventas_cliente(db: AsyncSession, nombre: str = "", **k) -> Dict[str, Any]:
-    """Busca un cliente por nombre (fuzzy ILIKE) y devuelve su resumen
-    de compras: total histórico, pedidos, saldo pendiente y última compra."""
+async def ventas_persona(db: AsyncSession, nombre: str = "", **k) -> Dict[str, Any]:
+    """Búsqueda unificada por nombre: revisa TANTO vendedores (User.full_name
+    con Order.user_id) COMO clientes (Customer.name / razon_social). Devuelve
+    lo que encuentre en cada rol — si Francisco es a la vez un vendedor y un
+    cliente, aparecen ambas secciones."""
     from app.modules.sales import models as sm
     from app.modules.customers.models import Customer
+    from app.modules.auth.models import User
     nombre = (nombre or "").strip()
     if len(nombre) < 2:
-        return {"tool": "ventas_cliente", "empty": True,
-                "reason": "no se especificó nombre de cliente"}
+        return {"tool": "ventas_persona", "empty": True,
+                "reason": ("no capté un nombre. Prueba con 'ventas de <nombre>' "
+                            "o 'cómo va <nombre>' — funciona para vendedores y clientes.")}
     like = f"%{nombre}%"
+
+    # ── Sección 1: como vendedor (User) ────────────────────────────
+    vend_stmt = (
+        select(
+            User.id, User.full_name, User.email,
+            func.count(sm.Order.id).label("pedidos"),
+            func.coalesce(func.sum(sm.Order.total_amount), 0.0).label("total"),
+            func.max(sm.Order.created_at).label("ultima"),
+        )
+        .join(sm.Order, sm.Order.user_id == User.id)
+        .where(
+            or_(User.full_name.ilike(like), User.email.ilike(like)),
+            sm.Order.kind == "order",
+            sm.Order.status != "cancelled",
+        )
+        .group_by(User.id, User.full_name, User.email)
+        .order_by(func.coalesce(func.sum(sm.Order.total_amount), 0.0).desc())
+        .limit(3)
+    )
+    vend_rows = (await db.execute(vend_stmt)).all()
+    vendedores = [{
+        "nombre": r.full_name or r.email or "?",
+        "pedidos": int(r.pedidos or 0),
+        "total_vendido": _money(r.total),
+        "ultima_venta": _aware(r.ultima).strftime("%d/%m/%Y") if r.ultima else "sin ventas",
+    } for r in vend_rows]
+
+    # ── Sección 2: como cliente (Customer) ─────────────────────────
     cust_stmt = (
         select(Customer.id, Customer.name, Customer.razon_social)
         .where(or_(Customer.name.ilike(like), Customer.razon_social.ilike(like)))
         .limit(5)
     )
     matches = (await db.execute(cust_stmt)).all()
-    if not matches:
-        return {"tool": "ventas_cliente", "nombre": nombre, "empty": True,
-                "reason": f"no encontré un cliente con nombre parecido a '{nombre}'"}
-    # Si hay múltiples matches, tomamos el que más ha comprado en historia.
-    ids = [m.id for m in matches]
-    agg_stmt = (
-        select(
-            Customer.id, Customer.name, Customer.razon_social,
-            func.count(sm.Order.id).label("pedidos"),
-            func.coalesce(func.sum(sm.Order.total_amount), 0.0).label("total_hist"),
-            func.coalesce(func.sum(sm.Order.total_amount - sm.Order.paid_amount), 0.0).label("saldo"),
-            func.max(sm.Order.created_at).label("ultima"),
+    clientes = []
+    if matches:
+        ids = [m.id for m in matches]
+        agg_stmt = (
+            select(
+                Customer.id, Customer.name, Customer.razon_social,
+                func.count(sm.Order.id).label("pedidos"),
+                func.coalesce(func.sum(sm.Order.total_amount), 0.0).label("total"),
+                func.coalesce(func.sum(sm.Order.total_amount - sm.Order.paid_amount), 0.0).label("saldo"),
+                func.max(sm.Order.created_at).label("ultima"),
+            )
+            .join(sm.Order, sm.Order.customer_id == Customer.id, isouter=True)
+            .where(Customer.id.in_(ids),
+                    or_(sm.Order.kind.is_(None), sm.Order.kind == "order"),
+                    or_(sm.Order.status.is_(None), sm.Order.status != "cancelled"))
+            .group_by(Customer.id, Customer.name, Customer.razon_social)
+            .order_by(func.coalesce(func.sum(sm.Order.total_amount), 0.0).desc())
         )
-        .join(sm.Order, sm.Order.customer_id == Customer.id, isouter=True)
-        .where(Customer.id.in_(ids),
-                or_(sm.Order.kind.is_(None), sm.Order.kind == "order"),
-                or_(sm.Order.status.is_(None), sm.Order.status != "cancelled"))
-        .group_by(Customer.id, Customer.name, Customer.razon_social)
-        .order_by(func.coalesce(func.sum(sm.Order.total_amount), 0.0).desc())
-    )
-    rows = (await db.execute(agg_stmt)).all()
-    if not rows:
-        return {"tool": "ventas_cliente", "nombre": nombre, "empty": True}
-    top = rows[0]
-    ultima = _aware(top.ultima)
+        for r in (await db.execute(agg_stmt)).all():
+            clientes.append({
+                "nombre": r.razon_social or r.name or "?",
+                "pedidos": int(r.pedidos or 0),
+                "total_comprado": _money(r.total),
+                "saldo_pendiente": _money(r.saldo),
+                "ultima_compra": _aware(r.ultima).strftime("%d/%m/%Y") if r.ultima else "sin compras",
+            })
+
+    empty = len(vendedores) == 0 and len(clientes) == 0
     return {
-        "tool": "ventas_cliente",
+        "tool": "ventas_persona",
         "nombre_busqueda": nombre,
-        "cliente": top.razon_social or top.name or "?",
-        "pedidos": int(top.pedidos or 0),
-        "total_historico": _money(top.total_hist),
-        "saldo_pendiente": _money(top.saldo),
-        "ultima_compra": ultima.strftime("%d/%m/%Y") if ultima else "sin compras",
-        "otras_coincidencias": [
-            {"name": r.razon_social or r.name or "?", "total": _money(r.total_hist)}
-            for r in rows[1:5]
-        ],
-        "empty": int(top.pedidos or 0) == 0,
+        "vendedores": vendedores,
+        "clientes": clientes,
+        "empty": empty,
+        "reason": (f"no encontré vendedor ni cliente con nombre parecido a '{nombre}'"
+                    if empty else None),
     }
+
+
+# Alias retrocompatible: si algo llama a ventas_cliente, delega a ventas_persona.
+async def ventas_cliente(db: AsyncSession, nombre: str = "", **k) -> Dict[str, Any]:
+    r = await ventas_persona(db, nombre=nombre, **k)
+    r["tool"] = "ventas_cliente"
+    return r
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2512,4 +2549,6 @@ TOOLS_REGISTRY = {
     "top_vendedores": top_vendedores,
     "ventas_pos_periodo": ventas_pos_periodo,
     "ventas_cliente": ventas_cliente,
+    # Fase 9 · Búsqueda unificada vendedor + cliente por nombre
+    "ventas_persona": ventas_persona,
 }
