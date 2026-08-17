@@ -2445,16 +2445,15 @@ async def ventas_persona(db: AsyncSession, nombre: str = "", **k) -> Dict[str, A
             })
 
     # ── Sección 3: como empleado (Employee — plantilla RH) ─────────
-    # Info organizacional NO sensible únicamente. Salario, SBC, RFC,
-    # CURP, NSS y datos fiscales quedan fuera — para eso están las
-    # tools específicas de RH (nomina_periodo, etc.) bajo permiso HR.
+    # Datos ORGANIZACIONALES por default. Si el caller pasa
+    # include_hr_details=True (router lo hace cuando el usuario tiene
+    # permiso hr.view), se agregan datos operativos de nómina:
+    # salario, SBC, contacto, banco, vacaciones y deducciones.
+    # RFC/CURP/NSS quedan fuera aún con permiso — se ven en el módulo
+    # HR con contexto completo, no en un chat.
+    include_hr = bool(k.get("include_hr_details", False))
     emp_stmt = (
-        select(
-            hm.Employee.name, hm.Employee.last_name, hm.Employee.email,
-            hm.Employee.position, hm.Employee.department,
-            hm.Employee.hire_date, hm.Employee.status,
-            hm.Employee.employee_number,
-        )
+        select(hm.Employee)
         .where(
             or_(
                 hm.Employee.name.ilike(like),
@@ -2466,17 +2465,41 @@ async def ventas_persona(db: AsyncSession, nombre: str = "", **k) -> Dict[str, A
         .limit(5)
     )
     try:
-        emp_rows = (await db.execute(emp_stmt)).all()
+        emp_rows = (await db.execute(emp_stmt)).scalars().all()
     except Exception:
         emp_rows = []
-    empleados = [{
-        "nombre": f"{r.name} {r.last_name}".strip(),
-        "numero": r.employee_number,
-        "puesto": r.position or "?",
-        "departamento": r.department or "?",
-        "estado": r.status or "activo",
-        "ingreso": r.hire_date or "?",
-    } for r in emp_rows]
+    empleados = []
+    for e in emp_rows:
+        row = {
+            "nombre": f"{e.name} {e.last_name}".strip(),
+            "numero": e.employee_number,
+            "puesto": e.position or "?",
+            "departamento": e.department or "?",
+            "estado": e.status or "activo",
+            "ingreso": e.hire_date or "?",
+        }
+        if include_hr:
+            deducciones = []
+            if e.infonavit_credit:
+                deducciones.append(f"INFONAVIT {e.infonavit_credit}")
+            if e.fonacot_credit:
+                deducciones.append(f"FONACOT {e.fonacot_credit}")
+            if e.alimony_type:
+                deducciones.append(f"Pensión alimenticia")
+            vac_pend = int((e.vacation_days or 0) - (e.vacation_used or 0))
+            row.update({
+                "salario_base": _money(e.base_salary),
+                "sbc": _money(e.sbc),
+                "frecuencia": e.pay_frequency or "?",
+                "contrato": e.contract_type or "?",
+                "telefono": e.phone or "—",
+                "email_personal": e.email or "—",
+                "banco": e.bank or "—",
+                "clabe": e.clabe or "—",
+                "vacaciones_pendientes": vac_pend,
+                "deducciones": ", ".join(deducciones) if deducciones else "sin deducciones activas",
+            })
+        empleados.append(row)
 
     empty = len(vendedores) == 0 and len(clientes) == 0 and len(empleados) == 0
     return {

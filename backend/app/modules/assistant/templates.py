@@ -747,6 +747,22 @@ def _t_ventas_persona(r: Dict[str, Any]) -> str:
                 f"• **{e['nombre']}**{num} — {e['puesto']} · {e['departamento']}"
                 f" (ingreso {e['ingreso']}, estado {e['estado']})"
             )
+            # Datos operativos HR (solo si el rol los tiene habilitados)
+            if "salario_base" in e:
+                parts.append(
+                    f"   — Salario **{_mxn(e['salario_base'])}** {e['frecuencia']}"
+                    f" · SBC {_mxn(e['sbc'])} · Contrato {e['contrato']}"
+                )
+                parts.append(
+                    f"   — Contacto: {e['telefono']} · {e['email_personal']}"
+                )
+                parts.append(
+                    f"   — Banco: {e['banco']} · CLABE {e['clabe']}"
+                )
+                parts.append(
+                    f"   — Vacaciones pendientes: **{e['vacaciones_pendientes']}d**"
+                    f" · {e['deducciones']}"
+                )
     return "\n".join(parts)
 
 

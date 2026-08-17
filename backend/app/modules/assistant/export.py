@@ -592,6 +592,17 @@ _SPEC: Dict[str, Dict[str, Any]] = {
                 ("departamento", "Departamento", "str"),
                 ("ingreso", "Fecha ingreso", "str"),
                 ("estado", "Estado", "str"),
+                # Los siguientes solo tienen valor cuando el usuario tenía
+                # permiso HR al pedir la consulta (include_hr_details=True).
+                # Si no, quedan vacíos y openpyxl los deja en blanco.
+                ("salario_base", "Salario", "money"),
+                ("sbc", "SBC", "money"),
+                ("frecuencia", "Frecuencia", "str"),
+                ("vacaciones_pendientes", "Vacaciones pend.", "int"),
+                ("telefono", "Teléfono", "str"),
+                ("banco", "Banco", "str"),
+                ("clabe", "CLABE", "str"),
+                ("deducciones", "Deducciones", "str"),
             ]},
         ],
     },

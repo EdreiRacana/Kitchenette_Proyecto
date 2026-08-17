@@ -130,6 +130,15 @@ async def ask(payload: AskRequest, db: DB, current_user: CurrentUser) -> AskResp
 
     tool_name, kwargs = routed
 
+    # Inyección declarativa de permisos a tools sensibles: ventas_persona
+    # devuelve datos HR (salario, SBC, banco, deducciones) SOLO si el
+    # usuario tiene 'hr.view'. Cualquier otro rol ve solo la info
+    # organizacional básica. Esta gate es adicional al RBAC de acceso
+    # a la tool — aquí controlamos el DETALLE dentro de la respuesta.
+    from app.modules.auth.rbac import user_can
+    if tool_name == "ventas_persona" and user_can(current_user, "hr", "view"):
+        kwargs = {**kwargs, "include_hr_details": True}
+
     # Guardarraíl RBAC: si el router local (regex) matcheó una tool que el
     # usuario no puede consumir, devolvemos mensaje suave. Sin ejecutar
     # queries, sin llamar al LLM: cero fugas de datos por chat.
