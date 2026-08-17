@@ -127,7 +127,7 @@ _PATTERNS: list = [
     (r"(valor|monto|cu[aá]nto\s+vale).{0,20}inventario",
         "valor_inventario", None),
     (r"(merma|caduc.{0,10}consumid|desperdicio|p[eé]rdida\s+inventario)",
-        "merma_mes", None),
+        "merma_mes", lambda m, q: {"periodo": _detect_period(q)}),
 
     # ── Contabilidad ──────────────────────────────────────────────────
     (r"(utilidad|margen|rentabilidad|ganancia)\s*(bruta)?",
@@ -142,20 +142,18 @@ _PATTERNS: list = [
         "movimientos_no_conciliados", None),
 
     # ── RH / Nómina ───────────────────────────────────────────────────
-    (r"(n[oó]mina|payroll).{0,20}(mes|actual|periodo|reciente|[uú]ltim)",
-        "nomina_periodo", None),
-    (r"^(cu[aá]nto\s+pago(?:mos)?\s+de\s+n[oó]mina|total\s+n[oó]mina)",
-        "nomina_periodo", None),
+    (r"(n[oó]mina|payroll)",
+        "nomina_periodo", lambda m, q: {"periodo": _detect_period(q)}),
     (r"(empleados?\s+activ|plantilla|headcount|altas?\s+del\s+mes)",
         "empleados_activos", None),
     (r"(incapacid|permisos?\s+m[eé]dicos?|imss\s+incap)",
-        "incapacidades_mes", None),
+        "incapacidades_mes", lambda m, q: {"periodo": _detect_period(q)}),
     (r"(contrato).{0,25}(vence|por\s+vencer|renovar|termin)",
         "contratos_por_vencer", lambda m, q: {"dias": _detect_days(q, default=30)}),
     (r"(cumplea[nñ]os|birthday|aniversari)",
         "cumpleanos_mes", None),
     (r"(isr).{0,20}(n[oó]mina|retenid)",
-        "isr_nomina_mes", None),
+        "isr_nomina_mes", lambda m, q: {"periodo": _detect_period(q)}),
 
     # ── POS avanzado ──────────────────────────────────────────────────
     (r"(corte\s+de\s+caja|caja\s+actual|sesi[oó]n(es)?\s+abiert)",
@@ -204,14 +202,14 @@ _PATTERNS: list = [
         "aguinaldo_devengado", None),
     (r"vacaciones?",
         "vacaciones_pendientes", None),
-    (r"(imss).{0,20}(pagar|mes|cuota)",
-        "imss_a_pagar", None),
+    (r"\bimss\b",
+        "imss_a_pagar", lambda m, q: {"periodo": _detect_period(q)}),
     (r"\bptu\b|(reparto\s+de\s+utilidad)",
         "ptu_estimado", None),
 
     # ── Contabilidad ──────────────────────────────────────────────────
     (r"\biva\b",
-        "iva_mes", None),
+        "iva_mes", lambda m, q: {"periodo": _detect_period(q)}),
 
     # ── Compras extra ─────────────────────────────────────────────────
     (r"(lead\s*time|tiempo\s+de\s+entrega)",
@@ -239,13 +237,28 @@ _PATTERNS: list = [
 ]
 
 
+_MONTHS = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+    "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
+    "noviembre": 11, "diciembre": 12,
+}
+
+
 def _detect_period(q: str) -> str:
+    """Devuelve etiqueta de periodo. Reconoce:
+      - hoy / ayer / semana / mes_pasado / año / mes (default)
+      - nombres de mes: enero..diciembre → 'mes:1'..'mes:12'
+    _period_bounds() interpreta 'mes:N' como ese mes del año actual (o
+    del anterior si N está en el futuro respecto a hoy)."""
     ql = q.lower()
     if re.search(r"\bhoy\b", ql): return "hoy"
     if re.search(r"\bayer\b", ql): return "ayer"
     if re.search(r"\b(esta\s+)?semana\b", ql): return "semana"
     if re.search(r"\b(mes\s+pasado|mes\s+anterior)\b", ql): return "mes_pasado"
     if re.search(r"\b(a[ñn]o|anual|ytd|acumulad)\b", ql): return "año"
+    for name, num in _MONTHS.items():
+        if re.search(rf"\b{name}\b", ql):
+            return f"mes:{num}"
     return "mes"
 
 
