@@ -17,6 +17,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import api from "../../services/api";
 
 // ── Silueta NovaMark — logo oficial Sthenova ───────────────────────────
 // Coordenadas exactas del NovaMark tal como viven en TrianglesCanvas.tsx
@@ -179,38 +180,19 @@ const DEFAULT_CHIPS = [
   "¿Cómo va Walmart?",
 ];
 
-// Respuestas simuladas — solo demo mientras aún no está el backend LLM.
-// Se muestran letra por letra para replicar la sensación de streaming.
-function fakeAnswerFor(question: string): { text: string; source: string; ms: number } {
-  const q = question.toLowerCase();
-  if (q.includes("cxc") || q.includes("cobrar") || q.includes("cartera")) {
+// Llama al endpoint real /assistant/ask. Sprint 1: cero LLM, todo Python.
+async function fetchAnswer(question: string): Promise<{ text: string; source: string; ms: number }> {
+  try {
+    const { data } = await api.post("/assistant/ask", { question });
     return {
-      text: "Tienes $1,240,530 por cobrar (28 clientes).\nAl día $840K · 1-30d $260K · 31-60d $95K · +60d $45K (3 clientes).",
-      source: "Finanzas", ms: 340,
+      text: data?.text || "Sin respuesta.",
+      source: data?.source || "Sistema",
+      ms: data?.ms ?? 0,
     };
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail || e?.message || "Error de conexión";
+    return { text: `No pude consultar el asistente: ${msg}`, source: "Error", ms: 0 };
   }
-  if (q.includes("vend") || q.includes("ventas")) {
-    return {
-      text: "Este mes has facturado $487,320 con 143 pedidos (ticket promedio $3,408).\nLlevas +12% vs mes pasado. Cadena con mayor crecimiento: Walmart (+18%).",
-      source: "Ventas", ms: 420,
-    };
-  }
-  if (q.includes("walmart") || q.includes("cadena") || q.includes("tienda")) {
-    return {
-      text: "Walmart este mes: $180,000 (37% del total).\nMejores tiendas: Satélite $65K · Gustavo Baz $52K · Arboledas $38K.\nAlerta: WoS crítico en tienda Toltecas (1.4 semanas).",
-      source: "Retail", ms: 510,
-    };
-  }
-  if (q.includes("producto") || q.includes("top") || q.includes("mejor")) {
-    return {
-      text: "Top 5 productos por revenue este mes:\n1. Apple iPhone 15 Pro Max — $145,200 (17 uds.)\n2. Apple Watch Series 9 — $98,400\n3. AirPods Pro 2 — $67,120\n4. MacBook Air M3 — $52,800\n5. iPad Air — $41,300",
-      source: "Ventas", ms: 380,
-    };
-  }
-  return {
-    text: "Modo demo: en la próxima fase conecto el motor de análisis para responder esta pregunta con datos reales de tu ERP. Prueba con: ventas, cartera, Walmart, top productos.",
-    source: "Demo", ms: 90,
-  };
 }
 
 // ── Assistant (componente principal, se monta en App root) ─────────────
@@ -281,17 +263,19 @@ export default function Assistant() {
     setInput("");
     setMsgs(prev => [...prev, { role: "user", text: question }]);
     setStreaming(true);
-    // Streaming falso — letra por letra a ~18ms
-    const answer = fakeAnswerFor(question);
+    // Placeholder mientras espera respuesta real del backend
+    setMsgs(prev => [...prev, { role: "assistant", text: "", source: "", ms: 0 }]);
+    const answer = await fetchAnswer(question);
+    // Streaming visual — letra por letra a ~14ms. Aunque el backend
+    // devolvió toda la respuesta de una, mostrarla progresivamente da la
+    // sensación de "escribiendo" que ya se espera de un asistente moderno.
     let acc = "";
-    const chars = answer.text.split("");
-    setMsgs(prev => [...prev, { role: "assistant", text: "", source: answer.source, ms: answer.ms }]);
-    for (const ch of chars) {
-      await new Promise(r => setTimeout(r, 18));
+    for (const ch of answer.text) {
+      await new Promise(r => setTimeout(r, 14));
       acc += ch;
       setMsgs(prev => {
         const copy = [...prev];
-        copy[copy.length - 1] = { ...copy[copy.length - 1], text: acc };
+        copy[copy.length - 1] = { role: "assistant", text: acc, source: answer.source, ms: answer.ms };
         return copy;
       });
     }

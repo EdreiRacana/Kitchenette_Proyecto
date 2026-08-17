@@ -48,6 +48,8 @@ api_router.include_router(pos_router,       prefix="/pos",        tags=["pos"], 
 api_router.include_router(search_router,    prefix="/search",     tags=["search"])
 api_router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(bi_router,        prefix="/bi",         tags=["bi"])
+from app.modules.assistant.router import router as assistant_router  # noqa: E402
+api_router.include_router(assistant_router, prefix="/assistant", tags=["assistant"])
 from app.modules.reports.router import router as reports_router  # noqa: E402
 api_router.include_router(reports_router,   prefix="/reports",    tags=["reports"])
 from app.modules.core_config.companies_router import router as companies_router  # noqa: E402
