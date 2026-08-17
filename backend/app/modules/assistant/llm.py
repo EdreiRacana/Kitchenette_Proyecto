@@ -300,6 +300,16 @@ TOOLS_SCHEMA: List[Dict[str, Any]] = [
     {"name": "top_producto_pos_dia",
      "description": "Producto más vendido en el POS del día.",
      "input_schema": {"type": "object", "properties": {"fecha": {"type": "string"}}}},
+    # Fase 8
+    {"name": "top_vendedores",
+     "description": "Top vendedores (usuarios asignados como seller en la orden) por revenue del periodo.",
+     "input_schema": {"type": "object", "properties": {"periodo": {"type": "string"}, "limite": {"type": "integer"}}}},
+    {"name": "ventas_pos_periodo",
+     "description": "Total de ventas del POS en un periodo (mes/año), no solo hoy.",
+     "input_schema": {"type": "object", "properties": {"periodo": {"type": "string"}}}},
+    {"name": "ventas_cliente",
+     "description": "Busca un cliente por nombre (fuzzy) y devuelve total comprado, pedidos, saldo pendiente y última compra.",
+     "input_schema": {"type": "object", "properties": {"nombre": {"type": "string"}}, "required": ["nombre"]}},
 ]
 
 

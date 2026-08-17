@@ -75,10 +75,15 @@ _PATTERNS: list = [
     (r"(c[oó]mo\s+va|desempe[nñ]o|performance).{0,20}(cadena|retail)",
         "desempeno_cadena", lambda m, q: {"periodo": _detect_period(q), "limite": _detect_limit(q)}),
 
-    # POS — ventas del día
-    (r"(pos|punto\s+de\s+venta|caja).{0,25}(hoy|d[ií]a|corte)",
+    # POS — ventas del día (default) o periodo específico
+    # 'post' se acepta como typo comun de 'pos' con \b boundary.
+    (r"(ventas|cu[aá]nto\s+vend|monto).{0,15}\b(pos|post|punto\s+de\s+venta|caja)\b.{0,30}(mes|semana|a[ñn]o|ayer|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)",
+        "ventas_pos_periodo", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"\b(pos|post|punto\s+de\s+venta|caja)\b.{0,25}(hoy|d[ií]a|corte)",
         "ventas_pos_dia", None),
-    (r"cu[aá]nto.{0,15}vend.{0,15}(pos|hoy|caja)",
+    (r"cu[aá]nto.{0,15}vend.{0,15}\b(pos|post|hoy|caja)\b",
+        "ventas_pos_dia", None),
+    (r"^ventas?\s+\b(pos|post|caja)\b\s*\??$",
         "ventas_pos_dia", None),
 
     # Utilidad / margen
@@ -234,6 +239,20 @@ _PATTERNS: list = [
         "cancelaciones_pos_dia", None),
     (r"(producto|art[ií]cul).{0,20}(m[aá]s\s+vendid|top).{0,15}(pos|hoy|d[ií]a|caja)",
         "top_producto_pos_dia", None),
+
+    # ── Fase 8 · Vendedores + cliente por nombre ──────────────────────
+    (r"(top|mejor(es)?|los?\s+mejores)\s*\d*\s+vendedor(es)?",
+        "top_vendedores", lambda m, q: {"periodo": _detect_period(q), "limite": _detect_limit(q)}),
+    (r"\b(vendedor(es)?|salesperson|seller)\b.{0,15}(top|mejor|m[aá]s)",
+        "top_vendedores", lambda m, q: {"periodo": _detect_period(q), "limite": _detect_limit(q)}),
+
+    # Cliente por nombre: capturamos lo que viene tras "de/del/al". Se
+    # excluye si el nombre coincide con periodo o palabra reservada — eso
+    # ya lo captura el patron general de ventas antes.
+    (r"(ventas|compras?|cu[aá]nto\s+(?:me\s+)?ha?\s+comprad).{0,10}(?:de|del|al?)\s+([a-záéíóúüñ][a-záéíóúüñ0-9\s\.]{1,40})",
+        "ventas_cliente", lambda m, q: {"nombre": _clean_name(m.group(m.lastindex))}),
+    (r"(?:c[oó]mo\s+va|estado\s+de|status\s+de)\s+(?:cliente\s+)?([a-záéíóúüñ][a-záéíóúüñ0-9\s\.]{1,40})",
+        "ventas_cliente", lambda m, q: {"nombre": _clean_name(m.group(m.lastindex))}),
 ]
 
 
@@ -281,6 +300,30 @@ def _detect_days(q: str, default: int = 30) -> int:
     m = re.search(r"\b(\d{1,3})\s*d[ií]as?\b", q.lower())
     if m: return min(max(int(m.group(1)), 1), 365)
     return default
+
+
+# Palabras que si aparecen solas tras 'ventas de' NO son nombres de
+# cliente — son periodos/temas del ERP.
+_RESERVED_AFTER_DE = {
+    "hoy", "ayer", "semana", "mes", "año", "ano", "anual", "ytd",
+    "este", "esta", "el", "la", "los", "las", "del", "de",
+    "producto", "productos", "articulo", "articulos", "artículo",
+    "cliente", "clientes", "vendedor", "vendedores", "cadena",
+    "walmart", "soriana", "chedraui", "costco", "heb", "sam's", "sams",
+    "pos", "post", "caja", "nomina", "nómina", "imss", "iva", "isr",
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+    "agosto", "septiembre", "setiembre", "octubre", "noviembre", "diciembre",
+}
+
+
+def _clean_name(raw: str) -> str:
+    """Limpia lo capturado por la regex de cliente: quita signos de
+    interrogación finales, espacios extra y palabras reservadas."""
+    if not raw:
+        return ""
+    s = raw.strip().strip("?.,;:").strip()
+    words = [w for w in s.split() if w.lower() not in _RESERVED_AFTER_DE]
+    return " ".join(words[:4])  # cap 4 palabras — evita capturar frases largas
 
 
 def route(question: str) -> Optional[Tuple[str, Dict[str, Any]]]:

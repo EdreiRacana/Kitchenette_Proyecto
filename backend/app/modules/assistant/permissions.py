@@ -121,6 +121,10 @@ TOOL_MODULE: dict[str, str] = {
     "devoluciones_pos_dia": "sales",
     "cancelaciones_pos_dia": "sales",
     "top_producto_pos_dia": "sales",
+    # Fase 8
+    "top_vendedores": "sales",
+    "ventas_pos_periodo": "sales",
+    "ventas_cliente": "sales",
 }
 
 

@@ -72,6 +72,11 @@ _SPEC: Dict[str, Dict[str, Any]] = {
             ("revenue", "Ingreso", "money"),
         ]},
     },
+    "ticket_promedio_ventas": {
+        "title": "Ticket promedio de ventas",
+        "scalars": [("periodo", "Periodo"), ("count", "Pedidos"),
+                     ("ticket", "Ticket promedio")],
+    },
     "pedidos_pendientes": {
         "title": "Pedidos pendientes",
         "scalars": [("count", "Total"), ("total_saldo", "Saldo pendiente")],
@@ -516,6 +521,31 @@ _SPEC: Dict[str, Dict[str, Any]] = {
         "table": {"key": "items", "headers": [
             ("name", "Producto", "str"), ("sku", "SKU", "str"),
             ("unidades", "Unidades", "int"), ("revenue", "Ingreso", "money"),
+        ]},
+    },
+    "top_vendedores": {
+        "title": "Top vendedores",
+        "scalars": [("periodo", "Periodo")],
+        "table": {"key": "items", "headers": [
+            ("vendedor", "Vendedor", "str"),
+            ("pedidos", "Pedidos", "int"),
+            ("revenue", "Ingreso", "money"),
+        ]},
+    },
+    "ventas_pos_periodo": {
+        "title": "Ventas POS del periodo",
+        "scalars": [("periodo", "Periodo"), ("tickets", "Tickets"),
+                     ("total", "Total"), ("ticket_promedio", "Ticket promedio")],
+    },
+    "ventas_cliente": {
+        "title": "Ficha de cliente",
+        "scalars": [("cliente", "Cliente"), ("pedidos", "Pedidos"),
+                     ("total_historico", "Total histórico"),
+                     ("saldo_pendiente", "Saldo pendiente"),
+                     ("ultima_compra", "Última compra")],
+        "table": {"key": "otras_coincidencias", "headers": [
+            ("name", "Otra coincidencia", "str"),
+            ("total", "Total histórico", "money"),
         ]},
     },
 }
