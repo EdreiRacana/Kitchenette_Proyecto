@@ -125,6 +125,8 @@ TOOL_MODULE: dict[str, str] = {
     "top_vendedores": "sales",
     "ventas_pos_periodo": "sales",
     "ventas_cliente": "sales",
+    # Fase 9
+    "ventas_persona": "sales",
 }
 
 

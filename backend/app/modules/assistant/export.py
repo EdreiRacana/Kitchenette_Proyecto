@@ -548,6 +548,18 @@ _SPEC: Dict[str, Dict[str, Any]] = {
             ("total", "Total histórico", "money"),
         ]},
     },
+    "ventas_persona": {
+        "title": "Ficha por nombre (vendedor / cliente)",
+        "scalars": [("nombre_busqueda", "Nombre buscado")],
+        # Elegimos la tabla más útil — la de vendedores. Si el usuario
+        # quiere ambas en el XLSX podemos abrir dos sheets en el futuro.
+        "table": {"key": "vendedores", "headers": [
+            ("nombre", "Vendedor", "str"),
+            ("pedidos", "Pedidos", "int"),
+            ("total_vendido", "Total vendido", "money"),
+            ("ultima_venta", "Última venta", "str"),
+        ]},
+    },
 }
 
 

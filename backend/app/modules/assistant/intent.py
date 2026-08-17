@@ -14,7 +14,7 @@ _PATTERNS: list = [
     # Ventas periodo — captura "vendí este mes / hoy / semana / año"
     (r"(cu[aá]nt[oa]|total|monto).{0,20}(vend|factur|ingres)",
         "ventas_periodo", lambda m, q: {"periodo": _detect_period(q)}),
-    (r"(ventas|facturaci[oó]n).{0,25}(hoy|semana|mes|a[ñn]o|ayer)",
+    (r"(ventas|facturaci[oó]n).{0,25}(hoy|semana|mes|a[ñn]o|ayer|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)",
         "ventas_periodo", lambda m, q: {"periodo": _detect_period(q)}),
 
     # Top productos
@@ -246,13 +246,15 @@ _PATTERNS: list = [
     (r"\b(vendedor(es)?|salesperson|seller)\b.{0,15}(top|mejor|m[aá]s)",
         "top_vendedores", lambda m, q: {"periodo": _detect_period(q), "limite": _detect_limit(q)}),
 
-    # Cliente por nombre: capturamos lo que viene tras "de/del/al". Se
-    # excluye si el nombre coincide con periodo o palabra reservada — eso
-    # ya lo captura el patron general de ventas antes.
-    (r"(ventas|compras?|cu[aá]nto\s+(?:me\s+)?ha?\s+comprad).{0,10}(?:de|del|al?)\s+([a-záéíóúüñ][a-záéíóúüñ0-9\s\.]{1,40})",
-        "ventas_cliente", lambda m, q: {"nombre": _clean_name(m.group(m.lastindex))}),
-    (r"(?:c[oó]mo\s+va|estado\s+de|status\s+de)\s+(?:cliente\s+)?([a-záéíóúüñ][a-záéíóúüñ0-9\s\.]{1,40})",
-        "ventas_cliente", lambda m, q: {"nombre": _clean_name(m.group(m.lastindex))}),
+    # Persona por nombre — busca en AMBOS vendedores y clientes. Se
+    # excluye si el nombre coincide con periodo o palabra reservada —
+    # eso ya lo captura el patron general de ventas antes.
+    (r"(ventas|compras?).{0,10}(?:de|del|al?)\s+([a-záéíóúüñ][a-záéíóúüñ0-9\s\.]{1,40})",
+        "ventas_persona", lambda m, q: {"nombre": _clean_name(m.group(m.lastindex))}),
+    (r"cu[aá]nto\s+(?:me\s+)?ha?\s+(?:comprad|vendid|factur)[a-z]*\s+([a-záéíóúüñ][a-záéíóúüñ0-9\s\.]{1,40})",
+        "ventas_persona", lambda m, q: {"nombre": _clean_name(m.group(m.lastindex))}),
+    (r"(?:c[oó]mo\s+va|estado\s+de|status\s+de)\s+(?:cliente\s+|vendedor\s+)?([a-záéíóúüñ][a-záéíóúüñ0-9\s\.]{1,40})",
+        "ventas_persona", lambda m, q: {"nombre": _clean_name(m.group(m.lastindex))}),
 ]
 
 

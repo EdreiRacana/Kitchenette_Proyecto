@@ -310,6 +310,9 @@ TOOLS_SCHEMA: List[Dict[str, Any]] = [
     {"name": "ventas_cliente",
      "description": "Busca un cliente por nombre (fuzzy) y devuelve total comprado, pedidos, saldo pendiente y última compra.",
      "input_schema": {"type": "object", "properties": {"nombre": {"type": "string"}}, "required": ["nombre"]}},
+    {"name": "ventas_persona",
+     "description": "Búsqueda unificada por nombre: revisa tanto vendedores (User asignado como seller) como clientes (Customer). Devuelve secciones para cada rol donde aparezca el nombre. Úsala cuando la pregunta es del tipo 'ventas de X' o 'cómo va X' sin especificar si X es vendedor o cliente.",
+     "input_schema": {"type": "object", "properties": {"nombre": {"type": "string"}}, "required": ["nombre"]}},
 ]
 
 
