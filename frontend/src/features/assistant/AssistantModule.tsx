@@ -216,6 +216,9 @@ async function fetchAnswer(question: string): Promise<{
 const TABLE_KEYS = [
   "items", "top_debtors", "top_creditors", "accounts", "horas",
   "top", "sesiones", "recientes", "rapidos", "mas_lentos", "bottom",
+  // ventas_persona devuelve estas dos — el botón debe aparecer si al
+  // menos una tiene filas.
+  "vendedores", "clientes",
 ];
 function isExportable(data: any): boolean {
   if (!data || typeof data !== "object") return false;
