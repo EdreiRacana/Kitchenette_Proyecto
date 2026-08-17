@@ -12,7 +12,23 @@ quedan stubbed devolviendo "en construcción" — se van agregando en la
 práctica sin romper el contrato del asistente.
 """
 from __future__ import annotations
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
+
+
+def _now() -> datetime:
+    """Timestamp aware (con zona horaria) — para comparar con columnas
+    DateTime(timezone=True) del ERP sin errores 'naive vs aware'."""
+    return datetime.now(timezone.utc)
+
+
+def _aware(dt):
+    """Garantiza que un datetime cargado de DB tenga tzinfo. Si ya es aware
+    lo devuelve tal cual; si es naive lo asume UTC."""
+    if dt is None:
+        return None
+    if getattr(dt, "tzinfo", None) is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,8 +38,9 @@ from sqlalchemy import select, func, and_, or_
 # ── Helpers de periodo ────────────────────────────────────────────────
 def _period_bounds(periodo: str = "mes") -> tuple[datetime, datetime, str]:
     """Convierte una etiqueta legible en (inicio, fin, etiqueta_humana).
-    Soporta: hoy, ayer, semana, mes, mes_pasado, año, ytd."""
-    now = datetime.now()
+    Soporta: hoy, ayer, semana, mes, mes_pasado, año, ytd. Devuelve
+    datetimes tz-aware para que coincidan con columnas DateTime(timezone=True)."""
+    now = _now()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     p = (periodo or "mes").lower().strip()
     if p in ("hoy", "today"):
@@ -188,11 +205,12 @@ async def pedidos_pendientes(db: AsyncSession) -> Dict[str, Any]:
     rows = (await db.execute(stmt)).all()
     items = []
     total_saldo = 0.0
-    now = datetime.now()
+    now = _now()
     for r in rows:
         saldo = _money((r.total_amount or 0) - (r.paid_amount or 0))
         total_saldo += saldo
-        dias = (now - r.created_at).days if r.created_at else 0
+        created = _aware(r.created_at)
+        dias = (now - created).days if created else 0
         items.append({
             "order_id": r.id, "folio": r.folio,
             "status": r.status, "saldo": saldo, "dias": dias,
@@ -225,7 +243,7 @@ async def cxc_resumen(db: AsyncSession) -> Dict[str, Any]:
     )
     rows = (await db.execute(stmt)).all()
 
-    now = datetime.now()
+    now = _now()
     buckets = {"al_dia": 0.0, "1_30": 0.0, "31_60": 0.0, "mas_60": 0.0}
     top_debtors: Dict[int, Dict[str, Any]] = {}
     total = 0.0
@@ -234,7 +252,8 @@ async def cxc_resumen(db: AsyncSession) -> Dict[str, Any]:
         if saldo <= 0:
             continue
         total += saldo
-        dias = (now - r.created_at).days if r.created_at else 0
+        created = _aware(r.created_at)
+        dias = (now - created).days if created else 0
         if dias <= 0:
             buckets["al_dia"] += saldo
         elif dias <= 30:
@@ -271,7 +290,7 @@ async def cxp_resumen(db: AsyncSession) -> Dict[str, Any]:
     ).where(SupplierBill.status != "paid")
     rows = (await db.execute(stmt)).all()
 
-    now = datetime.now()
+    now = _now()
     buckets = {"vigente": 0.0, "1_30": 0.0, "31_60": 0.0, "mas_60": 0.0}
     total = 0.0
     top_creditors: Dict[str, float] = {}
@@ -280,8 +299,9 @@ async def cxp_resumen(db: AsyncSession) -> Dict[str, Any]:
         if saldo <= 0:
             continue
         total += saldo
-        if r.due_date:
-            days_overdue = (now - r.due_date).days if r.due_date < now else 0
+        due = _aware(r.due_date)
+        if due:
+            days_overdue = (now - due).days if due < now else 0
         else:
             days_overdue = 0
         if days_overdue <= 0:
@@ -433,9 +453,11 @@ async def ventas_pos_dia(db: AsyncSession, fecha: Optional[str] = None) -> Dict[
     """Corte del día del POS: monto total, tickets, ticket promedio,
     diferencias de arqueo en sesiones cerradas."""
     from app.modules.pos import models as pm
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = _now().replace(hour=0, minute=0, second=0, microsecond=0)
     if fecha:
-        try: today = datetime.fromisoformat(fecha)
+        try:
+            parsed = datetime.fromisoformat(fecha)
+            today = _aware(parsed)
         except Exception: pass
     tomorrow = today + timedelta(days=1)
 
