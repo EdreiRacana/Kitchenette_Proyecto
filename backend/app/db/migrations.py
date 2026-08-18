@@ -800,6 +800,19 @@ _ASSISTANT_STATEMENTS = [
         cost_usd       DOUBLE PRECISION DEFAULT 0 NOT NULL
     )""",
     "CREATE INDEX IF NOT EXISTS ix_assistant_usage_created ON assistant_llm_usage (created_at)",
+    # Fase 14 — loop de aprendizaje: preguntas que NO matchearon el
+    # router determinista. Se revisa periodicamente para crear patrones
+    # nuevos. matched_by: 'llm' si Haiku resolvió, 'none' si tampoco.
+    """CREATE TABLE IF NOT EXISTS assistant_unmatched_queries (
+        id           SERIAL PRIMARY KEY,
+        created_at   TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+        user_id      INTEGER,
+        question     TEXT NOT NULL,
+        matched_by   VARCHAR NOT NULL DEFAULT 'none',
+        tool_hit     VARCHAR
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_assistant_unmatched_created ON assistant_unmatched_queries (created_at)",
+    "CREATE INDEX IF NOT EXISTS ix_assistant_unmatched_matched_by ON assistant_unmatched_queries (matched_by)",
 ]
 
 

@@ -245,6 +245,17 @@ function triggerDownload(blob: Blob, filename: string) {
   }, 100);
 }
 
+type Suggestion = { tool: string; prompt: string; score: number };
+
+async function fetchSuggestions(q: string): Promise<Suggestion[]> {
+  try {
+    const { data } = await api.get("/assistant/suggest", { params: { q } });
+    return Array.isArray(data?.items) ? data.items : [];
+  } catch {
+    return [];
+  }
+}
+
 async function downloadExcel(tool: string, data: any, question?: string) {
   try {
     const res = await api.post(
@@ -340,6 +351,42 @@ export default function Assistant() {
   const speech = useSpeechRecognition((text, isFinal) => {
     setInput(prev => isFinal ? (prev + " " + text).trim() : text);
   });
+
+  // ── Typeahead de sugerencias (debounced) ─────────────────────────
+  // Al escribir en el input, con 180ms de debounce llamamos a
+  // /assistant/suggest y mostramos las top 5 en un popover flotante.
+  // Cero AI: matching por substring + prefix en el backend.
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [showSuggest, setShowSuggest] = useState(false);
+  const [activeSuggest, setActiveSuggest] = useState<number>(-1);
+  const suggestDebounceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    if (suggestDebounceRef.current) window.clearTimeout(suggestDebounceRef.current);
+    const q = input.trim();
+    // Solo consulta si el usuario está escribiendo activamente.
+    suggestDebounceRef.current = window.setTimeout(async () => {
+      if (q.length === 0) {
+        setSuggestions([]);
+        setShowSuggest(false);
+        return;
+      }
+      const items = await fetchSuggestions(q);
+      setSuggestions(items);
+      setShowSuggest(items.length > 0);
+      setActiveSuggest(-1);
+    }, 180);
+    return () => {
+      if (suggestDebounceRef.current) window.clearTimeout(suggestDebounceRef.current);
+    };
+  }, [input, open]);
+
+  const applySuggestion = (s: Suggestion) => {
+    setInput("");
+    setShowSuggest(false);
+    setSuggestions([]);
+    send(s.prompt);
+  };
 
   const send = async (text?: string) => {
     const question = (text ?? input).trim();
@@ -773,7 +820,44 @@ export default function Assistant() {
           </div>
 
           {/* Input + micrófono + enviar */}
-          <div style={{ padding: "12px 14px 14px", borderTop: "1px solid rgba(148,178,245,0.10)" }}>
+          <div style={{ padding: "12px 14px 14px", borderTop: "1px solid rgba(148,178,245,0.10)",
+                         position: "relative" }}>
+            {/* Popover de sugerencias — arriba del input, cierra en Escape
+                o click fuera. Al click en una sugerencia, se envía como
+                pregunta directa. */}
+            {showSuggest && suggestions.length > 0 && (
+              <div style={{
+                position: "absolute", left: 14, right: 14, bottom: "100%",
+                marginBottom: 6,
+                background: "rgba(12,22,44,0.98)",
+                border: "1px solid rgba(148,178,245,0.25)",
+                borderRadius: 12, padding: 6,
+                boxShadow: "0 10px 30px rgba(0,0,0,0.45)",
+                zIndex: 20, maxHeight: 260, overflowY: "auto",
+              }}>
+                <div style={{ fontSize: 10, color: "rgba(160,180,220,0.55)",
+                               padding: "4px 8px" }}>
+                  Sugerencias · ↑↓ para elegir, Enter para enviar
+                </div>
+                {suggestions.map((s, i) => (
+                  <div
+                    key={`${s.tool}-${i}`}
+                    onMouseEnter={() => setActiveSuggest(i)}
+                    onMouseDown={(e) => { e.preventDefault(); applySuggestion(s); }}
+                    style={{
+                      padding: "8px 10px", borderRadius: 8,
+                      background: activeSuggest === i
+                        ? "rgba(70,120,200,0.28)" : "transparent",
+                      color: "#DEE9FB", fontSize: 13, cursor: "pointer",
+                      display: "flex", alignItems: "center", gap: 8,
+                    }}
+                  >
+                    <span style={{ color: "rgba(140,200,255,0.85)" }}>→</span>
+                    <span style={{ flex: 1 }}>{s.prompt}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div style={{
               display: "flex", alignItems: "flex-end", gap: 8,
               background: "rgba(255,255,255,0.03)",
@@ -787,10 +871,40 @@ export default function Assistant() {
                 ref={inputRef}
                 value={input}
                 onChange={e => setInput(e.target.value)}
+                onBlur={() => setTimeout(() => setShowSuggest(false), 120)}
                 onKeyDown={e => {
+                  // Navegación del popover de sugerencias
+                  if (showSuggest && suggestions.length > 0) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setActiveSuggest(i => Math.min(i + 1, suggestions.length - 1));
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setActiveSuggest(i => Math.max(i - 1, -1));
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setShowSuggest(false);
+                      return;
+                    }
+                    if (e.key === "Tab" && activeSuggest >= 0) {
+                      e.preventDefault();
+                      applySuggestion(suggestions[activeSuggest]);
+                      return;
+                    }
+                  }
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    send();
+                    // Enter con sugerencia activa → envía esa sugerencia.
+                    // Sin sugerencia activa → envía lo que el usuario escribió.
+                    if (showSuggest && activeSuggest >= 0) {
+                      applySuggestion(suggestions[activeSuggest]);
+                    } else {
+                      send();
+                    }
                   }
                 }}
                 placeholder={speech.listening ? "Escuchando…" : "Pregúntame algo del negocio…"}
