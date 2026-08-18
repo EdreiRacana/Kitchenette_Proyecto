@@ -253,8 +253,17 @@ _PATTERNS: list = [
         "ventas_persona", lambda m, q: {"nombre": _clean_name(m.group(m.lastindex))}),
     (r"cu[aá]nto\s+(?:me\s+)?ha?\s+(?:comprad|vendid|factur)[a-z]*\s+([a-záéíóúüñ][a-záéíóúüñ0-9\s\.]{1,40})",
         "ventas_persona", lambda m, q: {"nombre": _clean_name(m.group(m.lastindex))}),
-    (r"(?:c[oó]mo\s+va|estado\s+de|status\s+de)\s+(?:cliente\s+|vendedor\s+)?([a-záéíóúüñ][a-záéíóúüñ0-9\s\.]{1,40})",
+    (r"(?:c[oó]mo\s+va|estado\s+de|status\s+de)\s+(?:cliente\s+|vendedor\s+|empleado\s+)?([a-záéíóúüñ][a-záéíóúüñ0-9\s\.]{1,40})",
         "ventas_persona", lambda m, q: {"nombre": _clean_name(m.group(m.lastindex))}),
+
+    # ── ÚLTIMO PATRÓN: nombre suelto (ej. "RICARDO ESCANDON ROBLES") ──
+    # Debe ir al final para que no interfiera con nada más. El deriver
+    # usa _looks_like_person_name como heurística — si rechaza,
+    # devuelve None y route() sigue al fallback LLM.
+    (r"^[a-záéíóúüñ][a-záéíóúüñ\s\.\-']{2,60}\??$",
+        "ventas_persona", lambda m, q: (
+            {"nombre": _clean_name(q)} if _looks_like_person_name(q) else None
+        )),
 ]
 
 
@@ -328,15 +337,57 @@ def _clean_name(raw: str) -> str:
     return " ".join(words[:4])  # cap 4 palabras — evita capturar frases largas
 
 
+# Verbos y palabras interrogativas que descartan "nombre suelto".
+# Si aparecen en la pregunta, probablemente NO es solo un nombre propio.
+_QUESTION_WORDS = {
+    "cuanto", "cuánto", "cuanta", "cuánta", "cuantos", "cuántos",
+    "que", "qué", "como", "cómo", "quien", "quién", "quienes", "quiénes",
+    "donde", "dónde", "cuando", "cuándo", "por", "cual", "cuál",
+    "vendo", "vendi", "vendí", "vende", "vendieron", "vendemos",
+    "compro", "compró", "compré", "compra", "compran",
+    "muestra", "dame", "haz", "ver", "mostrar", "quiero", "dime",
+    "hay", "existe", "tengo", "tiene", "hola", "adios", "gracias",
+    "s", "sí", "no", "ok", "listo",
+}
+
+
+def _looks_like_person_name(q: str) -> bool:
+    """Heurística: la pregunta parece SOLO un nombre propio.
+    Reglas conservadoras — falso negativo (deja pasar al LLM) es mejor
+    que falso positivo (busca 'francisco' cuando la pregunta era otra)."""
+    words = q.strip().strip("?.,;:").split()
+    if len(words) < 2 or len(words) > 5:
+        return False
+    for w in words:
+        wl = w.lower().strip(".,;:¿?¡!")
+        if len(wl) < 2:
+            return False
+        # Solo letras y guiones — nada de números ni símbolos raros.
+        if not wl.replace("-", "").replace(".", "").replace("'", "").isalpha():
+            return False
+        if wl in _QUESTION_WORDS:
+            return False
+        if wl in _RESERVED_AFTER_DE:
+            return False
+    return True
+
+
 def route(question: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     """Devuelve (tool_name, kwargs) si la pregunta matchea algún patrón,
-    o None si no matchea nada (escalar a LLM en Sprint 2)."""
+    o None si no matchea nada (escalar a LLM en Sprint 2).
+
+    Si un deriver devuelve None significa que su heurística rechazó el
+    match (ej. el nombre capturado no parece nombre propio) — se sigue
+    con los siguientes patrones."""
     q = (question or "").strip().lower()
     if not q or len(q) < 3:
         return None
     for pat, tool, deriver in _PATTERNS:
         m = re.search(pat, q)
-        if m:
-            kwargs = deriver(m, q) if deriver else {}
-            return tool, kwargs
+        if not m:
+            continue
+        kwargs = deriver(m, q) if deriver else {}
+        if kwargs is None:
+            continue
+        return tool, kwargs
     return None
