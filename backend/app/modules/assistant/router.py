@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
 from app.modules.auth.models import User
-from app.modules.assistant import tools, intent, templates, budget, llm, permissions, export
+from app.modules.assistant import tools, intent, templates, budget, llm, permissions, export, suggestions
 
 router = APIRouter()
 DB = Annotated[AsyncSession, Depends(deps.get_db)]
@@ -45,11 +45,30 @@ class ExportRequest(BaseModel):
     question: Optional[str] = None
 
 
+class SuggestionItem(BaseModel):
+    tool: str
+    prompt: str
+    score: float
+
+
+class SuggestResponse(BaseModel):
+    items: list[SuggestionItem]
+
+
 @router.get("/budget", response_model=BudgetResponse)
 async def get_budget(db: DB, current_user: CurrentUser):
     """Estado actual del presupuesto mensual de LLM.
     La UI la usa para colorear la barra sin exponer cifras al usuario."""
     return await budget.budget_status(db)
+
+
+@router.get("/suggest", response_model=SuggestResponse)
+async def get_suggestions(current_user: CurrentUser, q: str = ""):
+    """Autocompletado del asistente. Devuelve las top N plantillas de
+    preguntas que más se parecen a lo que el usuario está escribiendo,
+    filtradas por el RBAC del usuario. Cero AI, sub-50ms típico."""
+    items = suggestions.suggest(q, current_user, limit=6)
+    return {"items": items}
 
 
 @router.post("/export-xlsx")
@@ -102,6 +121,7 @@ async def ask(payload: AskRequest, db: DB, current_user: CurrentUser) -> AskResp
     # Se le pasa SOLO el catálogo de tools que el usuario puede ejecutar —
     # de lo más eficiente: el LLM ni siquiera sugiere algo que se le va a
     # bloquear después.
+    router_missed = routed is None
     if not routed:
         allowed = set(permissions.allowed_tools_for(current_user))
         llm_choice = await llm.route_with_llm(
@@ -111,6 +131,14 @@ async def ask(payload: AskRequest, db: DB, current_user: CurrentUser) -> AskResp
             routed = (llm_choice["tool_name"], llm_choice.get("tool_input") or {})
             used_llm = True
             llm_purpose = "route"
+
+    # Loop de aprendizaje: si el router determinista no matcheó, lo
+    # logueamos para revisión offline (crear nuevos patrones). No
+    # bloquea la respuesta si el insert falla.
+    if router_missed:
+        matched_by = "llm" if routed else "none"
+        tool_hit = routed[0] if routed else None
+        await suggestions.log_unmatched(db, q, user_id, matched_by, tool_hit)
 
     if not routed:
         # No entendimos, o LLM tampoco encontró tool aplicable, o presupuesto agotado
