@@ -816,6 +816,56 @@ _ASSISTANT_STATEMENTS = [
 ]
 
 
+# ── Actualización de política RBAC (idempotente) ─────────────────────
+# Cambios acordados con el usuario (Fase 15):
+#   1. Nuevo módulo 'retail' + sus 5 permisos (view/create/edit/delete/approve).
+#   2. Rol "Gerente Ventas" gana retail.{view,create,edit,approve} y
+#      pierde reports.*  → el KPI ejecutivo queda solo para Admin.
+#   3. Rol "Contador" gana sales.view — necesario para conciliar
+#      facturas contra ventas del ERP.
+# Todo con INSERT ON CONFLICT DO NOTHING y DELETE con subquery — se
+# puede correr múltiples veces sin efecto duplicado. NO toca roles
+# personalizados del cliente (solo los tres nombres canónicos).
+_RBAC_POLICY_UPDATES = [
+    # 1. Permisos del módulo retail (5 acciones × una fila)
+    """INSERT INTO permissions (module, action, description)
+        SELECT 'retail', a, 'Retail / Cadenas · ' || a
+        FROM unnest(ARRAY['view','create','edit','delete','approve']) AS a
+        WHERE NOT EXISTS (
+            SELECT 1 FROM permissions p WHERE p.module = 'retail' AND p.action = a
+        )""",
+
+    # 2a. Asegurar retail.{view,create,edit,approve} para "Gerente Ventas"
+    """INSERT INTO role_permissions (role_id, permission_id)
+        SELECT r.id, p.id
+        FROM roles r, permissions p
+        WHERE r.name = 'Gerente Ventas'
+          AND p.module = 'retail'
+          AND p.action IN ('view','create','edit','approve')
+          AND NOT EXISTS (
+              SELECT 1 FROM role_permissions rp
+              WHERE rp.role_id = r.id AND rp.permission_id = p.id
+          )""",
+
+    # 2b. Quitar reports.* del rol "Gerente Ventas"
+    """DELETE FROM role_permissions
+        WHERE role_id IN (SELECT id FROM roles WHERE name = 'Gerente Ventas')
+          AND permission_id IN (SELECT id FROM permissions WHERE module = 'reports')""",
+
+    # 3. Dar sales.view al rol "Contador"
+    """INSERT INTO role_permissions (role_id, permission_id)
+        SELECT r.id, p.id
+        FROM roles r, permissions p
+        WHERE r.name = 'Contador'
+          AND p.module = 'sales'
+          AND p.action = 'view'
+          AND NOT EXISTS (
+              SELECT 1 FROM role_permissions rp
+              WHERE rp.role_id = r.id AND rp.permission_id = p.id
+          )""",
+]
+
+
 def _apply(sync_conn: Connection) -> None:
     if sync_conn.dialect.name != "postgresql":
         return
@@ -835,6 +885,10 @@ def _apply(sync_conn: Connection) -> None:
         ("promotions", _PROMOTIONS_STATEMENTS),
         ("loyalty",    _LOYALTY_STATEMENTS),
         ("assistant",  _ASSISTANT_STATEMENTS),
+        # Corre DESPUÉS de assistant y auth: necesita que existan las
+        # tablas 'permissions', 'roles' y 'role_permissions' (que crea
+        # SQLAlchemy con Base.metadata.create_all en el startup).
+        ("rbac_policy", _RBAC_POLICY_UPDATES),
     ]
 
     for label, statements in all_statements:

@@ -83,21 +83,22 @@ TOOL_MODULE: dict[str, str] = {
     "formas_pago_pos": "sales",
     "top_cajeros_dia": "sales",
 
-    # Retail
-    "desempeno_cadena": "sales",
-    "desempeno_tienda": "sales",
-    "sell_through_por_tienda": "sales",
+    # Retail — módulo propio (Fase 15). Solo Administrador, Solo lectura
+    # y Gerente Ventas lo ven. Rol Ventas y Almacén NO lo ven ya.
+    "desempeno_cadena": "retail",
+    "desempeno_tienda": "retail",
+    "sell_through_por_tienda": "retail",
 
     # KPI ejecutivo — solo administrador (queda anclado a 'reports'
     # que por default solo Administrador/Contador ven en el seed RBAC).
     "flujo_efectivo_proyectado": "reports",
     "nomina_vs_ventas": "reports",
 
-    # Fase 6 · Retail avanzado
-    "tiendas_wos_critico": "sales",
-    "tiendas_sobrestock": "sales",
-    "fill_rate_cadena": "sales",
-    "return_rate_cadena": "sales",
+    # Fase 6 · Retail avanzado (Fase 15: módulo propio 'retail')
+    "tiendas_wos_critico": "retail",
+    "tiendas_sobrestock": "retail",
+    "fill_rate_cadena": "retail",
+    "return_rate_cadena": "retail",
     # Fase 6 · Finanzas
     "aging_cxc": "finance",
     "dso_dpo": "finance",
@@ -155,6 +156,7 @@ def permission_denied_message(tool_name: str) -> str:
         "finance": "finanzas y tesorería",
         "accounting": "contabilidad",
         "hr": "recursos humanos y nómina",
+        "retail": "retail y cadenas",
         "reports": "reportes ejecutivos",
         "config": "configuración",
         "dashboard": "tablero general",
