@@ -564,6 +564,123 @@ _SPEC: Dict[str, Dict[str, Any]] = {
             ]},
         ],
     },
+    # ── Fase 16 · 12 tools nuevas de Ventas ──────────────────────────
+    "pedidos_sin_timbrar": {
+        "title": "Pedidos sin timbrar (CFDI pendiente)",
+        "scalars": [("count", "Total"), ("monto_total", "Monto por facturar")],
+        "table": {"key": "items", "headers": [
+            ("folio", "Folio", "str"), ("cliente", "Cliente", "str"),
+            ("monto", "Monto", "money"), ("estado_cfdi", "Estado CFDI", "str"),
+        ]},
+    },
+    "ventas_por_canal": {
+        "title": "Ventas por canal",
+        "scalars": [("periodo", "Periodo"), ("total_general", "Total general")],
+        "table": {"key": "items", "headers": [
+            ("canal", "Canal", "str"), ("pedidos", "Pedidos", "int"),
+            ("total", "Total", "money"), ("pct", "% del total", "pct"),
+        ]},
+    },
+    "comisiones_agentes": {
+        "title": "Comisiones de agentes",
+        "scalars": [("periodo", "Periodo"), ("total_comision", "Total a pagar")],
+        "table": {"key": "items", "headers": [
+            ("agente", "Agente", "str"),
+            ("pct", "% comisión", "pct"),
+            ("pedidos", "Pedidos", "int"),
+            ("ventas", "Ventas", "money"),
+            ("comision", "Comisión", "money"),
+        ]},
+    },
+    "tasa_conversion_cotizaciones": {
+        "title": "Tasa de conversión de cotizaciones",
+        "scalars": [("periodo", "Periodo"), ("tasa_pct", "Tasa %"),
+                     ("pedidos", "Pedidos cerrados"),
+                     ("cotizaciones", "Cotizaciones nuevas"),
+                     ("monto_pedidos", "Monto pedidos"),
+                     ("monto_cotizaciones", "Monto cotizaciones")],
+    },
+    "cotizaciones_vencidas": {
+        "title": "Cotizaciones vencidas",
+        "scalars": [("count", "Total"), ("monto_total", "Monto perdido")],
+        "table": {"key": "items", "headers": [
+            ("folio", "Folio", "str"), ("cliente", "Cliente", "str"),
+            ("monto", "Monto", "money"),
+            ("vencio_hace", "Vencido hace (días)", "int"),
+        ]},
+    },
+    "clientes_nuevos_mes": {
+        "title": "Clientes nuevos del periodo",
+        "scalars": [("periodo", "Periodo"), ("count", "Total")],
+        "table": {"key": "items", "headers": [
+            ("cliente", "Cliente", "str"),
+            ("primera_compra", "Primera compra", "str"),
+        ]},
+    },
+    "ventas_por_sucursal": {
+        "title": "Ventas por sucursal",
+        "scalars": [("periodo", "Periodo")],
+        "table": {"key": "items", "headers": [
+            ("sucursal", "Sucursal", "str"),
+            ("pedidos", "Pedidos", "int"),
+            ("total", "Total", "money"),
+        ]},
+    },
+    "devoluciones_por_razon": {
+        "title": "Devoluciones por razón",
+        "scalars": [("periodo", "Periodo"), ("total_veces", "Total devoluciones")],
+        "table": {"key": "items", "headers": [
+            ("razon", "Razón", "str"),
+            ("veces", "Veces", "int"),
+            ("monto", "Monto reembolsado", "money"),
+        ]},
+    },
+    "metodos_pago_ventas": {
+        "title": "Métodos de pago (todos los cobros)",
+        "scalars": [("periodo", "Periodo"), ("total", "Total cobrado")],
+        "table": {"key": "items", "headers": [
+            ("metodo", "Método", "str"),
+            ("cobros", "Cobros", "int"),
+            ("monto", "Monto", "money"),
+            ("pct", "% del total", "pct"),
+        ]},
+    },
+    "margen_por_producto": {
+        "title": "Top productos por margen",
+        "scalars": [("periodo", "Periodo")],
+        "table": {"key": "items", "headers": [
+            ("product_name", "Producto", "str"),
+            ("sku", "SKU", "str"),
+            ("quantity", "Unidades", "int"),
+            ("revenue", "Ingreso", "money"),
+            ("costo", "Costo", "money"),
+            ("margen", "Margen", "money"),
+            ("margen_pct", "Margen %", "pct"),
+        ]},
+    },
+    "pedidos_con_saldo_parcial": {
+        "title": "Pedidos con abono parcial",
+        "scalars": [("count", "Total"), ("total_saldo", "Saldo pendiente"),
+                     ("total_abonado", "Total abonado")],
+        "table": {"key": "items", "headers": [
+            ("folio", "Folio", "str"),
+            ("cliente", "Cliente", "str"),
+            ("total", "Total", "money"),
+            ("abonado", "Abonado", "money"),
+            ("saldo", "Saldo", "money"),
+            ("avance_pct", "% avance", "pct"),
+        ]},
+    },
+    "pipeline_valor": {
+        "title": "Valor del pipeline",
+        "scalars": [("count", "Cotizaciones vigentes"),
+                     ("total", "Valor total")],
+        "table": {"key": "top", "headers": [
+            ("folio", "Folio", "str"),
+            ("monto", "Monto", "money"),
+            ("vence", "Vence", "str"),
+        ]},
+    },
     "ventas_persona": {
         "title": "Ficha por nombre (vendedor / cliente)",
         "scalars": [("nombre_busqueda", "Nombre buscado")],

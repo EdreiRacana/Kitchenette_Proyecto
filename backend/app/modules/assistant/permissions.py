@@ -128,6 +128,22 @@ TOOL_MODULE: dict[str, str] = {
     "ventas_cliente": "sales",
     # Fase 9
     "ventas_persona": "sales",
+    # Fase 16 · 12 tools nuevas de Ventas
+    # pedidos_sin_timbrar toca CFDI — se ancla a accounting (Contador
+    # lo pide en la práctica) pero Ventas también lo ve porque en
+    # rondas B/B/B dimos sales.view al Contador.
+    "pedidos_sin_timbrar": "accounting",
+    "ventas_por_canal": "sales",
+    "comisiones_agentes": "sales",
+    "tasa_conversion_cotizaciones": "sales",
+    "cotizaciones_vencidas": "sales",
+    "clientes_nuevos_mes": "sales",
+    "ventas_por_sucursal": "sales",
+    "devoluciones_por_razon": "sales",
+    "metodos_pago_ventas": "finance",  # cobros → tesorería
+    "margen_por_producto": "sales",
+    "pedidos_con_saldo_parcial": "finance",  # cobranza
+    "pipeline_valor": "sales",
 }
 
 

@@ -116,6 +116,19 @@ def _empty_msg(tool: str, reason: str | None) -> str:
         "ventas_cliente": "No encontré un cliente con ese nombre, o no tiene compras registradas.",
         # Fase 9
         "ventas_persona": "No encontré vendedor ni cliente con ese nombre.",
+        # Fase 16
+        "pedidos_sin_timbrar": "Todos los pedidos activos están timbrados. CFDI al día.",
+        "ventas_por_canal": "No hay ventas registradas en el periodo consultado.",
+        "comisiones_agentes": "No hay comisiones asignadas a agentes en el periodo consultado.",
+        "tasa_conversion_cotizaciones": "Sin cotizaciones ni pedidos en el periodo — no se puede calcular tasa.",
+        "cotizaciones_vencidas": "No hay cotizaciones vencidas. Pipeline vigente.",
+        "clientes_nuevos_mes": "No se registraron clientes nuevos en el periodo consultado.",
+        "ventas_por_sucursal": "No hay ventas asignadas a sucursales en el periodo consultado.",
+        "devoluciones_por_razon": "No hay devoluciones registradas en el periodo consultado.",
+        "metodos_pago_ventas": "No se registraron cobros en el periodo consultado.",
+        "margen_por_producto": "No hay ventas en el periodo — no se puede calcular margen.",
+        "pedidos_con_saldo_parcial": "No hay pedidos con abono parcial. Cobranza al día.",
+        "pipeline_valor": "No hay cotizaciones vigentes en el pipeline.",
     }
     base = friendly.get(tool, "No hay datos que mostrar para esta consulta.")
     if reason and "construcción" in reason:
@@ -771,6 +784,110 @@ def _t_ventas_persona(r: Dict[str, Any]) -> str:
 _t_ventas_cliente = _t_ventas_persona
 
 
+# ═════════════ formatters Fase 16 ═════════════
+
+def _t_pedidos_sin_timbrar(r: Dict[str, Any]) -> str:
+    t = (f"**{r['count']}** pedido{'s' if r['count'] != 1 else ''} sin timbrar "
+         f"— total **{_mxn(r['monto_total'])}** por facturar.")
+    if r["items"]:
+        t += "\n\nRecientes:"
+        for it in r["items"][:5]:
+            t += f"\n• {it['folio']} · {it['cliente']} — {_mxn(it['monto'])} ({it['estado_cfdi']})"
+    return t
+
+
+def _t_ventas_por_canal(r: Dict[str, Any]) -> str:
+    lines = [f"Ventas por canal {r['periodo']} — total {_mxn(r['total_general'])}:"]
+    for it in r["items"]:
+        lines.append(f"• **{it['canal']}** — {_mxn(it['total'])} ({it['pct']}%, {it['pedidos']} pedidos)")
+    return "\n".join(lines)
+
+
+def _t_comisiones_agentes(r: Dict[str, Any]) -> str:
+    t = (f"Comisiones {r['periodo']}: total a pagar **{_mxn(r['total_comision'])}**.")
+    if r["items"]:
+        t += "\n\nDesglose:"
+        for it in r["items"][:5]:
+            tipo = "externo" if it["externo"] else "interno"
+            t += (f"\n• **{it['agente']}** ({tipo}, {it['pct']}%) — "
+                  f"{_mxn(it['comision'])} sobre {_mxn(it['ventas'])}")
+    return t
+
+
+def _t_tasa_conversion(r: Dict[str, Any]) -> str:
+    return (f"Tasa de conversión {r['periodo']}: **{r['tasa_pct']}%**.\n"
+            f"• Pedidos cerrados: {r['pedidos']} ({_mxn(r['monto_pedidos'])})\n"
+            f"• Cotizaciones nuevas: {r['cotizaciones']} ({_mxn(r['monto_cotizaciones'])})")
+
+
+def _t_cotizaciones_vencidas(r: Dict[str, Any]) -> str:
+    t = (f"**{r['count']}** cotización{'es' if r['count'] != 1 else ''} vencida"
+         f"{'s' if r['count'] != 1 else ''} — total **{_mxn(r['monto_total'])}** perdido de pipeline.")
+    if r["items"]:
+        t += "\n\nMayores:"
+        for it in r["items"][:5]:
+            t += f"\n• {it['folio']} · {it['cliente']} — {_mxn(it['monto'])} (venció hace {it['vencio_hace']}d)"
+    return t
+
+
+def _t_clientes_nuevos(r: Dict[str, Any]) -> str:
+    t = f"**{r['count']}** cliente{'s' if r['count'] != 1 else ''} nuevo{'s' if r['count'] != 1 else ''} en {r['periodo']}."
+    if r["items"]:
+        t += "\n\nRecientes:"
+        for it in r["items"][:5]:
+            t += f"\n• **{it['cliente']}** — primera compra {it['primera_compra']}"
+    return t
+
+
+def _t_ventas_por_sucursal(r: Dict[str, Any]) -> str:
+    lines = [f"Ventas por sucursal {r['periodo']}:"]
+    for i, it in enumerate(r["items"], 1):
+        lines.append(f"{i}. **{it['sucursal']}** — {_mxn(it['total'])} ({it['pedidos']} pedidos)")
+    return "\n".join(lines)
+
+
+def _t_devoluciones_razon(r: Dict[str, Any]) -> str:
+    t = f"Devoluciones {r['periodo']} — total **{r['total_veces']}** por razón:"
+    for it in r["items"]:
+        t += f"\n• {it['razon']} — **{it['veces']}** veces ({_mxn(it['monto'])})"
+    return t
+
+
+def _t_metodos_pago(r: Dict[str, Any]) -> str:
+    lines = [f"Métodos de pago {r['periodo']} — total {_mxn(r['total'])}:"]
+    for it in r["items"]:
+        lines.append(f"• **{it['metodo']}** — {_mxn(it['monto'])} ({it['pct']}%, {it['cobros']} cobros)")
+    return "\n".join(lines)
+
+
+def _t_margen_producto(r: Dict[str, Any]) -> str:
+    lines = [f"Top productos por margen {r['periodo']}:"]
+    for i, it in enumerate(r["items"], 1):
+        lines.append(f"{i}. **{it['product_name']}** — margen **{_mxn(it['margen'])}** ({it['margen_pct']}%) sobre {_mxn(it['revenue'])} en {it['quantity']} uds.")
+    return "\n".join(lines)
+
+
+def _t_saldo_parcial(r: Dict[str, Any]) -> str:
+    t = (f"**{r['count']}** pedido{'s' if r['count'] != 1 else ''} con abono parcial "
+         f"— saldo pendiente **{_mxn(r['total_saldo'])}** "
+         f"(ya abonaron {_mxn(r['total_abonado'])}).")
+    if r["items"]:
+        t += "\n\nDetalle:"
+        for it in r["items"][:5]:
+            t += f"\n• {it['folio']} · {it['cliente']} — {it['avance_pct']}% pagado (saldo {_mxn(it['saldo'])})"
+    return t
+
+
+def _t_pipeline_valor(r: Dict[str, Any]) -> str:
+    t = (f"Pipeline vigente: **{r['count']}** cotización{'es' if r['count'] != 1 else ''} abierta"
+         f"{'s' if r['count'] != 1 else ''} por **{_mxn(r['total'])}**.")
+    if r["top"]:
+        t += "\n\nMayores:"
+        for it in r["top"]:
+            t += f"\n• {it['folio']} — {_mxn(it['monto'])} (vence {it['vence']})"
+    return t
+
+
 _FORMATTERS = {
     "ventas_periodo": _t_ventas_periodo,
     "top_productos": _t_top_productos,
@@ -848,4 +965,17 @@ _FORMATTERS = {
     "ventas_cliente": _t_ventas_cliente,
     # Fase 9
     "ventas_persona": _t_ventas_persona,
+    # Fase 16
+    "pedidos_sin_timbrar": _t_pedidos_sin_timbrar,
+    "ventas_por_canal": _t_ventas_por_canal,
+    "comisiones_agentes": _t_comisiones_agentes,
+    "tasa_conversion_cotizaciones": _t_tasa_conversion,
+    "cotizaciones_vencidas": _t_cotizaciones_vencidas,
+    "clientes_nuevos_mes": _t_clientes_nuevos,
+    "ventas_por_sucursal": _t_ventas_por_sucursal,
+    "devoluciones_por_razon": _t_devoluciones_razon,
+    "metodos_pago_ventas": _t_metodos_pago,
+    "margen_por_producto": _t_margen_producto,
+    "pedidos_con_saldo_parcial": _t_saldo_parcial,
+    "pipeline_valor": _t_pipeline_valor,
 }
