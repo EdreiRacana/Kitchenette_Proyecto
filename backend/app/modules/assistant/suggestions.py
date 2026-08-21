@@ -66,6 +66,58 @@ PROMPT_HINTS: dict[str, list[str]] = {
         "ventas de Francisco", "cómo va Manuel",
         "cuánto ha comprado Argelia", "estado de cliente Elías",
     ],
+    # ── Fase 16 · Ventas — 12 tools nuevas ─────────────────────────
+    "pedidos_sin_timbrar": [
+        "pedidos sin timbrar", "cuántas facturas me faltan",
+        "cfdi pendientes", "resumen de timbrado",
+        "pedidos sin facturar",
+    ],
+    "ventas_por_canal": [
+        "ventas por canal", "cuánto vendo en whatsapp",
+        "distribución por canal", "qué canal vende más",
+        "ventas mostrador vs web",
+    ],
+    "comisiones_agentes": [
+        "comisiones del mes", "cuánto le debo a agentes",
+        "top comisiones", "ranking de comisiones",
+        "comisiones a pagar",
+    ],
+    "tasa_conversion_cotizaciones": [
+        "tasa de conversión", "cuántas cotizaciones cerré",
+        "% de cierre", "conversión de quotes",
+    ],
+    "cotizaciones_vencidas": [
+        "cotizaciones vencidas", "quotes caducadas",
+        "cotizaciones que expiraron",
+    ],
+    "clientes_nuevos_mes": [
+        "clientes nuevos", "cuántos clientes nuevos tengo",
+        "primeras compras del mes",
+    ],
+    "ventas_por_sucursal": [
+        "ventas por sucursal", "qué sucursal vende más",
+        "ventas por almacén",
+    ],
+    "devoluciones_por_razon": [
+        "por qué me devuelven", "razones de devolución",
+        "top razones de devolución",
+    ],
+    "metodos_pago_ventas": [
+        "cómo me pagan", "efectivo vs tarjeta general",
+        "métodos de pago del mes", "formas de pago totales",
+    ],
+    "margen_por_producto": [
+        "productos con más ganancia", "top margen",
+        "qué me deja más dinero", "margen por producto",
+    ],
+    "pedidos_con_saldo_parcial": [
+        "pedidos con abono parcial", "quiénes deben aún",
+        "pagos incompletos", "cobranza fácil",
+    ],
+    "pipeline_valor": [
+        "valor del pipeline", "potencial de ventas",
+        "cuánto potencial tengo", "pipeline vigente",
+    ],
     # ── Finanzas ─────────────────────────────────────────────────────
     "cxc_resumen": [
         "cartera vencida", "cuentas por cobrar",

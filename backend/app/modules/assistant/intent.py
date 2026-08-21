@@ -11,6 +11,78 @@ from typing import Optional, Tuple, Dict, Any
 # Cada entrada: (regex, tool_name, kwargs_deriver)
 # El deriver recibe el match y devuelve los kwargs; si es None se ejecuta sin args.
 _PATTERNS: list = [
+    # ══════════════════════════════════════════════════════════════════
+    # PATRONES ESPECÍFICOS FASE 16 — deben ir ANTES de los generales
+    # para que "cuántas facturas me faltan timbrar" no caiga a
+    # ventas_periodo (que capta cualquier "cuánto...factur").
+    # ══════════════════════════════════════════════════════════════════
+    (r"(pedidos?|facturas?|cfdi).{0,20}(sin\s+timbr|por\s+timbrar|por\s+facturar|pendientes?|faltan?\s+timbr|no\s+timbrad)",
+        "pedidos_sin_timbrar", None),
+    (r"\btimbr[aeo]|resumen\s+de\s+timbrado",
+        "pedidos_sin_timbrar", None),
+    (r"cu[aá]ntas?\s+facturas?\s+me\s+faltan",
+        "pedidos_sin_timbrar", None),
+
+    (r"(cotizaci[oó]n(es)?|quotes?).{0,15}(vencid|expirad|caducad|vencer|expiraron|caducaron)",
+        "cotizaciones_vencidas", None),
+    (r"(cu[aá]ntas?)\s+cotizaci[oó]n(es)?.{0,15}(cerr|convert|gan)",
+        "tasa_conversion_cotizaciones", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(tasa|%|porcentaje).{0,15}(conversi[oó]n|cierre)",
+        "tasa_conversion_cotizaciones", lambda m, q: {"periodo": _detect_period(q)}),
+
+    (r"(comisi[oó]n(es)?|comisionist)",
+        "comisiones_agentes", lambda m, q: {"periodo": _detect_period(q)}),
+
+    (r"(ventas?|distribuci[oó]n).{0,10}(por\s+canal|por\s+canales)",
+        "ventas_por_canal", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"\b(whatsapp|mostrador|tel[eé]fono|marketplace)\b.{0,10}(vs|contra|canal|ventas?)",
+        "ventas_por_canal", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"cu[aá]nto\s+vend[oi]\s+(en|por).{0,10}(whatsapp|mostrador|tel[eé]fono|web|marketplace)",
+        "ventas_por_canal", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(cu[aá]l|qu[eé])\s+canal\s+(vende|factura|convierte)\s+m[aá]s",
+        "ventas_por_canal", lambda m, q: {"periodo": _detect_period(q)}),
+
+    (r"client(es)?\s+nuev[oa]s?|primer(a|as|os)\s+compra|cu[aá]nt(os|as)\s+client(es)?\s+nuev",
+        "clientes_nuevos_mes", lambda m, q: {"periodo": _detect_period(q)}),
+
+    (r"(ventas?).{0,10}(por\s+sucursal|por\s+almac[eé]n|por\s+tienda\s+propia)",
+        "ventas_por_sucursal", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(qu[eé]|cu[aá]l)\s+sucursal.{0,20}(vende|factura)\s+m[aá]s",
+        "ventas_por_sucursal", lambda m, q: {"periodo": _detect_period(q)}),
+
+    (r"(por\s+qu[eé]|raz[oó]n(es)?)\s+(me\s+)?devuelven",
+        "devoluciones_por_razon", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(raz[oó]n(es)?)\s+de\s+devoluci[oó]n",
+        "devoluciones_por_razon", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"top\s+raz[oó]n(es)?\s+de\s+devoluci[oó]n",
+        "devoluciones_por_razon", lambda m, q: {"periodo": _detect_period(q)}),
+
+    (r"m[eé]todos?\s+de\s+pago|c[oó]mo\s+(me\s+)?pagan",
+        "metodos_pago_ventas", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(efectivo|tarjeta|transferencia).{0,15}(vs|contra).{0,15}(total|general|globales?)",
+        "metodos_pago_ventas", lambda m, q: {"periodo": _detect_period(q)}),
+
+    (r"(margen).{0,15}(por\s+producto|productos?)",
+        "margen_por_producto", lambda m, q: {"periodo": _detect_period(q), "limite": _detect_limit(q)}),
+    (r"(top|mejor(es)?).{0,10}productos?.{0,10}(por\s+margen|por\s+ganancia|por\s+utilidad)",
+        "margen_por_producto", lambda m, q: {"periodo": _detect_period(q), "limite": _detect_limit(q)}),
+    (r"productos?\s+con\s+m[aá]s\s+(margen|ganancia|utilidad)",
+        "margen_por_producto", lambda m, q: {"periodo": _detect_period(q), "limite": _detect_limit(q)}),
+
+    (r"(pedidos?).{0,20}(abono\s+parcial|pago\s+parcial|abon(o|ados?))",
+        "pedidos_con_saldo_parcial", None),
+    (r"qui[eé]nes?\s+(me\s+)?deben\s+a[uú]n",
+        "pedidos_con_saldo_parcial", None),
+    (r"cobranza\s+f[aá]cil|pagos?\s+incompletos?",
+        "pedidos_con_saldo_parcial", None),
+
+    (r"(valor|monto|cu[aá]nto).{0,15}pipeline",
+        "pipeline_valor", None),
+    (r"\bpipeline\b|potencial\s+de\s+ventas|cu[aá]nto\s+potencial",
+        "pipeline_valor", None),
+
+    # ══════════════════════════════════════════════════════════════════
+
     # Ventas periodo — captura "vendí este mes / hoy / semana / año"
     (r"(cu[aá]nt[oa]|total|monto).{0,20}(vend|factur|ingres)",
         "ventas_periodo", lambda m, q: {"periodo": _detect_period(q)}),
@@ -255,6 +327,9 @@ _PATTERNS: list = [
         "ventas_persona", lambda m, q: {"nombre": _clean_name(m.group(m.lastindex))}),
     (r"(?:c[oó]mo\s+va|estado\s+de|status\s+de)\s+(?:cliente\s+|vendedor\s+|empleado\s+)?([a-záéíóúüñ][a-záéíóúüñ0-9\s\.]{1,40})",
         "ventas_persona", lambda m, q: {"nombre": _clean_name(m.group(m.lastindex))}),
+
+    # (Los patrones Fase 16 se movieron al INICIO de _PATTERNS para que
+    #  ganen a los generales — ver comentario "PATRONES ESPECÍFICOS FASE 16")
 
     # ── ÚLTIMO PATRÓN: nombre suelto (ej. "RICARDO ESCANDON ROBLES") ──
     # Debe ir al final para que no interfiera con nada más. El deriver

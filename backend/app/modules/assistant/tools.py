@@ -2522,6 +2522,471 @@ async def ventas_cliente(db: AsyncSession, nombre: str = "", **k) -> Dict[str, A
 
 
 # ══════════════════════════════════════════════════════════════════════
+# FASE 16 · 12 tools nuevas de Ventas
+# ══════════════════════════════════════════════════════════════════════
+
+# ─── 1. Timbrado CFDI ────────────────────────────────────────────────
+
+async def pedidos_sin_timbrar(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Pedidos que aún no tienen CFDI timbrado. Excluye cancelados y
+    los que ya están timbrados o cancelados en CFDI."""
+    from app.modules.sales import models as sm
+    from app.modules.customers.models import Customer
+    stmt = (
+        select(
+            sm.Order.folio, sm.Order.total_amount, sm.Order.created_at,
+            sm.Order.cfdi_status,
+            Customer.name.label("cliente"), Customer.razon_social,
+        )
+        .join(Customer, Customer.id == sm.Order.customer_id, isouter=True)
+        .where(
+            sm.Order.kind == "order",
+            sm.Order.status != "cancelled",
+            or_(sm.Order.cfdi_status.is_(None),
+                sm.Order.cfdi_status.in_(["none", "pending"])),
+        )
+        .order_by(sm.Order.created_at.desc())
+        .limit(50)
+    )
+    rows = (await db.execute(stmt)).all()
+    total = _money(sum((r.total_amount or 0) for r in rows))
+    items = [{
+        "folio": r.folio,
+        "cliente": r.razon_social or r.cliente or "?",
+        "monto": _money(r.total_amount),
+        "estado_cfdi": r.cfdi_status or "sin gestión",
+    } for r in rows]
+    return {"tool": "pedidos_sin_timbrar",
+            "count": len(items), "monto_total": total,
+            "items": items[:10], "empty": len(items) == 0}
+
+
+# ─── 2. Ventas por canal ──────────────────────────────────────────────
+
+async def ventas_por_canal(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Distribución de ventas por canal (mostrador/whatsapp/web/etc.)."""
+    from app.modules.sales import models as sm
+    start, end, label = _period_bounds(periodo)
+    stmt = (
+        select(
+            sm.Order.channel,
+            func.count(sm.Order.id).label("pedidos"),
+            func.coalesce(func.sum(sm.Order.total_amount), 0.0).label("total"),
+        )
+        .where(
+            sm.Order.kind == "order",
+            sm.Order.status != "cancelled",
+            sm.Order.created_at >= start, sm.Order.created_at < end,
+        )
+        .group_by(sm.Order.channel)
+        .order_by(func.coalesce(func.sum(sm.Order.total_amount), 0.0).desc())
+    )
+    rows = (await db.execute(stmt)).all()
+    total_general = sum(float(r.total or 0) for r in rows) or 1.0
+    items = [{
+        "canal": (r.channel or "sin canal").capitalize(),
+        "pedidos": int(r.pedidos or 0),
+        "total": _money(r.total),
+        "pct": round((float(r.total or 0) / total_general) * 100, 1),
+    } for r in rows]
+    return {"tool": "ventas_por_canal", "periodo": label,
+            "total_general": _money(total_general if rows else 0),
+            "items": items, "empty": len(items) == 0}
+
+
+# ─── 3. Comisiones de agentes ────────────────────────────────────────
+
+async def comisiones_agentes(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Comisiones acumuladas del periodo por agente de ventas.
+    Se calcula: SUM(order.total_amount × agent.commission_pct / 100)."""
+    from app.modules.sales import models as sm
+    start, end, label = _period_bounds(periodo)
+    stmt = (
+        select(
+            sm.SalesAgent.id, sm.SalesAgent.name,
+            sm.SalesAgent.commission_pct, sm.SalesAgent.is_external,
+            func.count(sm.Order.id).label("pedidos"),
+            func.coalesce(func.sum(sm.Order.total_amount), 0.0).label("ventas"),
+        )
+        .join(sm.Order, sm.Order.sales_agent_id == sm.SalesAgent.id)
+        .where(
+            sm.Order.kind == "order",
+            sm.Order.status != "cancelled",
+            sm.Order.created_at >= start, sm.Order.created_at < end,
+        )
+        .group_by(sm.SalesAgent.id, sm.SalesAgent.name,
+                   sm.SalesAgent.commission_pct, sm.SalesAgent.is_external)
+        .order_by(func.coalesce(func.sum(sm.Order.total_amount), 0.0).desc())
+    )
+    try:
+        rows = (await db.execute(stmt)).all()
+    except Exception:
+        rows = []
+    items = []
+    total_comision = 0.0
+    for r in rows:
+        pct = float(r.commission_pct or 0)
+        ventas = float(r.ventas or 0)
+        comision = round(ventas * pct / 100.0, 2)
+        total_comision += comision
+        items.append({
+            "agente": r.name, "externo": bool(r.is_external),
+            "pct": pct, "ventas": _money(ventas),
+            "pedidos": int(r.pedidos or 0),
+            "comision": _money(comision),
+        })
+    return {"tool": "comisiones_agentes", "periodo": label,
+            "total_comision": _money(total_comision),
+            "items": items[:10], "empty": len(items) == 0}
+
+
+# ─── 4. Tasa de conversión de cotizaciones ───────────────────────────
+
+async def tasa_conversion_cotizaciones(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """% de cotizaciones que se convirtieron en pedido. Se aproxima
+    como (orders created / (orders + open quotes)) en el periodo."""
+    from app.modules.sales import models as sm
+    start, end, label = _period_bounds(periodo)
+    q_orders = select(
+        func.count(sm.Order.id),
+        func.coalesce(func.sum(sm.Order.total_amount), 0.0),
+    ).where(
+        sm.Order.kind == "order", sm.Order.status != "cancelled",
+        sm.Order.created_at >= start, sm.Order.created_at < end,
+    )
+    n_orders, monto_orders = (await db.execute(q_orders)).one()
+    q_quotes = select(
+        func.count(sm.Order.id),
+        func.coalesce(func.sum(sm.Order.total_amount), 0.0),
+    ).where(
+        sm.Order.kind == "quote", sm.Order.status != "cancelled",
+        sm.Order.created_at >= start, sm.Order.created_at < end,
+    )
+    n_quotes, monto_quotes = (await db.execute(q_quotes)).one()
+    n_orders = int(n_orders or 0)
+    n_quotes = int(n_quotes or 0)
+    total_flow = n_orders + n_quotes
+    tasa = round((n_orders / total_flow) * 100, 1) if total_flow > 0 else 0.0
+    return {"tool": "tasa_conversion_cotizaciones", "periodo": label,
+            "pedidos": n_orders, "cotizaciones": n_quotes,
+            "monto_pedidos": _money(monto_orders),
+            "monto_cotizaciones": _money(monto_quotes),
+            "tasa_pct": tasa,
+            "empty": total_flow == 0}
+
+
+# ─── 5. Cotizaciones vencidas ────────────────────────────────────────
+
+async def cotizaciones_vencidas(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Cotizaciones cuyo valid_until ya pasó y aún no se convirtieron."""
+    from app.modules.sales import models as sm
+    from app.modules.customers.models import Customer
+    ahora = _now()
+    stmt = (
+        select(
+            sm.Order.folio, sm.Order.total_amount, sm.Order.valid_until,
+            Customer.name.label("cliente"), Customer.razon_social,
+        )
+        .join(Customer, Customer.id == sm.Order.customer_id, isouter=True)
+        .where(
+            sm.Order.kind == "quote", sm.Order.status != "cancelled",
+            sm.Order.valid_until.isnot(None),
+            sm.Order.valid_until < ahora,
+        )
+        .order_by(sm.Order.valid_until.desc())
+        .limit(50)
+    )
+    rows = (await db.execute(stmt)).all()
+    total = _money(sum(float(r.total_amount or 0) for r in rows))
+    items = []
+    for r in rows:
+        exp = _aware(r.valid_until)
+        dias = (ahora - exp).days if exp else 0
+        items.append({
+            "folio": r.folio,
+            "cliente": r.razon_social or r.cliente or "?",
+            "monto": _money(r.total_amount),
+            "vencio_hace": dias,
+        })
+    return {"tool": "cotizaciones_vencidas",
+            "count": len(items), "monto_total": total,
+            "items": items[:10], "empty": len(items) == 0}
+
+
+# ─── 6. Clientes nuevos del mes ──────────────────────────────────────
+
+async def clientes_nuevos_mes(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Clientes cuya PRIMERA compra cayó en el periodo consultado.
+    Distinto de 'creados en el CRM' — aquí solo cuentan los que
+    efectivamente compraron por primera vez."""
+    from app.modules.sales import models as sm
+    from app.modules.customers.models import Customer
+    start, end, label = _period_bounds(periodo)
+    # Subquery: MIN(created_at) por customer
+    first_purchase = (
+        select(
+            sm.Order.customer_id,
+            func.min(sm.Order.created_at).label("first_at"),
+        )
+        .where(sm.Order.kind == "order", sm.Order.status != "cancelled")
+        .group_by(sm.Order.customer_id)
+        .subquery()
+    )
+    stmt = (
+        select(
+            Customer.id, Customer.name, Customer.razon_social,
+            first_purchase.c.first_at,
+        )
+        .join(first_purchase, first_purchase.c.customer_id == Customer.id)
+        .where(
+            first_purchase.c.first_at >= start,
+            first_purchase.c.first_at < end,
+        )
+        .order_by(first_purchase.c.first_at.desc())
+        .limit(30)
+    )
+    rows = (await db.execute(stmt)).all()
+    items = [{
+        "cliente": r.razon_social or r.name or "?",
+        "primera_compra": _aware(r.first_at).strftime("%d/%m/%Y") if r.first_at else "?",
+    } for r in rows]
+    return {"tool": "clientes_nuevos_mes", "periodo": label,
+            "count": len(items), "items": items[:15],
+            "empty": len(items) == 0}
+
+
+# ─── 7. Ventas por sucursal / almacén ────────────────────────────────
+
+async def ventas_por_sucursal(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Ventas agrupadas por almacén/sucursal (Warehouse) — muestra qué
+    sucursal factura más en el periodo."""
+    from app.modules.sales import models as sm
+    from app.modules.inventory import models as im
+    start, end, label = _period_bounds(periodo)
+    stmt = (
+        select(
+            im.Warehouse.name,
+            func.count(sm.Order.id).label("pedidos"),
+            func.coalesce(func.sum(sm.Order.total_amount), 0.0).label("total"),
+        )
+        .join(sm.Order, sm.Order.warehouse_id == im.Warehouse.id)
+        .where(
+            sm.Order.kind == "order",
+            sm.Order.status != "cancelled",
+            sm.Order.created_at >= start, sm.Order.created_at < end,
+        )
+        .group_by(im.Warehouse.id, im.Warehouse.name)
+        .order_by(func.coalesce(func.sum(sm.Order.total_amount), 0.0).desc())
+    )
+    rows = (await db.execute(stmt)).all()
+    items = [{
+        "sucursal": r.name or "?",
+        "pedidos": int(r.pedidos or 0),
+        "total": _money(r.total),
+    } for r in rows]
+    return {"tool": "ventas_por_sucursal", "periodo": label,
+            "items": items, "empty": len(items) == 0}
+
+
+# ─── 8. Devoluciones por razón ───────────────────────────────────────
+
+async def devoluciones_por_razon(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Top razones de devolución agrupadas."""
+    from app.modules.sales import models as sm
+    start, end, label = _period_bounds(periodo)
+    try:
+        stmt = (
+            select(
+                sm.CustomerReturn.reason,
+                func.count(sm.CustomerReturn.id).label("veces"),
+                func.coalesce(func.sum(sm.CustomerReturn.refund_amount), 0.0).label("monto"),
+            )
+            .where(
+                sm.CustomerReturn.created_at >= start,
+                sm.CustomerReturn.created_at < end,
+            )
+            .group_by(sm.CustomerReturn.reason)
+            .order_by(func.count(sm.CustomerReturn.id).desc())
+        )
+        rows = (await db.execute(stmt)).all()
+    except Exception:
+        rows = []
+    items = [{
+        "razon": (r.reason or "sin especificar").capitalize(),
+        "veces": int(r.veces or 0),
+        "monto": _money(r.monto),
+    } for r in rows]
+    total_veces = sum(x["veces"] for x in items)
+    return {"tool": "devoluciones_por_razon", "periodo": label,
+            "total_veces": total_veces, "items": items,
+            "empty": total_veces == 0}
+
+
+# ─── 9. Métodos de pago (todos los pagos, no solo POS) ──────────────
+
+async def metodos_pago_ventas(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Desglose de todos los cobros por método de pago (Payment.method)
+    en el periodo. Cubre B2B, POS, marketplace — no solo POS."""
+    from app.modules.sales import models as sm
+    start, end, label = _period_bounds(periodo)
+    stmt = (
+        select(
+            sm.Payment.method,
+            func.count(sm.Payment.id).label("cobros"),
+            func.coalesce(func.sum(sm.Payment.amount), 0.0).label("monto"),
+        )
+        .where(
+            sm.Payment.created_at >= start, sm.Payment.created_at < end,
+        )
+        .group_by(sm.Payment.method)
+        .order_by(func.coalesce(func.sum(sm.Payment.amount), 0.0).desc())
+    )
+    rows = (await db.execute(stmt)).all()
+    total = sum(float(r.monto or 0) for r in rows) or 1.0
+    items = [{
+        "metodo": (r.method or "sin método").capitalize(),
+        "cobros": int(r.cobros or 0),
+        "monto": _money(r.monto),
+        "pct": round((float(r.monto or 0) / total) * 100, 1),
+    } for r in rows]
+    return {"tool": "metodos_pago_ventas", "periodo": label,
+            "total": _money(total if rows else 0),
+            "items": items, "empty": len(items) == 0}
+
+
+# ─── 10. Margen por producto ─────────────────────────────────────────
+
+async def margen_por_producto(db: AsyncSession, periodo: str = "mes",
+                                limite: int = 10, **k) -> Dict[str, Any]:
+    """Top productos por MARGEN absoluto (revenue − costo)."""
+    from app.modules.sales import models as sm
+    start, end, label = _period_bounds(periodo)
+    stmt = (
+        select(
+            sm.OrderItem.product_name, sm.OrderItem.sku,
+            func.coalesce(func.sum(sm.OrderItem.subtotal), 0.0).label("revenue"),
+            func.coalesce(
+                func.sum(sm.OrderItem.unit_cost * sm.OrderItem.quantity), 0.0,
+            ).label("costo"),
+            func.coalesce(func.sum(sm.OrderItem.quantity), 0).label("qty"),
+        )
+        .join(sm.Order, sm.Order.id == sm.OrderItem.order_id)
+        .where(
+            sm.Order.kind == "order",
+            sm.Order.status != "cancelled",
+            sm.Order.created_at >= start,
+            sm.Order.created_at < end,
+        )
+        .group_by(sm.OrderItem.product_name, sm.OrderItem.sku)
+    )
+    rows = (await db.execute(stmt)).all()
+    calc = []
+    for r in rows:
+        rev = float(r.revenue or 0)
+        cost = float(r.costo or 0)
+        margen = rev - cost
+        pct = round((margen / rev) * 100, 1) if rev > 0 else 0.0
+        calc.append({
+            "product_name": r.product_name or "?",
+            "sku": r.sku, "quantity": int(r.qty or 0),
+            "revenue": _money(rev), "costo": _money(cost),
+            "margen": _money(margen), "margen_pct": pct,
+        })
+    calc.sort(key=lambda x: -x["margen"])
+    return {"tool": "margen_por_producto", "periodo": label,
+            "items": calc[:max(1, min(limite, 20))],
+            "empty": len(calc) == 0}
+
+
+# ─── 11. Pedidos con saldo parcial ───────────────────────────────────
+
+async def pedidos_con_saldo_parcial(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Pedidos con al menos un pago parcial (paid > 0) pero saldo
+    pendiente aún. Distintos de 'sin pagar' — estos ya empezaron a
+    liquidar y son buen prospecto de cobranza rápida."""
+    from app.modules.sales import models as sm
+    from app.modules.customers.models import Customer
+    ahora = _now()
+    stmt = (
+        select(
+            sm.Order.folio, sm.Order.total_amount, sm.Order.paid_amount,
+            sm.Order.created_at,
+            Customer.name.label("cliente"), Customer.razon_social,
+        )
+        .join(Customer, Customer.id == sm.Order.customer_id, isouter=True)
+        .where(
+            sm.Order.kind == "order",
+            sm.Order.status.in_(["pending", "partial"]),
+            sm.Order.paid_amount > 0,
+            sm.Order.paid_amount < sm.Order.total_amount,
+        )
+        .order_by(sm.Order.created_at.desc())
+        .limit(30)
+    )
+    rows = (await db.execute(stmt)).all()
+    items, total_saldo, total_abonado = [], 0.0, 0.0
+    for r in rows:
+        total = float(r.total_amount or 0)
+        pagado = float(r.paid_amount or 0)
+        saldo = round(total - pagado, 2)
+        total_saldo += saldo
+        total_abonado += pagado
+        avance = round((pagado / total) * 100, 1) if total > 0 else 0.0
+        items.append({
+            "folio": r.folio,
+            "cliente": r.razon_social or r.cliente or "?",
+            "total": _money(total),
+            "abonado": _money(pagado),
+            "saldo": _money(saldo),
+            "avance_pct": avance,
+        })
+    return {"tool": "pedidos_con_saldo_parcial",
+            "count": len(items),
+            "total_saldo": _money(total_saldo),
+            "total_abonado": _money(total_abonado),
+            "items": items[:10], "empty": len(items) == 0}
+
+
+# ─── 12. Valor del pipeline (cotizaciones vigentes) ─────────────────
+
+async def pipeline_valor(db: AsyncSession, **k) -> Dict[str, Any]:
+    """Valor total del pipeline: cotizaciones abiertas con valid_until
+    aún vigente (o sin fecha, se asume vigente)."""
+    from app.modules.sales import models as sm
+    ahora = _now()
+    stmt = (
+        select(
+            func.count(sm.Order.id),
+            func.coalesce(func.sum(sm.Order.total_amount), 0.0),
+        )
+        .where(
+            sm.Order.kind == "quote", sm.Order.status != "cancelled",
+            or_(sm.Order.valid_until.is_(None), sm.Order.valid_until >= ahora),
+        )
+    )
+    n, total = (await db.execute(stmt)).one()
+    n = int(n or 0)
+    total = _money(total)
+    # Top 5 cotizaciones vigentes
+    top_stmt = (
+        select(sm.Order.folio, sm.Order.total_amount, sm.Order.valid_until)
+        .where(
+            sm.Order.kind == "quote", sm.Order.status != "cancelled",
+            or_(sm.Order.valid_until.is_(None), sm.Order.valid_until >= ahora),
+        )
+        .order_by(sm.Order.total_amount.desc())
+        .limit(5)
+    )
+    top = [{
+        "folio": r.folio, "monto": _money(r.total_amount),
+        "vence": _aware(r.valid_until).strftime("%d/%m/%Y") if r.valid_until else "sin fecha",
+    } for r in (await db.execute(top_stmt)).all()]
+    return {"tool": "pipeline_valor",
+            "count": n, "total": total,
+            "top": top, "empty": n == 0}
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Registro de tools disponibles — usado por el intent router y el LLM
 # ══════════════════════════════════════════════════════════════════════
 
@@ -2615,4 +3080,17 @@ TOOLS_REGISTRY = {
     "ventas_cliente": ventas_cliente,
     # Fase 9 · Búsqueda unificada vendedor + cliente por nombre
     "ventas_persona": ventas_persona,
+    # Fase 16 · 12 tools nuevas de Ventas
+    "pedidos_sin_timbrar": pedidos_sin_timbrar,
+    "ventas_por_canal": ventas_por_canal,
+    "comisiones_agentes": comisiones_agentes,
+    "tasa_conversion_cotizaciones": tasa_conversion_cotizaciones,
+    "cotizaciones_vencidas": cotizaciones_vencidas,
+    "clientes_nuevos_mes": clientes_nuevos_mes,
+    "ventas_por_sucursal": ventas_por_sucursal,
+    "devoluciones_por_razon": devoluciones_por_razon,
+    "metodos_pago_ventas": metodos_pago_ventas,
+    "margen_por_producto": margen_por_producto,
+    "pedidos_con_saldo_parcial": pedidos_con_saldo_parcial,
+    "pipeline_valor": pipeline_valor,
 }
