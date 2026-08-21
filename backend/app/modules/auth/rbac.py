@@ -26,6 +26,7 @@ MODULES: list[tuple[str, str]] = [
     ("finance", "Finanzas"),
     ("accounting", "Contabilidad"),
     ("hr", "RH / Nómina"),
+    ("retail", "Retail / Cadenas"),
     ("reports", "Reportes / BI"),
     ("config", "Configuración"),
 ]
@@ -53,24 +54,31 @@ SYSTEM_ROLES = {
         "permissions": {k: VIEW for k in MODULE_KEYS},
     },
     "Gerente Ventas": {
-        "description": "Gestión completa de ventas y clientes",
+        "description": "Gestión completa de ventas, retail y clientes",
         "is_system": False, "color": "#FBBF24",
         "permissions": {
             "dashboard": _grant(view=True),
             "sales": _grant(view=True, create=True, edit=True, approve=True),
             "customers": _grant(view=True, create=True, edit=True),
             "inventory": _grant(view=True),
-            "reports": _grant(view=True),
+            # Retail elevado a su propio módulo — Gerente Ventas gestiona
+            # cadenas y tiendas al mismo nivel que ventas B2B.
+            "retail": _grant(view=True, create=True, edit=True, approve=True),
+            # 'reports' (KPI ejecutivo) queda para Administrador. Un
+            # gerente comercial ve su piso, no el flujo de caja global.
         },
     },
     "Contador": {
-        "description": "Finanzas, nómina y reportes",
+        "description": "Finanzas, nómina, contabilidad y lectura de ventas",
         "is_system": False, "color": "#34D399",
         "permissions": {
             "dashboard": _grant(view=True),
             "finance": _grant(view=True, create=True, edit=True, approve=True),
             "accounting": _grant(view=True, create=True, edit=True, approve=True),
             "hr": _grant(view=True, create=True, edit=True, approve=True),
+            # Lectura de ventas para conciliar facturas vs pedidos y
+            # armar el P&L. NO puede crear/editar/aprobar en ventas.
+            "sales": _grant(view=True),
             "reports": _grant(view=True),
         },
     },
@@ -134,9 +142,14 @@ async def seed_rbac(db: AsyncSession) -> None:
                 role.is_system = spec["is_system"]
             if not role.color:
                 role.color = spec["color"]
-            # Solo poblar si el rol no tiene permisos todavía (recién migrado),
-            # para no sobrescribir ajustes hechos por el cliente.
-            if not role.permissions:
+            # Sincronizar SOLO los roles marcados como is_system con lo que
+            # define SYSTEM_ROLES — el cliente no puede editar esos roles
+            # desde la UI, así que actualizarlos es seguro y permite
+            # propagar cambios de política (nuevo módulo, permiso extra,
+            # etc.) sin manual overrides. Roles NO-sistema quedan intactos.
+            if spec["is_system"]:
+                role.permissions = wanted_perms
+            elif not role.permissions:
                 role.permissions = wanted_perms
     await db.flush()
 
