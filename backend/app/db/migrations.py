@@ -816,6 +816,26 @@ _ASSISTANT_STATEMENTS = [
 ]
 
 
+# ── Multi-marca: campos nuevos en company_profile (Fase 1a) ──────────
+# Extienden el modelo existente sin romper nada. Todo con IF NOT EXISTS
+# para poder correr múltiples veces sin efecto.
+_BRAND_FIELDS_STATEMENTS = [
+    # business_model: 'direct' (empresa factura y cobra) | 'agency' (matriz
+    # extranjera factura y cobra; la empresa MX solo gestiona y cobra
+    # comisión). Cosméticos = direct; Apple / Cocina = agency.
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS business_model VARCHAR DEFAULT 'direct' NOT NULL",
+    # % de comisión default cuando business_model='agency'. 0 si no aplica.
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS commission_default_pct DOUBLE PRECISION DEFAULT 0.0 NOT NULL",
+    # Base de cálculo de la comisión: 'gross' (total) | 'subtotal' (sin IVA)
+    # | 'net' (después de descuentos de marketing). Default: net.
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS commission_base VARCHAR DEFAULT 'net' NOT NULL",
+    # Marca de demo/showcase — no cuenta en reportes corporativos
+    # consolidados, se resetea/duplica desde admin. Ideal para presentar
+    # el ERP a prospectos sin exponer datos reales de clientes.
+    "ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS is_demo BOOLEAN DEFAULT FALSE NOT NULL",
+]
+
+
 # ── Actualización de política RBAC (idempotente) ─────────────────────
 # Cambios acordados con el usuario (Fase 15):
 #   1. Nuevo módulo 'retail' + sus 5 permisos (view/create/edit/delete/approve).
@@ -889,6 +909,8 @@ def _apply(sync_conn: Connection) -> None:
         # tablas 'permissions', 'roles' y 'role_permissions' (que crea
         # SQLAlchemy con Base.metadata.create_all en el startup).
         ("rbac_policy", _RBAC_POLICY_UPDATES),
+        # Corre después que create_all haya generado la tabla company_profile.
+        ("brand_fields", _BRAND_FIELDS_STATEMENTS),
     ]
 
     for label, statements in all_statements:

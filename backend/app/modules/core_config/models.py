@@ -69,6 +69,20 @@ class CompanyProfile(Base):
     # Registro patronal IMSS (formato: AAA-NN-CCCC-D con dígito verificador).
     # Se imprime en cédulas y en avisos AFIL-02/04/08 al IMSS.
     imss_registro_patronal = Column(String, nullable=True)
+    # ── Modelo comercial (Fase multi-marca) ────────────────────────
+    # business_model:
+    #   'direct' → empresa MX factura y cobra (ej. cosméticos con su Shopify)
+    #   'agency' → matriz extranjera factura y cobra; empresa MX solo gestiona
+    #              y cobra COMISIÓN (ej. representante de accesorios Apple)
+    business_model = Column(String, default="direct", nullable=False)
+    # % comisión default cuando business_model='agency'. El operador puede
+    # sobrescribir por pedido manualmente (marketing, negociación, etc.).
+    commission_default_pct = Column(Float, default=0.0, nullable=False)
+    # Base de cálculo de la comisión: 'gross' | 'subtotal' | 'net' (default).
+    commission_base = Column(String, default="net", nullable=False)
+    # Marca de demo/showcase — se filtra de reportes corporativos y sirve
+    # para presentar el ERP a prospectos sin exponer datos reales.
+    is_demo = Column(Boolean, default=False, nullable=False)
 
 
 class UserCompany(Base):
