@@ -45,8 +45,15 @@ class CompanyOut(BaseModel):
     contact_phone: Optional[str] = None
     address: Optional[str] = None
     brand_color: Optional[str] = None
+    logo_url: Optional[str] = None
+    # ── Fase multi-marca ─────────────────────────────────────────
+    business_model: str = "direct"          # direct | agency
+    commission_default_pct: float = 0.0
+    commission_base: str = "net"            # gross | subtotal | net
+    is_demo: bool = False
     is_active: bool = True
-    role_in_company: Optional[str] = None   # rol del usuario que consulta
+    # Rol del usuario que consulta esta marca (viene del join user_companies)
+    role_in_company: Optional[str] = None
     is_default: Optional[bool] = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -60,6 +67,11 @@ class CompanyCreate(BaseModel):
     contact_phone: Optional[str] = None
     address: Optional[str] = None
     brand_color: Optional[str] = "#33B2F5"
+    logo_url: Optional[str] = None
+    business_model: str = "direct"
+    commission_default_pct: float = 0.0
+    commission_base: str = "net"
+    is_demo: bool = False
 
 
 class CompanyUpdate(BaseModel):
@@ -71,6 +83,11 @@ class CompanyUpdate(BaseModel):
     contact_phone: Optional[str] = None
     address: Optional[str] = None
     brand_color: Optional[str] = None
+    logo_url: Optional[str] = None
+    business_model: Optional[str] = None
+    commission_default_pct: Optional[float] = None
+    commission_base: Optional[str] = None
+    is_demo: Optional[bool] = None
     is_active: Optional[bool] = None
 
 
@@ -155,6 +172,11 @@ async def create_company(
         contact_phone=data.contact_phone,
         address=data.address,
         brand_color=data.brand_color or "#33B2F5",
+        logo_url=data.logo_url,
+        business_model=data.business_model or "direct",
+        commission_default_pct=data.commission_default_pct or 0.0,
+        commission_base=data.commission_base or "net",
+        is_demo=bool(data.is_demo),
         base_currency="MXN",
         timezone="America/Mexico_City",
         is_active=True,
