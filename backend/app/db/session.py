@@ -26,10 +26,12 @@ AsyncSessionLocal = sessionmaker(
 )
 
 # Multi-tenancy: instala event listeners globales que filtran queries y
-# auto-asignan company_id al crear. Los modelos declaran su participación
-# con TenantScopedMixin — el resto es transparente. Ver app/core/tenancy.py.
+# auto-asignan company_id al crear. Los modelos se registran con
+# register_tenant_scoped() al importarse. Los listeners viven en la
+# clase Session sync (donde SQLAlchemy dispara los ORM events, incluso
+# cuando se usa AsyncSession por encima).
 from app.core.tenancy import install_tenancy as _install_tenancy  # noqa: E402
-_install_tenancy(AsyncSession)
+_install_tenancy()
 
 
 async def get_db():
