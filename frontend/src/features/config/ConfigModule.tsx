@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import configService, { type SystemIntegration, type CompanyProfile, type ApiUser, type ApiRole, type PermissionDef } from "./service";
 import AgentsTab from "./AgentsTab";
+import CompanyMembers from "../../components/CompanyMembers";
 import {
   Building2, Users, Shield, Receipt, Plug, Workflow, Lock, Settings,
   Plus, Search, Edit2, Trash2, Check, X, Mail, Globe,
@@ -70,7 +71,7 @@ const PERM_LABELS = { view: "Ver", create: "Crear", edit: "Editar", delete: "Eli
 const PERM_COLORS = { view: "#60A5FA", create: "#34D399", edit: "#FBBF24", delete: "#F87171", approve: "#A78BFA" };
 
 export default function ConfigModule({ t, s, company }: { t: any; s: any; company?: any }) {
-  const [tab, setTab] = useState<"company" | "users" | "roles" | "agents" | "fiscal" | "integrations" | "automation" | "security" | "preferences">("company");
+  const [tab, setTab] = useState<"company" | "members" | "users" | "roles" | "agents" | "fiscal" | "integrations" | "automation" | "security" | "preferences">("company");
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [permList, setPermList] = useState<PermissionDef[]>([]);
@@ -379,7 +380,8 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
 
   const TABS = [
     { id: "company", label: "Empresa", icon: Building2 },
-    { id: "users", label: "Usuarios", icon: Users },
+    { id: "members", label: "Miembros de la marca", icon: UserPlus },
+    { id: "users", label: "Usuarios (globales)", icon: Users },
     { id: "roles", label: "Roles y Permisos", icon: Shield },
     { id: "agents", label: "Agentes / Comisiones", icon: UserPlus },
     { id: "fiscal", label: "Fiscal", icon: Receipt },
@@ -579,6 +581,13 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               <Save size={15} /> {companySaving ? "Guardando…" : "Guardar cambios"}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ── TAB: Miembros de la marca ── */}
+      {tab === "members" && (
+        <div style={card}>
+          <CompanyMembers t={t} />
         </div>
       )}
 
