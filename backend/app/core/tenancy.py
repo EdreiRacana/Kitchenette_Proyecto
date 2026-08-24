@@ -2,67 +2,62 @@
 
 Arquitectura:
   1. `current_company_id` — ContextVar por request.
-  2. `TenancyMiddleware` — lee X-Company-Id del header (o el default del
-     usuario ya persistido en user_companies) y lo setea en el ContextVar.
-  3. `TenantScopedMixin` — mixin que agrega `company_id` a los modelos.
-  4. `install_tenancy(engine)` — registra los event listeners:
-       * `before_insert`: auto-asigna company_id desde el context si el
-         modelo tiene el campo y el usuario no lo pasó explícito.
-       * `do_orm_execute`: agrega WHERE company_id = ctx a cualquier
-         SELECT sobre modelos scoped, VIA `with_loader_criteria`.
-         Bypass explícito con `execution_options(skip_tenant_filter=True)`.
+  2. `TenancyMiddleware` — lee X-Company-Id del header y lo setea.
+  3. `register_tenant_scoped(cls)` — marca un modelo como scoped por marca.
+  4. `install_tenancy()` — registra los event listeners en `Session`
+     (sync — es donde SQLAlchemy dispara los ORM events, incluso al
+     usar AsyncSession que corre sobre un Session sync interno):
 
-Filosofía "safe by default": si el ContextVar está vacío (script CLI,
-migración, tests) NO se aplica filtro — así los procesos internos siguen
-viendo todo. Solo request HTTP autenticado tiene contexto poblado.
+       * `before_flush`: auto-asigna company_id a inserts nuevos
+         desde el ContextVar.
+       * `do_orm_execute`: inspecciona el SELECT, encuentra qué tablas
+         scoped están en el FROM, y agrega WHERE company_id = ctx al
+         statement. Funciona con queries ORM completas Y con queries
+         de agregación pura (select(func.sum(Order.total_amount))).
 
-Uso admin corporativo: cuando el usuario tiene rol especial "admin
-corporativo" y quiere reportes agregados, el frontend manda header
-`X-Company-Id: __ALL__` y este middleware setea None → sin filtro.
+Bypass explícito: `execution_options(skip_tenant_filter=True)`.
+
+Safe-by-default: si el ContextVar está vacío (script CLI, migración,
+tests), NO se aplica filtro — así los procesos internos siguen viendo
+todo. Solo request HTTP autenticado tiene contexto poblado.
+
+Admin corporativo: sentinel ALL_COMPANIES ('__ALL__') — el frontend
+lo manda cuando el usuario quiere ver todo consolidado.
 """
 from __future__ import annotations
 import contextvars
 from typing import Optional
 
 from sqlalchemy import event, Column, String, ForeignKey
-from sqlalchemy.orm import with_loader_criteria, DeclarativeMeta
+from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
 
 
 # ── ContextVar por request ────────────────────────────────────────────
-# Cada request HTTP setea este valor via TenancyMiddleware. Vive en el
-# scope de la task asyncio del request — no se filtra entre requests
-# concurrentes gracias a ContextVar (safe para asyncio).
 current_company_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "current_company_id", default=None,
 )
 
-# Sentinel especial para admin corporativo — el frontend manda este valor
-# cuando quiere ver TODAS las marcas consolidadas (rol super_admin).
 ALL_COMPANIES = "__ALL__"
 
 
 def set_company_context(company_id: Optional[str]) -> contextvars.Token:
-    """Setea el company_id activo. Devuelve token para reset()."""
     return current_company_id.set(company_id)
 
 
 def get_company_context() -> Optional[str]:
-    """Lee el company_id activo (None si no hay contexto o es ALL)."""
     val = current_company_id.get()
     if val == ALL_COMPANIES:
         return None
     return val
 
 
-# ── Mixin para modelos multi-tenant ──────────────────────────────────
+# ── Mixin (documental — no usado directamente) ───────────────────────
 
 class TenantScopedMixin:
-    """Agrega company_id NOT NULL a un modelo. Se filtra automático en
-    todos los SELECT y se auto-asigna en INSERT desde el context var.
-
-    NULL permitido a nivel BD para retrocompat durante la migración —
-    después del bulk update se puede endurecer a NOT NULL con otra
-    migración. Por ahora dejamos nullable=True para no romper.
+    """Documenta que un modelo lleva company_id.
+    En la práctica cada modelo declara la columna directamente para
+    no depender del orden de resolución de mixins.
     """
     company_id = Column(
         String,
@@ -71,15 +66,19 @@ class TenantScopedMixin:
     )
 
 
-# Registro de clases marcadas como scoped — se llena al importar los modelos.
-_SCOPED_CLASSES: set[type] = set()
+# Registro de clases marcadas como scoped.
+_SCOPED_CLASSES: list = []
+_SCOPED_TABLE_NAMES: set[str] = set()
 
 
 def register_tenant_scoped(cls: type) -> type:
-    """Decorador / registro para marcar una clase como scoped por tenant.
-    Se llama automáticamente al declarar el modelo con TenantScopedMixin.
-    """
-    _SCOPED_CLASSES.add(cls)
+    """Marca una clase como scoped por tenant. Los inserts se
+    auto-asignan y los SELECT filtran automáticamente."""
+    if cls not in _SCOPED_CLASSES:
+        _SCOPED_CLASSES.append(cls)
+        table = getattr(cls, "__table__", None)
+        if table is not None:
+            _SCOPED_TABLE_NAMES.add(table.name)
     return cls
 
 
@@ -87,16 +86,24 @@ def is_scoped(cls: type) -> bool:
     return cls in _SCOPED_CLASSES
 
 
-# ── Event listeners ──────────────────────────────────────────────────
+# ── Event listeners globales ─────────────────────────────────────────
 
-def install_tenancy(session_class) -> None:
-    """Registra los event listeners globales en la clase de sesión.
-    Llamar UNA VEZ al arrancar la app, después de crear el sessionmaker.
+_installed = False
+
+
+def install_tenancy(_session_class=None) -> None:
+    """Registra los event listeners UNA sola vez sobre la clase `Session`
+    de SQLAlchemy sync (es donde se disparan los ORM events, incluso al
+    usar AsyncSession que corre sobre un Session sync interno).
+    Idempotente — al re-importar no duplica listeners.
     """
+    global _installed
+    if _installed:
+        return
+    _installed = True
 
-    @event.listens_for(session_class, "before_flush")
+    @event.listens_for(Session, "before_flush")
     def _auto_assign_company(session, flush_context, instances):
-        """Auto-asigna company_id a instancias nuevas que aún no lo tienen."""
         cid = current_company_id.get()
         if not cid or cid == ALL_COMPANIES:
             return
@@ -105,37 +112,62 @@ def install_tenancy(session_class) -> None:
                 if getattr(obj, "company_id", None) is None:
                     obj.company_id = cid
 
-    @event.listens_for(session_class, "do_orm_execute")
+    @event.listens_for(Session, "do_orm_execute")
     def _filter_by_company(orm_execute_state):
-        """Inyecta WHERE company_id = ctx en cualquier SELECT sobre modelos
-        scoped. Bypass con execution_options(skip_tenant_filter=True)."""
         if not orm_execute_state.is_select:
             return
         if orm_execute_state.execution_options.get("skip_tenant_filter"):
             return
         cid = current_company_id.get()
         if not cid or cid == ALL_COMPANIES:
-            return  # sin contexto o admin corporativo — sin filtro
-        for cls in _SCOPED_CLASSES:
-            # Agrega el criterio solo si esta clase aparece en el statement.
-            # `include_aliases=True` cubre joins y subqueries.
-            orm_execute_state.statement = orm_execute_state.statement.options(
-                with_loader_criteria(
-                    cls,
-                    lambda cls_, _cid=cid: cls_.company_id == _cid,
-                    include_aliases=True,
-                ),
-            )
+            return
+
+        stmt = orm_execute_state.statement
+        if not isinstance(stmt, Select):
+            return
+
+        # Detectar qué tablas scoped están en el FROM del SELECT.
+        # Usar los froms visibles ya resueltos por SQLAlchemy.
+        try:
+            froms = stmt.get_final_froms()
+        except Exception:
+            return
+
+        matched_classes = []
+        seen_tables = set()
+        for from_clause in froms:
+            table_name = getattr(from_clause, "name", None)
+            if not table_name or table_name in seen_tables:
+                continue
+            seen_tables.add(table_name)
+            if table_name in _SCOPED_TABLE_NAMES:
+                for cls in _SCOPED_CLASSES:
+                    if getattr(cls, "__table__", None) is not None \
+                       and cls.__table__.name == table_name:
+                        matched_classes.append(cls)
+                        break
+
+        if not matched_classes:
+            return
+
+        # Agrega WHERE company_id = cid por cada tabla scoped presente.
+        # Funciona con SELECT de entidades Y con SELECT de agregados.
+        new_stmt = stmt
+        for cls in matched_classes:
+            new_stmt = new_stmt.where(cls.company_id == cid)
+        orm_execute_state.statement = new_stmt
 
 
 # ── FastAPI middleware ───────────────────────────────────────────────
 
 async def tenancy_middleware(request, call_next):
-    """Middleware que lee X-Company-Id del header y lo setea en el
-    ContextVar por la duración del request. Cualquier query hecha via
-    AsyncSessionLocal durante este request se filtrará automático.
-    """
-    header_value = request.headers.get("X-Company-Id") or request.headers.get("x-company-id")
+    """Lee X-Company-Id del header y lo pone en el ContextVar por la
+    duración del request. Cualquier query hecha por el request se
+    filtra automático."""
+    header_value = (
+        request.headers.get("X-Company-Id")
+        or request.headers.get("x-company-id")
+    )
     token = set_company_context(header_value or None)
     try:
         response = await call_next(request)
