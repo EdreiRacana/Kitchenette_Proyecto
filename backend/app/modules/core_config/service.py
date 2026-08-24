@@ -67,7 +67,21 @@ async def delete_branch(db: AsyncSession, db_obj: Branch) -> bool:
 # -- Company Profile --
 
 async def get_company_profile(db: AsyncSession):
-    result = await db.execute(select(CompanyProfile))
+    """Devuelve el CompanyProfile de la marca activa (X-Company-Id del
+    request). Si no hay contexto, devuelve la más antigua (fallback
+    retrocompat). CompanyProfile es la tabla que DEFINE las marcas, así
+    que se filtra por su propio id, no por company_id (sería recursivo)."""
+    from app.core.tenancy import get_company_context
+    cid = get_company_context()
+    if cid:
+        result = await db.execute(
+            select(CompanyProfile).where(CompanyProfile.id == cid)
+        )
+        row = result.scalars().first()
+        if row is not None:
+            return row
+    # Fallback: cualquier empresa (retrocompat single-tenant)
+    result = await db.execute(select(CompanyProfile).limit(1))
     return result.scalars().first()
 
 async def create_company_profile(db: AsyncSession, obj_in: CompanyProfileCreate):

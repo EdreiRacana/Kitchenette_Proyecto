@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
+from typing import List, Optional
 
 from app.api import deps
 from . import service, schemas
@@ -69,10 +69,11 @@ async def read_company_profile(
     # archivo ya no exista — el usuario debe re-subir el logo una vez.
     resp = schemas.CompanyProfileResponse.model_validate(profile)
     if getattr(profile, "logo_bytes", None):
-        # Cache-buster con el hash de los bytes para invalidar al re-subir
+        # Cache-buster con el hash de los bytes + company_id para que el
+        # navegador NO reuse el logo de otra marca al hacer switch.
         import hashlib
         v = hashlib.md5(profile.logo_bytes).hexdigest()[:8]
-        resp.logo_url = f"/api/v1/config/company/logo?v={v}"
+        resp.logo_url = f"/api/v1/config/company/logo?company_id={profile.id}&v={v}"
     return resp
 
 @router.post("/company", response_model=schemas.CompanyProfileResponse, status_code=status.HTTP_201_CREATED)
@@ -159,12 +160,26 @@ async def upload_company_logo(
 
 
 @router.get("/company/logo")
-async def get_company_logo(db: AsyncSession = Depends(deps.get_db)):
+async def get_company_logo(
+    db: AsyncSession = Depends(deps.get_db),
+    company_id: Optional[str] = None,
+):
     """Sirve el logo desde la DB (persistente cross-deploy).
     Usar como <img src='/config/company/logo'> — no requiere auth para que
-    también funcione en tickets impresos y correos."""
+    también funcione en tickets impresos y correos.
+
+    Multi-marca: acepta ?company_id=xxx para forzar la marca específica
+    (el endpoint es público, no tiene header X-Company-Id del switcher).
+    Sin ese param, cae al fallback de get_company_profile(db)."""
     from fastapi.responses import Response
-    profile = await service.get_company_profile(db)
+    from sqlalchemy import select as _select
+    from app.modules.core_config.models import CompanyProfile as _CP
+    profile = None
+    if company_id:
+        r = await db.execute(_select(_CP).where(_CP.id == company_id))
+        profile = r.scalars().first()
+    if profile is None:
+        profile = await service.get_company_profile(db)
     if not profile or not profile.logo_bytes:
         raise HTTPException(404, "Logo no configurado")
     return Response(
