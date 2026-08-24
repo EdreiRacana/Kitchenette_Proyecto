@@ -127,25 +127,37 @@ def install_tenancy(_session_class=None) -> None:
             return
 
         # Detectar qué tablas scoped están en el FROM del SELECT.
-        # Usar los froms visibles ya resueltos por SQLAlchemy.
+        # Los FROM pueden ser Table directos o Join (cuando hay joins),
+        # entonces bajamos recursivamente por los .left/.right de cada Join.
         try:
             froms = stmt.get_final_froms()
         except Exception:
             return
 
-        matched_classes = []
-        seen_tables = set()
+        seen_tables: set[str] = set()
+
+        def _collect(clause):
+            # Table simple: .name propio
+            name = getattr(clause, "name", None)
+            if name and not hasattr(clause, "left"):
+                seen_tables.add(name)
+                return
+            # Join: bajamos por left y right
+            left = getattr(clause, "left", None)
+            right = getattr(clause, "right", None)
+            if left is not None:
+                _collect(left)
+            if right is not None:
+                _collect(right)
+
         for from_clause in froms:
-            table_name = getattr(from_clause, "name", None)
-            if not table_name or table_name in seen_tables:
-                continue
-            seen_tables.add(table_name)
-            if table_name in _SCOPED_TABLE_NAMES:
-                for cls in _SCOPED_CLASSES:
-                    if getattr(cls, "__table__", None) is not None \
-                       and cls.__table__.name == table_name:
-                        matched_classes.append(cls)
-                        break
+            _collect(from_clause)
+
+        matched_classes = []
+        for cls in _SCOPED_CLASSES:
+            table = getattr(cls, "__table__", None)
+            if table is not None and table.name in seen_tables:
+                matched_classes.append(cls)
 
         if not matched_classes:
             return
