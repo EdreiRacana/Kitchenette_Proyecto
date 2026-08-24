@@ -25,6 +25,13 @@ AsyncSessionLocal = sessionmaker(
     autoflush=False,
 )
 
+# Multi-tenancy: instala event listeners globales que filtran queries y
+# auto-asignan company_id al crear. Los modelos declaran su participación
+# con TenantScopedMixin — el resto es transparente. Ver app/core/tenancy.py.
+from app.core.tenancy import install_tenancy as _install_tenancy  # noqa: E402
+_install_tenancy(AsyncSession)
+
+
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session

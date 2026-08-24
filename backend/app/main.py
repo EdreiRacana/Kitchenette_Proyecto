@@ -7,6 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.logging import configure_logging, get_logger
+from app.core.tenancy import tenancy_middleware
 from app.api.v1.api import api_router
 
 # Configurar logging ANTES de que se cree cualquier logger — así todos
@@ -41,6 +42,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Multi-tenancy: lee X-Company-Id del header y lo pone en ContextVar
+# para que los event listeners de SQLAlchemy filtren automático.
+# Debe ir DESPUÉS de CORS para procesar los headers ya normalizados.
+app.middleware("http")(tenancy_middleware)
 
 from fastapi.staticfiles import StaticFiles
 from app.api.v1.endpoints import media

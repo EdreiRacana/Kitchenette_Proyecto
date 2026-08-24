@@ -836,6 +836,86 @@ _BRAND_FIELDS_STATEMENTS = [
 ]
 
 
+# ── Fase 1b · Multi-tenancy: company_id en tablas transaccionales ────
+# Cada ALTER agrega company_id nullable + índice. Después, un bulk
+# UPDATE asigna todo lo existente al primer CompanyProfile — que en
+# nuestra migración inicial es Elías Jabari (single-tenant original).
+# 100% idempotente. Puede correr múltiples veces.
+_TENANCY_STATEMENTS = [
+    # 1. Agregar columna company_id + FK + índice a las 11 tablas core.
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_orders_company_id ON orders(company_id)",
+
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_customers_company_id ON customers(company_id)",
+
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_products_company_id ON products(company_id)",
+
+    "ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_warehouses_company_id ON warehouses(company_id)",
+
+    "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_suppliers_company_id ON suppliers(company_id)",
+
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_purchase_orders_company_id ON purchase_orders(company_id)",
+
+    "ALTER TABLE hr_employees ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_hr_employees_company_id ON hr_employees(company_id)",
+
+    "ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_bank_accounts_company_id ON bank_accounts(company_id)",
+
+    "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_transactions_company_id ON transactions(company_id)",
+
+    "ALTER TABLE supplier_bills ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_supplier_bills_company_id ON supplier_bills(company_id)",
+
+    "ALTER TABLE retail_channels ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_retail_channels_company_id ON retail_channels(company_id)",
+
+    # 2. Bulk update: asignar todo lo existente sin company_id al PRIMER
+    # CompanyProfile (por created_at asc — típicamente Elías Jabari, la
+    # empresa inicial). Solo actualiza filas donde company_id IS NULL,
+    # así al re-correr no pisa marcas ya asignadas.
+    """UPDATE orders SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE customers SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE products SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE warehouses SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE suppliers SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE purchase_orders SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE hr_employees SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE bank_accounts SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE transactions SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE supplier_bills SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE retail_channels SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+]
+
+
 # ── Actualización de política RBAC (idempotente) ─────────────────────
 # Cambios acordados con el usuario (Fase 15):
 #   1. Nuevo módulo 'retail' + sus 5 permisos (view/create/edit/delete/approve).
@@ -911,6 +991,9 @@ def _apply(sync_conn: Connection) -> None:
         ("rbac_policy", _RBAC_POLICY_UPDATES),
         # Corre después que create_all haya generado la tabla company_profile.
         ("brand_fields", _BRAND_FIELDS_STATEMENTS),
+        # Corre DESPUÉS de brand_fields para asegurar que company_profile
+        # ya tenga los campos completos cuando se referencia por FK.
+        ("tenancy", _TENANCY_STATEMENTS),
     ]
 
     for label, statements in all_statements:

@@ -33,6 +33,8 @@ class RetailChannel(Base):
     __tablename__ = "retail_channels"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     name = Column(String, nullable=False)
     code = Column(String, nullable=True, unique=False)
     # Enlazar a Customer si esa cadena ya existe como cliente facturable
@@ -492,3 +494,9 @@ class RetailCategory(Base):
 
     # NOTA: la jerarquía se resuelve en el service (no usamos relationship
     # self-referential para evitar complicaciones con async lazy loading)
+
+
+# Multi-tenancy: RetailChannel scoped por marca. RetailStore, SellOutReport
+# y RetailAlert heredan el scope via el join con channel_id.
+from app.core.tenancy import register_tenant_scoped  # noqa: E402
+register_tenant_scoped(RetailChannel)
