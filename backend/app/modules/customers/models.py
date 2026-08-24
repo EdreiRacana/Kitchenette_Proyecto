@@ -79,6 +79,9 @@ class Customer(Base):
     __tablename__ = "customers"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Multi-tenancy: filtrado y auto-asignación por app/core/tenancy.py.
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
 
     # ── Identity / classification ────────────────────────────────────────
     client_number = Column(String, unique=True, index=True, nullable=True)  # CLI-00042
@@ -342,3 +345,8 @@ class LoyaltyProgramConfig(Base):
     birthday_email_body = Column(Text, nullable=True)
 
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+# Multi-tenancy: Customer scoped por marca.
+from app.core.tenancy import register_tenant_scoped  # noqa: E402
+register_tenant_scoped(Customer)

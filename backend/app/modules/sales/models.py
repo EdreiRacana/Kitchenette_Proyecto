@@ -45,6 +45,12 @@ class Order(Base):
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Multi-tenancy: scoped por marca. El event listener en
+    # app/core/tenancy.py auto-asigna esta columna al crear y filtra en
+    # cualquier SELECT. Nullable=True durante la migración; después de
+    # bulk update de existentes a Elías Jabari se puede endurecer.
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     folio = Column(String, unique=True, index=True, nullable=True)  # e.g. ORD-000123 / COT-000045
     kind = Column(String, default="order", nullable=False, index=True)  # order | quote | consignment_delivery | consignment_sale
     # Modelo comercial de esta orden (heredado del cliente por default).
@@ -262,3 +268,11 @@ class CustomerReturnItem(Base):
 
     customer_return = relationship("CustomerReturn", back_populates="items")
     variant = relationship("ProductVariant")
+
+
+# Multi-tenancy: registro de las clases scoped por marca.
+# Solo la clase Order lleva company_id directo — el resto (OrderItem,
+# Payment, OrderEvent, CustomerReturn, CustomerReturnItem) heredan el
+# scope via el join con Order (o customer_return → order).
+from app.core.tenancy import register_tenant_scoped  # noqa: E402
+register_tenant_scoped(Order)

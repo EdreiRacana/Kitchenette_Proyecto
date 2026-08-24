@@ -8,6 +8,8 @@ class Transaction(Base):
     __tablename__ = "transactions"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     type = Column(String, nullable=False, index=True)  # income, expense
     amount = Column(Float, nullable=False)
     category = Column(String, nullable=True, index=True)  # sales, payroll, rent, supplies, etc.
@@ -27,6 +29,8 @@ class BankAccount(Base):
     __tablename__ = "bank_accounts"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     name = Column(String, nullable=False)
     bank = Column(String, nullable=True)
     account_number = Column(String, nullable=True)
@@ -96,6 +100,8 @@ class SupplierBill(Base):
     __tablename__ = "supplier_bills"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     folio = Column(String, unique=True, index=True, nullable=True)  # folio interno FAC-000001
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True, index=True)
     supplier_name = Column(String, nullable=True)  # snapshot para que la fila siga legible
@@ -218,3 +224,10 @@ class BankReconciliation(Base):
     reopened_at = Column(DateTime(timezone=True), nullable=True)
 
     bank_account = relationship("BankAccount")
+
+
+# Multi-tenancy: registro de las clases scoped por marca.
+from app.core.tenancy import register_tenant_scoped  # noqa: E402
+register_tenant_scoped(Transaction)
+register_tenant_scoped(BankAccount)
+register_tenant_scoped(SupplierBill)

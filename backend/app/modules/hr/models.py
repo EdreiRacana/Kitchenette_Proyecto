@@ -8,6 +8,8 @@ class Employee(Base):
     __tablename__ = "hr_employees"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     employee_number = Column(String, unique=True, nullable=False, index=True)
     name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
@@ -515,3 +517,9 @@ class IMSSMovement(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     employee = relationship("Employee")
+
+
+# Multi-tenancy: Employee scoped por marca. Los demás modelos HR heredan
+# el scope via el join con employee_id (payroll, attendance, contracts).
+from app.core.tenancy import register_tenant_scoped  # noqa: E402
+register_tenant_scoped(Employee)

@@ -26,6 +26,8 @@ class Supplier(Base):
     __tablename__ = "suppliers"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     name = Column(String, index=True, nullable=False)
     contact_name = Column(String, nullable=True)
     email = Column(String, nullable=True)
@@ -69,6 +71,8 @@ class Product(Base):
     __tablename__ = "products"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     name = Column(String, index=True, nullable=False)
     description = Column(Text, nullable=True)
     category = Column(String, index=True, nullable=True)
@@ -155,6 +159,8 @@ class Warehouse(Base):
     __tablename__ = "warehouses"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     name = Column(String, unique=True, index=True, nullable=False)
     location = Column(String, nullable=True)
     type = Column(String, default=WarehouseType.OWN.value, nullable=False)
@@ -241,6 +247,8 @@ class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     folio = Column(String, unique=True, index=True, nullable=True)
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False)
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False)
@@ -460,3 +468,11 @@ class StockTransferItem(Base):
 
     transfer = relationship("StockTransfer", back_populates="items")
     variant = relationship("ProductVariant")
+
+
+# Multi-tenancy: registro de las clases scoped por marca.
+from app.core.tenancy import register_tenant_scoped  # noqa: E402
+register_tenant_scoped(Supplier)
+register_tenant_scoped(Product)
+register_tenant_scoped(Warehouse)
+register_tenant_scoped(PurchaseOrder)
