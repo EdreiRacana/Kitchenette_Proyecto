@@ -347,8 +347,28 @@ async def delete_user_admin(
         supers = [u for u in await service.get_users(db, limit=1000) if u.is_superuser]
         if len(supers) <= 1:
             raise HTTPException(status_code=400, detail="No puedes eliminar al único superusuario.")
-    await service.delete_user(db, user)
-    return {"ok": True}
+    # Intento DELETE físico. Si el usuario tiene actividad (ventas,
+    # pagos, movimientos de stock, etc.) las FK lo impiden — entonces
+    # caemos a soft-delete: is_active=False + quitar de todas las
+    # marcas para que ya no pueda entrar ni aparecer en ningún selector.
+    from sqlalchemy.exc import IntegrityError
+    try:
+        await service.delete_user(db, user)
+        return {"ok": True, "deleted": "hard"}
+    except IntegrityError:
+        await db.rollback()
+        # Soft delete: desactivar + desligar de todas las marcas
+        user.is_active = False
+        from sqlalchemy import delete as _delete
+        from app.modules.core_config import models as cfg
+        await db.execute(
+            _delete(cfg.UserCompany).where(cfg.UserCompany.user_id == user.id)
+        )
+        await db.commit()
+        return {"ok": True, "deleted": "soft",
+                "message": ("El usuario tiene actividad registrada (ventas, "
+                             "pagos, etc.) — se desactivó en vez de eliminar "
+                             "y se le quitó acceso a todas las marcas.")}
 
 
 @router.get("/roles", response_model=List[schemas.Role])
