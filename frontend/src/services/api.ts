@@ -85,6 +85,26 @@ export function setActiveCompanyId(id: string | null) {
     } catch { /* ignore */ }
 }
 
+// Al hacer login exitoso, resolvemos la marca activa AHORA — antes de
+// que ningún módulo dispare queries sin X-Company-Id (lo que dejaría
+// data contaminada al listener del backend). Elegimos:
+//   1. La marca marcada como default en /me/companies (is_default=true).
+//   2. Si no hay default, la primera de la lista.
+//   3. Si el usuario no tiene ninguna marca, no seteamos nada — el
+//      backend caerá al fallback "single tenant" para retrocompat.
+export async function initActiveCompanyAfterLogin(): Promise<void> {
+    try {
+        const r = await api.get("/me/companies");
+        const list: any[] = Array.isArray(r.data) ? r.data : [];
+        if (!list.length) return;
+        const def = list.find(c => c.is_default) || list[0];
+        if (def?.id) setActiveCompanyId(def.id);
+    } catch {
+        // Sin permisos o error transitorio: sigue el flujo, el switcher
+        // hará su propia inicialización cuando se monte.
+    }
+}
+
 // --- Request interceptor: auth token + empresa activa ---
 api.interceptors.request.use(
     (config) => {

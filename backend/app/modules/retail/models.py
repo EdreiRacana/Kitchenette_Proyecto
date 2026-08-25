@@ -75,6 +75,8 @@ class RetailStore(Base):
     __tablename__ = "retail_stores"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     channel_id = Column(
         Integer, ForeignKey("retail_channels.id", ondelete="CASCADE"),
         nullable=False, index=True,
@@ -131,6 +133,8 @@ class SellOutReport(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     store_id = Column(
         Integer, ForeignKey("retail_stores.id", ondelete="CASCADE"),
         nullable=False, index=True,
@@ -197,6 +201,8 @@ class RetailAlert(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     channel_id = Column(
         Integer, ForeignKey("retail_channels.id", ondelete="CASCADE"),
         nullable=False, index=True,
@@ -500,3 +506,6 @@ class RetailCategory(Base):
 # y RetailAlert heredan el scope via el join con channel_id.
 from app.core.tenancy import register_tenant_scoped  # noqa: E402
 register_tenant_scoped(RetailChannel)
+register_tenant_scoped(RetailStore)
+register_tenant_scoped(SellOutReport)
+register_tenant_scoped(RetailAlert)

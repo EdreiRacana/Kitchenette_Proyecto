@@ -48,6 +48,8 @@ class BankTransaction(Base):
     __tablename__ = "bank_transactions"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     bank_account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=False, index=True)
     type = Column(String, nullable=False)  # deposit, withdrawal, transfer_in, transfer_out
     amount = Column(Float, nullable=False)
@@ -148,6 +150,8 @@ class BillPayment(Base):
     __tablename__ = "bill_payments"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     bill_id = Column(Integer, ForeignKey("supplier_bills.id", ondelete="CASCADE"), nullable=False, index=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True, index=True)
     amount = Column(Float, nullable=False)
@@ -230,4 +234,6 @@ class BankReconciliation(Base):
 from app.core.tenancy import register_tenant_scoped  # noqa: E402
 register_tenant_scoped(Transaction)
 register_tenant_scoped(BankAccount)
+register_tenant_scoped(BankTransaction)
 register_tenant_scoped(SupplierBill)
+register_tenant_scoped(BillPayment)

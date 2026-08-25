@@ -47,6 +47,8 @@ class POSSession(Base):
     __tablename__ = "pos_sessions"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     terminal_id = Column(Integer, ForeignKey("pos_terminals.id"), nullable=False, index=True)
     cashier_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
@@ -89,6 +91,8 @@ class POSTransaction(Base):
     __tablename__ = "pos_transactions"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     session_id = Column(Integer, ForeignKey("pos_sessions.id"), nullable=False, index=True)
     type = Column(String, nullable=False, index=True)  # sale|refund|cash_in|cash_out|opening|closing
     amount = Column(Float, nullable=False)
@@ -98,3 +102,9 @@ class POSTransaction(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("POSSession", back_populates="transactions")
+
+
+# Multi-tenancy: POSSession y POSTransaction scoped por marca.
+from app.core.tenancy import register_tenant_scoped  # noqa: E402
+register_tenant_scoped(POSSession)
+register_tenant_scoped(POSTransaction)

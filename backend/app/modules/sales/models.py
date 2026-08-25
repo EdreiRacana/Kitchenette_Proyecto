@@ -155,6 +155,8 @@ class OrderItem(Base):
     __tablename__ = "order_items"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
     variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=True)
 
@@ -184,6 +186,8 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
     amount = Column(Float, nullable=False)
     method = Column(String, nullable=True)        # cash, card, transfer...
@@ -227,6 +231,8 @@ class CustomerReturn(Base):
     __tablename__ = "customer_returns"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     folio = Column(String, unique=True, index=True, nullable=True)  # DEV-000001
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
@@ -276,3 +282,6 @@ class CustomerReturnItem(Base):
 # scope via el join con Order (o customer_return → order).
 from app.core.tenancy import register_tenant_scoped  # noqa: E402
 register_tenant_scoped(Order)
+register_tenant_scoped(OrderItem)
+register_tenant_scoped(Payment)
+register_tenant_scoped(CustomerReturn)
