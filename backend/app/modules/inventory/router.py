@@ -632,3 +632,223 @@ async def overstock_alerts(db: DB, current_user: CurrentUser,
     return await service.get_overstock_alerts(
         db, warehouse_ids=ids, lookback_days=lookback_days, days_threshold=days_threshold,
     )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Workflow: solicitud de eliminación de producto con aprobación jerárquica
+# ══════════════════════════════════════════════════════════════════════
+
+from pydantic import BaseModel, Field
+from sqlalchemy import select as _select
+from sqlalchemy.orm import selectinload as _selectinload
+
+
+class DeletionRequestCreate(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class DeletionRequestReject(BaseModel):
+    rejection_reason: str = Field(min_length=3, max_length=500)
+
+
+class DeletionRequestOut(BaseModel):
+    id: int
+    product_id: int
+    product_name: Optional[str] = None
+    reason: str
+    status: str
+    requested_by_user_id: int
+    requested_by_name: Optional[str] = None
+    approved_by_user_id: Optional[int] = None
+    approved_by_name: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    rejected_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+    executed_at: Optional[datetime] = None
+    created_at: datetime
+
+
+def _is_approver(user: User) -> bool:
+    """Puede aprobar/rechazar eliminación: superuser o rol con permiso
+    inventory.approve. Ajustable via RBAC en Configuración."""
+    if getattr(user, "is_superuser", False):
+        return True
+    role = getattr(user, "role_obj", None)
+    if not role or not role.permissions:
+        return False
+    return any(p.module == "inventory" and p.action == "approve"
+               for p in role.permissions)
+
+
+async def _serialize_req(db: AsyncSession, req: models.ProductDeletionRequest) -> dict:
+    """Enriquece con nombres para no tener que pedir /users desde el frontend."""
+    from app.modules.auth import service as auth_service
+    prod = None
+    if req.product_id:
+        prod = (await db.execute(
+            _select(models.Product).where(models.Product.id == req.product_id)
+        )).scalars().first()
+    requester = await auth_service.get_user(db, req.requested_by_user_id)
+    approver = None
+    if req.approved_by_user_id:
+        approver = await auth_service.get_user(db, req.approved_by_user_id)
+    return {
+        "id": req.id, "product_id": req.product_id,
+        "product_name": prod.name if prod else None,
+        "reason": req.reason, "status": req.status,
+        "requested_by_user_id": req.requested_by_user_id,
+        "requested_by_name": (requester.full_name if requester else None) or (requester.email if requester else None),
+        "approved_by_user_id": req.approved_by_user_id,
+        "approved_by_name": (approver.full_name if approver else None) or (approver.email if approver else None) if approver else None,
+        "approved_at": req.approved_at,
+        "rejected_at": req.rejected_at,
+        "rejection_reason": req.rejection_reason,
+        "executed_at": req.executed_at,
+        "created_at": req.created_at,
+    }
+
+
+@router.post("/products/{product_id}/deletion-request",
+              response_model=DeletionRequestOut, status_code=201)
+async def create_deletion_request(
+    product_id: int, payload: DeletionRequestCreate,
+    db: DB, current_user: CurrentUser,
+):
+    """Solicita eliminar un producto. Cualquier rol con inventory.edit
+    puede solicitar; la aprobación queda pendiente para un rol autorizado.
+    Superuser: puede saltarse esto y llamar DELETE /products/{id} directo."""
+    prod = (await db.execute(
+        _select(models.Product).where(models.Product.id == product_id)
+    )).scalars().first()
+    if not prod:
+        raise HTTPException(404, "Producto no encontrado")
+    # ¿ya hay una solicitud pending para este producto?
+    existing = (await db.execute(
+        _select(models.ProductDeletionRequest).where(
+            models.ProductDeletionRequest.product_id == product_id,
+            models.ProductDeletionRequest.status == "pending",
+        )
+    )).scalars().first()
+    if existing:
+        raise HTTPException(
+            400, "Ya existe una solicitud pendiente para este producto."
+        )
+    req = models.ProductDeletionRequest(
+        product_id=product_id,
+        requested_by_user_id=current_user.id,
+        reason=payload.reason.strip(),
+        status="pending",
+    )
+    db.add(req)
+    await db.commit()
+    await db.refresh(req)
+    return await _serialize_req(db, req)
+
+
+@router.get("/products/deletion-requests",
+             response_model=List[DeletionRequestOut])
+async def list_deletion_requests(
+    db: DB, current_user: CurrentUser,
+    status_filter: str = "pending",
+):
+    """Lista solicitudes de eliminación. Por default solo las pending
+    (lo que el aprobador necesita ver). Pasa ?status_filter=all para todas."""
+    stmt = _select(models.ProductDeletionRequest)
+    if status_filter != "all":
+        stmt = stmt.where(models.ProductDeletionRequest.status == status_filter)
+    stmt = stmt.order_by(models.ProductDeletionRequest.created_at.desc()).limit(100)
+    rows = (await db.execute(stmt)).scalars().all()
+    return [await _serialize_req(db, r) for r in rows]
+
+
+@router.post("/products/deletion-requests/{request_id}/approve",
+              response_model=DeletionRequestOut)
+async def approve_deletion_request(
+    request_id: int, db: DB, current_user: CurrentUser,
+):
+    """Aprueba una solicitud y EJECUTA el soft-delete del producto
+    (Product.is_active=False). Historial de ventas queda intacto para
+    auditoría — no hay hard delete de productos con actividad."""
+    if not _is_approver(current_user):
+        raise HTTPException(
+            403, "Solo un administrador puede aprobar eliminaciones."
+        )
+    req = (await db.execute(
+        _select(models.ProductDeletionRequest).where(
+            models.ProductDeletionRequest.id == request_id
+        )
+    )).scalars().first()
+    if not req:
+        raise HTTPException(404, "Solicitud no encontrada")
+    if req.status != "pending":
+        raise HTTPException(
+            400, f"Solicitud ya está en estado '{req.status}'."
+        )
+    prod = (await db.execute(
+        _select(models.Product).where(models.Product.id == req.product_id)
+    )).scalars().first()
+    if not prod:
+        raise HTTPException(404, "Producto no encontrado")
+    now = datetime.utcnow()
+    prod.is_active = False  # soft delete
+    req.status = "executed"  # una vez aprobada, la ejecutamos en el mismo paso
+    req.approved_by_user_id = current_user.id
+    req.approved_at = now
+    req.executed_at = now
+    await db.commit()
+    await db.refresh(req)
+    return await _serialize_req(db, req)
+
+
+@router.post("/products/deletion-requests/{request_id}/reject",
+              response_model=DeletionRequestOut)
+async def reject_deletion_request(
+    request_id: int, payload: DeletionRequestReject,
+    db: DB, current_user: CurrentUser,
+):
+    """Rechaza la solicitud con un motivo obligatorio."""
+    if not _is_approver(current_user):
+        raise HTTPException(
+            403, "Solo un administrador puede rechazar eliminaciones."
+        )
+    req = (await db.execute(
+        _select(models.ProductDeletionRequest).where(
+            models.ProductDeletionRequest.id == request_id
+        )
+    )).scalars().first()
+    if not req:
+        raise HTTPException(404, "Solicitud no encontrada")
+    if req.status != "pending":
+        raise HTTPException(
+            400, f"Solicitud ya está en estado '{req.status}'."
+        )
+    req.status = "rejected"
+    req.approved_by_user_id = current_user.id
+    req.rejected_at = datetime.utcnow()
+    req.rejection_reason = payload.rejection_reason.strip()
+    await db.commit()
+    await db.refresh(req)
+    return await _serialize_req(db, req)
+
+
+@router.delete("/products/{product_id}")
+async def delete_product_direct(
+    product_id: int, db: DB, current_user: CurrentUser,
+):
+    """DELETE directo — SOLO superuser. Roles normales deben usar el
+    workflow de solicitud (/products/{id}/deletion-request).
+    Hace soft delete (is_active=False) para preservar historial."""
+    if not getattr(current_user, "is_superuser", False):
+        raise HTTPException(
+            403,
+            "Solo un superusuario puede eliminar productos directo. "
+            "Usa el botón 'Solicitar eliminación' para pedir aprobación.",
+        )
+    prod = (await db.execute(
+        _select(models.Product).where(models.Product.id == product_id)
+    )).scalars().first()
+    if not prod:
+        raise HTTPException(404, "Producto no encontrado")
+    prod.is_active = False
+    await db.commit()
+    return {"ok": True, "deleted": "soft"}

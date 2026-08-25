@@ -295,6 +295,17 @@ export const inventoryService = {
     getProduct: async (id: number) => (await api.get<Product>(`/inventory/products/${id}`)).data,
     createProduct: async (data: any) => (await api.post('/inventory/products', data)).data,
     updateProduct: async (id: number, data: any) => (await api.put(`/inventory/products/${id}`, data)).data,
+    // Workflow de eliminación con aprobación:
+    deleteProductDirect: async (id: number) =>
+        (await api.delete(`/inventory/products/${id}`)).data,
+    requestProductDeletion: async (productId: number, reason: string) =>
+        (await api.post(`/inventory/products/${productId}/deletion-request`, { reason })).data,
+    listDeletionRequests: async (statusFilter: string = "pending") =>
+        (await api.get(`/inventory/products/deletion-requests`, { params: { status_filter: statusFilter } })).data as any[],
+    approveDeletionRequest: async (id: number) =>
+        (await api.post(`/inventory/products/deletion-requests/${id}/approve`)).data,
+    rejectDeletionRequest: async (id: number, rejection_reason: string) =>
+        (await api.post(`/inventory/products/deletion-requests/${id}/reject`, { rejection_reason })).data,
     uploadProductImage: async (file: File) => {
         const fd = new FormData();
         fd.append('file', file);
