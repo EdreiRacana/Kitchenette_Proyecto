@@ -128,15 +128,19 @@ async def _my_role_in(db: AsyncSession, user_id: int, company_id: str) -> Option
 # ─── Endpoints ──────────────────────────────────────────────────────────
 
 def _build_logo_url(profile) -> Optional[str]:
-    """Si el CompanyProfile tiene logo_bytes en BD, arma la URL pública
-    del endpoint que sirve la imagen — con company_id + hash como
-    cache-buster. Si no, devuelve el logo_url guardado (puede ser data
-    URI, URL externa o filesystem — este último puede estar roto si
-    Render redeployó)."""
-    if getattr(profile, "logo_bytes", None):
-        import hashlib
-        v = hashlib.md5(profile.logo_bytes).hexdigest()[:8]
-        return f"/api/v1/config/company/logo?company_id={profile.id}&v={v}"
+    """Si el CompanyProfile tiene logo_bytes en BD, devuelve un data URI
+    base64 EMBEBIDO — así el <img src=...> del frontend NO depende de
+    ninguna request adicional, ni de auth, ni de cache del navegador,
+    ni de query params. Se renderiza instantáneo y siempre.
+
+    Si no hay logo_bytes, devuelve el logo_url guardado (puede ser data
+    URI, URL externa o filesystem antiguo)."""
+    logo_bytes = getattr(profile, "logo_bytes", None)
+    if logo_bytes:
+        import base64
+        mime = getattr(profile, "logo_mime", None) or "image/png"
+        b64 = base64.b64encode(logo_bytes).decode("ascii")
+        return f"data:{mime};base64,{b64}"
     return getattr(profile, "logo_url", None)
 
 
