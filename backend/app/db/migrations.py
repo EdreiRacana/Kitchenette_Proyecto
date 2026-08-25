@@ -916,6 +916,115 @@ _TENANCY_STATEMENTS = [
 ]
 
 
+# ── Fase 1c · Tablas hijas también scoped (dashboards / módulos) ────
+# Padre ya lleva company_id; ahora las hijas también, para que queries
+# directas sobre ellas (sin JOIN al padre) filtren correctamente. La
+# migración copia el company_id del padre a la hija via JOIN, y solo
+# afecta filas donde la hija tenía NULL — 100% idempotente.
+_TENANCY_CHILDREN_STATEMENTS = [
+    # ── Sales children ───────────────────────────────────────────
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_order_items_company_id ON order_items(company_id)",
+    """UPDATE order_items oi SET company_id = o.company_id
+        FROM orders o WHERE oi.order_id = o.id AND oi.company_id IS NULL""",
+
+    "ALTER TABLE payments ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_payments_company_id ON payments(company_id)",
+    """UPDATE payments p SET company_id = o.company_id
+        FROM orders o WHERE p.order_id = o.id AND p.company_id IS NULL""",
+
+    "ALTER TABLE customer_returns ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_customer_returns_company_id ON customer_returns(company_id)",
+    """UPDATE customer_returns cr SET company_id = o.company_id
+        FROM orders o WHERE cr.order_id = o.id AND cr.company_id IS NULL""",
+
+    # ── Inventory children ───────────────────────────────────────
+    "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_product_variants_company_id ON product_variants(company_id)",
+    """UPDATE product_variants pv SET company_id = p.company_id
+        FROM products p WHERE pv.product_id = p.id AND pv.company_id IS NULL""",
+
+    "ALTER TABLE stock_levels ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_stock_levels_company_id ON stock_levels(company_id)",
+    """UPDATE stock_levels sl SET company_id = w.company_id
+        FROM warehouses w WHERE sl.warehouse_id = w.id AND sl.company_id IS NULL""",
+
+    "ALTER TABLE stock_lots ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_stock_lots_company_id ON stock_lots(company_id)",
+    """UPDATE stock_lots sl SET company_id = w.company_id
+        FROM warehouses w WHERE sl.warehouse_id = w.id AND sl.company_id IS NULL""",
+
+    "ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_stock_movements_company_id ON stock_movements(company_id)",
+    """UPDATE stock_movements sm SET company_id = w.company_id
+        FROM warehouses w WHERE sm.warehouse_id = w.id AND sm.company_id IS NULL""",
+
+    "ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_poi_company_id ON purchase_order_items(company_id)",
+    """UPDATE purchase_order_items poi SET company_id = po.company_id
+        FROM purchase_orders po WHERE poi.purchase_order_id = po.id AND poi.company_id IS NULL""",
+
+    # ── Retail children ──────────────────────────────────────────
+    "ALTER TABLE retail_stores ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_retail_stores_company_id ON retail_stores(company_id)",
+    """UPDATE retail_stores rs SET company_id = rc.company_id
+        FROM retail_channels rc WHERE rs.channel_id = rc.id AND rs.company_id IS NULL""",
+
+    "ALTER TABLE retail_alerts ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_retail_alerts_company_id ON retail_alerts(company_id)",
+    """UPDATE retail_alerts ra SET company_id = rc.company_id
+        FROM retail_channels rc WHERE ra.channel_id = rc.id AND ra.company_id IS NULL""",
+
+    "ALTER TABLE retail_sellout_reports ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_sellout_company_id ON retail_sellout_reports(company_id)",
+    """UPDATE retail_sellout_reports so SET company_id = rs.company_id
+        FROM retail_stores rs WHERE so.store_id = rs.id AND so.company_id IS NULL""",
+
+    # ── HR children ──────────────────────────────────────────────
+    "ALTER TABLE hr_attendance ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_hr_attendance_company_id ON hr_attendance(company_id)",
+    """UPDATE hr_attendance a SET company_id = e.company_id
+        FROM hr_employees e WHERE a.employee_id = e.id AND a.company_id IS NULL""",
+
+    "ALTER TABLE hr_payroll_details ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_hr_payroll_details_company_id ON hr_payroll_details(company_id)",
+    """UPDATE hr_payroll_details pd SET company_id = e.company_id
+        FROM hr_employees e WHERE pd.employee_id = e.id AND pd.company_id IS NULL""",
+
+    "ALTER TABLE hr_contracts ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_hr_contracts_company_id ON hr_contracts(company_id)",
+    """UPDATE hr_contracts c SET company_id = e.company_id
+        FROM hr_employees e WHERE c.employee_id = e.id AND c.company_id IS NULL""",
+
+    # ── Finance children ─────────────────────────────────────────
+    "ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_bank_transactions_company_id ON bank_transactions(company_id)",
+    """UPDATE bank_transactions bt SET company_id = ba.company_id
+        FROM bank_accounts ba WHERE bt.bank_account_id = ba.id AND bt.company_id IS NULL""",
+
+    "ALTER TABLE bill_payments ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_bill_payments_company_id ON bill_payments(company_id)",
+    """UPDATE bill_payments bp SET company_id = sb.company_id
+        FROM supplier_bills sb WHERE bp.bill_id = sb.id AND bp.company_id IS NULL""",
+
+    # ── POS children ─────────────────────────────────────────────
+    # POSSession no tiene padre scoped (POSTerminal.warehouse_id apunta
+    # a Warehouse pero no siempre); bulk update la deja NULL — se
+    # asigna correctamente en próximas ventas via before_flush del
+    # tenancy listener. Alternativa: via warehouse del terminal.
+    "ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_pos_sessions_company_id ON pos_sessions(company_id)",
+    """UPDATE pos_sessions ps SET company_id = w.company_id
+        FROM pos_terminals pt JOIN warehouses w ON w.id = pt.warehouse_id
+        WHERE ps.terminal_id = pt.id AND ps.company_id IS NULL""",
+
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_pos_transactions_company_id ON pos_transactions(company_id)",
+    """UPDATE pos_transactions pt SET company_id = ps.company_id
+        FROM pos_sessions ps WHERE pt.session_id = ps.id AND pt.company_id IS NULL""",
+]
+
+
 # ── Actualización de política RBAC (idempotente) ─────────────────────
 # Cambios acordados con el usuario (Fase 15):
 #   1. Nuevo módulo 'retail' + sus 5 permisos (view/create/edit/delete/approve).
@@ -994,6 +1103,8 @@ def _apply(sync_conn: Connection) -> None:
         # Corre DESPUÉS de brand_fields para asegurar que company_profile
         # ya tenga los campos completos cuando se referencia por FK.
         ("tenancy", _TENANCY_STATEMENTS),
+        # Corre DESPUÉS de tenancy: las hijas heredan del padre.
+        ("tenancy_children", _TENANCY_CHILDREN_STATEMENTS),
     ]
 
     for label, statements in all_statements:

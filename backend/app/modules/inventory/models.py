@@ -124,6 +124,8 @@ class ProductVariant(Base):
     __tablename__ = "product_variants"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
     sku = Column(String, unique=True, index=True, nullable=False)
     barcode = Column(String, index=True, nullable=True)  # EAN/UPC para búsqueda por código
@@ -171,6 +173,8 @@ class StockLevel(Base):
     __tablename__ = "stock_levels"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=False)
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False)
     quantity = Column(Integer, default=0, nullable=False)            # disponible físicamente
@@ -187,6 +191,8 @@ class StockLot(Base):
     __tablename__ = "stock_lots"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=False)
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False)
     quantity_received = Column(Integer, nullable=False)
@@ -218,6 +224,8 @@ class StockMovement(Base):
     __tablename__ = "stock_movements"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=False)
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False)
     quantity = Column(Integer, nullable=False) # Positive or negative
@@ -320,6 +328,8 @@ class PurchaseOrderItem(Base):
     __tablename__ = "purchase_order_items"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=False)
     variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=False)
     quantity = Column(Integer, nullable=False)
@@ -474,5 +484,10 @@ class StockTransferItem(Base):
 from app.core.tenancy import register_tenant_scoped  # noqa: E402
 register_tenant_scoped(Supplier)
 register_tenant_scoped(Product)
+register_tenant_scoped(ProductVariant)
 register_tenant_scoped(Warehouse)
+register_tenant_scoped(StockLevel)
+register_tenant_scoped(StockLot)
+register_tenant_scoped(StockMovement)
 register_tenant_scoped(PurchaseOrder)
+register_tenant_scoped(PurchaseOrderItem)

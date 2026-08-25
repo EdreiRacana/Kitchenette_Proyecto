@@ -28,7 +28,7 @@ import POSModule from "./features/pos/POSModule";
 import Assistant from "./features/assistant/AssistantModule";
 import { TrianglesCanvas } from "./components/TrianglesCanvas";
 import CompanySwitcher from "./components/CompanySwitcher";
-import api, { onUnauthorized } from "./services/api";
+import api, { onUnauthorized, initActiveCompanyAfterLogin } from "./services/api";
 import { useServerRecovery } from "./hooks/useServerRecovery";
 import configService from "./features/config/service";
 
@@ -1441,6 +1441,9 @@ function Login({ t, s, lang, onEnter }) {
       if (!token) throw new Error("no token");
 
       localStorage.setItem("token", token);
+      // Multi-marca: resuelve X-Company-Id ANTES de entrar al ERP
+      // para que ningún módulo dispare queries sin scope de marca.
+      await initActiveCompanyAfterLogin();
       onEnter();
     } catch (err) {
       const status = err?.response?.status;
@@ -1467,6 +1470,9 @@ function Login({ t, s, lang, onEnter }) {
       const token = res.data?.access_token;
       if (!token) throw new Error("no token");
       localStorage.setItem("token", token);
+      // Multi-marca: resuelve X-Company-Id ANTES de entrar al ERP
+      // para que ningún módulo dispare queries sin scope de marca.
+      await initActiveCompanyAfterLogin();
       onEnter();
     } catch (err) {
       const status = err?.response?.status;

@@ -75,6 +75,8 @@ class Attendance(Base):
     __tablename__ = "hr_attendance"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     employee_id = Column(Integer, ForeignKey("hr_employees.id"), nullable=False, index=True)
     date = Column(String, nullable=False, index=True)  # ISO date
     type = Column(String, nullable=False)  # entrada, salida, retardo, falta, vacacion, incapacidad, permiso, extra
@@ -121,6 +123,8 @@ class PayrollDetail(Base):
     __tablename__ = "hr_payroll_details"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     period_id = Column(Integer, ForeignKey("hr_payroll_periods.id"), nullable=False, index=True)
     employee_id = Column(Integer, ForeignKey("hr_employees.id"), nullable=False, index=True)
     department = Column(String, nullable=True)
@@ -212,6 +216,8 @@ class Contract(Base):
     __tablename__ = "hr_contracts"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
     employee_id = Column(Integer, ForeignKey("hr_employees.id", ondelete="CASCADE"),
                           nullable=False, index=True)
     # Tipo de contrato — determina la plantilla legal aplicada:
@@ -523,3 +529,6 @@ class IMSSMovement(Base):
 # el scope via el join con employee_id (payroll, attendance, contracts).
 from app.core.tenancy import register_tenant_scoped  # noqa: E402
 register_tenant_scoped(Employee)
+register_tenant_scoped(Attendance)
+register_tenant_scoped(PayrollDetail)
+register_tenant_scoped(Contract)
