@@ -127,15 +127,35 @@ async def _my_role_in(db: AsyncSession, user_id: int, company_id: str) -> Option
 
 # ─── Endpoints ──────────────────────────────────────────────────────────
 
+def _build_logo_url(profile) -> Optional[str]:
+    """Si el CompanyProfile tiene logo_bytes en BD, arma la URL pública
+    del endpoint que sirve la imagen — con company_id + hash como
+    cache-buster. Si no, devuelve el logo_url guardado (puede ser data
+    URI, URL externa o filesystem — este último puede estar roto si
+    Render redeployó)."""
+    if getattr(profile, "logo_bytes", None):
+        import hashlib
+        v = hashlib.md5(profile.logo_bytes).hexdigest()[:8]
+        return f"/api/v1/config/company/logo?company_id={profile.id}&v={v}"
+    return getattr(profile, "logo_url", None)
+
+
 @router.get("/companies", response_model=List[CompanyOut])
 async def list_companies(db: DB, current_user: CurrentUser):
     """Lista todas las empresas visibles para el usuario.
     Superuser ve todas; usuarios normales solo aquellas donde tienen link.
+    Enriquece logo_url dinamicamente desde logo_bytes cuando la marca
+    tiene su logo persistido en BD.
     """
     if getattr(current_user, "is_superuser", False):
         q = select(cfg.CompanyProfile).order_by(cfg.CompanyProfile.legal_name)
         rows = (await db.execute(q)).scalars().all()
-        return [CompanyOut.model_validate(r) for r in rows]
+        out = []
+        for r in rows:
+            d = CompanyOut.model_validate(r)
+            d.logo_url = _build_logo_url(r)
+            out.append(d)
+        return out
 
     q = (
         select(cfg.CompanyProfile, cfg.UserCompany)
@@ -146,6 +166,7 @@ async def list_companies(db: DB, current_user: CurrentUser):
     out = []
     for c, uc in (await db.execute(q)).all():
         d = CompanyOut.model_validate(c)
+        d.logo_url = _build_logo_url(c)
         d.role_in_company = uc.role_in_company
         d.is_default = uc.is_default
         out.append(d)
