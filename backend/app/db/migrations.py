@@ -1022,6 +1022,25 @@ _TENANCY_CHILDREN_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS ix_pos_transactions_company_id ON pos_transactions(company_id)",
     """UPDATE pos_transactions pt SET company_id = ps.company_id
         FROM pos_sessions ps WHERE pt.session_id = ps.id AND pt.company_id IS NULL""",
+
+    # Workflow de aprobación para eliminación de productos
+    """CREATE TABLE IF NOT EXISTS product_deletion_requests (
+        id                    SERIAL PRIMARY KEY,
+        company_id            VARCHAR REFERENCES company_profile(id),
+        product_id            INTEGER NOT NULL REFERENCES products(id),
+        requested_by_user_id  INTEGER NOT NULL REFERENCES users(id),
+        reason                TEXT NOT NULL,
+        status                VARCHAR NOT NULL DEFAULT 'pending',
+        approved_by_user_id   INTEGER REFERENCES users(id),
+        approved_at           TIMESTAMPTZ,
+        rejected_at           TIMESTAMPTZ,
+        rejection_reason      TEXT,
+        executed_at           TIMESTAMPTZ,
+        created_at            TIMESTAMPTZ DEFAULT NOW() NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_pdr_status ON product_deletion_requests(status)",
+    "CREATE INDEX IF NOT EXISTS ix_pdr_company ON product_deletion_requests(company_id)",
+    "CREATE INDEX IF NOT EXISTS ix_pdr_product ON product_deletion_requests(product_id)",
 ]
 
 

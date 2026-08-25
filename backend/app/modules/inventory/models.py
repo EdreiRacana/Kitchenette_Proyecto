@@ -481,6 +481,36 @@ class StockTransferItem(Base):
 
 
 # Multi-tenancy: registro de las clases scoped por marca.
+class ProductDeletionRequest(Base):
+    """Solicitud de eliminación de un producto — workflow de aprobación
+    jerárquica. Roles operativos (Almacén, Ventas) NO borran directo:
+    crean esta solicitud con motivo, y un rol autorizado (Administrador,
+    Gerente Ventas) la aprueba o rechaza. Al aprobar → soft delete
+    (Product.is_active=False). Hard delete NO existe — el historial de
+    ventas asociado se conserva para auditoría."""
+    __tablename__ = "product_deletion_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"),
+                          nullable=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"),
+                          nullable=False, index=True)
+    requested_by_user_id = Column(Integer, ForeignKey("users.id"),
+                                    nullable=False)
+    reason = Column(Text, nullable=False)  # obligatorio
+    # pending | approved | rejected | executed
+    status = Column(String, default="pending", nullable=False, index=True)
+    approved_by_user_id = Column(Integer, ForeignKey("users.id"),
+                                   nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    rejected_at = Column(DateTime(timezone=True), nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+    executed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    product = relationship("Product", foreign_keys=[product_id])
+
+
 from app.core.tenancy import register_tenant_scoped  # noqa: E402
 register_tenant_scoped(Supplier)
 register_tenant_scoped(Product)
@@ -491,3 +521,4 @@ register_tenant_scoped(StockLot)
 register_tenant_scoped(StockMovement)
 register_tenant_scoped(PurchaseOrder)
 register_tenant_scoped(PurchaseOrderItem)
+register_tenant_scoped(ProductDeletionRequest)
