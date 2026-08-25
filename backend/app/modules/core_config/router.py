@@ -69,11 +69,13 @@ async def read_company_profile(
     # archivo ya no exista — el usuario debe re-subir el logo una vez.
     resp = schemas.CompanyProfileResponse.model_validate(profile)
     if getattr(profile, "logo_bytes", None):
-        # Cache-buster con el hash de los bytes + company_id para que el
-        # navegador NO reuse el logo de otra marca al hacer switch.
-        import hashlib
-        v = hashlib.md5(profile.logo_bytes).hexdigest()[:8]
-        resp.logo_url = f"/api/v1/config/company/logo?company_id={profile.id}&v={v}"
+        # Embebemos el logo como data URI base64 — el <img> se renderiza
+        # instantáneo, sin request adicional, sin problemas de auth ni
+        # cache ni cambio de marca.
+        import base64
+        mime = getattr(profile, "logo_mime", None) or "image/png"
+        b64 = base64.b64encode(profile.logo_bytes).decode("ascii")
+        resp.logo_url = f"data:{mime};base64,{b64}"
     return resp
 
 @router.post("/company", response_model=schemas.CompanyProfileResponse, status_code=status.HTTP_201_CREATED)
