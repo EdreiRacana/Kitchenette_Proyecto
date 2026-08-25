@@ -299,8 +299,10 @@ async def read_users(
     current_user: ConfigViewer,
     skip: int = 0,
     limit: int = 100,
+    include_inactive: bool = False,
 ):
-    return await service.get_users(db, skip=skip, limit=limit)
+    return await service.get_users(db, skip=skip, limit=limit,
+                                     include_inactive=include_inactive)
 
 
 @router.post("/users", response_model=schemas.User)
@@ -347,28 +349,22 @@ async def delete_user_admin(
         supers = [u for u in await service.get_users(db, limit=1000) if u.is_superuser]
         if len(supers) <= 1:
             raise HTTPException(status_code=400, detail="No puedes eliminar al único superusuario.")
-    # Intento DELETE físico. Si el usuario tiene actividad (ventas,
-    # pagos, movimientos de stock, etc.) las FK lo impiden — entonces
-    # caemos a soft-delete: is_active=False + quitar de todas las
-    # marcas para que ya no pueda entrar ni aparecer en ningún selector.
-    from sqlalchemy.exc import IntegrityError
-    try:
-        await service.delete_user(db, user)
-        return {"ok": True, "deleted": "hard"}
-    except IntegrityError:
-        await db.rollback()
-        # Soft delete: desactivar + desligar de todas las marcas
-        user.is_active = False
-        from sqlalchemy import delete as _delete
-        from app.modules.core_config import models as cfg
-        await db.execute(
-            _delete(cfg.UserCompany).where(cfg.UserCompany.user_id == user.id)
-        )
-        await db.commit()
-        return {"ok": True, "deleted": "soft",
-                "message": ("El usuario tiene actividad registrada (ventas, "
-                             "pagos, etc.) — se desactivó en vez de eliminar "
-                             "y se le quitó acceso a todas las marcas.")}
+    # Siempre soft delete: desactivar + quitar de todas las marcas.
+    # Nunca borramos filas de users físicamente porque las FK a Order,
+    # Payment, StockMovement, etc. son innumerables y su historial es
+    # base de auditoría. Al desactivar:
+    #   - No puede volver a entrar (is_active=False bloquea login)
+    #   - Ya no aparece en ningún selector de marca ni "Miembros"
+    #   - Su historial (ventas hechas, aprobaciones firmadas) queda
+    #     intacto trazable por user_id.
+    user.is_active = False
+    from sqlalchemy import delete as _delete
+    from app.modules.core_config import models as cfg
+    await db.execute(
+        _delete(cfg.UserCompany).where(cfg.UserCompany.user_id == user.id)
+    )
+    await db.commit()
+    return {"ok": True, "deleted": "soft"}
 
 
 @router.get("/roles", response_model=List[schemas.Role])
