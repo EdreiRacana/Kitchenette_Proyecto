@@ -41,14 +41,19 @@ async def create_user(db: AsyncSession, user_in: UserCreate):
     return await get_user(db, db_user.id)
 
 
-async def get_users(db: AsyncSession, skip: int = 0, limit: int = 100):
+async def get_users(db: AsyncSession, skip: int = 0, limit: int = 100,
+                      include_inactive: bool = True):
     # Carga el rol Y sus permisos: el schema de respuesta User incluye
     # role_obj.permissions; sin esta carga ansiosa, la serialización dispara un
     # lazy-load sobre la sesión async y revienta (ResponseValidationError).
-    result = await db.execute(
-        select(User).options(selectinload(User.role_obj).selectinload(Role.permissions))
-        .offset(skip).limit(limit)
+    # include_inactive=True por default para retrocompat con llamadas internas
+    # (ej. delete_user cuenta superusers). El endpoint público lo pasa False.
+    stmt = select(User).options(
+        selectinload(User.role_obj).selectinload(Role.permissions)
     )
+    if not include_inactive:
+        stmt = stmt.where(User.is_active == True)  # noqa: E712
+    result = await db.execute(stmt.offset(skip).limit(limit))
     return result.scalars().all()
 
 
