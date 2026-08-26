@@ -10,8 +10,6 @@ from app.core.logging import configure_logging, get_logger
 from app.core.tenancy import tenancy_middleware
 from app.api.v1.api import api_router
 
-# Configurar logging ANTES de que se cree cualquier logger — así todos
-# los módulos de la app comparten la misma configuración estructurada.
 configure_logging()
 logger = get_logger("app.main")
 
@@ -23,16 +21,11 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# ── CORS ─────────────────────────────────────────────────────────────────────
-# IMPORTANTE: con allow_credentials=True NO se puede usar allow_origins=["*"].
-# El estándar CORS lo prohíbe, y FastAPI entonces omite el header
-# Access-Control-Allow-Origin → el navegador bloquea todo. Por eso listamos
-# los orígenes explícitos del frontend (producción + desarrollo local).
 ALLOWED_ORIGINS = [
-    "https://sthenova-frontend.onrender.com",  # frontend en producción
-    "http://localhost:5173",                   # Vite dev server
+    "https://sthenova-frontend.onrender.com",
+    "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "http://localhost:3000",                   # por si usas otro puerto
+    "http://localhost:3000",
 ]
 
 app.add_middleware(
@@ -43,31 +36,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Multi-tenancy: lee X-Company-Id del header y lo pone en ContextVar
-# para que los event listeners de SQLAlchemy filtren automático.
-# Debe ir DESPUÉS de CORS para procesar los headers ya normalizados.
 app.middleware("http")(tenancy_middleware)
 
 from fastapi.staticfiles import StaticFiles
 from app.api.v1.endpoints import media
 
-# Mount static directory for local file serving
 app.mount("/static", StaticFiles(directory="uploads"), name="static")
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 app.include_router(media.router, prefix=f"{settings.API_V1_STR}/media", tags=["media"])
 
-
 @app.get("/health")
 def health_check():
     return {"status": "ok", "app_name": settings.PROJECT_NAME}
 
-
-# Unhandled exceptions escape CORSMiddleware: el handler de Exception corre en
-# ServerErrorMiddleware (la capa MÁS externa, por fuera de CORS), así que la
-# respuesta 500 salía SIN Access-Control-Allow-Origin. El navegador la
-# convertía en "Network Error" opaco y el frontend la reintentaba como si
-# fuera un fallo de red. Por eso aquí agregamos las cabeceras CORS a mano.
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error on %s %s", request.method, request.url)
@@ -78,8 +60,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         headers["Access-Control-Allow-Credentials"] = "true"
     return JSONResponse(status_code=500, content={"detail": "Error interno del servidor."}, headers=headers)
 
-
-# Auto-create tables on startup (for immediate local dev)
 from app.db.session import engine, Base
 
 # Import all models to ensure registration
@@ -89,33 +69,28 @@ from app.modules.customers import models as customer_models
 from app.modules.sales import models as sales_models
 from app.modules.finance import models as finance_models
 from app.modules.accounting import models as accounting_models
+# IMPORTANT: this import registers every company-owned accounting entity with
+# the tenancy layer and installs the backwards-compatible DB upgrade listener.
+from app.modules.accounting import tenant_bridge as accounting_tenant_bridge  # noqa: F401
 from app.modules.core_config import models as config_models
 from app.modules.hr import models as hr_models
 from app.modules.forecast import models as forecast_models
 from app.modules.retail import models as retail_models
 from app.modules.promotions import models as promotions_models
 from app.modules.marketplaces import models as marketplaces_models
-from app.modules.reports import models as reports_models  # noqa: F401
+from app.modules.reports import models as reports_models
 
 
 @app.on_event("startup")
 async def startup():
     from app.db.migrations import run_startup_migrations
-    # La base de datos puede estar temporalmente inaccesible al arrancar (p. ej.
-    # Supabase free en pausa, o un reinicio de la BD). Si create_all lanza aquí,
-    # el arranque ENTERO fallaba y Render dejaba el servicio caído por horas en
-    # lugar de reintentar. Ahora el servidor SIEMPRE levanta: responde /health y
-    # se recupera solo en cuanto la BD vuelve (el frontend ya reintenta y pinta
-    # el estado "servidor despertando").
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        # Migrations run isolated (own connection) and can never crash startup.
         await run_startup_migrations(engine)
     except Exception as e:
         logger.error("Init de BD diferido en el arranque (¿BD en pausa?): %s", e)
 
-    # Seed RBAC (permisos + roles de sistema). Idempotente, nunca pisa datos.
     try:
         from app.db.session import AsyncSessionLocal
         from app.modules.auth.rbac import seed_rbac
@@ -124,29 +99,19 @@ async def startup():
     except Exception as e:
         logger.warning("RBAC seed skipped", extra={"error": str(e)})
 
-    # Barrido de lotes caducados en el arranque — cada vez que Render reinicia
-    # el backend (frecuente en free tier) se auto-mueven a merma los lotes que
-    # cruzaron su expiration_date. Complementa un cron externo eventual. No
-    # rompe el startup si algo falla.
     try:
         from app.db.session import AsyncSessionLocal
         from app.modules.inventory import batch_service
         async with AsyncSessionLocal() as session:
             r = await batch_service.sweep_expired_to_scrap(session, user_id=None)
             if r.get("lots_expired", 0) > 0:
-                logger.info(
-                    "Auto-merma perecederos al arranque: %s lote(s), $%s",
-                    r["lots_expired"], r.get("total_value_written_off", 0.0),
-                )
+                logger.info("Auto-merma perecederos al arranque: %s lote(s), $%s", r["lots_expired"], r.get("total_value_written_off", 0.0))
     except Exception as e:
         logger.warning("Sweep de caducados omitido: %s", e)
 
-    # Alerta diaria de perecederos por correo — solo lotes ya caducados o en
-    # los próximos 7 días (críticos). Se dispara a lo mucho una vez cada 20h
-    # para no spammear si el backend reinicia varias veces al día.
     try:
         import os, time
-        marker = "/tmp/sthenova_expiry_alert.ts"  # efímero en Render, perfecto
+        marker = "/tmp/sthenova_expiry_alert.ts"
         should_run = True
         try:
             if os.path.exists(marker):
@@ -159,12 +124,9 @@ async def startup():
             from app.db.session import AsyncSessionLocal
             from app.modules.inventory import batch_service
             async with AsyncSessionLocal() as session:
-                res = await batch_service.notify_expiring_by_email(
-                    session, only_critical=True, days=7,
-                )
+                res = await batch_service.notify_expiring_by_email(session, only_critical=True, days=7)
                 if res.get("sent"):
-                    logger.info("Alerta perecederos enviada a %s (%s lotes)",
-                                res.get("to"), res.get("rows_notified"))
+                    logger.info("Alerta perecederos enviada a %s (%s lotes)", res.get("to"), res.get("rows_notified"))
                     try:
                         open(marker, "w").write(str(time.time()))
                     except Exception:
@@ -174,9 +136,6 @@ async def startup():
     except Exception as e:
         logger.warning("Alerta diaria perecederos omitida: %s", e)
 
-    # Seed Contabilidad (catálogo de cuentas + mapeo para pólizas automáticas).
-    # Sin esto, una venta no genera póliza contable (falla en silencio). Debe
-    # existir out-of-the-box tras un reset o instalación nueva. Idempotente.
     try:
         from app.db.session import AsyncSessionLocal
         from app.modules.accounting import service as acc
@@ -186,37 +145,21 @@ async def startup():
     except Exception as e:
         logger.warning("Accounting seed skipped", extra={"error": str(e)})
 
-    # Seed multi-empresa — asegura que todos los usuarios tengan al menos
-    # una empresa asignada (por default la primera CompanyProfile que exista).
-    # Idempotente: solo crea links faltantes.
     try:
         from app.db.session import AsyncSessionLocal
         from sqlalchemy import select as _sel
         from app.modules.core_config import models as _cfg
         from app.modules.auth.models import User as _User
         async with AsyncSessionLocal() as session:
-            # Toma la primera empresa activa
-            company = (await session.execute(
-                _sel(_cfg.CompanyProfile).where(_cfg.CompanyProfile.is_active == True).limit(1)  # noqa: E712
-            )).scalars().first()
+            company = (await session.execute(_sel(_cfg.CompanyProfile).where(_cfg.CompanyProfile.is_active == True).limit(1))).scalars().first()
             if not company:
-                company = (await session.execute(
-                    _sel(_cfg.CompanyProfile).limit(1)
-                )).scalars().first()
+                company = (await session.execute(_sel(_cfg.CompanyProfile).limit(1))).scalars().first()
             if company:
                 users = (await session.execute(_sel(_User.id))).all()
                 for (uid,) in users:
-                    existing = (await session.execute(
-                        _sel(_cfg.UserCompany).where(
-                            _cfg.UserCompany.user_id == uid,
-                            _cfg.UserCompany.company_id == company.id,
-                        )
-                    )).scalars().first()
+                    existing = (await session.execute(_sel(_cfg.UserCompany).where(_cfg.UserCompany.user_id == uid, _cfg.UserCompany.company_id == company.id))).scalars().first()
                     if existing is None:
-                        session.add(_cfg.UserCompany(
-                            user_id=uid, company_id=company.id,
-                            role_in_company="admin", is_default=True,
-                        ))
+                        session.add(_cfg.UserCompany(user_id=uid, company_id=company.id, role_in_company="admin", is_default=True))
                 await session.commit()
     except Exception as e:
         logger.warning("Multi-company seed skipped", extra={"error": str(e)})
@@ -230,4 +173,3 @@ async def shutdown():
     from app.core.scheduler import _scheduler
     if _scheduler.running:
         _scheduler.shutdown(wait=False)
-
