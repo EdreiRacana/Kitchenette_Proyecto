@@ -1293,7 +1293,10 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
               })}
             </div>
 
-            <div style={{ display: "flex", gap: 8, marginTop: "auto" }}>
+            {/* paddingRight: 72 evita que el ultimo boton caiga bajo el
+                FAB del Asistente (esquina inferior derecha, 52px + margen). */}
+            <div style={{ display: "flex", gap: 8, marginTop: "auto",
+                             paddingRight: 72 }}>
               <button onClick={() => { setEditingProduct(selectedProduct); setSelectedProduct(null); setProductForm(true); }} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
                 <Edit2 size={14} /> {lang === "es" ? "Editar" : "Edit"}
               </button>
