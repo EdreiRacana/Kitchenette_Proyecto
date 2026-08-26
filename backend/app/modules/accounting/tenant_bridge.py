@@ -5,7 +5,7 @@ mapped class so accounting entries participate in the same X-Company-Id
 isolation used by Sales/Finance, while keeping existing databases compatible.
 """
 
-from sqlalchemy import Column, ForeignKey, String, event, text
+from sqlalchemy import Column, ForeignKey, String, event
 
 from app.core.tenancy import register_tenant_scoped
 from app.db.session import Base, engine
@@ -32,7 +32,7 @@ def _upgrade_existing_accounting_schema(dbapi_connection, connection_record):
     """Upgrade old PostgreSQL databases before the first ORM operation.
 
     The listener runs before Base.metadata.create_all. On a fresh database the
-    referenced company_profile table may not exist yet, so we simply defer to
+    referenced company_profile table may not exist yet, so we defer to
     create_all. On an existing database the ALTER is applied immediately.
     """
     cursor = None
@@ -61,6 +61,7 @@ def _upgrade_existing_accounting_schema(dbapi_connection, connection_record):
                 je.source = 'venta:' || o.id::text
                 OR je.source = 'cogs:' || o.id::text
                 OR je.source LIKE 'cobro:' || o.id::text || ':%'
+                OR je.source LIKE 'cobro_iva:' || o.id::text || ':%'
               )
         """)
         # Any remaining legacy/manual accounting entries belong to the original
