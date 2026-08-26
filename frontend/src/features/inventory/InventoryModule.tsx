@@ -1300,6 +1300,40 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
               <button onClick={() => { setEntryForm(true); setSelectedProduct(null); }} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.good}, #059669)`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
                 <ArrowDownToLine size={14} /> {lang === "es" ? "Entrada" : "Entry"}
               </button>
+              {/* Eliminar: intenta directo (solo superuser). Si 403, pide
+                  motivo y crea solicitud de eliminación para aprobación. */}
+              <button onClick={async () => {
+                const p = selectedProduct; if (!p) return;
+                const superConfirm = window.confirm(
+                  `¿Eliminar "${p.name}"? Si eres superusuario se elimina directo. Si no, se creará una solicitud pendiente de aprobación.`
+                );
+                if (!superConfirm) return;
+                try {
+                  await inventoryService.deleteProductDirect(p.id);
+                  alert("Producto eliminado (soft delete). El historial de ventas queda intacto.");
+                  setSelectedProduct(null); await load();
+                } catch (e: any) {
+                  const st = e?.response?.status;
+                  if (st === 403) {
+                    const motivo = window.prompt(
+                      "Escribe el motivo de la eliminación (obligatorio). Un administrador debe aprobarla:"
+                    );
+                    if (!motivo || motivo.trim().length < 3) return;
+                    try {
+                      await inventoryService.requestProductDeletion(p.id, motivo.trim());
+                      alert("Solicitud enviada. Un administrador la revisará en Configuración → Aprobaciones.");
+                      setSelectedProduct(null);
+                    } catch (e2: any) {
+                      alert(e2?.response?.data?.detail || e2?.message || "Error");
+                    }
+                  } else {
+                    alert(e?.response?.data?.detail || e?.message || "Error");
+                  }
+                }
+              }} title={lang === "es" ? "Eliminar producto" : "Delete product"}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.bad || "#ef4444"}`, background: "transparent", color: t.bad || "#ef4444", cursor: "pointer" }}>
+                <Trash2 size={15} />
+              </button>
             </div>
           </div>
         </div>,
