@@ -1,56 +1,60 @@
-"""Accounting tenant isolation bridge.
+"""Multi-company isolation for the accounting module.
 
-JournalEntry predates the multi-company tenancy layer. This module upgrades the
-mapped class so accounting entries participate in the same X-Company-Id
-isolation used by Sales/Finance, while keeping existing databases compatible.
+The chart of accounts is a shared system template, but accounting policies,
+journal entries, fixed assets, period closes, budgets, balance snapshots and
+automatic account maps are company-owned data.
 """
 
 from sqlalchemy import Column, ForeignKey, String, event
 
 from app.core.tenancy import register_tenant_scoped
-from app.db.session import Base, engine
-from app.modules.accounting.models import JournalEntry
+from app.db.session import engine
+from app.modules.accounting.models import (
+    JournalEntry, AccountingPolicy, FixedAsset, PeriodClose,
+    AccountBudget, BalanceSheet, AccountMap,
+)
 
+_SCOPED = (
+    JournalEntry, AccountingPolicy, FixedAsset, PeriodClose,
+    AccountBudget, BalanceSheet, AccountMap,
+)
 
-# SQLAlchemy's DeclarativeMeta supports adding a Column to an already mapped
-# declarative class. The mapper is updated automatically and the column becomes
-# part of Base.metadata, so new databases get it through create_all().
-if not hasattr(JournalEntry, "company_id"):
-    JournalEntry.company_id = Column(  # type: ignore[attr-defined]
-        String,
-        ForeignKey("company_profile.id", ondelete="CASCADE"),
-        nullable=True,
-        index=True,
-    )
-
-# Same tenant isolation mechanism used by Sales/Finance.
-register_tenant_scoped(JournalEntry)
+# Add company_id to legacy mapped classes without destructive table recreation.
+for _cls in _SCOPED:
+    if not hasattr(_cls, "company_id"):
+        _cls.company_id = Column(  # type: ignore[attr-defined]
+            String,
+            ForeignKey("company_profile.id", ondelete="CASCADE"),
+            nullable=True,
+            index=True,
+        )
+    register_tenant_scoped(_cls)
 
 
 @event.listens_for(engine.sync_engine, "connect")
-def _upgrade_existing_accounting_schema(dbapi_connection, connection_record):
-    """Upgrade old PostgreSQL databases before the first ORM operation.
-
-    The listener runs before Base.metadata.create_all. On a fresh database the
-    referenced company_profile table may not exist yet, so we defer to
-    create_all. On an existing database the ALTER is applied immediately.
-    """
+def _upgrade_accounting_schema(dbapi_connection, connection_record):
+    """Upgrade existing PostgreSQL accounting tables safely and idempotently."""
     cursor = None
     try:
         if dbapi_connection.__class__.__module__.startswith("sqlite"):
             return
         cursor = dbapi_connection.cursor()
-        cursor.execute(
-            "ALTER TABLE accounting_journal_entries "
-            "ADD COLUMN IF NOT EXISTS company_id VARCHAR "
-            "REFERENCES company_profile(id)"
-        )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS ix_accounting_journal_entries_company_id "
-            "ON accounting_journal_entries(company_id)"
-        )
-        # Existing sales already know their company. Use that authoritative
-        # relationship for historical auto-generated sale/cogs/payment entries.
+        for table in (
+            "accounting_journal_entries", "accounting_policies",
+            "accounting_fixed_assets", "accounting_period_close",
+            "accounting_budgets", "accounting_balance_sheets",
+            "accounting_account_map",
+        ):
+            cursor.execute(
+                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS company_id VARCHAR "
+                "REFERENCES company_profile(id)"
+            )
+            cursor.execute(
+                f"CREATE INDEX IF NOT EXISTS ix_{table}_company_id "
+                f"ON {table}(company_id)"
+            )
+
+        # Automatic sale-related entries have an authoritative company_id in Orders.
         cursor.execute("""
             UPDATE accounting_journal_entries je
             SET company_id = o.company_id
@@ -64,25 +68,32 @@ def _upgrade_existing_accounting_schema(dbapi_connection, connection_record):
                 OR je.source LIKE 'cobro_iva:' || o.id::text || ':%'
               )
         """)
-        # Any remaining legacy/manual accounting entries belong to the original
-        # tenant, matching the repository's existing tenancy backfill policy.
-        cursor.execute("""
-            UPDATE accounting_journal_entries
-            SET company_id = (
-                SELECT id FROM company_profile
-                ORDER BY created_at ASC
-                LIMIT 1
-            )
-            WHERE company_id IS NULL
-        """)
+
+        # Existing accounting data belongs to Elias Jabari, the only company
+        # with real activity. Do NOT use creation order as an accounting rule.
+        for table in (
+            "accounting_journal_entries", "accounting_policies",
+            "accounting_fixed_assets", "accounting_period_close",
+            "accounting_budgets", "accounting_balance_sheets",
+            "accounting_account_map",
+        ):
+            cursor.execute(f"""
+                UPDATE {table}
+                SET company_id = (
+                    SELECT id FROM company_profile
+                    WHERE lower(coalesce(legal_name, '')) LIKE '%elias jabari%'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                )
+                WHERE company_id IS NULL
+            """)
         dbapi_connection.commit()
     except Exception as exc:
         try:
             dbapi_connection.rollback()
         except Exception:
             pass
-        # Fresh DBs legitimately reach this point before company_profile exists.
-        # Existing startup code is intentionally resilient; do not prevent boot.
+        # Fresh databases may not have all tables yet. Never take Render offline.
         print(f"[accounting tenancy] schema upgrade deferred: {exc}")
     finally:
         if cursor is not None:
