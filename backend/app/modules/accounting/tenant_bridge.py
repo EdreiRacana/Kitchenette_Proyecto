@@ -1,20 +1,20 @@
 """Accounting tenant isolation bridge.
 
 JournalEntry predates the multi-company tenancy layer. This module upgrades the
-mapped class at import time so accounting entries participate in the same
-X-Company-Id isolation used by Sales/Finance, while keeping the change
-backwards-compatible with existing databases.
+mapped class so accounting entries participate in the same X-Company-Id
+isolation used by Sales/Finance, while keeping existing databases compatible.
 """
 
-from sqlalchemy import Column, ForeignKey, String, text
+from sqlalchemy import Column, ForeignKey, String, event, text
 
 from app.core.tenancy import register_tenant_scoped
-from app.db.session import Base
+from app.db.session import Base, engine
 from app.modules.accounting.models import JournalEntry
 
 
-# DeclarativeMeta supports adding mapped Columns after class declaration. The
-# guard makes this safe across reloads/tests.
+# SQLAlchemy's DeclarativeMeta supports adding a Column to an already mapped
+# declarative class. The mapper is updated automatically and the column becomes
+# part of Base.metadata, so new databases get it through create_all().
 if not hasattr(JournalEntry, "company_id"):
     JournalEntry.company_id = Column(  # type: ignore[attr-defined]
         String,
@@ -23,57 +23,69 @@ if not hasattr(JournalEntry, "company_id"):
         index=True,
     )
 
-# This makes INSERTs receive the request company automatically and makes every
-# SELECT involving accounting_journal_entries tenant-filtered automatically.
+# Same tenant isolation mechanism used by Sales/Finance.
 register_tenant_scoped(JournalEntry)
 
 
-async def ensure_accounting_tenant_schema(engine) -> None:
-    """Upgrade an existing PostgreSQL DB without breaking startup.
+@event.listens_for(engine.sync_engine, "connect")
+def _upgrade_existing_accounting_schema(dbapi_connection, connection_record):
+    """Upgrade old PostgreSQL databases before the first ORM operation.
 
-    New databases are handled by Base.metadata.create_all. Existing databases
-    need the ALTER explicitly because create_all never changes an existing
-    table. Historical entries are assigned to the first company, matching the
-    project's existing tenancy migration policy for pre-multi-company data.
+    The listener runs before Base.metadata.create_all. On a fresh database the
+    referenced company_profile table may not exist yet, so we simply defer to
+    create_all. On an existing database the ALTER is applied immediately.
     """
+    cursor = None
     try:
-        async with engine.begin() as conn:
-            if conn.dialect.name != "postgresql":
-                return
-            await conn.execute(text(
-                "ALTER TABLE accounting_journal_entries "
-                "ADD COLUMN IF NOT EXISTS company_id VARCHAR "
-                "REFERENCES company_profile(id)"
-            ))
-            await conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_accounting_journal_entries_company_id "
-                "ON accounting_journal_entries(company_id)"
-            ))
-            # Preserve company attribution from sales where possible.
-            await conn.execute(text("""
-                UPDATE accounting_journal_entries je
-                SET company_id = o.company_id
-                FROM orders o
-                WHERE je.company_id IS NULL
-                  AND o.company_id IS NOT NULL
-                  AND (
-                    je.source = 'venta:' || o.id::text
-                    OR je.source = 'cogs:' || o.id::text
-                    OR je.source LIKE 'cobro:' || o.id::text || ':%'
-                  )
-            """))
-            # Remaining historical accounting rows belong to the original
-            # tenant in this installation, consistent with the existing
-            # tenancy backfill policy.
-            await conn.execute(text("""
-                UPDATE accounting_journal_entries
-                SET company_id = (
-                    SELECT id FROM company_profile
-                    ORDER BY created_at ASC
-                    LIMIT 1
-                )
-                WHERE company_id IS NULL
-            """))
+        if dbapi_connection.__class__.__module__.startswith("sqlite"):
+            return
+        cursor = dbapi_connection.cursor()
+        cursor.execute(
+            "ALTER TABLE accounting_journal_entries "
+            "ADD COLUMN IF NOT EXISTS company_id VARCHAR "
+            "REFERENCES company_profile(id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS ix_accounting_journal_entries_company_id "
+            "ON accounting_journal_entries(company_id)"
+        )
+        # Existing sales already know their company. Use that authoritative
+        # relationship for historical auto-generated sale/cogs/payment entries.
+        cursor.execute("""
+            UPDATE accounting_journal_entries je
+            SET company_id = o.company_id
+            FROM orders o
+            WHERE je.company_id IS NULL
+              AND o.company_id IS NOT NULL
+              AND (
+                je.source = 'venta:' || o.id::text
+                OR je.source = 'cogs:' || o.id::text
+                OR je.source LIKE 'cobro:' || o.id::text || ':%'
+              )
+        """)
+        # Any remaining legacy/manual accounting entries belong to the original
+        # tenant, matching the repository's existing tenancy backfill policy.
+        cursor.execute("""
+            UPDATE accounting_journal_entries
+            SET company_id = (
+                SELECT id FROM company_profile
+                ORDER BY created_at ASC
+                LIMIT 1
+            )
+            WHERE company_id IS NULL
+        """)
+        dbapi_connection.commit()
     except Exception as exc:
-        # Keep the same resilient startup philosophy used by db.migrations.py.
-        print(f"[accounting tenancy] schema upgrade skipped: {exc}")
+        try:
+            dbapi_connection.rollback()
+        except Exception:
+            pass
+        # Fresh DBs legitimately reach this point before company_profile exists.
+        # Existing startup code is intentionally resilient; do not prevent boot.
+        print(f"[accounting tenancy] schema upgrade deferred: {exc}")
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
