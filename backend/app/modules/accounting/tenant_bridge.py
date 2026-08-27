@@ -25,6 +25,10 @@ _ACCOUNTING_TABLES = (
     "accounting_account_map",
 )
 _MIGRATION_MARKER = "accounting_company_isolation_v3"
+_LEGACY_ELIAS_FOLIOS = (
+    "POL-000011", "POL-000012", "POL-000013",
+    "POL-000019", "POL-000027", "POL-000028",
+)
 
 # Add company_id to legacy mapped classes without destructive table recreation.
 for _cls in _SCOPED:
@@ -40,15 +44,14 @@ for _cls in _SCOPED:
 
 @event.listens_for(engine.sync_engine, "connect")
 def _upgrade_accounting_schema(dbapi_connection, connection_record):
-    """Upgrade old accounting schemas and perform the one-time legacy cutover.
+    """Upgrade old accounting schemas and repair known legacy ownership.
 
     IMPORTANT BUSINESS RULE:
-      - All accounting data that existed before multi-company accounting belongs
-        to Elias Jabari, because Elias is the only company that already had
-        accounting activity.
+      - Historical accounting belongs to Elias Jabari.
       - Nene Gardoqui and Twelve South are new companies and must start with
         zero accounting movements.
-      - After the one-time cutover, future rows are never reassigned.
+      - The six legacy demo/imported folios below must never remain attached to
+        Twelve South. They are reassigned to Elias, together with their lines.
     """
     cursor = None
     try:
@@ -125,6 +128,33 @@ def _upgrade_accounting_schema(dbapi_connection, connection_record):
                     "INSERT INTO accounting_tenancy_migrations(key) VALUES (%s)",
                     (_MIGRATION_MARKER,),
                 )
+
+        # Explicit repair for the six legacy folios that were created before
+        # company isolation and are known to have been mis-assigned to Twelve
+        # South. This block is intentionally idempotent and does not depend on
+        # the one-time migration marker.
+        cursor.execute("""
+            SELECT id FROM company_profile
+            WHERE lower(coalesce(legal_name, '')) LIKE '%elias jabari%'
+            ORDER BY created_at ASC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+        if row:
+            elias_id = row[0]
+            placeholders = ",".join(["%s"] * len(_LEGACY_ELIAS_FOLIOS))
+            cursor.execute(
+                f"UPDATE accounting_journal_entries "
+                f"SET company_id = %s WHERE folio IN ({placeholders})",
+                (elias_id, *_LEGACY_ELIAS_FOLIOS),
+            )
+            cursor.execute("""
+                UPDATE accounting_journal_lines jl
+                SET company_id = je.company_id
+                FROM accounting_journal_entries je
+                WHERE jl.entry_id = je.id
+                  AND je.folio IN (%s, %s, %s, %s, %s, %s)
+            """, _LEGACY_ELIAS_FOLIOS)
 
         dbapi_connection.commit()
     except Exception as exc:
