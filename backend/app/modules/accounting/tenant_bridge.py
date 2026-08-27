@@ -1,7 +1,7 @@
 """Multi-company isolation for the accounting module.
 
 The chart of accounts is a shared system template, but accounting policies,
-journal entries, fixed assets, period closes, budgets, balance snapshots and
+journal entries, journal lines, fixed assets, period closes, budgets, balance snapshots and
 automatic account maps are company-owned data.
 """
 
@@ -10,21 +10,21 @@ from sqlalchemy import Column, ForeignKey, String, event
 from app.core.tenancy import register_tenant_scoped
 from app.db.session import engine
 from app.modules.accounting.models import (
-    JournalEntry, AccountingPolicy, FixedAsset, PeriodClose,
+    JournalEntry, JournalLine, AccountingPolicy, FixedAsset, PeriodClose,
     AccountBudget, BalanceSheet, AccountMap,
 )
 
 _SCOPED = (
-    JournalEntry, AccountingPolicy, FixedAsset, PeriodClose,
+    JournalEntry, JournalLine, AccountingPolicy, FixedAsset, PeriodClose,
     AccountBudget, BalanceSheet, AccountMap,
 )
 _ACCOUNTING_TABLES = (
-    "accounting_journal_entries", "accounting_policies",
+    "accounting_journal_entries", "accounting_journal_lines", "accounting_policies",
     "accounting_fixed_assets", "accounting_period_close",
     "accounting_budgets", "accounting_balance_sheets",
     "accounting_account_map",
 )
-_MIGRATION_MARKER = "accounting_company_isolation_v2"
+_MIGRATION_MARKER = "accounting_company_isolation_v3"
 
 # Add company_id to legacy mapped classes without destructive table recreation.
 for _cls in _SCOPED:
@@ -103,14 +103,23 @@ def _upgrade_accounting_schema(dbapi_connection, connection_record):
             if row:
                 elias_id = row[0]
 
-                # At migration time, ALL existing accounting data is historical
-                # and belongs to Elias. This intentionally corrects rows that
-                # may already have been assigned incorrectly to a new company.
+                # Existing headers and lines form one historical accounting set.
+                # First assign journal entries, then make each journal line inherit
+                # exactly the same company as its parent entry.
                 for table in _ACCOUNTING_TABLES:
-                    cursor.execute(
-                        f"UPDATE {table} SET company_id = %s",
-                        (elias_id,),
-                    )
+                    if table == "accounting_journal_lines":
+                        cursor.execute("""
+                            UPDATE accounting_journal_lines jl
+                            SET company_id = je.company_id
+                            FROM accounting_journal_entries je
+                            WHERE jl.entry_id = je.id
+                              AND je.company_id IS NOT NULL
+                        """)
+                    else:
+                        cursor.execute(
+                            f"UPDATE {table} SET company_id = %s",
+                            (elias_id,),
+                        )
 
                 cursor.execute(
                     "INSERT INTO accounting_tenancy_migrations(key) VALUES (%s)",
