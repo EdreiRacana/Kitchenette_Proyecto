@@ -166,7 +166,17 @@ async def delete_account(db: AsyncSession, account_id: int) -> bool:
 # ── Pólizas ───────────────────────────────────────────────────────────────────
 
 async def _generate_folio(db: AsyncSession) -> str:
-    n = (await db.execute(select(func.count(models.JournalEntry.id)))).scalar() or 0
+    # Se deriva del folio más alto, no del conteo: con el conteo, cancelar o
+    # eliminar una póliza baja el total y el siguiente folio repite uno ya
+    # emitido. El relleno a 6 dígitos hace que el orden lexicográfico coincida
+    # con el numérico, así que MAX() basta y no hace falta castear.
+    # La consulta va filtrada por empresa (tenancy), de modo que cada empresa
+    # conserva su propia numeración consecutiva.
+    last = (await db.execute(
+        select(func.max(models.JournalEntry.folio))
+        .where(models.JournalEntry.folio.like("POL-%"))
+    )).scalar()
+    n = int(last[4:]) if last and last[4:].isdigit() else 0
     return f"POL-{n + 1:06d}"
 
 
