@@ -813,7 +813,14 @@ function MetaBubble({ data, t, L }: { data: any; t: Tokens; L: any }) {
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%" }}>
       <div style={{ flex: 1, display: "grid", placeItems: "center", width: "100%", margin: "4px 0 12px" }}>
         {hasGoal ? (
-          <LiquidCore pct={data.achieved_pct} t={t} sub={L.ofGoal} hue="blue" />
+          <LiquidCore
+            pct={data.achieved_pct}
+            t={t}
+            sub={L.ofGoal}
+            hue="blue"
+            liquidOpacity={0.62}
+            style={{ maxWidth: 260 }}
+          />
         ) : (
           <div style={{ textAlign: "center", padding: 20 }}>
             <div style={{ fontSize: 28, color: t.textHi, fontWeight: 800 }}>{mxn(data?.real || 0)}</div>
@@ -868,8 +875,9 @@ function ChannelDonut({ data, total, t, L }: {
   const focusColor = CHANNEL_PALETTE[focusIdx % CHANNEL_PALETTE.length];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", gap: 16, alignItems: "center", height: "100%" }}>
-      <div style={{ position: "relative", width: 130, height: 130 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 14, alignItems: "center", height: "100%", padding: "4px 0" }}>
+      {/* Donut mas grande, texto centrado compacto */}
+      <div style={{ position: "relative", width: 170, height: 170, flexShrink: 0 }}>
         <svg viewBox="0 0 42 42" style={{ width: "100%", height: "100%" }}>
           <circle cx={cx} cy={cy} r={r} fill="transparent" stroke={t.border || "#1B2540"} strokeWidth={w} />
           {rings}
@@ -878,38 +886,52 @@ function ChannelDonut({ data, total, t, L }: {
           position: "absolute", inset: 0,
           display: "flex", flexDirection: "column",
           alignItems: "center", justifyContent: "center",
-          pointerEvents: "none", textAlign: "center", padding: 4,
+          pointerEvents: "none", textAlign: "center", padding: 6,
         }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+          <div style={{ fontSize: 28, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
             {focused ? focused.share_pct.toFixed(0) : 0}%
           </div>
-          <div style={{ fontSize: 9, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110 }}>
+          <div style={{ fontSize: 9.5, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.14em", marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 130, fontWeight: 700 }}>
             {focused ? L.tr(focused.label) : "—"}
           </div>
-          <div style={{ fontSize: 10, color: t.textMid, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
+          <div style={{ fontSize: 10.5, color: t.textMid, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
             {focused ? mxn(focused.revenue) : ""}
           </div>
         </div>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {data.map((d, i) => (
-          <div key={i}
-            onMouseEnter={() => setHoverIdx(i)}
-            onMouseLeave={() => setHoverIdx(null)}
-            style={{
-              display: "grid", gridTemplateColumns: "10px 1fr auto auto",
-              alignItems: "center", gap: 8, fontSize: 12,
-              padding: "3px 5px", borderRadius: 5,
-              background: hoverIdx === i ? (t.panel2 || "transparent") : "transparent",
-              transition: "background .15s",
-              cursor: "pointer",
-            }}>
-            <span style={{ width: 10, height: 10, borderRadius: 3, background: CHANNEL_PALETTE[i % CHANNEL_PALETTE.length] }} />
-            <span style={{ color: t.textMid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{L.tr(d.label)}</span>
-            <span style={{ color: t.textHi, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{mxn(d.revenue)}</span>
-            <span style={{ color: t.textLo, fontSize: 11, minWidth: 32, textAlign: "right" }}>{d.share_pct.toFixed(0)}%</span>
-          </div>
-        ))}
+
+      {/* Leyenda pegada al donut, compacta */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+        {data.map((d, i) => {
+          const color = CHANNEL_PALETTE[i % CHANNEL_PALETTE.length];
+          const isHover = hoverIdx === i;
+          const dim = hoverIdx != null && !isHover;
+          return (
+            <div key={i}
+              onMouseEnter={() => setHoverIdx(i)}
+              onMouseLeave={() => setHoverIdx(null)}
+              style={{
+                display: "grid", gridTemplateColumns: "12px 1fr auto auto",
+                alignItems: "center", gap: 8, fontSize: 12,
+                padding: "6px 8px", borderRadius: 6,
+                background: isHover ? withAlpha(color, 0.12) : "transparent",
+                borderLeft: `2px solid ${isHover ? color : withAlpha(color, 0.35)}`,
+                opacity: dim ? 0.5 : 1,
+                transition: "background .15s, opacity .15s, border-color .15s",
+                cursor: "pointer",
+              }}>
+              {/* Swatch translucido */}
+              <span style={{
+                width: 12, height: 12, borderRadius: 3,
+                background: withAlpha(color, 0.65),
+                boxShadow: `inset 0 0 0 1px ${withAlpha(color, 0.9)}`,
+              }} />
+              <span style={{ color: t.textMid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{L.tr(d.label)}</span>
+              <span style={{ color: t.textHi, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{mxn(d.revenue)}</span>
+              <span style={{ color: t.textLo, fontSize: 11, minWidth: 32, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{d.share_pct.toFixed(0)}%</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1005,17 +1027,21 @@ function AlertList({ alerts, t, L, onClick }: {
 }
 
 
-// ── Distribucion geografica (mapa grande + top 3 debajo) ───────────
+// ── Distribucion geografica (mapa fijo + estados con scroll) ───────
 function GeoBig({ geo, t, L }: {
   geo: { by_state: GeoStateRow[]; top5: GeoStateRow[]; total_revenue: number };
   t: Tokens; L: any;
 }) {
-  const top3 = (geo?.top5 || []).slice(0, 3);
+  // Todos los estados con venta ordenados por revenue, no solo top 3 —
+  // asi la lista se hace scrolleable cuando hay muchas ciudades.
+  const allStates = [...(geo?.by_state || [])].sort((a, b) => (b.revenue || 0) - (a.revenue || 0));
+  const nova = t.nova || "#33B2F5";
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
-      {/* Mapa a todo el ancho, altura grande — se distinguen los estados */}
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%", minHeight: 0 }}>
+      {/* Mapa — tamano y posicion fijos, no se mueven al crecer la lista */}
       <div style={{
-        width: "100%", height: 220, background: t.panel2 || t.panel,
+        width: "100%", height: 220, flexShrink: 0,
+        background: t.panel2 || t.panel,
         borderRadius: 10, padding: 8, display: "flex", alignItems: "center", justifyContent: "center",
         overflow: "hidden", position: "relative",
       }}>
@@ -1023,23 +1049,30 @@ function GeoBig({ geo, t, L }: {
         <div style={{
           position: "absolute", bottom: 6, right: 10,
           fontSize: 9.5, color: t.textLo, pointerEvents: "none",
-          background: (t.panel || "#0A111E") + "cc", padding: "2px 6px", borderRadius: 4,
+          background: withAlpha(t.panel || "#0A111E", 0.8), padding: "2px 6px", borderRadius: 4,
         }}>
-          {L.statesWithSales(geo?.by_state?.length || 0)}
+          {L.statesWithSales(allStates.length)}
         </div>
       </div>
-      {/* Top 3 estados debajo — compacto en fila */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {!top3.length && <div style={{ color: t.textLo, fontSize: 11, textAlign: "center", padding: 8 }}>{L.noGeo}</div>}
-        {top3.map((s, i) => (
+      {/* Lista de estados — se hace scroll cuando hay muchos */}
+      <div style={{
+        display: "flex", flexDirection: "column", gap: 4,
+        flex: 1, minHeight: 0,
+        maxHeight: 176, overflowY: "auto", overflowX: "hidden",
+        paddingRight: 4,
+        scrollbarWidth: "thin",
+      }}>
+        {!allStates.length && <div style={{ color: t.textLo, fontSize: 11, textAlign: "center", padding: 8 }}>{L.noGeo}</div>}
+        {allStates.map((s, i) => (
           <div key={s.state_code} style={{
             display: "grid", gridTemplateColumns: "18px 1fr auto auto",
             gap: 10, alignItems: "center", padding: "5px 8px",
             background: t.panel2 || t.panel, borderRadius: 6,
+            flexShrink: 0,
           }}>
             <span style={{
               width: 18, height: 18, borderRadius: "50%",
-              background: (t.nova || "#33B2F5") + "26", color: t.nova || "#33B2F5",
+              background: withAlpha(nova, 0.18), color: nova,
               display: "grid", placeItems: "center",
               fontSize: 10, fontWeight: 700,
             }}>{i + 1}</span>
@@ -1048,7 +1081,7 @@ function GeoBig({ geo, t, L }: {
               <div style={{ fontSize: 10, color: t.textLo }}>{num(s.units)}u · {s.orders_count} ped.</div>
             </div>
             <div style={{ fontSize: 12, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{mxn(s.revenue)}</div>
-            <div style={{ fontSize: 10.5, color: t.nova || "#33B2F5", fontWeight: 600, minWidth: 38, textAlign: "right" }}>{s.share_pct.toFixed(1)}%</div>
+            <div style={{ fontSize: 10.5, color: nova, fontWeight: 600, minWidth: 38, textAlign: "right" }}>{s.share_pct.toFixed(1)}%</div>
           </div>
         ))}
       </div>

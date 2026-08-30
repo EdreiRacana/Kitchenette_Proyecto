@@ -12,9 +12,12 @@ interface Props {
   sub?: string;
   hue?: "green" | "blue";
   style?: CSSProperties;
+  // Opacidad del liquido interno (0..1). Default 0.92; usar valores mas bajos
+  // para un efecto mas cristalino/translucido.
+  liquidOpacity?: number;
 }
 
-export default function LiquidCore({ pct, t, sub, hue = "green", style }: Props) {
+export default function LiquidCore({ pct, t, sub, hue = "green", style, liquidOpacity = 0.92 }: Props) {
   const W = 200, H = 204, cx = 100, cy = 100, r = 78;
   const fillPct = Math.max(0, Math.min(100, Math.round(pct)));
   const bot = cy + r;
@@ -92,7 +95,7 @@ export default function LiquidCore({ pct, t, sub, hue = "green", style }: Props)
             <g>
               <animateTransform attributeName="transform" type="translate"
                 from="0 0" to="-70 0" dur="3.2s" repeatCount="indefinite" />
-              <path d={waveFill(5, 70)} fill="url(#lcLiquid)" opacity="0.92" />
+              <path d={waveFill(5, 70)} fill="url(#lcLiquid)" opacity={liquidOpacity} />
               <path d={waveLine(5, 70)} fill="none" stroke={MTX.surf}
                 strokeWidth="2" filter="url(#lcGlow)" />
             </g>
