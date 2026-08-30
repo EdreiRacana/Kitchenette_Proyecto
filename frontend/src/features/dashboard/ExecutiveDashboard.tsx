@@ -74,76 +74,113 @@ function smoothPath(points: { x: number; y: number }[]): string {
   return d;
 }
 
-// Diccionario de traduccion ES → EN para textos que llegan del backend
-// (KPI labels/subs, alertas, operational hints). Si no matchea, devuelve el
-// original — asi seguimos leyendo cualquier texto nuevo sin romper.
-const ES_EN: Record<string, string> = {
+// Normaliza para lookup case-insensitive y sin acentos, colapsando espacios.
+// Asi "Ingresos Totales", "ingresos totales", "Ingresos  Totales" comparten
+// entrada en el diccionario.
+function normKey(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Diccionario ES → EN normalizado. Keys en lowercase sin acentos. Cubre todos
+// los textos que llegan del backend en /dashboard/executive (revisado contra
+// backend/app/modules/dashboard/service.py, agosto 2026).
+const ES_EN_RAW: Record<string, string> = {
   // KPI hero labels
+  "Ingresos Totales": "Total Revenue",
   "Ingresos": "Revenue",
-  "Utilidad neta": "Net profit",
+  "Utilidad Neta": "Net Profit",
   "Pedidos": "Orders",
-  "Ticket promedio": "Avg. ticket",
-  "Margen de ganancia": "Profit margin",
+  "Ticket Promedio": "Avg. Ticket",
+  "Margen de Ganancia": "Profit Margin",
   "Margen": "Margin",
-  "Cuentas por cobrar": "Receivables",
+  "Cuentas por Cobrar": "Accounts Receivable",
+  // KPI subs
+  "vs. periodo anterior": "vs. previous period",
+  "vs periodo anterior": "vs previous period",
   "Utilidad / Ingresos": "Profit / Revenue",
   // Operational KPI labels
-  "Cumplimiento de meta": "Goal achievement",
-  "Margen neto vs objetivo": "Net margin vs target",
-  "Cobranza del periodo": "Collections in period",
-  "Cobranza del período": "Collections in period",
-  "Salud del inventario": "Inventory health",
-  "Real vs forecast del mes": "Actual vs forecast",
+  "Cumplimiento de meta": "Goal Achievement",
+  "Margen neto vs objetivo": "Net Margin vs Target",
+  "Cobranza del período": "Collections in Period",
+  "Salud del inventario": "Inventory Health",
+  // Operational KPI hints
+  "Real vs forecast del mes": "Actual vs monthly forecast",
   "Objetivo 25% margen": "Target 25% margin",
   "Pagado / Vendido": "Paid / Sold",
-  "Pagado / vendido": "Paid / Sold",
   "% SKUs sobre punto de reorden": "% SKUs above reorder point",
-  // Alertas / labels
+  // Alertas labels (uppercase tags)
   "CARTERA": "AR",
   "RETAIL": "RETAIL",
   "STOCK": "STOCK",
   "INVENTARIO": "INVENTORY",
   "FINANZAS": "FINANCE",
-  "Saldo pendiente": "Outstanding balance",
-  "Sobreinventario": "Overstock",
-  "Punto de reorden alcanzado": "Reorder point reached",
+  // Alertas title / subtitle
+  "Alerta retail": "Retail alert",
   // Financial KPI labels
-  "Liquidez corriente": "Current ratio",
+  "Liquidez Corriente": "Current Ratio",
   "Endeudamiento": "Leverage",
-  "Rotacion de inventario": "Inventory turnover",
-  "Rotación de inventario": "Inventory turnover",
-  "Dias de cobranza": "DSO",
-  "Días de cobranza": "DSO",
-  "Dias de pago": "DPO",
-  "Días de pago": "DPO",
-  "Activo / Pasivo corto plazo": "Assets / short-term liabilities",
-  "Pasivo / Activo total": "Liabilities / total assets",
-  "Dias promedio de cobro": "Avg. collection days",
-  "Días promedio de cobro": "Avg. collection days",
-  "Dias promedio de pago": "Avg. payment days",
-  "Días promedio de pago": "Avg. payment days",
-  "AR / Ventas × dias": "AR / Sales × days",
-  "AR / Ventas x dias": "AR / Sales × days",
-  "Captura balance en Contabilidad": "Enter balance sheet in Accounting",
+  "Rotación de Inventario": "Inventory Turnover",
+  "Días de Cobranza": "DSO (Days Sales Outstanding)",
+  "Días de Pago": "DPO (Days Payable Outstanding)",
+  // Financial KPI subtitles
+  "COGS / Inventario prom.": "COGS / Avg. inventory",
   "Sin COGS o inventario capturado": "No COGS or inventory captured",
+  "AR / Ventas × días": "AR / Sales × days",
+  "Captura balance en Contabilidad": "Enter balance sheet in Accounting",
+  "Sin datos": "No data",
+  "Sin ventas en el periodo": "No sales in the period",
+  // Meta bubble
+  "de la meta": "of target",
+  // Mapa
+  "México": "Mexico",
 };
+
+const ES_EN: Record<string, string> = Object.fromEntries(
+  Object.entries(ES_EN_RAW).map(([k, v]) => [normKey(k), v])
+);
 
 function tr(s: string | null | undefined, lang: "es" | "en"): string {
   if (s == null) return "";
   if (lang === "es") return s;
-  // Match exacto primero
-  if (ES_EN[s]) return ES_EN[s];
-  // Patrones con numeros dinamicos: "3 órdenes con saldo", "2 pedidos", "45 días"
+
+  // 1. Match exacto (normalizado)
+  const nk = normKey(s);
+  if (ES_EN[nk]) return ES_EN[nk];
+
+  // 2. Patrones con valores dinamicos
   let out = s;
+
+  // "Saldo pendiente $1,234.56"  → "Outstanding balance $1,234.56"
+  out = out.replace(/^saldo\s+pendiente\s+/i, "Outstanding balance ");
+  // "Sobreinventario en X"       → "Overstock in X"
+  out = out.replace(/^sobreinventario\s+en\s+/i, "Overstock in ");
+  // "Punto de reorden alcanzado" (con posible sufijo)
+  out = out.replace(/^punto\s+de\s+reorden\s+alcanzado/i, "Reorder point reached");
+  // "Disponible 4 / reorden 10"  → "Available 4 / reorder 10"
+  out = out.replace(/^disponible\s+(\d+)\s*\/\s*reorden\s+(\d+)$/i, "Available $1 / reorder $2");
+  // "Balance <periodo>"          → "Balance sheet <periodo>"
+  out = out.replace(/^balance\s+/i, "Balance sheet ");
+  out = out.replace(/\bsin\s+pasivo\s+corto\s+plazo/gi, "no short-term liabilities");
+  out = out.replace(/\bsin\s+activo/gi, "no assets");
+
+  // Sub del KPI CxC dinamico
   out = out.replace(/^(\d+)\s+ó?rdenes?\s+con\s+saldo$/i, (_m, n) => `${n} order${n === "1" ? "" : "s"} with balance`);
   out = out.replace(/^(\d+)\s+pedidos?$/i, (_m, n) => `${n} order${n === "1" ? "" : "s"}`);
+
+  // Unidades cortas
   out = out.replace(/(\d+)\s+d[ií]as?\s+atr[aá]s/gi, "$1 days ago");
   out = out.replace(/(\d+)\s+d[ií]as?/gi, "$1 days");
   out = out.replace(/(\d+)\s+sem\.?/gi, "$1 wk");
-  out = out.replace(/(\d+)\s+u\b/gi, "$1u");
+  out = out.replace(/(\d+)u\b/gi, "$1u");
   out = out.replace(/(\d+)\s+ped\.?/gi, "$1 ord.");
   out = out.replace(/^m[aá]x\s+/i, "max ");
   out = out.replace(/^rp:\s*/i, "reorder: ");
+
   return out;
 }
 
