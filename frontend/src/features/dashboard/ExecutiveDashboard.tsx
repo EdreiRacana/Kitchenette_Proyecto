@@ -1,19 +1,20 @@
-// Dashboard Ejecutivo — reemplaza el Tablero anterior. Consume /dashboard/executive
-// que agrega ventas, forecast, mapa MX, cartera, alertas, etc.
+// Dashboard Ejecutivo — Rediseno "Tablero Sthenova" (mockup b92bdb2b aprobado).
+// Consume /dashboard/executive (agrega ventas, forecast, cartera, alertas, etc).
 //
-// Diseño según requerimiento del cliente:
-// - Fila 1: 6 KPIs ejecutivos (Ingresos, Utilidad, Pedidos, Ticket, Margen, Meta)
-// - Fila 2: Ventas del período (línea) | Meta vs Real (gauge) | Top 5 Clientes
-// - Fila 3: Ingresos vs Gastos | Mapa MX + Top 5 estados | KPIs Operativos
-// - Fila 4: Ventas por Canal (donut) | Alertas Tempranas | KPIs Financieros
+// Estructura visual:
+//  Fila 1: 6 KPIs hero (Ingresos, Utilidad, Pedidos, Ticket, Margen, CxC)
+//          — accent bar top, icono, sparkline decorativa, hover chevron
+//  Fila 2: Ventas del periodo (span 8) + Top 5 clientes (span 4)
+//  Fila 3: Meta vs Real (esfera liquida) + Ventas por canal (donut) + KPIs operativos
+//  Fila 4: Alertas tempranas + Distribucion geografica (mapa + top 3) + KPIs financieros
 //
-// Todos los KPIs son clickeables y navegan al módulo relevante.
+// Todos los KPIs y widgets clickeables navegan al modulo relevante.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import {
-  TrendingUp, TrendingDown, Package, ShoppingCart, Target,
-  DollarSign, RefreshCw, Building2, AlertTriangle, MapPin, CreditCard,
+  TrendingUp, Package, ShoppingCart, Target,
+  DollarSign, RefreshCw, AlertTriangle, CreditCard, ChevronRight,
 } from "lucide-react";
 import { dashboardApi } from "./api";
 import MexicoMap from "./MexicoMap";
@@ -36,51 +37,50 @@ interface Props {
   isMobile?: boolean;
 }
 
-// Diccionario mínimo para los strings visibles del dashboard.
-// El resto del app ya se traduce por su cuenta; aquí sólo cubrimos textos
-// hard-coded en este archivo para que el toggle idioma tenga efecto visible.
 const I18N = {
   es: {
-    title: "Matriz de Indicadores", from: "Del", to: "al",
+    title: "Matriz de indicadores", from: "Del", to: "al", subtitleSuffix: "Vista ejecutiva",
     refresh: "Actualizar", loading: "Calculando indicadores…",
     error: "Error", retry: "Reintentar", year: "1 año",
     custom: "Personalizado", startDate: "Desde", endDate: "Hasta", apply: "Aplicar",
-    salesPeriod: "Ventas del período", vsPrev: "Actual vs anterior",
-    metaVsReal: "Meta vs Real", monthLabel: "Mes",
+    salesPeriod: "Ventas del periodo", vsPrev: "Actual vs periodo anterior",
+    metaVsReal: "Meta vs Real",
     basisForecast: "Contra forecast", basisPrev: "Contra mes anterior", basisNone: "Sin referencia",
     noMeta: "Sin meta ni ventas del mes anterior para comparar",
-    top5Cust: "Top 5 Clientes", ofPeriod: "del período",
-    incomeExpenses: "Tendencia Ingresos vs Gastos", income: "Ingresos", expenses: "Gastos",
-    geoDist: "Distribución Geográfica", salesByState: "Ventas por estado",
-    opKpis: "KPIs Operativos", channels: "Ventas por Canal",
-    alerts: "Alertas Tempranas", top5: "Top 5", finKpis: "KPIs Financieros",
-    ofGoal: "DE LA META", current: "Actual", previous: "Anterior",
-    top5states: "Top 5 estados", noGeo: "Sin ventas geolocalizadas",
+    top5Cust: "Top 5 clientes", ofPeriod: "del periodo",
+    geoDist: "Distribucion geografica", topStates: "Top 3 estados",
+    opKpis: "KPIs operativos", opSub: "salud del negocio",
+    channels: "Ventas por canal",
+    alerts: "Alertas tempranas", top4: "Top 4", finKpis: "KPIs financieros", finSub: "indicadores clave",
+    ofGoal: "de la meta",
+    noGeo: "Sin ventas geolocalizadas",
     noChannel: "Sin ventas por canal", noAlerts: "Sin alertas activas ✓",
-    noSalesPeriod: "Sin ventas en el período",
-    ordersW: (n:number) => `${n} pedido${n!==1?"s":""}`,
-    statesWithSales: (n:number) => `México · ${n} estados con venta`,
+    noSalesPeriod: "Sin ventas en el periodo",
+    vsAnterior: "vs anterior",
+    ordersW: (n: number) => `${n} pedido${n !== 1 ? "s" : ""}`,
+    statesWithSales: (n: number) => `Mexico · ${n} estados con venta`,
   },
   en: {
-    title: "Dashboard", from: "From", to: "to",
+    title: "Indicator matrix", from: "From", to: "to", subtitleSuffix: "Executive view",
     refresh: "Refresh", loading: "Computing dashboard…",
     error: "Error", retry: "Retry", year: "1 year",
     custom: "Custom", startDate: "From", endDate: "To", apply: "Apply",
-    salesPeriod: "Sales in period", vsPrev: "Current vs previous",
-    metaVsReal: "Target vs Actual", monthLabel: "Month",
+    salesPeriod: "Sales in period", vsPrev: "Current vs previous period",
+    metaVsReal: "Target vs Actual",
     basisForecast: "vs forecast", basisPrev: "vs previous month", basisNone: "No reference",
     noMeta: "No target nor previous-month sales to compare",
-    top5Cust: "Top 5 Customers", ofPeriod: "of the period",
-    incomeExpenses: "Income vs Expenses", income: "Income", expenses: "Expenses",
-    geoDist: "Geographic Distribution", salesByState: "Sales by state",
-    opKpis: "Operational KPIs", channels: "Sales by Channel",
-    alerts: "Early Alerts", top5: "Top 5", finKpis: "Financial KPIs",
-    ofGoal: "OF TARGET", current: "Current", previous: "Previous",
-    top5states: "Top 5 states", noGeo: "No geolocated sales",
+    top5Cust: "Top 5 customers", ofPeriod: "of the period",
+    geoDist: "Geographic distribution", topStates: "Top 3 states",
+    opKpis: "Operational KPIs", opSub: "business health",
+    channels: "Sales by channel",
+    alerts: "Early alerts", top4: "Top 4", finKpis: "Financial KPIs", finSub: "key indicators",
+    ofGoal: "of target",
+    noGeo: "No geolocated sales",
     noChannel: "No channel sales", noAlerts: "No active alerts ✓",
     noSalesPeriod: "No sales in the period",
-    ordersW: (n:number) => `${n} order${n!==1?"s":""}`,
-    statesWithSales: (n:number) => `Mexico · ${n} states with sales`,
+    vsAnterior: "vs previous",
+    ordersW: (n: number) => `${n} order${n !== 1 ? "s" : ""}`,
+    statesWithSales: (n: number) => `Mexico · ${n} states with sales`,
   },
 } as const;
 
@@ -93,6 +93,16 @@ const KPI_ICON: Record<string, any> = {
   receivables: CreditCard,
 };
 
+// Acentos por KPI segun el mockup.
+const KPI_ACCENT: Record<string, string> = {
+  income_total: "#33B2F5",
+  net_profit: "#22C55E",
+  orders: "#F59E0B",
+  avg_ticket: "#A78BFA",
+  margin_pct: "#22D3EE",
+  receivables: "#EF4444",
+};
+
 const KPI_NAV: Record<string, string> = {
   income_total: "ventas",
   net_profit: "ventas",
@@ -102,14 +112,7 @@ const KPI_NAV: Record<string, string> = {
   receivables: "finanzas",
 };
 
-function colorForHint(t: Tokens, hint?: string | null): string {
-  switch (hint) {
-    case "good": return t.good || "#22c55e";
-    case "warn": return t.warn || "#f59e0b";
-    case "bad": return t.bad || "#ef4444";
-    default: return t.textHi || "#e5e7eb";
-  }
-}
+const CHANNEL_PALETTE = ["#33B2F5", "#22C55E", "#A78BFA", "#F59E0B", "#EC4899", "#5D6A85"];
 
 export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile = false }: Props) {
   const [data, setData] = useState<ExecutiveDashboardResponse | null>(null);
@@ -142,7 +145,7 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       setError(e?.response?.data?.detail || e?.message || "Error al cargar dashboard");
     } finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, [days]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [days]);
   const applyCustom = () => {
     if (!customStart || !customEnd) return;
     if (customStart > customEnd) {
@@ -158,7 +161,7 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
   if (loading) return <div style={{ padding: 40, color: t.textLo, textAlign: "center" }}>{L.loading}</div>;
   if (error) {
     return (
-      <div style={{ padding: 20, color: t.bad, background: t.bad + "18", borderRadius: 10, textAlign: "center" }}>
+      <div style={{ padding: 20, color: t.bad, background: (t.bad || "#ef4444") + "18", borderRadius: 10, textAlign: "center" }}>
         <AlertTriangle size={24} />
         <div style={{ marginTop: 8, fontSize: 14 }}>{L.error}: {error}</div>
         <button onClick={load} style={{ marginTop: 12, padding: "6px 14px", background: t.nova, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>{L.retry}</button>
@@ -167,135 +170,146 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
   }
   if (!data) return null;
 
+  // Sparkline serie base (para el KPI de Ingresos). El resto usa una serie
+  // reducida derivada — o ninguna, si no hay datos.
+  const salesSpark = (data.trend_sales || []).map(p => p.revenue || 0);
+  const expensesSpark = (data.trend_income_expenses || []).map(p => p.expenses || 0);
+  const profitSpark = (data.trend_income_expenses || []).map(p => (p.revenue || 0) - (p.expenses || 0));
+  const kpiSparks: Record<string, number[]> = {
+    income_total: salesSpark,
+    net_profit: profitSpark,
+    orders: [],
+    avg_ticket: [],
+    margin_pct: [],
+    receivables: expensesSpark,
+  };
+
+  // Layout de la grid principal (12 columnas). Se colapsa a 1 columna en movil.
+  const gridBase = isMobile
+    ? { display: "grid", gridTemplateColumns: "1fr", gap: 12 }
+    : { display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 14 };
+
+  const rangeBtn = (active: boolean): CSSProperties => ({
+    padding: "6px 12px", fontSize: 12, fontWeight: 600,
+    color: active ? "#fff" : t.textMid,
+    borderRadius: 7, cursor: "pointer",
+    border: "none", background: active ? t.nova : "transparent",
+    transition: "background .15s, color .15s",
+  });
+
   return (
-    <div style={{ padding: isMobile ? 12 : 20, maxWidth: 1500, margin: "0 auto" }}>
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: isMobile ? 12 : 18, flexWrap: "wrap", gap: 10 }}>
+    <div style={{ padding: isMobile ? 12 : "20px 24px 32px", maxWidth: 1600, margin: "0 auto" }}>
+      {/* Page head */}
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 20 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: isMobile ? 20 : 24, color: t.textHi }}>{L.title}</h1>
-          <div style={{ fontSize: 12, color: t.textLo, marginTop: 3 }}>
+          <h1 style={{ margin: "0 0 4px", fontSize: isMobile ? 20 : 22, fontWeight: 700, letterSpacing: "-0.015em", color: t.textHi }}>
+            {L.title}
+          </h1>
+          <div style={{ fontSize: 12, color: t.textLo }}>
             {L.from} {new Date(data.period_start).toLocaleDateString(locale, { day: "2-digit", month: "short", year: "numeric" })}
             {" "}{L.to}{" "}
             {new Date(data.period_end).toLocaleDateString(locale, { day: "2-digit", month: "short", year: "numeric" })}
+            {"  ·  "}{L.subtitleSuffix}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          {[7, 30, 90, 365].map(d => (
-            <button key={d} onClick={() => setDays(d)}
-              style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${t.border}`,
-                        background: days === d ? t.nova : "transparent",
-                        color: days === d ? "#fff" : t.textMid,
-                        cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-              {d === 7 ? "7d" : d === 30 ? "30d" : d === 90 ? "90d" : L.year}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 4, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, padding: 3 }}>
+            {[7, 30, 90, 365].map(d => (
+              <button key={d} onClick={() => setDays(d)} style={rangeBtn(days === d)}>
+                {d === 7 ? "7d" : d === 30 ? "30d" : d === 90 ? "90d" : L.year}
+              </button>
+            ))}
+            <button onClick={() => setDays("custom")}
+              style={{ ...rangeBtn(days === "custom"), background: days === "custom" ? t.nova : (t.panel2 || t.panel), color: days === "custom" ? "#fff" : t.textMid }}>
+              {L.custom}
             </button>
-          ))}
-          <button onClick={() => setDays("custom")}
-            style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${t.border}`,
-                      background: days === "custom" ? t.nova : "transparent",
-                      color: days === "custom" ? "#fff" : t.textMid,
-                      cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-            {L.custom}
-          </button>
+          </div>
           {days === "custom" && (
-            <div style={{ display: "flex", gap: 4, alignItems: "center", background: t.panel2, padding: "4px 6px", borderRadius: 6, border: `1px solid ${t.border}` }}>
-              <input
-                type="date" value={customStart}
-                onChange={e => setCustomStart(e.target.value)}
-                title={L.startDate}
-                style={{ padding: "3px 6px", borderRadius: 4, border: `1px solid ${t.border}`, background: t.panel, color: t.textHi, fontSize: 11.5, outline: "none" }}
-              />
+            <div style={{ display: "flex", gap: 4, alignItems: "center", background: t.panel2, padding: "4px 6px", borderRadius: 8, border: `1px solid ${t.border}` }}>
+              <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} title={L.startDate}
+                style={{ padding: "3px 6px", borderRadius: 4, border: `1px solid ${t.border}`, background: t.panel, color: t.textHi, fontSize: 11.5, outline: "none" }} />
               <span style={{ fontSize: 11, color: t.textLo }}>{L.to}</span>
-              <input
-                type="date" value={customEnd}
-                onChange={e => setCustomEnd(e.target.value)}
-                title={L.endDate}
-                style={{ padding: "3px 6px", borderRadius: 4, border: `1px solid ${t.border}`, background: t.panel, color: t.textHi, fontSize: 11.5, outline: "none" }}
-              />
+              <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} title={L.endDate}
+                style={{ padding: "3px 6px", borderRadius: 4, border: `1px solid ${t.border}`, background: t.panel, color: t.textHi, fontSize: 11.5, outline: "none" }} />
               <button onClick={applyCustom}
                 style={{ padding: "3px 10px", borderRadius: 4, border: "none", background: t.nova, color: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
                 {L.apply}
               </button>
             </div>
           )}
-          <button onClick={load} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}>
-            <RefreshCw size={12} /> {L.refresh}
+          <button onClick={load} title={L.refresh}
+            style={{ padding: 8, borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel, color: t.textMid, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+            <RefreshCw size={14} />
           </button>
         </div>
       </div>
 
-      {/* Fila 1: 6 KPIs principales (móvil: 2×3) */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(6, minmax(0, 1fr))", gap: isMobile ? 8 : 10, marginBottom: isMobile ? 10 : 14 }}>
-        {data.kpis.map(k => <KPITile key={k.key} kpi={k} t={t} isMobile={isMobile} onClick={() => nav(KPI_NAV[k.key])} />)}
+      {/* Fila 1 — 6 KPIs hero */}
+      <div style={{ ...gridBase, marginBottom: 14 }}>
+        {data.kpis.map(k => (
+          <KpiHero key={k.key} kpi={k} t={t} isMobile={isMobile}
+            accent={KPI_ACCENT[k.key] || t.nova}
+            spark={kpiSparks[k.key] || []}
+            L={L}
+            onClick={() => nav(KPI_NAV[k.key])}
+          />
+        ))}
       </div>
 
-      {/* Fila 2: Ventas del período + Meta vs Real + Top 5 Clientes */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr)", gap: isMobile ? 10 : 12, marginBottom: isMobile ? 10 : 14 }}>
-        <PanelCard t={t} title={L.salesPeriod} subtitle={L.vsPrev}>
-          <SalesTrendChart data={data.trend_sales} t={t} L={L} />
+      {/* Fila 2 — Ventas del periodo (8) + Top 5 clientes (4) */}
+      <div style={{ ...gridBase, marginBottom: 14 }}>
+        <PanelCard t={t} title={L.salesPeriod} subtitle={L.vsPrev}
+          hint={data.trend_sales?.length ? `${mxn(sumPoints(data.trend_sales, "revenue"))} / ${mxn(sumPoints(data.trend_sales, "prev_revenue"))} anterior` : undefined}
+          span={isMobile ? undefined : 8} minH={320}>
+          <SalesTrendChart data={data.trend_sales || []} t={t} L={L} />
         </PanelCard>
-        <PanelCard
-          t={t}
-          title={L.metaVsReal}
-          subtitle={
+        <PanelCard t={t} title={L.top5Cust} hint={L.ofPeriod}
+          span={isMobile ? undefined : 4} minH={320}>
+          <TopCustomers rows={data.top_customers || []} t={t} L={L}
+            onSelect={(id) => id && nav("clientes")} />
+        </PanelCard>
+      </div>
+
+      {/* Fila 3 — Meta (4) + Canal (4) + KPIs Op (4) */}
+      <div style={{ ...gridBase, marginBottom: 14 }}>
+        <PanelCard t={t} title={L.metaVsReal}
+          hint={
             data.meta_vs_real.basis === "previous_period" ? L.basisPrev
-            : data.meta_vs_real.basis === "none" ? L.basisNone
-            : L.basisForecast
+              : data.meta_vs_real.basis === "none" ? L.basisNone
+                : L.basisForecast
           }
-        >
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 8 }}>
-            {data.meta_vs_real.goal > 0 ? (
-              <>
-                <LiquidCore
-                  pct={data.meta_vs_real.achieved_pct}
-                  t={t}
-                  sub={L.ofGoal}
-                  hue="blue"
-                />
-                <div style={{ fontSize: 11, color: t.textLo, textAlign: "center" }}>
-                  <b style={{ color: t.textHi }}>{mxn(data.meta_vs_real.real)}</b>
-                  {" / "}{mxn(data.meta_vs_real.goal)}
-                </div>
-              </>
-            ) : (
-              <div style={{ textAlign: "center", padding: 20 }}>
-                <div style={{ fontSize: 28, color: t.textHi, fontWeight: 800 }}>
-                  {mxn(data.meta_vs_real.real)}
-                </div>
-                <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4, maxWidth: 220 }}>
-                  {L.noMeta}
-                </div>
-              </div>
-            )}
-          </div>
+          span={isMobile ? undefined : 4}>
+          <MetaBubble data={data.meta_vs_real} t={t} L={L} />
         </PanelCard>
-        <PanelCard t={t} title={L.top5Cust} subtitle={L.ofPeriod}>
-          <TopCustomers rows={data.top_customers} t={t} L={L} onSelect={(id) => id && nav("clientes")} />
+
+        <PanelCard t={t} title={L.channels} hint={L.ofPeriod}
+          span={isMobile ? undefined : 4}>
+          <ChannelDonut data={data.channel_sales.channels || []} total={data.channel_sales.total_revenue} t={t} L={L} />
+        </PanelCard>
+
+        <PanelCard t={t} title={L.opKpis} hint={L.opSub}
+          span={isMobile ? undefined : 4}>
+          <OperationalBars kpis={data.operational_kpis || []} t={t} />
         </PanelCard>
       </div>
 
-      {/* Fila 3: Ingresos vs Gastos + Mapa MX + KPIs Operativos */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr)", gap: isMobile ? 10 : 12, marginBottom: isMobile ? 10 : 14 }}>
-        <PanelCard t={t} title={L.incomeExpenses}>
-          <IncomeExpensesChart data={data.trend_income_expenses} t={t} L={L} />
+      {/* Fila 4 — Alertas (4) + Geografia (4) + Financieros (4) */}
+      <div style={{ ...gridBase }}>
+        <PanelCard t={t} title={L.alerts} hint={L.top4}
+          span={isMobile ? undefined : 4}>
+          <AlertList alerts={(data.alerts || []).slice(0, 4)} t={t} L={L}
+            onClick={(a) => nav(a.module === "finance" ? "finanzas" : a.module === "retail" ? "retail" : "inventario")} />
         </PanelCard>
-        <PanelCard t={t} title={L.geoDist} subtitle={L.salesByState}>
-          <GeoMap geo={data.geographic} t={t} L={L} isMobile={isMobile} />
-        </PanelCard>
-        <PanelCard t={t} title={L.opKpis}>
-          <OperationalBars kpis={data.operational_kpis} t={t} />
-        </PanelCard>
-      </div>
 
-      {/* Fila 4: Canales + Alertas + Financieros */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr)", gap: isMobile ? 10 : 12 }}>
-        <PanelCard t={t} title={L.channels}>
-          <ChannelDonut data={data.channel_sales.channels} total={data.channel_sales.total_revenue} t={t} L={L} />
+        <PanelCard t={t} title={L.geoDist} hint={L.topStates}
+          span={isMobile ? undefined : 4}>
+          <GeoCompact geo={data.geographic} t={t} L={L} />
         </PanelCard>
-        <PanelCard t={t} title={L.alerts} subtitle={L.top5}>
-          <AlertList alerts={data.alerts} t={t} L={L} onClick={(a) => nav(a.module === "finance" ? "finanzas" : a.module === "retail" ? "retail" : "inventario")} />
-        </PanelCard>
-        <PanelCard t={t} title={L.finKpis}>
-          <FinancialKPIs kpis={data.financial_kpis} t={t} onClick={() => nav("contabilidad")} />
+
+        <PanelCard t={t} title={L.finKpis} hint={L.finSub}
+          span={isMobile ? undefined : 4}>
+          <FinancialKPIs kpis={data.financial_kpis || []} t={t}
+            onClick={() => nav("contabilidad")} />
         </PanelCard>
       </div>
     </div>
@@ -307,141 +321,271 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
 // Subcomponentes
 // ────────────────────────────────────────────────────────────────────────
 
-function PanelCard({ t, title, subtitle, children }: { t: Tokens; title: string; subtitle?: string; children: any }) {
-  return (
-    <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", minHeight: 220 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-        <div style={{ fontSize: 12, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>{title}</div>
-        {subtitle && <div style={{ fontSize: 10.5, color: t.textLo }}>{subtitle}</div>}
-      </div>
-      <div style={{ flex: 1 }}>{children}</div>
-    </div>
-  );
+function sumPoints(rows: TrendPoint[], key: "revenue" | "prev_revenue" | "expenses"): number {
+  return (rows || []).reduce((acc, r) => acc + (Number((r as any)[key]) || 0), 0);
 }
 
 
-function KPITile({ kpi, t, isMobile, onClick }: { kpi: ExecKPI; t: Tokens; isMobile?: boolean; onClick?: () => void }) {
-  const Icon = KPI_ICON[kpi.key] || DollarSign;
-  const color = colorForHint(t, kpi.color_hint);
-  const deltaSign = kpi.delta_pct == null ? null : kpi.delta_pct >= 0 ? "▲" : "▼";
-  const deltaColor = kpi.delta_pct == null ? t.textLo
-    : kpi.delta_pct >= 0 ? (t.good || "#22c55e") : (t.bad || "#ef4444");
-
-  const isMeta = kpi.key === "margin_pct";
-  return (
-    <div onClick={onClick}
-      style={{
-        padding: isMobile ? 10 : 14, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12,
-        cursor: onClick ? "pointer" : "default", position: "relative", overflow: "hidden",
-      }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ width: isMobile ? 28 : 32, height: isMobile ? 28 : 32, borderRadius: 8, background: color + "22", color: color, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Icon size={isMobile ? 14 : 16} />
-        </div>
-      </div>
-      <div style={{ fontSize: isMobile ? 9.5 : 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginTop: isMobile ? 8 : 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{kpi.label}</div>
-      {isMeta ? (
-        <MiniGauge value_pct={kpi.value} color={color} t={t} display={kpi.display} />
-      ) : (
-        <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 800, color: t.textHi, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{kpi.display}</div>
-      )}
-      {kpi.delta_pct != null && (
-        <div style={{ fontSize: isMobile ? 10 : 11, color: deltaColor, marginTop: 4, fontWeight: 700 }}>
-          {deltaSign} {Math.abs(kpi.delta_pct).toFixed(1)}%
-          {!isMobile && <span style={{ color: t.textLo, fontWeight: 400 }}> {kpi.sub}</span>}
-        </div>
-      )}
-      {kpi.delta_pct == null && kpi.sub && (
-        <div style={{ fontSize: isMobile ? 9.5 : 10.5, color: t.textLo, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{kpi.sub}</div>
-      )}
-    </div>
-  );
-}
-
-
-function MiniGauge({ value_pct, color, t, display }: { value_pct: number; color: string; t: Tokens; display: string }) {
-  const pct = Math.max(0, Math.min(100, value_pct));
-  const size = 62;
-  const cx = size / 2, cy = size / 2;
-  const r = 24;
-  const circ = 2 * Math.PI * r;
-  const arc = (pct / 100) * circ * 0.75; // 3/4 circle
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
-      <svg width={size} height={size} style={{ transform: "rotate(135deg)" }}>
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke={t.border} strokeWidth="6" strokeDasharray={`${circ * 0.75} ${circ}`} />
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="6"
-          strokeDasharray={`${arc} ${circ}`} strokeLinecap="round" />
-      </svg>
-      <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{display}</div>
-    </div>
-  );
-}
-
-
-// Hook: índice del data-point bajo el mouse, o null.
-// Si el dataset está vacío o tiene un solo punto, no calcula índice — evita
-// crash accediendo a data[0] en un array vacío.
-function useHoverIndex(len: number) {
-  const [idx, setIdx] = useState<number | null>(null);
-  const [mouseX, setMouseX] = useState(0);
-  const [mouseY, setMouseY] = useState(0);
-  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (len <= 0) { setIdx(null); return; }
-    const rect = e.currentTarget.getBoundingClientRect();
-    const rel = (e.clientX - rect.left) / rect.width;
-    const i = Math.max(0, Math.min(len - 1, Math.round(rel * Math.max(1, len - 1))));
-    setIdx(i);
-    setMouseX(e.clientX - rect.left);
-    setMouseY(e.clientY - rect.top);
+function PanelCard({
+  t, title, subtitle, hint, children, span, minH,
+}: {
+  t: Tokens; title: string; subtitle?: string; hint?: string;
+  children: any; span?: number; minH?: number;
+}) {
+  const style: CSSProperties = {
+    background: t.panel,
+    border: `1px solid ${t.border}`,
+    borderRadius: 14,
+    padding: "16px 18px",
+    display: "flex", flexDirection: "column",
+    minHeight: minH || 220,
+    position: "relative",
+    overflow: "hidden",
   };
-  const onLeave = () => setIdx(null);
-  return { idx, mouseX, mouseY, onMove, onLeave };
+  if (span) style.gridColumn = `span ${span}`;
+  return (
+    <div style={style}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: t.textLo, fontWeight: 700 }}>{title}</div>
+          {subtitle && <div style={{ fontSize: 11, color: t.textLo, marginTop: 2 }}>{subtitle}</div>}
+        </div>
+        {hint && <div style={{ fontSize: 10, color: t.textLo, fontVariantNumeric: "tabular-nums" }}>{hint}</div>}
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
+    </div>
+  );
 }
 
 
+function KpiHero({
+  kpi, t, isMobile, accent, spark, L, onClick,
+}: {
+  kpi: ExecKPI; t: Tokens; isMobile?: boolean;
+  accent: string; spark: number[]; L: any;
+  onClick?: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  const Icon = KPI_ICON[kpi.key] || DollarSign;
+  const deltaSign = kpi.delta_pct == null ? null : kpi.delta_pct >= 0 ? "▲" : "▼";
+  const isFlat = kpi.delta_pct == null;
+  const deltaColor = isFlat ? t.textLo
+    : (kpi.delta_pct as number) >= 0 ? (t.good || "#22c55e") : (t.bad || "#ef4444");
+
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        gridColumn: isMobile ? "span 1" : "span 2",
+        position: "relative",
+        display: "flex", flexDirection: "column",
+        background: `linear-gradient(180deg, ${t.panel} 0%, ${t.panel2 || t.panel} 100%)`,
+        border: `1px solid ${hover ? accent + "77" : t.border}`,
+        borderRadius: 14,
+        padding: "16px 18px 14px",
+        minHeight: 130,
+        cursor: onClick ? "pointer" : "default",
+        overflow: "hidden",
+        transform: hover ? "translateY(-2px)" : "none",
+        boxShadow: hover ? "0 8px 24px rgba(0,0,0,0.35)" : "none",
+        transition: "transform .15s ease, border-color .15s ease, box-shadow .15s ease",
+      }}
+    >
+      {/* Accent bar top */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: accent, opacity: 0.55 }} />
+
+      {/* Chevron esquina */}
+      <span style={{
+        position: "absolute", top: 12, right: 12,
+        width: 18, height: 18, display: "grid", placeItems: "center",
+        color: accent, opacity: hover ? 1 : 0, transition: "opacity .15s",
+      }}>
+        <ChevronRight size={14} />
+      </span>
+
+      {/* Icono */}
+      <div style={{
+        width: 26, height: 26, borderRadius: 7,
+        background: accent + "2E", color: accent,
+        display: "grid", placeItems: "center", marginBottom: 8,
+      }}>
+        <Icon size={14} />
+      </div>
+
+      <div style={{
+        fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase",
+        color: t.textLo, fontWeight: 700, marginBottom: 4,
+      }}>{kpi.label}</div>
+
+      <div style={{
+        fontSize: 24, fontWeight: 700, color: t.textHi, lineHeight: 1.05, marginBottom: 4,
+        fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em",
+      }}>{kpi.display}</div>
+
+      <div style={{
+        fontSize: 11.5, fontWeight: 600, color: deltaColor, marginTop: "auto",
+        display: "flex", alignItems: "center", gap: 4,
+      }}>
+        {deltaSign && <span>{deltaSign} {Math.abs(kpi.delta_pct as number).toFixed(1)}%</span>}
+        {!deltaSign && <span>—</span>}
+        <span style={{ color: t.textLo, fontWeight: 500 }}>
+          {kpi.delta_pct != null ? L.vsAnterior : (kpi.sub || "")}
+        </span>
+      </div>
+
+      {/* Sparkline decorativa (solo si hay datos) */}
+      {spark.length > 1 && (
+        <Sparkline values={spark} color={accent} />
+      )}
+    </div>
+  );
+}
+
+
+function Sparkline({ values, color }: { values: number[]; color: string }) {
+  const w = 60, h = 24;
+  const max = Math.max(1, ...values);
+  const min = Math.min(...values);
+  const range = Math.max(1, max - min);
+  const step = values.length > 1 ? w / (values.length - 1) : w;
+  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(h - ((v - min) / range) * h).toFixed(1)}`).join(" ");
+  return (
+    <svg style={{ position: "absolute", right: 12, bottom: 8, width: w, height: h, opacity: 0.7, pointerEvents: "none" }}
+      viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+
+// ── Ventas del periodo — area + linea dashed anterior ───────────────
 function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any }) {
   const safe = data || [];
+  if (!safe.length) return <EmptyMsg t={t} msg={L.noSalesPeriod} />;
   const maxVal = Math.max(1, ...safe.map(d => Math.max(d.revenue || 0, d.prev_revenue || 0)));
-  const W = 100, H = 60;
-  const step = safe.length > 1 ? W / (safe.length - 1) : W;
-  const buildPath = (getVal: (d: TrendPoint) => number) =>
-    safe.map((d, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(2)} ${(H - ((getVal(d) || 0) / maxVal) * H).toFixed(2)}`).join(" ");
-  const lineCur = buildPath(d => d.revenue);
-  const linePrev = buildPath(d => d.prev_revenue);
-  const { idx, mouseX, mouseY, onMove, onLeave } = useHoverIndex(safe.length);
-  const hovered = idx != null && safe[idx] ? safe[idx] : null;
+  const W = 720, H = 220;
+  const padL = 44, padR = 30, padT = 12, padB = 30;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const step = safe.length > 1 ? innerW / (safe.length - 1) : innerW;
+  const y = (v: number) => padT + innerH - ((v || 0) / maxVal) * innerH;
+  const x = (i: number) => padL + i * step;
+
+  const buildLine = (getV: (d: TrendPoint) => number) =>
+    safe.map((d, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(getV(d)).toFixed(1)}`).join(" ");
+  const buildArea = () =>
+    `M ${padL} ${padT + innerH} `
+    + safe.map((d, i) => `L ${x(i).toFixed(1)} ${y(d.revenue || 0).toFixed(1)}`).join(" ")
+    + ` L ${x(safe.length - 1).toFixed(1)} ${padT + innerH} Z`;
+
+  const [hover, setHover] = useState<{ i: number; mx: number; my: number } | null>(null);
+  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const rel = (e.clientX - rect.left) / rect.width;
+    const sx = rel * W;
+    const i = Math.max(0, Math.min(safe.length - 1, Math.round((sx - padL) / step)));
+    setHover({ i, mx: e.clientX - rect.left, my: e.clientY - rect.top });
+  };
+  const onLeave = () => setHover(null);
+
+  // Y-axis marks (3): 0, maxVal/2, maxVal
+  const yLabels = [maxVal, maxVal / 2, 0];
+  const xLabels = pickXTicks(safe, 8);
+
+  const nova = t.nova || "#33B2F5";
+  const dim = t.textLo || "#5D6A85";
+  const grid = (t.border || "#223154");
+  const gid = `sales-grad-${useIdSuffix()}`;
+
+  const cur = hover && safe[hover.i] ? safe[hover.i] : null;
 
   return (
-    <div style={{ width: "100%", height: 180, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", gap: 10, fontSize: 11, color: t.textLo, marginBottom: 6 }}>
-        <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.nova, marginRight: 4 }} /> {L.current}</span>
-        <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.textLo, opacity: 0.5, marginRight: 4 }} /> {L.previous}</span>
-      </div>
-      <div style={{ position: "relative", flex: 1, overflow: "hidden" }} onMouseMove={onMove} onMouseLeave={onLeave}>
-        <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%", display: "block" }}>
-          <path d={linePrev} stroke={t.textLo} strokeWidth="1.5" fill="none" strokeDasharray="4,4" opacity="0.6" vectorEffect="non-scaling-stroke" />
-          <path d={lineCur} stroke={t.nova} strokeWidth="2" fill="none" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-          {idx != null && safe[idx] && (
+    <div style={{ position: "relative", width: "100%", height: 260, display: "flex", flexDirection: "column" }}
+      onMouseMove={onMove} onMouseLeave={onLeave}>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%", display: "block" }}>
+          <defs>
+            <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={nova} stopOpacity="0.35" />
+              <stop offset="100%" stopColor={nova} stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {/* Grid horizontal */}
+          {yLabels.map((v, i) => (
+            <line key={i} x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke={grid} strokeWidth="0.5" opacity="0.6" />
+          ))}
+          {/* Y labels */}
+          <g fontFamily="Inter, sans-serif" fontSize="10" fill={dim}>
+            {yLabels.map((v, i) => (
+              <text key={i} x={padL - 6} y={y(v) + 3} textAnchor="end">{formatShort(v)}</text>
+            ))}
+          </g>
+          {/* Periodo anterior dashed */}
+          <path d={buildLine(d => d.prev_revenue || 0)} fill="none" stroke={dim} strokeWidth="1.5" strokeDasharray="4 4" opacity="0.6" />
+          {/* Area actual */}
+          <path d={buildArea()} fill={`url(#${gid})`} />
+          {/* Linea actual */}
+          <path d={buildLine(d => d.revenue || 0)} fill="none" stroke={nova} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+          {/* Endpoint */}
+          {safe.length > 0 && (
+            <circle cx={x(safe.length - 1)} cy={y(safe[safe.length - 1].revenue || 0)} r="4" fill={nova} stroke={t.panel || "#0A111E"} strokeWidth="2" />
+          )}
+          {/* Hover crosshair */}
+          {hover && safe[hover.i] && (
             <>
-              <line x1={idx * step} y1="0" x2={idx * step} y2={H} stroke={t.textLo} strokeWidth="1" strokeDasharray="2,2" opacity="0.7" vectorEffect="non-scaling-stroke" />
-              <circle cx={idx * step} cy={H - ((safe[idx].revenue || 0) / maxVal) * H} r="1.2" fill={t.nova} vectorEffect="non-scaling-stroke" />
-              <circle cx={idx * step} cy={H - ((safe[idx].prev_revenue || 0) / maxVal) * H} r="1" fill={t.textLo} opacity="0.7" vectorEffect="non-scaling-stroke" />
+              <line x1={x(hover.i)} x2={x(hover.i)} y1={padT} y2={padT + innerH} stroke={dim} strokeWidth="1" strokeDasharray="2 3" opacity="0.7" />
+              <circle cx={x(hover.i)} cy={y(safe[hover.i].revenue || 0)} r="3.5" fill={nova} stroke={t.panel || "#0A111E"} strokeWidth="1.5" />
+              <circle cx={x(hover.i)} cy={y(safe[hover.i].prev_revenue || 0)} r="3" fill={dim} stroke={t.panel || "#0A111E"} strokeWidth="1.5" />
             </>
           )}
+          {/* X labels */}
+          <g fontFamily="Inter, sans-serif" fontSize="9.5" fill={dim} textAnchor="middle">
+            {xLabels.map(i => (
+              <text key={i} x={x(i)} y={H - 10}>{safe[i]?.label || ""}</text>
+            ))}
+          </g>
         </svg>
-        {hovered && (
-          <ChartTooltip t={t} x={mouseX} y={mouseY} title={hovered.label} rows={[
-            { label: L.current, value: mxn(hovered.revenue), color: t.nova },
-            { label: L.previous, value: mxn(hovered.prev_revenue), color: t.textLo },
-          ]} />
-        )}
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, color: t.textLo, marginTop: 4 }}>
-        {safe.filter((_, i) => i === 0 || i === Math.floor(safe.length / 2) || i === safe.length - 1).map(d => <span key={d.period}>{d.label}</span>)}
+      {cur && hover && (
+        <ChartTooltip t={t} x={hover.mx} y={hover.my} title={cur.label} rows={[
+          { label: L.salesPeriod, value: mxn(cur.revenue), color: nova },
+          { label: L.vsPrev, value: mxn(cur.prev_revenue), color: dim },
+        ]} />
+      )}
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 11, color: t.textMid }}>
+        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: nova, marginRight: 6, verticalAlign: "middle" }} />Actual</span>
+        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: dim, marginRight: 6, verticalAlign: "middle" }} />Periodo anterior</span>
       </div>
     </div>
   );
+}
+
+
+function pickXTicks(rows: TrendPoint[], target: number): number[] {
+  if (rows.length <= target) return rows.map((_, i) => i);
+  const step = Math.max(1, Math.floor(rows.length / target));
+  const idxs: number[] = [];
+  for (let i = 0; i < rows.length; i += step) idxs.push(i);
+  if (idxs[idxs.length - 1] !== rows.length - 1) idxs.push(rows.length - 1);
+  return idxs;
+}
+
+
+function formatShort(v: number): string {
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `$${Math.round(v / 1_000)}K`;
+  return `$${Math.round(v)}`;
+}
+
+
+// Genera un sufijo determinístico por ejecución para evitar colision de IDs SVG
+// cuando el componente se re-renderiza en la misma pantalla. useState congelado.
+function useIdSuffix(): string {
+  const [id] = useState(() => Math.random().toString(36).slice(2, 8));
+  return id;
 }
 
 
@@ -452,16 +596,16 @@ function ChartTooltip({ t, x, y, title, rows }: {
   return (
     <div style={{
       position: "absolute", left: Math.min(x + 12, 999), top: Math.max(y - 40, 0),
-      background: t.panel || t.panel2 || "rgba(15,20,30,0.92)",
+      background: t.panel2 || t.panel || "rgba(15,20,30,0.94)",
       border: `1px solid ${t.border}`,
-      borderRadius: 6, padding: "6px 8px", pointerEvents: "none",
+      borderRadius: 8, padding: "8px 10px", pointerEvents: "none",
       fontSize: 11, whiteSpace: "nowrap", zIndex: 10,
-      boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
-      transform: x > 200 ? "translateX(-100%) translateX(-24px)" : undefined,
+      boxShadow: "0 6px 20px rgba(0,0,0,0.35)",
+      transform: x > 400 ? "translateX(-100%) translateX(-24px)" : undefined,
     }}>
-      <div style={{ color: t.textHi, fontWeight: 700, marginBottom: 3 }}>{title}</div>
+      <div style={{ color: t.textHi, fontWeight: 700, marginBottom: 4 }}>{title}</div>
       {rows.map((r, i) => (
-        <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color, display: "inline-block" }} />
           <span style={{ color: t.textMid }}>{r.label}:</span>
           <b style={{ color: t.textHi, marginLeft: "auto" }}>{r.value}</b>
@@ -472,122 +616,43 @@ function ChartTooltip({ t, x, y, title, rows }: {
 }
 
 
-function IncomeExpensesChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any }) {
-  const safe = data || [];
-  const maxVal = Math.max(1, ...safe.map(d => Math.max(d.revenue || 0, d.expenses || 0)));
-  const W = 100, H = 60;
-  const step = safe.length > 1 ? W / (safe.length - 1) : W;
-  const areaRev = safe.map((d, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(2)} ${(H - ((d.revenue || 0) / maxVal) * H).toFixed(2)}`).join(" ")
-                    + ` L ${W} ${H} L 0 ${H} Z`;
-  const lineExp = safe.map((d, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(2)} ${(H - ((d.expenses || 0) / maxVal) * H).toFixed(2)}`).join(" ");
-  const { idx, mouseX, mouseY, onMove, onLeave } = useHoverIndex(safe.length);
-  const hovered = idx != null && safe[idx] ? safe[idx] : null;
-
+// ── Top 5 clientes ─────────────────────────────────────────────────
+function TopCustomers({ rows, t, L, onSelect }: {
+  rows: TopCustomerRow[]; t: Tokens; L: any; onSelect?: (id?: number | null) => void;
+}) {
+  if (!rows?.length) return <EmptyMsg t={t} msg={L.noSalesPeriod} />;
+  const warn = t.warn || "#F59E0B";
   return (
-    <div style={{ width: "100%", height: 180, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", gap: 10, fontSize: 11, color: t.textLo, marginBottom: 6 }}>
-        <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.good, marginRight: 4 }} /> {L.income}</span>
-        <span><span style={{ display: "inline-block", width: 10, height: 2, background: t.bad, marginRight: 4 }} /> {L.expenses}</span>
-      </div>
-      <div style={{ position: "relative", flex: 1, overflow: "hidden" }} onMouseMove={onMove} onMouseLeave={onLeave}>
-        <svg viewBox={`0 0 ${W} ${H + 4}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%", display: "block" }}>
-          <path d={areaRev} fill={t.good} opacity="0.15" />
-          <path d={areaRev.replace(` L ${W} ${H} L 0 ${H} Z`, "")} stroke={t.good} strokeWidth="2" fill="none" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-          <path d={lineExp} stroke={t.bad} strokeWidth="2" fill="none" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-          {idx != null && safe[idx] && (
-            <>
-              <line x1={idx * step} y1="0" x2={idx * step} y2={H} stroke={t.textLo} strokeWidth="1" strokeDasharray="2,2" opacity="0.7" vectorEffect="non-scaling-stroke" />
-              <circle cx={idx * step} cy={H - ((safe[idx].revenue || 0) / maxVal) * H} r="1.2" fill={t.good} vectorEffect="non-scaling-stroke" />
-              <circle cx={idx * step} cy={H - ((safe[idx].expenses || 0) / maxVal) * H} r="1.2" fill={t.bad} vectorEffect="non-scaling-stroke" />
-            </>
-          )}
-        </svg>
-        {hovered && (
-          <ChartTooltip t={t} x={mouseX} y={mouseY} title={hovered.label} rows={[
-            { label: L.income, value: mxn(hovered.revenue), color: t.good },
-            { label: L.expenses, value: mxn(hovered.expenses), color: t.bad },
-          ]} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-
-function TopCustomers({ rows, t, L, onSelect }: { rows: TopCustomerRow[]; t: Tokens; L: any; onSelect?: (id?: number | null) => void }) {
-  if (!rows?.length) return <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noSalesPeriod}</div>;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      {rows.map((c, i) => (
-        <div key={i} onClick={() => onSelect?.(c.customer_id)}
-          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", background: t.panel2, borderRadius: 6, cursor: onSelect && c.customer_id ? "pointer" : "default" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
-            <span style={{ width: 22, height: 22, borderRadius: "50%", background: t.nova + "22", color: t.nova, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {rows.slice(0, 5).map((c, i) => {
+        const isTop = i === 0;
+        return (
+          <div key={i} onClick={() => onSelect?.(c.customer_id)}
+            style={{
+              display: "grid", gridTemplateColumns: "20px 1fr auto",
+              gap: 10, alignItems: "center", padding: "8px 0",
+              borderBottom: i === Math.min(rows.length, 5) - 1 ? "none" : `1px solid ${t.border}`,
+              cursor: onSelect && c.customer_id ? "pointer" : "default",
+            }}>
+            <span style={{
+              width: 20, height: 20, borderRadius: "50%",
+              background: isTop ? warn + "33" : (t.panel2 || t.panel),
+              color: isTop ? warn : t.textMid,
+              display: "grid", placeItems: "center",
+              fontSize: 10, fontWeight: 700,
+            }}>{i + 1}</span>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12, color: t.textHi, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</div>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</div>
               <div style={{ fontSize: 10.5, color: t.textLo }}>{L.ordersW(c.orders)}</div>
             </div>
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>{mxn(c.total)}</div>
-            {c.delta_pct != null && (
-              <div style={{ fontSize: 10, color: c.delta_pct >= 0 ? (t.good || "#22c55e") : (t.bad || "#ef4444") }}>
-                {c.delta_pct >= 0 ? "▲" : "▼"} {Math.abs(c.delta_pct).toFixed(1)}%
-              </div>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-
-function GeoMap({ geo, t, L, isMobile }: { geo: { by_state: GeoStateRow[]; top5: GeoStateRow[]; total_revenue: number }; t: Tokens; L: any; isMobile?: boolean }) {
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr", gap: 12, minHeight: isMobile ? 420 : 260 }}>
-      <div style={{ position: "relative", background: t.panel2, borderRadius: 8, overflow: "hidden", minHeight: isMobile ? 240 : 240 }}>
-        <MexicoMap t={t} data={geo.by_state || []} />
-        <div style={{ position: "absolute", bottom: 6, left: 8, fontSize: 9, color: t.textLo, pointerEvents: "none" }}>
-          {L.statesWithSales(geo.by_state?.length || 0)}
-        </div>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}>
-        <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>{L.top5states}</div>
-        {(!geo.top5?.length) && <div style={{ color: t.textLo, fontSize: 11 }}>{L.noGeo}</div>}
-        {(geo.top5 || []).map((s, i) => (
-          <div key={s.state_code} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px", background: t.panel2, borderRadius: 6 }}>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 11.5, color: t.textHi, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i + 1}. {s.state_name}</div>
-              <div style={{ fontSize: 9.5, color: t.textLo }}>{num(s.units)}u · {s.orders_count} ped.</div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(c.total)}</div>
+              {c.delta_pct != null && (
+                <div style={{ fontSize: 10.5, color: c.delta_pct >= 0 ? (t.good || "#22c55e") : (t.bad || "#ef4444"), fontWeight: 600 }}>
+                  {c.delta_pct >= 0 ? "▲" : "▼"} {Math.abs(c.delta_pct).toFixed(1)}%
+                </div>
+              )}
             </div>
-            <div style={{ textAlign: "right", marginLeft: 6 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: t.textHi }}>{mxn(s.revenue)}</div>
-              <div style={{ fontSize: 10, color: t.nova }}>{s.share_pct.toFixed(1)}%</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-
-function OperationalBars({ kpis, t }: { kpis: OperationalKPIRow[]; t: Tokens }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "6px 0" }}>
-      {kpis.map(k => {
-        const color = colorForHint(t, k.color_hint);
-        return (
-          <div key={k.key}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-              <div style={{ fontSize: 12, color: t.textMid }}>{k.label}</div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: color }}>{k.value_pct.toFixed(0)}%</div>
-            </div>
-            <div style={{ width: "100%", height: 8, background: t.panel2, borderRadius: 4, overflow: "hidden" }}>
-              <div style={{ width: `${Math.min(100, k.value_pct)}%`, height: "100%", background: color, transition: "width 0.3s" }} />
-            </div>
-            {k.hint && <div style={{ fontSize: 10, color: t.textLo, marginTop: 3 }}>{k.hint}</div>}
           </div>
         );
       })}
@@ -596,65 +661,85 @@ function OperationalBars({ kpis, t }: { kpis: OperationalKPIRow[]; t: Tokens }) 
 }
 
 
-function ChannelDonut({ data, total, t, L }: { data: ChannelSalesRow[]; total: number; t: Tokens; L: any }) {
-  const palette = [t.nova || "#33B2F5", t.good || "#22c55e", t.warn || "#f59e0b", "#a855f7", "#ec4899", t.textLo];
+// ── Meta vs Real (esfera liquida) ──────────────────────────────────
+function MetaBubble({ data, t, L }: { data: any; t: Tokens; L: any }) {
+  const hasGoal = data?.goal > 0;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%" }}>
+      <div style={{ flex: 1, display: "grid", placeItems: "center", width: "100%", margin: "4px 0 12px" }}>
+        {hasGoal ? (
+          <LiquidCore pct={data.achieved_pct} t={t} sub={L.ofGoal} hue="blue" />
+        ) : (
+          <div style={{ textAlign: "center", padding: 20 }}>
+            <div style={{ fontSize: 28, color: t.textHi, fontWeight: 800 }}>{mxn(data?.real || 0)}</div>
+            <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4, maxWidth: 220 }}>{L.noMeta}</div>
+          </div>
+        )}
+      </div>
+      {hasGoal && (
+        <div style={{ textAlign: "center", fontSize: 11, color: t.textMid, fontVariantNumeric: "tabular-nums" }}>
+          <b style={{ color: t.textHi, fontWeight: 600 }}>{mxn(data.real)}</b>
+          {" / "}{mxn(data.goal)}{" objetivo"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Ventas por canal (donut compacto + leyenda) ────────────────────
+function ChannelDonut({ data, total, t, L }: {
+  data: ChannelSalesRow[]; total: number; t: Tokens; L: any;
+}) {
+  if (!data?.length || total === 0) return <EmptyMsg t={t} msg={L.noChannel} />;
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  if (!data?.length || total === 0) return <div style={{ color: t.textLo, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noChannel}</div>;
-  const cx = 50, cy = 50, r = 34, w = 12;
+  const cx = 21, cy = 21, r = 15.9, w = 6;
   let accum = 0;
-  const arcs = data.map((d, i) => {
-    const start = accum;
+  const rings = data.map((d, i) => {
     const share = d.revenue / total;
+    const dashLen = share * 100;
+    const rest = 100 - dashLen;
+    const offset = -accum * 100 + 25; // rotate -90 lo desplaza a las 12 en punto
     accum += share;
-    const a0 = start * 2 * Math.PI - Math.PI / 2;
-    const a1 = accum * 2 * Math.PI - Math.PI / 2;
-    const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
-    const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
-    const large = share > 0.5 ? 1 : 0;
-    const d_ = `M ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1}`;
     const isHover = hoverIdx === i;
     return (
-      <path key={i} d={d_}
-        stroke={palette[i % palette.length]}
-        strokeWidth={isHover ? w + 3 : w}
-        fill="none"
+      <circle key={i} cx={cx} cy={cy} r={r} fill="transparent"
+        stroke={CHANNEL_PALETTE[i % CHANNEL_PALETTE.length]}
+        strokeWidth={isHover ? w + 1.5 : w}
+        strokeDasharray={`${dashLen} ${rest}`}
+        strokeDashoffset={offset}
+        transform={`rotate(-90 ${cx} ${cy})`}
         opacity={hoverIdx == null || isHover ? 1 : 0.4}
-        style={{ cursor: "pointer", transition: "stroke-width 0.15s, opacity 0.15s" }}
+        style={{ cursor: "pointer", transition: "stroke-width .15s, opacity .15s" }}
         onMouseEnter={() => setHoverIdx(i)}
         onMouseLeave={() => setHoverIdx(null)}
       />
     );
   });
-  const focused = hoverIdx != null ? data[hoverIdx] : data[0];
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, height: 180 }}>
-      <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <svg viewBox="0 0 100 100" style={{ width: "100%", height: "100%" }}>{arcs}</svg>
-        <div style={{ position: "absolute", textAlign: "center", pointerEvents: "none" }}>
-          <div style={{ fontSize: 20, fontWeight: 800, color: t.textHi }}>{focused ? focused.share_pct.toFixed(0) : 0}%</div>
-          <div style={{ fontSize: 10, color: t.textLo, textTransform: "uppercase" }}>{focused?.label || "—"}</div>
-          {hoverIdx != null && focused && (
-            <div style={{ fontSize: 10.5, color: t.textMid, marginTop: 3 }}>
-              {mxn(focused.revenue)} · {focused.orders} ped.
-            </div>
-          )}
-        </div>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 20, alignItems: "center", height: "100%" }}>
+      <svg viewBox="0 0 42 42" style={{ width: 120, height: 120 }}>
+        <circle cx={cx} cy={cy} r={r} fill="transparent" stroke={t.border || "#1B2540"} strokeWidth={w} />
+        {rings}
+      </svg>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {data.map((d, i) => (
           <div key={i}
             onMouseEnter={() => setHoverIdx(i)}
             onMouseLeave={() => setHoverIdx(null)}
             style={{
-              display: "flex", alignItems: "center", gap: 6, fontSize: 11,
-              padding: "3px 4px", borderRadius: 4, cursor: "pointer",
-              background: hoverIdx === i ? t.panel2 : "transparent",
-              transition: "background 0.15s",
+              display: "grid", gridTemplateColumns: "10px 1fr auto auto",
+              alignItems: "center", gap: 10, fontSize: 12,
+              padding: "2px 4px", borderRadius: 4,
+              background: hoverIdx === i ? (t.panel2 || "transparent") : "transparent",
+              transition: "background .15s",
+              cursor: "pointer",
             }}>
-            <div style={{ width: 10, height: 10, background: palette[i % palette.length], borderRadius: 2 }} />
-            <div style={{ flex: 1, color: t.textMid }}>{d.label}</div>
-            <div style={{ color: t.textHi, fontWeight: 700 }}>{mxn(d.revenue)}</div>
-            <div style={{ color: t.textLo, fontSize: 10, width: 34, textAlign: "right" }}>{d.share_pct.toFixed(1)}%</div>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: CHANNEL_PALETTE[i % CHANNEL_PALETTE.length] }} />
+            <span style={{ color: t.textMid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.label}</span>
+            <span style={{ color: t.textHi, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{mxn(d.revenue)}</span>
+            <span style={{ color: t.textLo, fontSize: 11, minWidth: 34, textAlign: "right" }}>{d.share_pct.toFixed(0)}%</span>
           </div>
         ))}
       </div>
@@ -663,49 +748,181 @@ function ChannelDonut({ data, total, t, L }: { data: ChannelSalesRow[]; total: n
 }
 
 
-function AlertList({ alerts, t, L, onClick }: { alerts: AlertRow[]; t: Tokens; L: any; onClick?: (a: AlertRow) => void }) {
-  if (!alerts?.length) return <div style={{ color: t.good, fontSize: 12, textAlign: "center", padding: 20 }}>{L.noAlerts}</div>;
-  const sevColor = (s: string) => s === "urgent" ? (t.bad || "#ef4444") : s === "high" ? (t.warn || "#f59e0b") : t.nova;
+// ── KPIs operativos (barras con nota + valor) ──────────────────────
+function OperationalBars({ kpis, t }: { kpis: OperationalKPIRow[]; t: Tokens }) {
+  const colorFor = (hint?: string | null) => {
+    switch (hint) {
+      case "good": return t.good || "#22C55E";
+      case "warn": return t.warn || "#F59E0B";
+      case "bad": return t.bad || "#EF4444";
+      default: return t.textMid || "#98A6BE";
+    }
+  };
+  const bgFor = (hint?: string | null) => {
+    switch (hint) {
+      case "good": return `linear-gradient(90deg, #16A34A, ${t.good || "#22C55E"})`;
+      case "warn": return `linear-gradient(90deg, ${t.warn || "#F59E0B"}, #FBBF24)`;
+      case "bad": return `linear-gradient(90deg, ${t.bad || "#EF4444"}, #F87171)`;
+      default: return t.nova || "#33B2F5";
+    }
+  };
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      {alerts.map((a, i) => (
-        <div key={i} onClick={() => onClick?.(a)}
-          style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 10px", background: t.panel2, borderRadius: 6, cursor: onClick ? "pointer" : "default" }}>
-          <span style={{ padding: "2px 6px", borderRadius: 4, background: sevColor(a.severity) + "22", color: sevColor(a.severity), fontSize: 9.5, fontWeight: 800 }}>
-            {a.label}
-          </span>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontSize: 12, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</div>
-            {a.subtitle && <div style={{ fontSize: 10, color: t.textLo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.subtitle}</div>}
+    <div>
+      {kpis.map((k, i) => {
+        const c = colorFor(k.color_hint);
+        return (
+          <div key={k.key} style={{
+            display: "grid", gridTemplateColumns: "1fr auto",
+            alignItems: "center", padding: "10px 0",
+            borderBottom: i === kpis.length - 1 ? "none" : `1px solid ${t.border}`,
+            gap: 12,
+          }}>
+            <div>
+              <div style={{ fontSize: 12, color: t.textMid, fontWeight: 500 }}>{k.label}</div>
+              {k.hint && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 1 }}>{k.hint}</div>}
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: c, fontVariantNumeric: "tabular-nums", textAlign: "right" }}>
+              {k.value_pct.toFixed(0)}%
+            </div>
+            <div style={{ gridColumn: "1 / -1", height: 4, background: t.panel2 || t.panel, borderRadius: 2, overflow: "hidden", marginTop: 4 }}>
+              <div style={{ width: `${Math.min(100, k.value_pct)}%`, height: "100%", borderRadius: 2, background: bgFor(k.color_hint) }} />
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
 
-function FinancialKPIs({ kpis, t, onClick }: { kpis: FinancialKPIRow[]; t: Tokens; onClick?: () => void }) {
-  const statusColor = (s: string) => s === "good" ? (t.good || "#22c55e") : s === "warn" ? (t.warn || "#f59e0b") : s === "bad" ? (t.bad || "#ef4444") : t.textLo;
+// ── Alertas tempranas (pill con --accent border-left) ──────────────
+function AlertList({ alerts, t, L, onClick }: {
+  alerts: AlertRow[]; t: Tokens; L: any; onClick?: (a: AlertRow) => void;
+}) {
+  if (!alerts?.length) return <EmptyMsg t={t} msg={L.noAlerts} color={t.good} />;
+  const accentFor = (s: string) => s === "urgent" ? (t.bad || "#EF4444") : s === "high" ? (t.warn || "#F59E0B") : (t.nova || "#33B2F5");
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-      {kpis.map(k => (
-        <div key={k.key} onClick={onClick}
-          title={onClick ? "Ir a Contabilidad → Balance General" : undefined}
-          style={{
-            padding: 10, background: k.available ? t.panel2 : (t.panel2 + "88"),
-            borderRadius: 8, border: k.available ? "none" : `1px dashed ${t.border}`,
-            cursor: onClick ? "pointer" : "default",
-            transition: "transform 0.12s, box-shadow 0.12s",
-          }}
-          onMouseEnter={(e) => { if (onClick) (e.currentTarget as HTMLDivElement).style.transform = "translateY(-1px)"; }}
-          onMouseLeave={(e) => { if (onClick) (e.currentTarget as HTMLDivElement).style.transform = "none"; }}
-        >
-          <div style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 3 }}>{k.label}</div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: k.available ? statusColor(k.status) : t.textLo, fontVariantNumeric: "tabular-nums" }}>{k.display}</div>
-          {k.subtitle && <div style={{ fontSize: 9.5, color: t.textLo, marginTop: 2 }}>{k.subtitle}</div>}
-        </div>
-      ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {alerts.map((a, i) => {
+        const accent = accentFor(a.severity);
+        return (
+          <div key={i} onClick={() => onClick?.(a)}
+            style={{
+              display: "grid", gridTemplateColumns: "auto 1fr auto",
+              alignItems: "center", gap: 10, padding: "10px 12px",
+              background: t.panel2 || t.panel, borderRadius: 10,
+              borderLeft: `3px solid ${accent}`,
+              cursor: onClick ? "pointer" : "default",
+            }}>
+            <span style={{
+              textTransform: "uppercase", letterSpacing: "0.08em",
+              fontSize: 8.5, fontWeight: 800,
+              padding: "3px 6px", borderRadius: 4,
+              background: accent + "33", color: accent, textAlign: "center",
+            }}>{a.label}</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</div>
+              {a.subtitle && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.subtitle}</div>}
+            </div>
+            {a.reference && (
+              <div style={{ fontSize: 11, fontWeight: 700, color: accent, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                {a.reference}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+// ── Distribucion geografica compacta (mapa mini + top 3) ───────────
+function GeoCompact({ geo, t, L }: {
+  geo: { by_state: GeoStateRow[]; top5: GeoStateRow[]; total_revenue: number };
+  t: Tokens; L: any;
+}) {
+  const top3 = (geo?.top5 || []).slice(0, 3);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 16, height: "100%" }}>
+      <div style={{ width: 110, height: 110, flexShrink: 0, display: "grid", placeItems: "center", background: t.panel2 || t.panel, borderRadius: 8, padding: 4 }}>
+        <MexicoMap t={t} data={geo?.by_state || []} />
+      </div>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
+        {!top3.length && <div style={{ color: t.textLo, fontSize: 11 }}>{L.noGeo}</div>}
+        {top3.map((s, i) => (
+          <div key={s.state_code} style={{
+            display: "grid", gridTemplateColumns: "20px 1fr auto",
+            gap: 10, alignItems: "center", padding: "6px 0",
+            borderBottom: i === top3.length - 1 ? "none" : `1px solid ${t.border}`,
+          }}>
+            <span style={{
+              width: 20, height: 20, borderRadius: "50%",
+              background: t.panel2 || t.panel, color: t.textMid,
+              display: "grid", placeItems: "center",
+              fontSize: 10, fontWeight: 700,
+            }}>{i + 1}</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.state_name}</div>
+              <div style={{ fontSize: 10.5, color: t.textLo }}>{num(s.units)}u · {s.orders_count} ped.</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(s.revenue)}</div>
+              <div style={{ fontSize: 10.5, color: t.textLo, fontWeight: 600 }}>{s.share_pct.toFixed(1)}%</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+// ── KPIs financieros (2x2 tiles con border-left color) ─────────────
+function FinancialKPIs({ kpis, t, onClick }: {
+  kpis: FinancialKPIRow[]; t: Tokens; onClick?: () => void;
+}) {
+  const accentFor = (status: string): string => {
+    switch (status) {
+      case "good": return t.good || "#22C55E";
+      case "warn": return t.warn || "#F59E0B";
+      case "bad": return t.bad || "#EF4444";
+      default: return t.nova || "#33B2F5";
+    }
+  };
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      {kpis.slice(0, 4).map(k => {
+        const accent = accentFor(k.status);
+        return (
+          <div key={k.key} onClick={onClick}
+            title={onClick ? "Ir a Contabilidad → Balance General" : undefined}
+            style={{
+              padding: 12,
+              background: k.available ? (t.panel2 || t.panel) : (t.panel2 || t.panel) + "88",
+              borderRadius: 10,
+              borderLeft: `3px solid ${accent}`,
+              cursor: onClick ? "pointer" : "default",
+              transition: "transform .12s",
+            }}
+            onMouseEnter={(e) => { if (onClick) (e.currentTarget as HTMLDivElement).style.transform = "translateY(-1px)"; }}
+            onMouseLeave={(e) => { if (onClick) (e.currentTarget as HTMLDivElement).style.transform = "none"; }}
+          >
+            <div style={{ fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.textLo, fontWeight: 700, marginBottom: 4 }}>{k.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: k.available ? t.textHi : t.textLo, fontVariantNumeric: "tabular-nums" }}>{k.display}</div>
+            {k.subtitle && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2 }}>{k.subtitle}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+function EmptyMsg({ t, msg, color }: { t: Tokens; msg: string; color?: string }) {
+  return (
+    <div style={{ color: color || t.textLo, fontSize: 12, textAlign: "center", padding: 20, height: "100%", display: "grid", placeItems: "center" }}>
+      {msg}
     </div>
   );
 }
