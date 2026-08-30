@@ -30,6 +30,123 @@ type Tokens = any;
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const num = (n: number) => (n || 0).toLocaleString("es-MX");
 
+// Convierte "#RRGGBB" a rgba(r,g,b,alpha). Si el input no es hex, lo devuelve tal cual.
+function withAlpha(hex: string | undefined, a: number): string {
+  if (!hex) return `rgba(19, 28, 46, ${a})`;
+  if (hex.startsWith("rgba")) return hex;
+  if (!hex.startsWith("#") || hex.length < 7) return hex;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+// Estilo "cristal" (glassmorphism) para contenedores. Fondo semi-transparente
+// + blur del fondo detras. Fallback a color solido en navegadores sin support.
+function glass(t: Tokens, alpha = 0.55): CSSProperties {
+  const base = t.panel || "#131C2E";
+  return {
+    background: withAlpha(base, alpha),
+    backdropFilter: "blur(14px) saturate(140%)",
+    WebkitBackdropFilter: "blur(14px) saturate(140%)",
+    borderColor: withAlpha(t.textHi || "#E8EEFA", 0.09),
+  };
+}
+
+// Genera path SVG suavizado (curva Catmull-Rom → cubic Bezier). Elimina las
+// puntas angulares del grafico de linea.
+function smoothPath(points: { x: number; y: number }[]): string {
+  if (!points.length) return "";
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] || points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] || p2;
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+// Diccionario de traduccion ES → EN para textos que llegan del backend
+// (KPI labels/subs, alertas, operational hints). Si no matchea, devuelve el
+// original — asi seguimos leyendo cualquier texto nuevo sin romper.
+const ES_EN: Record<string, string> = {
+  // KPI hero labels
+  "Ingresos": "Revenue",
+  "Utilidad neta": "Net profit",
+  "Pedidos": "Orders",
+  "Ticket promedio": "Avg. ticket",
+  "Margen de ganancia": "Profit margin",
+  "Margen": "Margin",
+  "Cuentas por cobrar": "Receivables",
+  "Utilidad / Ingresos": "Profit / Revenue",
+  // Operational KPI labels
+  "Cumplimiento de meta": "Goal achievement",
+  "Margen neto vs objetivo": "Net margin vs target",
+  "Cobranza del periodo": "Collections in period",
+  "Cobranza del período": "Collections in period",
+  "Salud del inventario": "Inventory health",
+  "Real vs forecast del mes": "Actual vs forecast",
+  "Objetivo 25% margen": "Target 25% margin",
+  "Pagado / Vendido": "Paid / Sold",
+  "Pagado / vendido": "Paid / Sold",
+  "% SKUs sobre punto de reorden": "% SKUs above reorder point",
+  // Alertas / labels
+  "CARTERA": "AR",
+  "RETAIL": "RETAIL",
+  "STOCK": "STOCK",
+  "INVENTARIO": "INVENTORY",
+  "FINANZAS": "FINANCE",
+  "Saldo pendiente": "Outstanding balance",
+  "Sobreinventario": "Overstock",
+  "Punto de reorden alcanzado": "Reorder point reached",
+  // Financial KPI labels
+  "Liquidez corriente": "Current ratio",
+  "Endeudamiento": "Leverage",
+  "Rotacion de inventario": "Inventory turnover",
+  "Rotación de inventario": "Inventory turnover",
+  "Dias de cobranza": "DSO",
+  "Días de cobranza": "DSO",
+  "Dias de pago": "DPO",
+  "Días de pago": "DPO",
+  "Activo / Pasivo corto plazo": "Assets / short-term liabilities",
+  "Pasivo / Activo total": "Liabilities / total assets",
+  "Dias promedio de cobro": "Avg. collection days",
+  "Días promedio de cobro": "Avg. collection days",
+  "Dias promedio de pago": "Avg. payment days",
+  "Días promedio de pago": "Avg. payment days",
+  "AR / Ventas × dias": "AR / Sales × days",
+  "AR / Ventas x dias": "AR / Sales × days",
+  "Captura balance en Contabilidad": "Enter balance sheet in Accounting",
+  "Sin COGS o inventario capturado": "No COGS or inventory captured",
+};
+
+function tr(s: string | null | undefined, lang: "es" | "en"): string {
+  if (s == null) return "";
+  if (lang === "es") return s;
+  // Match exacto primero
+  if (ES_EN[s]) return ES_EN[s];
+  // Patrones con numeros dinamicos: "3 órdenes con saldo", "2 pedidos", "45 días"
+  let out = s;
+  out = out.replace(/^(\d+)\s+ó?rdenes?\s+con\s+saldo$/i, (_m, n) => `${n} order${n === "1" ? "" : "s"} with balance`);
+  out = out.replace(/^(\d+)\s+pedidos?$/i, (_m, n) => `${n} order${n === "1" ? "" : "s"}`);
+  out = out.replace(/(\d+)\s+d[ií]as?\s+atr[aá]s/gi, "$1 days ago");
+  out = out.replace(/(\d+)\s+d[ií]as?/gi, "$1 days");
+  out = out.replace(/(\d+)\s+sem\.?/gi, "$1 wk");
+  out = out.replace(/(\d+)\s+u\b/gi, "$1u");
+  out = out.replace(/(\d+)\s+ped\.?/gi, "$1 ord.");
+  out = out.replace(/^m[aá]x\s+/i, "max ");
+  out = out.replace(/^rp:\s*/i, "reorder: ");
+  return out;
+}
+
 interface Props {
   t: Tokens;
   lang?: "es" | "en";
@@ -57,6 +174,8 @@ const I18N = {
     noChannel: "Sin ventas por canal", noAlerts: "Sin alertas activas ✓",
     noSalesPeriod: "Sin ventas en el periodo",
     vsAnterior: "vs anterior",
+    chartCurrent: "Actual", chartPrev: "Periodo anterior",
+    objective: "objetivo", anterior: "anterior",
     ordersW: (n: number) => `${n} pedido${n !== 1 ? "s" : ""}`,
     statesWithSales: (n: number) => `Mexico · ${n} estados con venta`,
   },
@@ -79,6 +198,8 @@ const I18N = {
     noChannel: "No channel sales", noAlerts: "No active alerts ✓",
     noSalesPeriod: "No sales in the period",
     vsAnterior: "vs previous",
+    chartCurrent: "Current", chartPrev: "Previous period",
+    objective: "target", anterior: "previous",
     ordersW: (n: number) => `${n} order${n !== 1 ? "s" : ""}`,
     statesWithSales: (n: number) => `Mexico · ${n} states with sales`,
   },
@@ -126,7 +247,8 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
   };
   const [customStart, setCustomStart] = useState<string>(isoDaysAgo(30));
   const [customEnd, setCustomEnd] = useState<string>(isoToday());
-  const L = I18N[lang] || I18N.es;
+  const baseL = I18N[lang] || I18N.es;
+  const L = { ...baseL, tr: (s: string | null | undefined) => tr(s, lang) };
   const locale = lang === "en" ? "en-US" : "es-MX";
 
   const load = async () => {
@@ -259,7 +381,7 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       {/* Fila 2 — Ventas del periodo (8) + Top 5 clientes (4) */}
       <div style={{ ...gridBase, marginBottom: 14 }}>
         <PanelCard t={t} title={L.salesPeriod} subtitle={L.vsPrev}
-          hint={data.trend_sales?.length ? `${mxn(sumPoints(data.trend_sales, "revenue"))} / ${mxn(sumPoints(data.trend_sales, "prev_revenue"))} anterior` : undefined}
+          hint={data.trend_sales?.length ? `${mxn(sumPoints(data.trend_sales, "revenue"))} / ${mxn(sumPoints(data.trend_sales, "prev_revenue"))} ${L.anterior}` : undefined}
           span={isMobile ? undefined : 8} minH={320}>
           <SalesTrendChart data={data.trend_sales || []} t={t} L={L} />
         </PanelCard>
@@ -303,12 +425,12 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
 
         <PanelCard t={t} title={L.opKpis} hint={L.opSub}
           span={isMobile ? undefined : 4}>
-          <OperationalBars kpis={data.operational_kpis || []} t={t} />
+          <OperationalBars kpis={data.operational_kpis || []} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.finKpis} hint={L.finSub}
           span={isMobile ? undefined : 4}>
-          <FinancialKPIs kpis={data.financial_kpis || []} t={t}
+          <FinancialKPIs kpis={data.financial_kpis || []} t={t} L={L}
             onClick={() => nav("contabilidad")} />
         </PanelCard>
       </div>
@@ -333,7 +455,7 @@ function PanelCard({
   children: any; span?: number; minH?: number;
 }) {
   const style: CSSProperties = {
-    background: t.panel,
+    ...glass(t, 0.55),
     border: `1px solid ${t.border}`,
     borderRadius: 14,
     padding: "16px 18px",
@@ -341,18 +463,25 @@ function PanelCard({
     minHeight: minH || 220,
     position: "relative",
     overflow: "hidden",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03), 0 1px 2px rgba(0,0,0,0.15)",
   };
   if (span) style.gridColumn = `span ${span}`;
   return (
     <div style={style}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <div>
+      {/* Highlight superior tipo cristal */}
+      <div style={{
+        position: "absolute", top: 0, left: 0, right: 0, height: 60,
+        background: "linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0) 100%)",
+        pointerEvents: "none",
+      }} />
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12, gap: 8, position: "relative" }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: t.textLo, fontWeight: 700 }}>{title}</div>
           {subtitle && <div style={{ fontSize: 11, color: t.textLo, marginTop: 2 }}>{subtitle}</div>}
         </div>
-        {hint && <div style={{ fontSize: 10, color: t.textLo, fontVariantNumeric: "tabular-nums" }}>{hint}</div>}
+        {hint && <div style={{ fontSize: 10, color: t.textLo, fontVariantNumeric: "tabular-nums", textAlign: "right", flexShrink: 0 }}>{hint}</div>}
       </div>
-      <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>{children}</div>
     </div>
   );
 }
@@ -381,20 +510,28 @@ function KpiHero({
         gridColumn: isMobile ? "span 1" : "span 2",
         position: "relative",
         display: "flex", flexDirection: "column",
-        background: `linear-gradient(180deg, ${t.panel} 0%, ${t.panel2 || t.panel} 100%)`,
+        ...glass(t, 0.5),
         border: `1px solid ${hover ? accent + "77" : t.border}`,
         borderRadius: 14,
         padding: "16px 18px 14px",
-        minHeight: 130,
+        minHeight: 140,
         cursor: onClick ? "pointer" : "default",
         overflow: "hidden",
         transform: hover ? "translateY(-2px)" : "none",
-        boxShadow: hover ? "0 8px 24px rgba(0,0,0,0.35)" : "none",
+        boxShadow: hover
+          ? `0 10px 28px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.05)`
+          : "inset 0 1px 0 rgba(255,255,255,0.04), 0 1px 2px rgba(0,0,0,0.15)",
         transition: "transform .15s ease, border-color .15s ease, box-shadow .15s ease",
       }}
     >
       {/* Accent bar top */}
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: accent, opacity: 0.55 }} />
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: accent, opacity: 0.6 }} />
+      {/* Highlight cristal superior */}
+      <div style={{
+        position: "absolute", top: 2, left: 0, right: 0, height: 50,
+        background: "linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 100%)",
+        pointerEvents: "none",
+      }} />
 
       {/* Chevron esquina */}
       <span style={{
@@ -417,7 +554,10 @@ function KpiHero({
       <div style={{
         fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase",
         color: t.textLo, fontWeight: 700, marginBottom: 4,
-      }}>{kpi.label}</div>
+        lineHeight: 1.25, minHeight: 12,
+        // Permite wrap para labels largos en ingles ("Accounts receivable")
+        wordBreak: "break-word",
+      }}>{L.tr(kpi.label)}</div>
 
       <div style={{
         fontSize: 24, fontWeight: 700, color: t.textHi, lineHeight: 1.05, marginBottom: 4,
@@ -426,12 +566,12 @@ function KpiHero({
 
       <div style={{
         fontSize: 11.5, fontWeight: 600, color: deltaColor, marginTop: "auto",
-        display: "flex", alignItems: "center", gap: 4,
+        display: "flex", alignItems: "baseline", gap: 4, flexWrap: "wrap",
       }}>
-        {deltaSign && <span>{deltaSign} {Math.abs(kpi.delta_pct as number).toFixed(1)}%</span>}
+        {deltaSign && <span style={{ whiteSpace: "nowrap" }}>{deltaSign} {Math.abs(kpi.delta_pct as number).toFixed(1)}%</span>}
         {!deltaSign && <span>—</span>}
-        <span style={{ color: t.textLo, fontWeight: 500 }}>
-          {kpi.delta_pct != null ? L.vsAnterior : (kpi.sub || "")}
+        <span style={{ color: t.textLo, fontWeight: 500, fontSize: 10.5 }}>
+          {kpi.delta_pct != null ? L.vsAnterior : L.tr(kpi.sub || "")}
         </span>
       </div>
 
@@ -473,12 +613,17 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
   const y = (v: number) => padT + innerH - ((v || 0) / maxVal) * innerH;
   const x = (i: number) => padL + i * step;
 
-  const buildLine = (getV: (d: TrendPoint) => number) =>
-    safe.map((d, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(getV(d)).toFixed(1)}`).join(" ");
-  const buildArea = () =>
-    `M ${padL} ${padT + innerH} `
-    + safe.map((d, i) => `L ${x(i).toFixed(1)} ${y(d.revenue || 0).toFixed(1)}`).join(" ")
-    + ` L ${x(safe.length - 1).toFixed(1)} ${padT + innerH} Z`;
+  // Curva suave: convierte los puntos a Bezier cubico (Catmull-Rom) para que
+  // los picos sean redondeados en vez de puntas angulares.
+  const points = (getV: (d: TrendPoint) => number) =>
+    safe.map((d, i) => ({ x: x(i), y: y(getV(d)) }));
+  const buildLine = (getV: (d: TrendPoint) => number) => smoothPath(points(getV));
+  const buildArea = () => {
+    const pts = points(d => d.revenue || 0);
+    const curve = smoothPath(pts);
+    if (!curve) return "";
+    return `${curve} L ${pts[pts.length - 1].x.toFixed(1)} ${(padT + innerH).toFixed(1)} L ${pts[0].x.toFixed(1)} ${(padT + innerH).toFixed(1)} Z`;
+  };
 
   const [hover, setHover] = useState<{ i: number; mx: number; my: number } | null>(null);
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -556,8 +701,8 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
       )}
       {/* Legend */}
       <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 11, color: t.textMid }}>
-        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: nova, marginRight: 6, verticalAlign: "middle" }} />Actual</span>
-        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: dim, marginRight: 6, verticalAlign: "middle" }} />Periodo anterior</span>
+        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: nova, marginRight: 6, verticalAlign: "middle" }} />{L.chartCurrent}</span>
+        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: dim, marginRight: 6, verticalAlign: "middle" }} />{L.chartPrev}</span>
       </div>
     </div>
   );
@@ -679,7 +824,7 @@ function MetaBubble({ data, t, L }: { data: any; t: Tokens; L: any }) {
       {hasGoal && (
         <div style={{ textAlign: "center", fontSize: 11, color: t.textMid, fontVariantNumeric: "tabular-nums" }}>
           <b style={{ color: t.textHi, fontWeight: 600 }}>{mxn(data.real)}</b>
-          {" / "}{mxn(data.goal)}{" objetivo"}
+          {" / "}{mxn(data.goal)} {L.objective}
         </div>
       )}
     </div>
@@ -739,7 +884,7 @@ function ChannelDonut({ data, total, t, L }: {
             {focused ? focused.share_pct.toFixed(0) : 0}%
           </div>
           <div style={{ fontSize: 9, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110 }}>
-            {focused?.label || "—"}
+            {focused ? L.tr(focused.label) : "—"}
           </div>
           <div style={{ fontSize: 10, color: t.textMid, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
             {focused ? mxn(focused.revenue) : ""}
@@ -760,7 +905,7 @@ function ChannelDonut({ data, total, t, L }: {
               cursor: "pointer",
             }}>
             <span style={{ width: 10, height: 10, borderRadius: 3, background: CHANNEL_PALETTE[i % CHANNEL_PALETTE.length] }} />
-            <span style={{ color: t.textMid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.label}</span>
+            <span style={{ color: t.textMid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{L.tr(d.label)}</span>
             <span style={{ color: t.textHi, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{mxn(d.revenue)}</span>
             <span style={{ color: t.textLo, fontSize: 11, minWidth: 32, textAlign: "right" }}>{d.share_pct.toFixed(0)}%</span>
           </div>
@@ -772,7 +917,7 @@ function ChannelDonut({ data, total, t, L }: {
 
 
 // ── KPIs operativos (barras con nota + valor) ──────────────────────
-function OperationalBars({ kpis, t }: { kpis: OperationalKPIRow[]; t: Tokens }) {
+function OperationalBars({ kpis, t, L }: { kpis: OperationalKPIRow[]; t: Tokens; L: any }) {
   const colorFor = (hint?: string | null) => {
     switch (hint) {
       case "good": return t.good || "#22C55E";
@@ -801,8 +946,8 @@ function OperationalBars({ kpis, t }: { kpis: OperationalKPIRow[]; t: Tokens }) 
             gap: 12,
           }}>
             <div>
-              <div style={{ fontSize: 12, color: t.textMid, fontWeight: 500 }}>{k.label}</div>
-              {k.hint && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 1 }}>{k.hint}</div>}
+              <div style={{ fontSize: 12, color: t.textMid, fontWeight: 500 }}>{L.tr(k.label)}</div>
+              {k.hint && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 1 }}>{L.tr(k.hint)}</div>}
             </div>
             <div style={{ fontSize: 14, fontWeight: 700, color: c, fontVariantNumeric: "tabular-nums", textAlign: "right" }}>
               {k.value_pct.toFixed(0)}%
@@ -842,10 +987,10 @@ function AlertList({ alerts, t, L, onClick }: {
               fontSize: 8.5, fontWeight: 800,
               padding: "3px 6px", borderRadius: 4,
               background: accent + "33", color: accent, textAlign: "center",
-            }}>{a.label}</span>
+            }}>{L.tr(a.label)}</span>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</div>
-              {a.subtitle && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.subtitle}</div>}
+              <div style={{ fontSize: 12, fontWeight: 600, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{L.tr(a.title)}</div>
+              {a.subtitle && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{L.tr(a.subtitle)}</div>}
             </div>
             {a.reference && (
               <div style={{ fontSize: 11, fontWeight: 700, color: accent, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
@@ -913,8 +1058,8 @@ function GeoBig({ geo, t, L }: {
 
 
 // ── KPIs financieros (2x2 tiles con border-left color) ─────────────
-function FinancialKPIs({ kpis, t, onClick }: {
-  kpis: FinancialKPIRow[]; t: Tokens; onClick?: () => void;
+function FinancialKPIs({ kpis, t, L, onClick }: {
+  kpis: FinancialKPIRow[]; t: Tokens; L: any; onClick?: () => void;
 }) {
   const accentFor = (status: string): string => {
     switch (status) {
@@ -942,9 +1087,9 @@ function FinancialKPIs({ kpis, t, onClick }: {
             onMouseEnter={(e) => { if (onClick) (e.currentTarget as HTMLDivElement).style.transform = "translateY(-1px)"; }}
             onMouseLeave={(e) => { if (onClick) (e.currentTarget as HTMLDivElement).style.transform = "none"; }}
           >
-            <div style={{ fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.textLo, fontWeight: 700, marginBottom: 4 }}>{k.label}</div>
+            <div style={{ fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.textLo, fontWeight: 700, marginBottom: 4 }}>{L.tr(k.label)}</div>
             <div style={{ fontSize: 22, fontWeight: 700, color: k.available ? t.textHi : t.textLo, fontVariantNumeric: "tabular-nums" }}>{k.display}</div>
-            {k.subtitle && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2 }}>{k.subtitle}</div>}
+            {k.subtitle && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2 }}>{L.tr(k.subtitle)}</div>}
           </div>
         );
       })}
