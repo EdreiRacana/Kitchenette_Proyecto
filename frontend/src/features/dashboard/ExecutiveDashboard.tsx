@@ -351,8 +351,8 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
 
   // Layout de la grid principal (12 columnas). Se colapsa a 1 columna en movil.
   const gridBase = isMobile
-    ? { display: "grid", gridTemplateColumns: "1fr", gap: 14 }
-    : { display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 16 };
+    ? { display: "grid", gridTemplateColumns: "1fr", gap: 10 }
+    : { display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 };
 
   const rangeBtn = (active: boolean): CSSProperties => ({
     padding: "6px 12px", fontSize: 12, fontWeight: 600,
@@ -410,7 +410,7 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       </div>
 
       {/* Fila 1 — 6 KPIs hero */}
-      <div style={{ ...gridBase, marginBottom: 16 }}>
+      <div style={{ ...gridBase, marginBottom: 12 }}>
         {data.kpis.map(k => (
           <KpiHero key={k.key} kpi={k} t={t} isMobile={isMobile}
             accent={KPI_ACCENT[k.key] || t.nova}
@@ -422,38 +422,38 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       </div>
 
       {/* Fila 2 — Ventas del periodo (8) + Top 5 clientes (4) */}
-      <div style={{ ...gridBase, marginBottom: 16 }}>
+      <div style={{ ...gridBase, marginBottom: 12 }}>
         <PanelCard t={t} title={L.salesPeriod} subtitle={L.vsPrev}
           hint={data.trend_sales?.length ? `${mxn(sumPoints(data.trend_sales, "revenue"))} / ${mxn(sumPoints(data.trend_sales, "prev_revenue"))} ${L.anterior}` : undefined}
-          span={isMobile ? undefined : 8} minH={240}>
+          span={isMobile ? undefined : 8} minH={220}>
           <SalesTrendChart data={data.trend_sales || []} t={t} L={L} />
         </PanelCard>
         <PanelCard t={t} title={L.top5Cust} hint={L.ofPeriod}
-          span={isMobile ? undefined : 4} minH={240}>
+          span={isMobile ? undefined : 4} minH={220}>
           <TopCustomers rows={data.top_customers || []} t={t} L={L}
             onSelect={(id) => id && nav("clientes")} />
         </PanelCard>
       </div>
 
       {/* Fila 3 — Meta (4) + Canal (4) + Geografia (4, mapa GRANDE) */}
-      <div style={{ ...gridBase, marginBottom: 16 }}>
+      <div style={{ ...gridBase, marginBottom: 12 }}>
         <PanelCard t={t} title={L.metaVsReal}
           hint={
             data.meta_vs_real.basis === "previous_period" ? L.basisPrev
               : data.meta_vs_real.basis === "none" ? L.basisNone
                 : L.basisForecast
           }
-          span={isMobile ? undefined : 4} minH={280}>
+          span={isMobile ? undefined : 4} minH={240}>
           <MetaBubble data={data.meta_vs_real} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.channels} hint={L.ofPeriod}
-          span={isMobile ? undefined : 4} minH={280}>
+          span={isMobile ? undefined : 4} minH={240}>
           <ChannelDonut data={data.channel_sales.channels || []} total={data.channel_sales.total_revenue} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.geoDist} hint={L.topStates}
-          span={isMobile ? undefined : 4} minH={280}>
+          span={isMobile ? undefined : 4} minH={240}>
           <GeoBig geo={data.geographic} t={t} L={L} />
         </PanelCard>
       </div>
@@ -461,18 +461,18 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       {/* Fila 4 — Alertas (4) + KPIs Op (4) + Financieros (4) */}
       <div style={{ ...gridBase }}>
         <PanelCard t={t} title={L.alerts} hint={L.top4}
-          span={isMobile ? undefined : 4} minH={240}>
+          span={isMobile ? undefined : 4} minH={220}>
           <AlertList alerts={(data.alerts || []).slice(0, 4)} t={t} L={L}
             onClick={(a) => nav(a.module === "finance" ? "finanzas" : a.module === "retail" ? "retail" : "inventario")} />
         </PanelCard>
 
         <PanelCard t={t} title={L.opKpis} hint={L.opSub}
-          span={isMobile ? undefined : 4} minH={240}>
+          span={isMobile ? undefined : 4} minH={220}>
           <OperationalBars kpis={data.operational_kpis || []} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.finKpis} hint={L.finSub}
-          span={isMobile ? undefined : 4} minH={240}>
+          span={isMobile ? undefined : 4} minH={220}>
           <FinancialKPIs kpis={data.financial_kpis || []} t={t} L={L}
             onClick={() => nav("contabilidad")} />
         </PanelCard>
@@ -501,7 +501,7 @@ function PanelCard({
     ...glass(t, 0.55),
     border: `1px solid ${t.border}`,
     borderRadius: 12,
-    padding: "18px 20px",
+    padding: "14px 16px",
     display: "flex", flexDirection: "column",
     minHeight: minH || 220,
     position: "relative",
@@ -556,8 +556,8 @@ function KpiHero({
         ...glass(t, 0.5),
         border: `1px solid ${hover ? accent + "77" : t.border}`,
         borderRadius: 12,
-        padding: "16px 18px 14px",
-        minHeight: 128,
+        padding: "14px 16px 12px",
+        minHeight: 108,
         cursor: onClick ? "pointer" : "default",
         overflow: "hidden",
         transform: hover ? "translateY(-2px)" : "none",
@@ -700,7 +700,7 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
   const cur = hover && safe[hover.i] ? safe[hover.i] : null;
 
   return (
-    <div style={{ position: "relative", width: "100%", height: 180, display: "flex", flexDirection: "column" }}
+    <div style={{ position: "relative", width: "100%", height: 160, display: "flex", flexDirection: "column" }}
       onMouseMove={onMove} onMouseLeave={onLeave}>
       <div style={{ flex: 1, minHeight: 0 }}>
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%", display: "block" }}>
@@ -715,7 +715,7 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
             <line key={i} x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke={grid} strokeWidth="0.5" opacity="0.6" />
           ))}
           {/* Y labels */}
-          <g fontFamily="Inter, sans-serif" fontSize="10" fill={dim}>
+          <g fontFamily="Inter, sans-serif" fontSize="11" fill={dim} fontWeight="500">
             {yLabels.map((v, i) => (
               <text key={i} x={padL - 6} y={y(v) + 3} textAnchor="end">{formatShort(v)}</text>
             ))}
@@ -725,7 +725,7 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
           {/* Area actual */}
           <path d={buildArea()} fill={`url(#${gid})`} />
           {/* Linea actual */}
-          <path d={buildLine(d => d.revenue || 0)} fill="none" stroke={nova} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+          <path d={buildLine(d => d.revenue || 0)} fill="none" stroke={nova} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
           {/* Endpoint */}
           {safe.length > 0 && (
             <circle cx={x(safe.length - 1)} cy={y(safe[safe.length - 1].revenue || 0)} r="4" fill={nova} stroke={t.panel || "#0A111E"} strokeWidth="2" />
@@ -739,7 +739,7 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
             </>
           )}
           {/* X labels */}
-          <g fontFamily="Inter, sans-serif" fontSize="9.5" fill={dim} textAnchor="middle">
+          <g fontFamily="Inter, sans-serif" fontSize="10.5" fill={dim} textAnchor="middle" fontWeight="500">
             {xLabels.map(i => (
               <text key={i} x={x(i)} y={H - 10}>{safe[i]?.label || ""}</text>
             ))}
@@ -868,7 +868,8 @@ function TopCustomers({ rows, t, L, onSelect }: {
 function MetaBubble({ data, t, L }: { data: any; t: Tokens; L: any }) {
   const hasGoal = data?.goal > 0;
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%", justifyContent: "space-between", gap: 6 }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 8 }}>
+      {/* Burbuja arriba llenando todo el ancho disponible del panel */}
       <div style={{ flex: 1, display: "grid", placeItems: "center", width: "100%", minHeight: 0 }}>
         {hasGoal ? (
           <LiquidCore
@@ -876,20 +877,26 @@ function MetaBubble({ data, t, L }: { data: any; t: Tokens; L: any }) {
             t={t}
             sub={L.ofGoal}
             hue="blue"
-            liquidOpacity={0.62}
-            style={{ maxWidth: 200 }}
+            liquidOpacity={0.55}
+            style={{ maxWidth: 220, width: "100%" }}
           />
         ) : (
-          <div style={{ textAlign: "center", padding: 20 }}>
+          <div style={{ textAlign: "center", padding: 12 }}>
             <div style={{ fontSize: 28, color: t.textHi, fontWeight: 800 }}>{mxn(data?.real || 0)}</div>
             <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 4, maxWidth: 220 }}>{L.noMeta}</div>
           </div>
         )}
       </div>
+      {/* Footer con la comparativa real vs objetivo, tipografia grande y horizontal */}
       {hasGoal && (
-        <div style={{ textAlign: "center", fontSize: 11, color: t.textMid, fontVariantNumeric: "tabular-nums" }}>
-          <b style={{ color: t.textHi, fontWeight: 600 }}>{mxn(data.real)}</b>
-          {" / "}{mxn(data.goal)} {L.objective}
+        <div style={{
+          display: "flex", alignItems: "baseline", justifyContent: "center",
+          gap: 10, paddingTop: 6, borderTop: `1px solid ${withAlpha(t.border || "#223154", 0.5)}`,
+        }}>
+          <span style={{ fontSize: 16, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(data.real)}</span>
+          <span style={{ fontSize: 12, color: t.textLo }}>/</span>
+          <span style={{ fontSize: 13, color: t.textMid, fontVariantNumeric: "tabular-nums" }}>{mxn(data.goal)}</span>
+          <span style={{ fontSize: 10.5, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.08em" }}>{L.objective}</span>
         </div>
       )}
     </div>
@@ -903,7 +910,7 @@ function ChannelDonut({ data, total, t, L }: {
 }) {
   if (!data?.length || total === 0) return <EmptyMsg t={t} msg={L.noChannel} />;
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const cx = 21, cy = 21, r = 15.9, w = 5.5;
+  const cx = 21, cy = 21, r = 15.9, w = 4.5;
   let accum = 0;
   const rings = data.map((d, i) => {
     const share = d.revenue / total;
@@ -913,15 +920,15 @@ function ChannelDonut({ data, total, t, L }: {
     accum += share;
     const isHover = hoverIdx === i;
     const color = CHANNEL_PALETTE[i % CHANNEL_PALETTE.length];
-    // Anillo translucido: fill translucido con borde solido; se satura en hover.
+    // Anillo mas translucido en normal, saturado en hover
     return (
       <circle key={i} cx={cx} cy={cy} r={r} fill="transparent"
-        stroke={withAlpha(color, isHover ? 0.95 : 0.55)}
+        stroke={withAlpha(color, isHover ? 0.95 : 0.4)}
         strokeWidth={isHover ? w + 1.5 : w}
         strokeDasharray={`${dashLen} ${rest}`}
         strokeDashoffset={offset}
         transform={`rotate(-90 ${cx} ${cy})`}
-        opacity={hoverIdx == null || isHover ? 1 : 0.5}
+        opacity={hoverIdx == null || isHover ? 1 : 0.45}
         style={{ cursor: "pointer", transition: "stroke-width .15s, opacity .15s, stroke .15s" }}
         onMouseEnter={() => setHoverIdx(i)}
         onMouseLeave={() => setHoverIdx(null)}
@@ -935,11 +942,11 @@ function ChannelDonut({ data, total, t, L }: {
   const focusColor = CHANNEL_PALETTE[focusIdx % CHANNEL_PALETTE.length];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: 20, alignItems: "center", height: "100%", padding: "6px 0" }}>
-      {/* Donut compacto y translucido; el foco actual (hover o top) se ve en el centro */}
-      <div style={{ position: "relative", width: 150, height: 150, flexShrink: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%", gap: 10, padding: "2px 0" }}>
+      {/* Anillo arriba, centrado */}
+      <div style={{ position: "relative", width: 120, height: 120, flexShrink: 0 }}>
         <svg viewBox="0 0 42 42" style={{ width: "100%", height: "100%" }}>
-          <circle cx={cx} cy={cy} r={r} fill="transparent" stroke={withAlpha(t.border || "#1B2540", 0.4)} strokeWidth={w} />
+          <circle cx={cx} cy={cy} r={r} fill="transparent" stroke={withAlpha(t.border || "#1B2540", 0.3)} strokeWidth={w} />
           {rings}
         </svg>
         <div style={{
@@ -958,8 +965,13 @@ function ChannelDonut({ data, total, t, L }: {
         </div>
       </div>
 
-      {/* Leyenda apilada (label arriba, monto abajo) para no cortar textos largos */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+      {/* Leyenda debajo del anillo, full width con scroll interno si hay muchos canales */}
+      <div style={{
+        display: "flex", flexDirection: "column", gap: 4,
+        width: "100%", minWidth: 0, flex: 1, minHeight: 0,
+        overflowY: "auto", overflowX: "hidden", paddingRight: 4,
+        scrollbarWidth: "thin",
+      }}>
         {data.map((d, i) => {
           const color = CHANNEL_PALETTE[i % CHANNEL_PALETTE.length];
           const isHover = hoverIdx === i;
