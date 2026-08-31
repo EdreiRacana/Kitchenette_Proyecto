@@ -421,21 +421,20 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
         ))}
       </div>
 
-      {/* Fila 2 — Ventas del periodo (8) + Top 5 clientes (4) */}
+      {/* Fila 2 — Ventas del periodo (8) + Distribucion geografica (4, mapa GRANDE) */}
       <div style={{ ...gridBase, marginBottom: 12 }}>
         <PanelCard t={t} title={L.salesPeriod} subtitle={L.vsPrev}
           hint={data.trend_sales?.length ? `${mxn(sumPoints(data.trend_sales, "revenue"))} / ${mxn(sumPoints(data.trend_sales, "prev_revenue"))} ${L.anterior}` : undefined}
-          span={isMobile ? undefined : 8} minH={220}>
+          span={isMobile ? undefined : 8} minH={300}>
           <SalesTrendChart data={data.trend_sales || []} t={t} L={L} />
         </PanelCard>
-        <PanelCard t={t} title={L.top5Cust} hint={L.ofPeriod}
-          span={isMobile ? undefined : 4} minH={220}>
-          <TopCustomers rows={data.top_customers || []} t={t} L={L}
-            onSelect={(id) => id && nav("clientes")} />
+        <PanelCard t={t} title={L.geoDist} hint={L.topStates}
+          span={isMobile ? undefined : 4} minH={300}>
+          <GeoBig geo={data.geographic} t={t} L={L} />
         </PanelCard>
       </div>
 
-      {/* Fila 3 — Meta (4) + Canal (4) + Geografia (4, mapa GRANDE) */}
+      {/* Fila 3 — Meta (4) + Canal (4) + Top 5 clientes (4) — compactas */}
       <div style={{ ...gridBase, marginBottom: 12 }}>
         <PanelCard t={t} title={L.metaVsReal}
           hint={
@@ -443,18 +442,19 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
               : data.meta_vs_real.basis === "none" ? L.basisNone
                 : L.basisForecast
           }
-          span={isMobile ? undefined : 4} minH={240}>
+          span={isMobile ? undefined : 4} minH={210}>
           <MetaBubble data={data.meta_vs_real} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.channels} hint={L.ofPeriod}
-          span={isMobile ? undefined : 4} minH={240}>
+          span={isMobile ? undefined : 4} minH={210}>
           <ChannelDonut data={data.channel_sales.channels || []} total={data.channel_sales.total_revenue} t={t} L={L} />
         </PanelCard>
 
-        <PanelCard t={t} title={L.geoDist} hint={L.topStates}
-          span={isMobile ? undefined : 4} minH={240}>
-          <GeoBig geo={data.geographic} t={t} L={L} />
+        <PanelCard t={t} title={L.top5Cust} hint={L.ofPeriod}
+          span={isMobile ? undefined : 4} minH={210}>
+          <TopCustomers rows={data.top_customers || []} t={t} L={L}
+            onSelect={(id) => id && nav("clientes")} />
         </PanelCard>
       </div>
 
@@ -878,7 +878,7 @@ function MetaBubble({ data, t, L }: { data: any; t: Tokens; L: any }) {
             sub={L.ofGoal}
             hue="blue"
             liquidOpacity={0.55}
-            style={{ maxWidth: 220, width: "100%" }}
+            style={{ maxWidth: 130, width: "100%" }}
           />
         ) : (
           <div style={{ textAlign: "center", padding: 12 }}>
@@ -944,7 +944,7 @@ function ChannelDonut({ data, total, t, L }: {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%", gap: 10, padding: "2px 0" }}>
       {/* Anillo arriba, centrado */}
-      <div style={{ position: "relative", width: 120, height: 120, flexShrink: 0 }}>
+      <div style={{ position: "relative", width: 100, height: 100, flexShrink: 0 }}>
         <svg viewBox="0 0 42 42" style={{ width: "100%", height: "100%" }}>
           <circle cx={cx} cy={cy} r={r} fill="transparent" stroke={withAlpha(t.border || "#1B2540", 0.3)} strokeWidth={w} />
           {rings}
@@ -955,11 +955,11 @@ function ChannelDonut({ data, total, t, L }: {
           alignItems: "center", justifyContent: "center",
           pointerEvents: "none", textAlign: "center", padding: 6,
         }}>
-          <div style={{ fontSize: 26, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
             {focused ? focused.share_pct.toFixed(0) : 0}%
           </div>
           <div title={focused ? L.tr(focused.label) : undefined}
-            style={{ fontSize: 9, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.12em", marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110, fontWeight: 700 }}>
+            style={{ fontSize: 8.5, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 80, fontWeight: 700 }}>
             {focused ? L.tr(focused.label) : "—"}
           </div>
         </div>
@@ -1121,7 +1121,7 @@ function GeoBig({ geo, t, L }: {
     <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%", minHeight: 0 }}>
       {/* Mapa — tamano y posicion fijos, no se mueven al crecer la lista */}
       <div style={{
-        width: "100%", height: 220, flexShrink: 0,
+        width: "100%", height: 190, flexShrink: 0,
         background: t.panel2 || t.panel,
         borderRadius: 10, padding: 8, display: "flex", alignItems: "center", justifyContent: "center",
         overflow: "hidden", position: "relative",
@@ -1135,11 +1135,11 @@ function GeoBig({ geo, t, L }: {
           {L.statesWithSales(allStates.length)}
         </div>
       </div>
-      {/* Lista de estados — se hace scroll cuando hay muchos */}
+      {/* Lista de estados — toma el espacio restante y hace scroll si excede */}
       <div style={{
         display: "flex", flexDirection: "column", gap: 4,
         flex: 1, minHeight: 0,
-        maxHeight: 176, overflowY: "auto", overflowX: "hidden",
+        overflowY: "auto", overflowX: "hidden",
         paddingRight: 4,
         scrollbarWidth: "thin",
       }}>
