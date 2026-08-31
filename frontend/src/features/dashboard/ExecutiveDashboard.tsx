@@ -363,7 +363,14 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
   });
 
   return (
-    <div style={{ padding: isMobile ? 12 : "20px 24px 32px", maxWidth: 1600, margin: "0 auto" }}>
+    <div style={{
+      padding: isMobile ? 12 : "20px 24px 32px",
+      maxWidth: isMobile ? undefined : 2000,
+      margin: "0 auto",
+      // Escala desktop al 80% para densidad tipo dashboard financiero pro
+      // sin tocar cada tipografia/tamano individual. Mobile queda al 100%.
+      ...(isMobile ? {} : { zoom: 0.8 } as any),
+    }}>
       {/* Page head */}
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 20 }}>
         <div>
