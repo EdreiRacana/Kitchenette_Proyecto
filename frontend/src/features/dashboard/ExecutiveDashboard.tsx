@@ -550,8 +550,8 @@ function KpiHero({
         ...glass(t, 0.5),
         border: `1px solid ${hover ? accent + "77" : t.border}`,
         borderRadius: 14,
-        padding: "16px 18px 14px",
-        minHeight: 140,
+        padding: "14px 18px 12px",
+        minHeight: 108,
         cursor: onClick ? "pointer" : "default",
         overflow: "hidden",
         transform: hover ? "translateY(-2px)" : "none",
@@ -579,30 +579,35 @@ function KpiHero({
         <ChevronRight size={14} />
       </span>
 
-      {/* Icono */}
-      <div style={{
-        width: 26, height: 26, borderRadius: 7,
-        background: accent + "2E", color: accent,
-        display: "grid", placeItems: "center", marginBottom: 8,
-      }}>
-        <Icon size={14} />
+      {/* Header: icono + titulo lado a lado. El titulo puede ocupar hasta 2 lineas. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, paddingRight: 18 }}>
+        <div style={{
+          width: 26, height: 26, borderRadius: 7,
+          background: accent + "2E", color: accent,
+          display: "grid", placeItems: "center", flexShrink: 0,
+        }}>
+          <Icon size={14} />
+        </div>
+        <div style={{
+          fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase",
+          color: t.textLo, fontWeight: 700,
+          lineHeight: 1.2,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+          wordBreak: "break-word",
+          minWidth: 0, flex: 1,
+        }}>{L.tr(kpi.label)}</div>
       </div>
 
       <div style={{
-        fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase",
-        color: t.textLo, fontWeight: 700, marginBottom: 4,
-        lineHeight: 1.25, minHeight: 12,
-        // Permite wrap para labels largos en ingles ("Accounts receivable")
-        wordBreak: "break-word",
-      }}>{L.tr(kpi.label)}</div>
-
-      <div style={{
-        fontSize: 24, fontWeight: 700, color: t.textHi, lineHeight: 1.05, marginBottom: 4,
+        fontSize: 22, fontWeight: 700, color: t.textHi, lineHeight: 1.05, marginBottom: 2,
         fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em",
       }}>{kpi.display}</div>
 
       <div style={{
-        fontSize: 11.5, fontWeight: 600, color: deltaColor, marginTop: "auto",
+        fontSize: 11, fontWeight: 600, color: deltaColor, marginTop: "auto",
         display: "flex", alignItems: "baseline", gap: 4, flexWrap: "wrap",
       }}>
         {deltaSign && <span style={{ whiteSpace: "nowrap" }}>{deltaSign} {Math.abs(kpi.delta_pct as number).toFixed(1)}%</span>}
@@ -622,14 +627,15 @@ function KpiHero({
 
 
 function Sparkline({ values, color }: { values: number[]; color: string }) {
-  const w = 60, h = 24;
+  // Compacta y translucida: refuerza el trend sin robar espacio al numero grande.
+  const w = 48, h = 16;
   const max = Math.max(1, ...values);
   const min = Math.min(...values);
   const range = Math.max(1, max - min);
   const step = values.length > 1 ? w / (values.length - 1) : w;
   const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(h - ((v - min) / range) * h).toFixed(1)}`).join(" ");
   return (
-    <svg style={{ position: "absolute", right: 12, bottom: 8, width: w, height: h, opacity: 0.7, pointerEvents: "none" }}
+    <svg style={{ position: "absolute", right: 14, bottom: 10, width: w, height: h, opacity: 0.5, pointerEvents: "none" }}
       viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
       <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
     </svg>
@@ -674,7 +680,8 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
 
   // Y-axis marks (3): 0, maxVal/2, maxVal
   const yLabels = [maxVal, maxVal / 2, 0];
-  const xLabels = pickXTicks(safe, 8);
+  // Fechas cada 3 dias (con techo de ~12 ticks para no saturar rangos largos).
+  const xLabels = pickXTicks(safe, 3, 12);
 
   const nova = t.nova || "#33B2F5";
   const dim = t.textLo || "#5D6A85";
@@ -746,11 +753,14 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
 }
 
 
-function pickXTicks(rows: TrendPoint[], target: number): number[] {
-  if (rows.length <= target) return rows.map((_, i) => i);
-  const step = Math.max(1, Math.floor(rows.length / target));
+// Selecciona ticks del eje X con paso de `stepDays` (por defecto cada 3 dias),
+// ampliando el paso automaticamente cuando el rango excede `maxTicks` para
+// que rangos largos (90/365 dias) no saturen el eje.
+function pickXTicks(rows: TrendPoint[], stepDays: number, maxTicks: number): number[] {
+  if (!rows.length) return [];
+  const stride = Math.max(stepDays, Math.ceil(rows.length / Math.max(1, maxTicks)));
   const idxs: number[] = [];
-  for (let i = 0; i < rows.length; i += step) idxs.push(i);
+  for (let i = 0; i < rows.length; i += stride) idxs.push(i);
   if (idxs[idxs.length - 1] !== rows.length - 1) idxs.push(rows.length - 1);
   return idxs;
 }
@@ -912,9 +922,9 @@ function ChannelDonut({ data, total, t, L }: {
   const focusColor = CHANNEL_PALETTE[focusIdx % CHANNEL_PALETTE.length];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 14, alignItems: "center", height: "100%", padding: "4px 0" }}>
-      {/* Donut mas grande, texto centrado compacto */}
-      <div style={{ position: "relative", width: 170, height: 170, flexShrink: 0 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 18, alignItems: "center", height: "100%", padding: "4px 2px" }}>
+      {/* Donut mas compacto; los % viven en el centro, la leyenda respira mas */}
+      <div style={{ position: "relative", width: 140, height: 140, flexShrink: 0 }}>
         <svg viewBox="0 0 42 42" style={{ width: "100%", height: "100%" }}>
           <circle cx={cx} cy={cy} r={r} fill="transparent" stroke={t.border || "#1B2540"} strokeWidth={w} />
           {rings}
@@ -925,20 +935,20 @@ function ChannelDonut({ data, total, t, L }: {
           alignItems: "center", justifyContent: "center",
           pointerEvents: "none", textAlign: "center", padding: 6,
         }}>
-          <div style={{ fontSize: 28, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
+          <div style={{ fontSize: 24, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
             {focused ? focused.share_pct.toFixed(0) : 0}%
           </div>
-          <div style={{ fontSize: 9.5, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.14em", marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 130, fontWeight: 700 }}>
+          <div style={{ fontSize: 9, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.14em", marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110, fontWeight: 700 }}>
             {focused ? L.tr(focused.label) : "—"}
           </div>
-          <div style={{ fontSize: 10.5, color: t.textMid, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
+          <div style={{ fontSize: 10, color: t.textMid, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
             {focused ? mxn(focused.revenue) : ""}
           </div>
         </div>
       </div>
 
-      {/* Leyenda pegada al donut, compacta */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+      {/* Leyenda con mas aire; el % vive dentro del donut para no cortarse */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
         {data.map((d, i) => {
           const color = CHANNEL_PALETTE[i % CHANNEL_PALETTE.length];
           const isHover = hoverIdx === i;
@@ -948,9 +958,9 @@ function ChannelDonut({ data, total, t, L }: {
               onMouseEnter={() => setHoverIdx(i)}
               onMouseLeave={() => setHoverIdx(null)}
               style={{
-                display: "grid", gridTemplateColumns: "12px 1fr auto auto",
-                alignItems: "center", gap: 8, fontSize: 12,
-                padding: "6px 8px", borderRadius: 6,
+                display: "grid", gridTemplateColumns: "12px minmax(0, 1fr) auto",
+                alignItems: "center", columnGap: 10, fontSize: 12,
+                padding: "7px 10px", borderRadius: 7,
                 background: isHover ? withAlpha(color, 0.12) : "transparent",
                 borderLeft: `2px solid ${isHover ? color : withAlpha(color, 0.35)}`,
                 opacity: dim ? 0.5 : 1,
@@ -964,8 +974,7 @@ function ChannelDonut({ data, total, t, L }: {
                 boxShadow: `inset 0 0 0 1px ${withAlpha(color, 0.9)}`,
               }} />
               <span style={{ color: t.textMid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{L.tr(d.label)}</span>
-              <span style={{ color: t.textHi, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{mxn(d.revenue)}</span>
-              <span style={{ color: t.textLo, fontSize: 11, minWidth: 32, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{d.share_pct.toFixed(0)}%</span>
+              <span style={{ color: t.textHi, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{mxn(d.revenue)}</span>
             </div>
           );
         })}
