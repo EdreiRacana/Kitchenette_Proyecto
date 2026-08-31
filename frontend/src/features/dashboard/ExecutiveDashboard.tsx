@@ -215,6 +215,9 @@ const I18N = {
     objective: "objetivo", anterior: "anterior",
     ordersW: (n: number) => `${n} pedido${n !== 1 ? "s" : ""}`,
     statesWithSales: (n: number) => `Mexico · ${n} estados con venta`,
+    captureBalance: "Capturar balance",
+    goToAccounting: "Ir a Contabilidad → Balance General",
+    channelCol: "Canal", channelRevCol: "Ingreso", channelShareCol: "%",
   },
   en: {
     title: "Indicator matrix", from: "From", to: "to", subtitleSuffix: "Executive view",
@@ -239,6 +242,9 @@ const I18N = {
     objective: "target", anterior: "previous",
     ordersW: (n: number) => `${n} order${n !== 1 ? "s" : ""}`,
     statesWithSales: (n: number) => `Mexico · ${n} states with sales`,
+    captureBalance: "Enter balance",
+    goToAccounting: "Go to Accounting → Balance Sheet",
+    channelCol: "Channel", channelRevCol: "Revenue", channelShareCol: "%",
   },
 } as const;
 
@@ -345,8 +351,8 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
 
   // Layout de la grid principal (12 columnas). Se colapsa a 1 columna en movil.
   const gridBase = isMobile
-    ? { display: "grid", gridTemplateColumns: "1fr", gap: 12 }
-    : { display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 14 };
+    ? { display: "grid", gridTemplateColumns: "1fr", gap: 14 }
+    : { display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 16 };
 
   const rangeBtn = (active: boolean): CSSProperties => ({
     padding: "6px 12px", fontSize: 12, fontWeight: 600,
@@ -361,7 +367,7 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       {/* Page head */}
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 20 }}>
         <div>
-          <h1 style={{ margin: "0 0 4px", fontSize: isMobile ? 20 : 22, fontWeight: 700, letterSpacing: "-0.015em", color: t.textHi }}>
+          <h1 style={{ margin: "0 0 4px", fontSize: isMobile ? 20 : 24, fontWeight: 700, letterSpacing: "-0.02em", color: t.textHi }}>
             {L.title}
           </h1>
           <div style={{ fontSize: 12, color: t.textLo }}>
@@ -404,7 +410,7 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       </div>
 
       {/* Fila 1 — 6 KPIs hero */}
-      <div style={{ ...gridBase, marginBottom: 14 }}>
+      <div style={{ ...gridBase, marginBottom: 16 }}>
         {data.kpis.map(k => (
           <KpiHero key={k.key} kpi={k} t={t} isMobile={isMobile}
             accent={KPI_ACCENT[k.key] || t.nova}
@@ -416,7 +422,7 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       </div>
 
       {/* Fila 2 — Ventas del periodo (8) + Top 5 clientes (4) */}
-      <div style={{ ...gridBase, marginBottom: 14 }}>
+      <div style={{ ...gridBase, marginBottom: 16 }}>
         <PanelCard t={t} title={L.salesPeriod} subtitle={L.vsPrev}
           hint={data.trend_sales?.length ? `${mxn(sumPoints(data.trend_sales, "revenue"))} / ${mxn(sumPoints(data.trend_sales, "prev_revenue"))} ${L.anterior}` : undefined}
           span={isMobile ? undefined : 8} minH={240}>
@@ -430,24 +436,24 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       </div>
 
       {/* Fila 3 — Meta (4) + Canal (4) + Geografia (4, mapa GRANDE) */}
-      <div style={{ ...gridBase, marginBottom: 14 }}>
+      <div style={{ ...gridBase, marginBottom: 16 }}>
         <PanelCard t={t} title={L.metaVsReal}
           hint={
             data.meta_vs_real.basis === "previous_period" ? L.basisPrev
               : data.meta_vs_real.basis === "none" ? L.basisNone
                 : L.basisForecast
           }
-          span={isMobile ? undefined : 4} minH={220}>
+          span={isMobile ? undefined : 4} minH={280}>
           <MetaBubble data={data.meta_vs_real} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.channels} hint={L.ofPeriod}
-          span={isMobile ? undefined : 4} minH={220}>
+          span={isMobile ? undefined : 4} minH={280}>
           <ChannelDonut data={data.channel_sales.channels || []} total={data.channel_sales.total_revenue} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.geoDist} hint={L.topStates}
-          span={isMobile ? undefined : 4} minH={220}>
+          span={isMobile ? undefined : 4} minH={280}>
           <GeoBig geo={data.geographic} t={t} L={L} />
         </PanelCard>
       </div>
@@ -455,18 +461,18 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       {/* Fila 4 — Alertas (4) + KPIs Op (4) + Financieros (4) */}
       <div style={{ ...gridBase }}>
         <PanelCard t={t} title={L.alerts} hint={L.top4}
-          span={isMobile ? undefined : 4} minH={200}>
+          span={isMobile ? undefined : 4} minH={240}>
           <AlertList alerts={(data.alerts || []).slice(0, 4)} t={t} L={L}
             onClick={(a) => nav(a.module === "finance" ? "finanzas" : a.module === "retail" ? "retail" : "inventario")} />
         </PanelCard>
 
         <PanelCard t={t} title={L.opKpis} hint={L.opSub}
-          span={isMobile ? undefined : 4} minH={200}>
+          span={isMobile ? undefined : 4} minH={240}>
           <OperationalBars kpis={data.operational_kpis || []} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.finKpis} hint={L.finSub}
-          span={isMobile ? undefined : 4} minH={200}>
+          span={isMobile ? undefined : 4} minH={240}>
           <FinancialKPIs kpis={data.financial_kpis || []} t={t} L={L}
             onClick={() => nav("contabilidad")} />
         </PanelCard>
@@ -494,13 +500,13 @@ function PanelCard({
   const style: CSSProperties = {
     ...glass(t, 0.55),
     border: `1px solid ${t.border}`,
-    borderRadius: 14,
-    padding: "16px 18px",
+    borderRadius: 12,
+    padding: "18px 20px",
     display: "flex", flexDirection: "column",
     minHeight: minH || 220,
     position: "relative",
     overflow: "hidden",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03), 0 1px 2px rgba(0,0,0,0.15)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04), 0 2px 8px rgba(0,0,0,0.18)",
   };
   if (span) style.gridColumn = `span ${span}`;
   return (
@@ -549,9 +555,9 @@ function KpiHero({
         display: "flex", flexDirection: "column",
         ...glass(t, 0.5),
         border: `1px solid ${hover ? accent + "77" : t.border}`,
-        borderRadius: 14,
-        padding: "14px 18px 12px",
-        minHeight: 108,
+        borderRadius: 12,
+        padding: "16px 18px 14px",
+        minHeight: 128,
         cursor: onClick ? "pointer" : "default",
         overflow: "hidden",
         transform: hover ? "translateY(-2px)" : "none",
@@ -579,32 +585,35 @@ function KpiHero({
         <ChevronRight size={14} />
       </span>
 
-      {/* Header: icono + titulo lado a lado. El titulo puede ocupar hasta 2 lineas. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+      {/* Header: icono + titulo lado a lado, con tooltip nativo por si se trunca */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
         <div style={{
-          width: 24, height: 24, borderRadius: 6,
-          background: accent + "2E", color: accent,
+          width: 28, height: 28, borderRadius: 8,
+          background: accent + "26", color: accent,
           display: "grid", placeItems: "center", flexShrink: 0,
+          boxShadow: `inset 0 0 0 1px ${accent}33`,
         }}>
-          <Icon size={13} />
+          <Icon size={14} />
         </div>
-        <div style={{
-          fontSize: 9.5, letterSpacing: "0.08em", textTransform: "uppercase",
-          color: t.textLo, fontWeight: 700,
-          lineHeight: 1.15,
-          display: "-webkit-box",
-          WebkitLineClamp: 2,
-          WebkitBoxOrient: "vertical",
-          overflow: "hidden",
-          overflowWrap: "anywhere",
-          minWidth: 0, flex: 1,
-        }}>{L.tr(kpi.label)}</div>
+        <div
+          title={L.tr(kpi.label)}
+          style={{
+            fontSize: 10, letterSpacing: "0.09em", textTransform: "uppercase",
+            color: t.textLo, fontWeight: 700,
+            lineHeight: 1.2,
+            minWidth: 0, flex: 1,
+            whiteSpace: "normal", wordBreak: "normal", overflowWrap: "break-word",
+          }}>{L.tr(kpi.label)}</div>
       </div>
 
-      <div style={{
-        fontSize: 22, fontWeight: 700, color: t.textHi, lineHeight: 1.05, marginBottom: 2,
-        fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em",
-      }}>{kpi.display}</div>
+      <div
+        title={kpi.display}
+        style={{
+          fontSize: "clamp(20px, 1.6vw, 26px)",
+          fontWeight: 700, color: t.textHi, lineHeight: 1.05, marginBottom: 4,
+          fontVariantNumeric: "tabular-nums", letterSpacing: "-0.015em",
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>{kpi.display}</div>
 
       <div style={{
         fontSize: 11, fontWeight: 600, color: deltaColor, marginTop: "auto",
@@ -868,7 +877,7 @@ function MetaBubble({ data, t, L }: { data: any; t: Tokens; L: any }) {
             sub={L.ofGoal}
             hue="blue"
             liquidOpacity={0.62}
-            style={{ maxWidth: 150 }}
+            style={{ maxWidth: 200 }}
           />
         ) : (
           <div style={{ textAlign: "center", padding: 20 }}>
@@ -926,9 +935,9 @@ function ChannelDonut({ data, total, t, L }: {
   const focusColor = CHANNEL_PALETTE[focusIdx % CHANNEL_PALETTE.length];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: 12, alignItems: "center", height: "100%", padding: "0" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: 20, alignItems: "center", height: "100%", padding: "6px 0" }}>
       {/* Donut compacto y translucido; el foco actual (hover o top) se ve en el centro */}
-      <div style={{ position: "relative", width: 108, height: 108, flexShrink: 0 }}>
+      <div style={{ position: "relative", width: 150, height: 150, flexShrink: 0 }}>
         <svg viewBox="0 0 42 42" style={{ width: "100%", height: "100%" }}>
           <circle cx={cx} cy={cy} r={r} fill="transparent" stroke={withAlpha(t.border || "#1B2540", 0.4)} strokeWidth={w} />
           {rings}
@@ -939,10 +948,11 @@ function ChannelDonut({ data, total, t, L }: {
           alignItems: "center", justifyContent: "center",
           pointerEvents: "none", textAlign: "center", padding: 6,
         }}>
-          <div style={{ fontSize: 20, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
+          <div style={{ fontSize: 26, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
             {focused ? focused.share_pct.toFixed(0) : 0}%
           </div>
-          <div style={{ fontSize: 8, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 80, fontWeight: 700 }}>
+          <div title={focused ? L.tr(focused.label) : undefined}
+            style={{ fontSize: 9, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.12em", marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110, fontWeight: 700 }}>
             {focused ? L.tr(focused.label) : "—"}
           </div>
         </div>
@@ -1167,23 +1177,40 @@ function FinancialKPIs({ kpis, t, L, onClick }: {
         const accent = accentFor(k.status);
         return (
           <div key={k.key} onClick={onClick}
-            title={onClick ? "Ir a Contabilidad → Balance General" : undefined}
+            title={onClick ? L.goToAccounting : undefined}
             style={{
-              padding: "8px 10px",
+              padding: "10px 12px",
               display: "flex", flexDirection: "column", justifyContent: "center",
               background: withAlpha(t.panel2 || t.panel || "#0F1729", k.available ? 0.55 : 0.35),
-              borderRadius: 8,
+              borderRadius: 10,
               borderLeft: `3px solid ${accent}`,
               cursor: onClick ? "pointer" : "default",
-              transition: "transform .12s",
+              transition: "transform .12s, background .12s",
               minHeight: 0,
             }}
             onMouseEnter={(e) => { if (onClick) (e.currentTarget as HTMLDivElement).style.transform = "translateY(-1px)"; }}
             onMouseLeave={(e) => { if (onClick) (e.currentTarget as HTMLDivElement).style.transform = "none"; }}
           >
-            <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: t.textLo, fontWeight: 700, marginBottom: 3, lineHeight: 1.2 }}>{L.tr(k.label)}</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: k.available ? t.textHi : t.textLo, fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{k.display}</div>
-            {k.subtitle && <div style={{ fontSize: 10, color: t.textLo, marginTop: 2, lineHeight: 1.25 }}>{L.tr(k.subtitle)}</div>}
+            <div title={L.tr(k.label)} style={{ fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: t.textLo, fontWeight: 700, marginBottom: 4, lineHeight: 1.2 }}>{L.tr(k.label)}</div>
+            {k.available ? (
+              <div title={k.display}
+                style={{ fontSize: "clamp(16px, 1.4vw, 20px)", fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums", lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {k.display}
+              </div>
+            ) : (
+              <button type="button"
+                onClick={(e) => { e.stopPropagation(); onClick?.(); }}
+                style={{
+                  marginTop: 2, alignSelf: "flex-start",
+                  fontSize: 10, fontWeight: 600, color: accent,
+                  background: withAlpha(accent, 0.14),
+                  border: `1px solid ${withAlpha(accent, 0.35)}`,
+                  padding: "3px 8px", borderRadius: 6, cursor: onClick ? "pointer" : "default",
+                }}>
+                {L.captureBalance}
+              </button>
+            )}
+            {k.subtitle && <div style={{ fontSize: 10, color: t.textLo, marginTop: 3, lineHeight: 1.3 }}>{L.tr(k.subtitle)}</div>}
           </div>
         );
       })}
