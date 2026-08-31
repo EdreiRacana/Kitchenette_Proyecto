@@ -425,11 +425,11 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       <div style={{ ...gridBase, marginBottom: 12 }}>
         <PanelCard t={t} title={L.salesPeriod} subtitle={L.vsPrev}
           hint={data.trend_sales?.length ? `${mxn(sumPoints(data.trend_sales, "revenue"))} / ${mxn(sumPoints(data.trend_sales, "prev_revenue"))} ${L.anterior}` : undefined}
-          span={isMobile ? undefined : 8} minH={300}>
+          span={isMobile ? undefined : 8} minH={260}>
           <SalesTrendChart data={data.trend_sales || []} t={t} L={L} />
         </PanelCard>
         <PanelCard t={t} title={L.geoDist} hint={L.topStates}
-          span={isMobile ? undefined : 4} minH={300}>
+          span={isMobile ? undefined : 4} minH={260}>
           <GeoBig geo={data.geographic} t={t} L={L} />
         </PanelCard>
       </div>
@@ -700,9 +700,9 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
   const cur = hover && safe[hover.i] ? safe[hover.i] : null;
 
   return (
-    <div style={{ position: "relative", width: "100%", height: 160, display: "flex", flexDirection: "column" }}
+    <div style={{ position: "relative", width: "100%", height: "100%", minHeight: 160, display: "flex", flexDirection: "column" }}
       onMouseMove={onMove} onMouseLeave={onLeave}>
-      <div style={{ flex: 1, minHeight: 0 }}>
+      <div style={{ flex: 1, minHeight: 0, width: "100%" }}>
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%", display: "block" }}>
           <defs>
             <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
@@ -878,7 +878,7 @@ function MetaBubble({ data, t, L }: { data: any; t: Tokens; L: any }) {
             sub={L.ofGoal}
             hue="blue"
             liquidOpacity={0.55}
-            style={{ maxWidth: 130, width: "100%" }}
+            style={{ maxWidth: 180, maxHeight: 180 }}
           />
         ) : (
           <div style={{ textAlign: "center", padding: 12 }}>
@@ -942,9 +942,9 @@ function ChannelDonut({ data, total, t, L }: {
   const focusColor = CHANNEL_PALETTE[focusIdx % CHANNEL_PALETTE.length];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%", gap: 10, padding: "2px 0" }}>
-      {/* Anillo arriba, centrado */}
-      <div style={{ position: "relative", width: 100, height: 100, flexShrink: 0 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: 14, alignItems: "center", height: "100%", padding: "2px 0" }}>
+      {/* Anillo a la izquierda, ocupa el alto natural del panel */}
+      <div style={{ position: "relative", width: 110, height: 110, flexShrink: 0 }}>
         <svg viewBox="0 0 42 42" style={{ width: "100%", height: "100%" }}>
           <circle cx={cx} cy={cy} r={r} fill="transparent" stroke={withAlpha(t.border || "#1B2540", 0.3)} strokeWidth={w} />
           {rings}
@@ -955,22 +955,20 @@ function ChannelDonut({ data, total, t, L }: {
           alignItems: "center", justifyContent: "center",
           pointerEvents: "none", textAlign: "center", padding: 6,
         }}>
-          <div style={{ fontSize: 20, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
             {focused ? focused.share_pct.toFixed(0) : 0}%
           </div>
           <div title={focused ? L.tr(focused.label) : undefined}
-            style={{ fontSize: 8.5, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 80, fontWeight: 700 }}>
+            style={{ fontSize: 9, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 90, fontWeight: 700 }}>
             {focused ? L.tr(focused.label) : "—"}
           </div>
         </div>
       </div>
 
-      {/* Leyenda debajo del anillo, full width con scroll interno si hay muchos canales */}
+      {/* Leyenda a la derecha del anillo, ocupa el resto */}
       <div style={{
         display: "flex", flexDirection: "column", gap: 4,
-        width: "100%", minWidth: 0, flex: 1, minHeight: 0,
-        overflowY: "auto", overflowX: "hidden", paddingRight: 4,
-        scrollbarWidth: "thin",
+        minWidth: 0, height: "100%", justifyContent: "center",
       }}>
         {data.map((d, i) => {
           const color = CHANNEL_PALETTE[i % CHANNEL_PALETTE.length];
