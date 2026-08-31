@@ -54,6 +54,66 @@ async function downloadBlob(fetcher: () => Promise<Blob>, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+// Traducciones locales del modulo Retail. Se consumen con tr(lang, key, fallback).
+// Solo las cadenas visibles principales (header, tabs, KPIs, filtros). Sub-vistas
+// avanzadas quedan en espanol; se pueden mover aqui cuando el usuario lo pida.
+type RetailLang = "es" | "en";
+const RETAIL_TR: Record<RetailLang, Record<string, string>> = {
+  es: {
+    subtitle: "Control de sell-out, inventarios y reabasto en tus cadenas de retail.",
+    chain: "Cadena", all: "Todas",
+    tab_dashboard: "Dashboard", tab_channels: "Cadenas", tab_stores: "Tiendas",
+    tab_sellout: "Sell-out", tab_replenishment: "Reabasto", tab_transfers: "Traslados",
+    tab_returns: "Devoluciones", tab_categories: "Categorías", tab_strategy: "Estrategia",
+    tab_alerts: "Alertas", tab_promotions: "Promociones", tab_consignment: "Consignación",
+    tab_analytics: "Analíticas",
+    last_n_days: (d: number) => `Últimos ${d} días`,
+    excel: "Excel", exec_pdf: "Reporte ejecutivo (PDF)",
+    kpi_channels: "Cadenas", kpi_stores: "Tiendas",
+    kpi_sellout_units: "Sell-out (unid.)", kpi_sellin_units: "Sell-in (unid.)",
+    kpi_sell_through: "Sell-through",
+    kpi_onhand: "On-hand", kpi_wos_avg: "WOS promedio",
+    kpi_net: "Neto", kpi_returns: "Devoluciones", kpi_critical_stores: "Tiendas críticas",
+    sub_active: "activas", sub_filter_on: "filtro activo",
+    sub_with_sales: (n: number) => `${n} con ventas`,
+    sub_sellthrough: "Sell-out / Sell-in",
+    sub_wos: "Weeks of Supply",
+    sub_skus: (n: number) => `${n} SKUs`,
+    sub_overstock: (n: number) => `${n} sobreinv.`,
+  },
+  en: {
+    subtitle: "Sell-out, inventory and replenishment control across your retail chains.",
+    chain: "Chain", all: "All",
+    tab_dashboard: "Dashboard", tab_channels: "Chains", tab_stores: "Stores",
+    tab_sellout: "Sell-out", tab_replenishment: "Replenishment", tab_transfers: "Transfers",
+    tab_returns: "Returns", tab_categories: "Categories", tab_strategy: "Strategy",
+    tab_alerts: "Alerts", tab_promotions: "Promotions", tab_consignment: "Consignment",
+    tab_analytics: "Analytics",
+    last_n_days: (d: number) => `Last ${d} days`,
+    excel: "Excel", exec_pdf: "Executive report (PDF)",
+    kpi_channels: "Chains", kpi_stores: "Stores",
+    kpi_sellout_units: "Sell-out (units)", kpi_sellin_units: "Sell-in (units)",
+    kpi_sell_through: "Sell-through",
+    kpi_onhand: "On-hand", kpi_wos_avg: "Avg. WOS",
+    kpi_net: "Net", kpi_returns: "Returns", kpi_critical_stores: "Critical stores",
+    sub_active: "active", sub_filter_on: "filter active",
+    sub_with_sales: (n: number) => `${n} with sales`,
+    sub_sellthrough: "Sell-out / Sell-in",
+    sub_wos: "Weeks of Supply",
+    sub_skus: (n: number) => `${n} SKUs`,
+    sub_overstock: (n: number) => `${n} overstock`,
+  },
+};
+function rtr(lang: RetailLang, key: string, fallback?: string): string {
+  const v = (RETAIL_TR[lang] as any)?.[key];
+  return typeof v === "string" ? v : (fallback ?? key);
+}
+function rfn(lang: RetailLang, key: string, arg: any, fallback: string): string {
+  const v = (RETAIL_TR[lang] as any)?.[key];
+  if (typeof v === "function") return v(arg);
+  return fallback;
+}
+
 function isoWeekStart(): string {
   const d = new Date();
   const day = d.getDay() || 7;
@@ -81,7 +141,7 @@ function statusInfo(t: Tokens, status: WosStatus) {
 
 type TabId = "dashboard" | "channels" | "stores" | "sellout" | "replenishment" | "transfers" | "returns" | "categories" | "strategy" | "alerts" | "promotions" | "consignment" | "analytics";
 
-export default function RetailModule({ t }: { t: Tokens }) {
+export default function RetailModule({ t, lang = "es" }: { t: Tokens; lang?: RetailLang }) {
   const [tab, setTab] = useState<TabId>("dashboard");
   const [channels, setChannels] = useState<RetailChannel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<number | null>(null);
@@ -106,23 +166,23 @@ export default function RetailModule({ t }: { t: Tokens }) {
   useEffect(() => { refreshAlertsSummary(); }, [selectedChannel]);
 
   const tabs: Array<{ id: TabId; label: string; icon: any; badge?: number; badgeColor?: string }> = [
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "channels", label: "Cadenas", icon: Building2 },
-    { id: "stores", label: "Tiendas", icon: Store },
-    { id: "sellout", label: "Sell-out", icon: ShoppingBag },
-    { id: "replenishment", label: "Reabasto", icon: Truck },
-    { id: "transfers", label: "Traslados", icon: ArrowLeftRight },
-    { id: "returns", label: "Devoluciones", icon: TrendingDown },
-    { id: "categories", label: "Categorías", icon: Grid2x2 },
-    { id: "strategy", label: "Estrategia", icon: Zap },
+    { id: "dashboard", label: rtr(lang, "tab_dashboard"), icon: LayoutDashboard },
+    { id: "channels", label: rtr(lang, "tab_channels"), icon: Building2 },
+    { id: "stores", label: rtr(lang, "tab_stores"), icon: Store },
+    { id: "sellout", label: rtr(lang, "tab_sellout"), icon: ShoppingBag },
+    { id: "replenishment", label: rtr(lang, "tab_replenishment"), icon: Truck },
+    { id: "transfers", label: rtr(lang, "tab_transfers"), icon: ArrowLeftRight },
+    { id: "returns", label: rtr(lang, "tab_returns"), icon: TrendingDown },
+    { id: "categories", label: rtr(lang, "tab_categories"), icon: Grid2x2 },
+    { id: "strategy", label: rtr(lang, "tab_strategy"), icon: Zap },
     {
-      id: "alerts", label: "Alertas", icon: Bell,
+      id: "alerts", label: rtr(lang, "tab_alerts"), icon: Bell,
       badge: alertsSummary?.open,
       badgeColor: (alertsSummary?.urgent ?? 0) > 0 ? "urgent" : "normal",
     },
-    { id: "promotions", label: "Promociones", icon: Tag },
-    { id: "consignment", label: "Consignación", icon: Warehouse },
-    { id: "analytics", label: "Analíticas", icon: BarChart3 },
+    { id: "promotions", label: rtr(lang, "tab_promotions"), icon: Tag },
+    { id: "consignment", label: rtr(lang, "tab_consignment"), icon: Warehouse },
+    { id: "analytics", label: rtr(lang, "tab_analytics"), icon: BarChart3 },
   ];
 
   const selectedChannelObj = channels.find(c => c.id === selectedChannel) || null;
@@ -136,17 +196,17 @@ export default function RetailModule({ t }: { t: Tokens }) {
         <div>
           <h1 style={{ margin: 0, fontSize: 24, color: t.textHi }}>Retail Analytics</h1>
           <p style={{ color: t.textLo, fontSize: 13, marginTop: 4 }}>
-            Control de sell-out, inventarios y reabasto en tus cadenas de retail.
+            {rtr(lang, "subtitle")}
           </p>
         </div>
         {channels.length > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <ChannelLogo channel={selectedChannelObj} t={t} />
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <label style={{ fontSize: 11.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>Cadena</label>
+              <label style={{ fontSize: 11.5, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>{rtr(lang, "chain")}</label>
               <select value={selectedChannel ?? ""} onChange={e => setSelectedChannel(e.target.value ? Number(e.target.value) : null)}
                 style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13 }}>
-                <option value="">Todas</option>
+                <option value="">{rtr(lang, "all")}</option>
                 {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
@@ -202,7 +262,7 @@ export default function RetailModule({ t }: { t: Tokens }) {
 
         {!loading && (channels.length > 0 || tab === "channels") && (
           <>
-            {tab === "dashboard" && <DashboardView t={t} channelId={selectedChannel} />}
+            {tab === "dashboard" && <DashboardView t={t} lang={lang} channelId={selectedChannel} />}
             {tab === "channels" && <ChannelsView t={t} channels={channels} onChanged={load} />}
             {tab === "stores" && <StoresView t={t} channels={channels} selectedChannel={selectedChannel} />}
             {tab === "sellout" && <SellOutView t={t} channels={channels} selectedChannel={selectedChannel} onChanged={refreshAlertsSummary} />}
@@ -284,7 +344,7 @@ type SortKey = "store_name" | "channel_name" | "on_hand_units" | "on_hand_value"
               | "wos_weeks" | "units_sold" | "revenue" | "status";
 type SortDir = "asc" | "desc";
 
-function DashboardView({ t, channelId }: { t: Tokens; channelId: number | null }) {
+function DashboardView({ t, lang = "es", channelId }: { t: Tokens; lang?: RetailLang; channelId: number | null }) {
   const [kpis, setKpis] = useState<RetailKPIs | null>(null);
   const [rows, setRows] = useState<StoreDashboardRow[]>([]);
   const [days, setDays] = useState(30);
@@ -341,17 +401,17 @@ function DashboardView({ t, channelId }: { t: Tokens; channelId: number | null }
   // 10 KPIs distribuidos en dos filas de 5
   const tiles = [
     // Fila 1 — cobertura + ventas
-    { label: "Cadenas", value: num(kpis.channels_count ?? 0), sub: channelId ? "filtro activo" : "activas", color: t.textHi },
-    { label: "Tiendas", value: num(kpis.stores_total_count ?? 0), sub: `${kpis.stores_active_count} con ventas`, color: t.textHi },
-    { label: "Sell-out (unid.)", value: num(kpis.total_sell_out_units), sub: mxn(kpis.total_sell_out_revenue), color: t.textHi },
-    { label: "Sell-in (unid.)", value: num(kpis.total_sell_in_units), sub: mxn(kpis.total_sell_in_revenue), color: t.textHi },
-    { label: "Sell-through", value: `${kpis.sell_through_pct.toFixed(1)}%`, sub: "Sell-out / Sell-in", color: kpis.sell_through_pct >= 70 ? t.good : kpis.sell_through_pct >= 40 ? t.warn : t.bad },
+    { label: rtr(lang, "kpi_channels"), value: num(kpis.channels_count ?? 0), sub: channelId ? rtr(lang, "sub_filter_on") : rtr(lang, "sub_active"), color: t.textHi },
+    { label: rtr(lang, "kpi_stores"), value: num(kpis.stores_total_count ?? 0), sub: rfn(lang, "sub_with_sales", kpis.stores_active_count, `${kpis.stores_active_count} con ventas`), color: t.textHi },
+    { label: rtr(lang, "kpi_sellout_units"), value: num(kpis.total_sell_out_units), sub: mxn(kpis.total_sell_out_revenue), color: t.textHi },
+    { label: rtr(lang, "kpi_sellin_units"), value: num(kpis.total_sell_in_units), sub: mxn(kpis.total_sell_in_revenue), color: t.textHi },
+    { label: rtr(lang, "kpi_sell_through"), value: `${kpis.sell_through_pct.toFixed(1)}%`, sub: rtr(lang, "sub_sellthrough"), color: kpis.sell_through_pct >= 70 ? t.good : kpis.sell_through_pct >= 40 ? t.warn : t.bad },
     // Fila 2 — inventario + salud
-    { label: "On-hand", value: num(kpis.total_on_hand), sub: `${kpis.skus_active_count} SKUs`, color: t.textHi },
-    { label: "WOS promedio", value: `${kpis.avg_wos_weeks.toFixed(1)}s`, sub: "Weeks of Supply", color: kpis.avg_wos_weeks >= 4 && kpis.avg_wos_weeks <= 12 ? t.good : t.warn },
-    { label: "Neto", value: num(netU), sub: mxn(netRev), color: t.textHi },
-    { label: "Devoluciones", value: num(retUnits), sub: `${retPct.toFixed(1)}% · ${mxn(retAmt)}`, color: retColor },
-    { label: "Tiendas críticas", value: num(kpis.critical_stores_count), sub: `${kpis.overstock_stores_count} sobreinv.`, color: kpis.critical_stores_count > 0 ? t.bad : t.good },
+    { label: rtr(lang, "kpi_onhand"), value: num(kpis.total_on_hand), sub: rfn(lang, "sub_skus", kpis.skus_active_count, `${kpis.skus_active_count} SKUs`), color: t.textHi },
+    { label: rtr(lang, "kpi_wos_avg"), value: `${kpis.avg_wos_weeks.toFixed(1)}s`, sub: rtr(lang, "sub_wos"), color: kpis.avg_wos_weeks >= 4 && kpis.avg_wos_weeks <= 12 ? t.good : t.warn },
+    { label: rtr(lang, "kpi_net"), value: num(netU), sub: mxn(netRev), color: t.textHi },
+    { label: rtr(lang, "kpi_returns"), value: num(retUnits), sub: `${retPct.toFixed(1)}% · ${mxn(retAmt)}`, color: retColor },
+    { label: rtr(lang, "kpi_critical_stores"), value: num(kpis.critical_stores_count), sub: rfn(lang, "sub_overstock", kpis.overstock_stores_count, `${kpis.overstock_stores_count} sobreinv.`), color: kpis.critical_stores_count > 0 ? t.bad : t.good },
   ];
 
   const sortIcon = (k: SortKey) => (
@@ -369,7 +429,7 @@ function DashboardView({ t, channelId }: { t: Tokens; channelId: number | null }
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ fontSize: 13, color: t.textLo }}>Últimos {days} días</div>
+        <div style={{ fontSize: 13, color: t.textLo }}>{rfn(lang, "last_n_days", days, `Últimos ${days} días`)}</div>
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           {[7, 30, 90].map(d => (
             <button key={d} onClick={() => setDays(d)}
@@ -380,13 +440,13 @@ function DashboardView({ t, channelId }: { t: Tokens; channelId: number | null }
             </button>
           ))}
           <div style={{ width: 8 }} />
-          <ExcelBtn t={t} label="Excel"
+          <ExcelBtn t={t} label={rtr(lang, "excel")}
             onClick={() => downloadBlob(
               () => retailApi.reports.dashboard({ channel_id: channelId || undefined, days }),
               `retail_dashboard_${days}d.xlsx`,
             )}
           />
-          <ExcelBtn t={t} label="Reporte ejecutivo (PDF)" icon={FileDown}
+          <ExcelBtn t={t} label={rtr(lang, "exec_pdf")} icon={FileDown}
             onClick={() => downloadBlob(
               () => retailApi.reports.executivePdf({ channel_id: channelId || undefined, days }),
               `retail_reporte_ejecutivo.pdf`,
