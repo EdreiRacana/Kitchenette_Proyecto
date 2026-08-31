@@ -363,6 +363,113 @@ def _score(query: str, hint: str) -> float:
     return 0.30 + 0.50 * (hits / len(q_words))
 
 
+async def suggest_entities(db, query: str, user: User, limit: int = 8) -> List[dict]:
+    """Busca entidades reales (tiendas retail, clientes, empleados) cuyo
+    nombre matchee el query. Devuelve items {tool, prompt, score, type, sublabel}
+    listos para inyectarse en el typeahead del asistente.
+
+    Idea: si el usuario escribe "satelite" y hay una tienda "Plaza Satelite",
+    debe aparecer sin importar que "satelite" no esté en PROMPT_HINTS.
+    """
+    from sqlalchemy import select, or_, func
+    q = (query or "").strip()
+    if len(q) < 2:
+        return []
+    like = f"%{q}%"
+    results: list[dict] = []
+    allowed = set(allowed_tools_for(user))
+
+    # ── Tiendas retail (RetailStore.name) ────────────────────────────
+    if "desempeno_tienda" in allowed or "sell_through_por_tienda" in allowed:
+        try:
+            from app.modules.retail import models as rm
+            stmt = (
+                select(rm.RetailStore.name, rm.RetailChannel.name.label("cadena"))
+                .join(rm.RetailChannel, rm.RetailChannel.id == rm.RetailStore.channel_id)
+                .where(rm.RetailStore.is_active == True, rm.RetailStore.name.ilike(like))  # noqa: E712
+                .limit(limit)
+            )
+            for r in (await db.execute(stmt)).all():
+                results.append({
+                    "tool": "desempeno_tienda",
+                    "prompt": f"cómo va {r.name}",
+                    "score": 0.98, "type": "store",
+                    "sublabel": f"Tienda · {r.cadena}",
+                })
+        except Exception:
+            pass
+
+    # ── Clientes (Customer.name / razon_social) ──────────────────────
+    if "ventas_persona" in allowed or "top_clientes" in allowed:
+        try:
+            from app.modules.sales.models import Customer
+            stmt = (
+                select(Customer.name)
+                .where(or_(Customer.name.ilike(like), Customer.razon_social.ilike(like)))
+                .limit(limit)
+            )
+            for r in (await db.execute(stmt)).all():
+                results.append({
+                    "tool": "ventas_persona",
+                    "prompt": f"ventas de {r.name}",
+                    "score": 0.97, "type": "customer",
+                    "sublabel": "Cliente",
+                })
+        except Exception:
+            pass
+
+    # ── Empleados (Employee.name + last_name) ────────────────────────
+    if "nomina_periodo" in allowed or "empleados_activos" in allowed:
+        try:
+            from app.modules.hr import models as hm
+            full = func.concat(hm.Employee.name, " ", hm.Employee.last_name)
+            stmt = (
+                select(hm.Employee.name, hm.Employee.last_name)
+                .where(or_(hm.Employee.name.ilike(like),
+                           hm.Employee.last_name.ilike(like),
+                           full.ilike(like)))
+                .limit(limit)
+            )
+            for r in (await db.execute(stmt)).all():
+                fullname = f"{r.name} {r.last_name or ''}".strip()
+                results.append({
+                    "tool": "nomina_periodo",
+                    "prompt": f"nómina de {fullname}",
+                    "score": 0.96, "type": "employee",
+                    "sublabel": "Empleado",
+                })
+        except Exception:
+            pass
+
+    # ── Módulos por nombre (navegación conceptual) ───────────────────
+    # Los prompts estáticos ya cubren la mayoría de módulos, pero
+    # agregamos sinónimos comunes que no están en PROMPT_HINTS.
+    module_synonyms: dict[str, tuple[str, str]] = {
+        "forecast": ("ventas_periodo", "cómo va el forecast del mes"),
+        "pronostico": ("ventas_periodo", "cómo va el forecast del mes"),
+        "pronóstico": ("ventas_periodo", "cómo va el forecast del mes"),
+        "bi": ("ventas_periodo", "ventas del mes"),
+        "kpi": ("ventas_periodo", "ventas del mes"),
+        "dashboard": ("ventas_periodo", "ventas del mes"),
+        "tablero": ("ventas_periodo", "ventas del mes"),
+    }
+    nq = _normalize(q)
+    for key, (tool, prompt) in module_synonyms.items():
+        if tool in allowed and (nq in _normalize(key) or _normalize(key).startswith(nq)):
+            results.append({
+                "tool": tool, "prompt": prompt, "score": 0.85,
+                "type": "module", "sublabel": "Módulo",
+            })
+
+    # Dedup por (tool + prompt), quedarnos con el score máximo
+    seen: dict[tuple, dict] = {}
+    for r in results:
+        k = (r["tool"], r["prompt"])
+        if k not in seen or r["score"] > seen[k]["score"]:
+            seen[k] = r
+    return list(seen.values())
+
+
 def suggest(query: str, user: User, limit: int = 6) -> List[dict]:
     """Devuelve top N sugerencias filtradas por RBAC del usuario.
     Cada entrada: {tool, prompt, score}. Ordenado por score desc.
