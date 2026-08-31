@@ -419,11 +419,11 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       <div style={{ ...gridBase, marginBottom: 14 }}>
         <PanelCard t={t} title={L.salesPeriod} subtitle={L.vsPrev}
           hint={data.trend_sales?.length ? `${mxn(sumPoints(data.trend_sales, "revenue"))} / ${mxn(sumPoints(data.trend_sales, "prev_revenue"))} ${L.anterior}` : undefined}
-          span={isMobile ? undefined : 8} minH={280}>
+          span={isMobile ? undefined : 8} minH={240}>
           <SalesTrendChart data={data.trend_sales || []} t={t} L={L} />
         </PanelCard>
         <PanelCard t={t} title={L.top5Cust} hint={L.ofPeriod}
-          span={isMobile ? undefined : 4} minH={280}>
+          span={isMobile ? undefined : 4} minH={240}>
           <TopCustomers rows={data.top_customers || []} t={t} L={L}
             onSelect={(id) => id && nav("clientes")} />
         </PanelCard>
@@ -437,17 +437,17 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
               : data.meta_vs_real.basis === "none" ? L.basisNone
                 : L.basisForecast
           }
-          span={isMobile ? undefined : 4} minH={260}>
+          span={isMobile ? undefined : 4} minH={220}>
           <MetaBubble data={data.meta_vs_real} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.channels} hint={L.ofPeriod}
-          span={isMobile ? undefined : 4} minH={260}>
+          span={isMobile ? undefined : 4} minH={220}>
           <ChannelDonut data={data.channel_sales.channels || []} total={data.channel_sales.total_revenue} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.geoDist} hint={L.topStates}
-          span={isMobile ? undefined : 4} minH={260}>
+          span={isMobile ? undefined : 4} minH={220}>
           <GeoBig geo={data.geographic} t={t} L={L} />
         </PanelCard>
       </div>
@@ -455,18 +455,18 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       {/* Fila 4 — Alertas (4) + KPIs Op (4) + Financieros (4) */}
       <div style={{ ...gridBase }}>
         <PanelCard t={t} title={L.alerts} hint={L.top4}
-          span={isMobile ? undefined : 4} minH={240}>
+          span={isMobile ? undefined : 4} minH={200}>
           <AlertList alerts={(data.alerts || []).slice(0, 4)} t={t} L={L}
             onClick={(a) => nav(a.module === "finance" ? "finanzas" : a.module === "retail" ? "retail" : "inventario")} />
         </PanelCard>
 
         <PanelCard t={t} title={L.opKpis} hint={L.opSub}
-          span={isMobile ? undefined : 4} minH={240}>
+          span={isMobile ? undefined : 4} minH={200}>
           <OperationalBars kpis={data.operational_kpis || []} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.finKpis} hint={L.finSub}
-          span={isMobile ? undefined : 4} minH={240}>
+          span={isMobile ? undefined : 4} minH={200}>
           <FinancialKPIs kpis={data.financial_kpis || []} t={t} L={L}
             onClick={() => nav("contabilidad")} />
         </PanelCard>
@@ -691,7 +691,7 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
   const cur = hover && safe[hover.i] ? safe[hover.i] : null;
 
   return (
-    <div style={{ position: "relative", width: "100%", height: 220, display: "flex", flexDirection: "column" }}
+    <div style={{ position: "relative", width: "100%", height: 180, display: "flex", flexDirection: "column" }}
       onMouseMove={onMove} onMouseLeave={onLeave}>
       <div style={{ flex: 1, minHeight: 0 }}>
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%", display: "block" }}>
@@ -814,17 +814,19 @@ function TopCustomers({ rows, t, L, onSelect }: {
 }) {
   if (!rows?.length) return <EmptyMsg t={t} msg={L.noSalesPeriod} />;
   const warn = t.warn || "#F59E0B";
+  const shown = rows.slice(0, 5);
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {rows.slice(0, 5).map((c, i) => {
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", justifyContent: "space-between", gap: 4 }}>
+      {shown.map((c, i) => {
         const isTop = i === 0;
         return (
           <div key={i} onClick={() => onSelect?.(c.customer_id)}
             style={{
               display: "grid", gridTemplateColumns: "20px 1fr auto",
-              gap: 10, alignItems: "center", padding: "8px 0",
-              borderBottom: i === Math.min(rows.length, 5) - 1 ? "none" : `1px solid ${t.border}`,
+              gap: 10, alignItems: "center", padding: "6px 0",
+              borderBottom: i === shown.length - 1 ? "none" : `1px solid ${t.border}`,
               cursor: onSelect && c.customer_id ? "pointer" : "default",
+              flex: 1, minHeight: 0,
             }}>
             <span style={{
               width: 20, height: 20, borderRadius: "50%",
@@ -857,8 +859,8 @@ function TopCustomers({ rows, t, L, onSelect }: {
 function MetaBubble({ data, t, L }: { data: any; t: Tokens; L: any }) {
   const hasGoal = data?.goal > 0;
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%" }}>
-      <div style={{ flex: 1, display: "grid", placeItems: "center", width: "100%", margin: "4px 0 12px" }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%", justifyContent: "space-between", gap: 6 }}>
+      <div style={{ flex: 1, display: "grid", placeItems: "center", width: "100%", minHeight: 0 }}>
         {hasGoal ? (
           <LiquidCore
             pct={data.achieved_pct}
@@ -866,7 +868,7 @@ function MetaBubble({ data, t, L }: { data: any; t: Tokens; L: any }) {
             sub={L.ofGoal}
             hue="blue"
             liquidOpacity={0.62}
-            style={{ maxWidth: 200 }}
+            style={{ maxWidth: 150 }}
           />
         ) : (
           <div style={{ textAlign: "center", padding: 20 }}>
@@ -892,7 +894,7 @@ function ChannelDonut({ data, total, t, L }: {
 }) {
   if (!data?.length || total === 0) return <EmptyMsg t={t} msg={L.noChannel} />;
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const cx = 21, cy = 21, r = 15.9, w = 6;
+  const cx = 21, cy = 21, r = 15.9, w = 5.5;
   let accum = 0;
   const rings = data.map((d, i) => {
     const share = d.revenue / total;
@@ -901,15 +903,17 @@ function ChannelDonut({ data, total, t, L }: {
     const offset = -accum * 100 + 25;
     accum += share;
     const isHover = hoverIdx === i;
+    const color = CHANNEL_PALETTE[i % CHANNEL_PALETTE.length];
+    // Anillo translucido: fill translucido con borde solido; se satura en hover.
     return (
       <circle key={i} cx={cx} cy={cy} r={r} fill="transparent"
-        stroke={CHANNEL_PALETTE[i % CHANNEL_PALETTE.length]}
-        strokeWidth={isHover ? w + 2 : w}
+        stroke={withAlpha(color, isHover ? 0.95 : 0.55)}
+        strokeWidth={isHover ? w + 1.5 : w}
         strokeDasharray={`${dashLen} ${rest}`}
         strokeDashoffset={offset}
         transform={`rotate(-90 ${cx} ${cy})`}
-        opacity={hoverIdx == null || isHover ? 1 : 0.35}
-        style={{ cursor: "pointer", transition: "stroke-width .15s, opacity .15s" }}
+        opacity={hoverIdx == null || isHover ? 1 : 0.5}
+        style={{ cursor: "pointer", transition: "stroke-width .15s, opacity .15s, stroke .15s" }}
         onMouseEnter={() => setHoverIdx(i)}
         onMouseLeave={() => setHoverIdx(null)}
       />
@@ -922,11 +926,11 @@ function ChannelDonut({ data, total, t, L }: {
   const focusColor = CHANNEL_PALETTE[focusIdx % CHANNEL_PALETTE.length];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: 14, alignItems: "center", height: "100%", padding: "2px 0" }}>
-      {/* Donut compacto; los % viven en el centro para no cortar labels */}
-      <div style={{ position: "relative", width: 128, height: 128, flexShrink: 0 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: 12, alignItems: "center", height: "100%", padding: "0" }}>
+      {/* Donut compacto y translucido; el foco actual (hover o top) se ve en el centro */}
+      <div style={{ position: "relative", width: 108, height: 108, flexShrink: 0 }}>
         <svg viewBox="0 0 42 42" style={{ width: "100%", height: "100%" }}>
-          <circle cx={cx} cy={cy} r={r} fill="transparent" stroke={t.border || "#1B2540"} strokeWidth={w} />
+          <circle cx={cx} cy={cy} r={r} fill="transparent" stroke={withAlpha(t.border || "#1B2540", 0.4)} strokeWidth={w} />
           {rings}
         </svg>
         <div style={{
@@ -935,10 +939,10 @@ function ChannelDonut({ data, total, t, L }: {
           alignItems: "center", justifyContent: "center",
           pointerEvents: "none", textAlign: "center", padding: 6,
         }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
             {focused ? focused.share_pct.toFixed(0) : 0}%
           </div>
-          <div style={{ fontSize: 8.5, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.12em", marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 96, fontWeight: 700 }}>
+          <div style={{ fontSize: 8, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 80, fontWeight: 700 }}>
             {focused ? L.tr(focused.label) : "—"}
           </div>
         </div>
@@ -970,13 +974,19 @@ function ChannelDonut({ data, total, t, L }: {
                 boxShadow: `inset 0 0 0 1px ${withAlpha(color, 0.9)}`,
               }} />
               <span style={{
-                color: t.textMid, fontSize: 12, fontWeight: 500,
+                color: t.textMid, fontSize: 11.5, fontWeight: 500,
                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0,
               }}>{L.tr(d.label)}</span>
-              <span style={{
-                color: t.textHi, fontWeight: 700, fontSize: 12,
-                fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
-              }}>{mxn(d.revenue)}</span>
+              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.15 }}>
+                <span style={{
+                  color: t.textHi, fontWeight: 700, fontSize: 11.5,
+                  fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+                }}>{mxn(d.revenue)}</span>
+                <span style={{
+                  color: withAlpha(color, 0.95), fontWeight: 700, fontSize: 10,
+                  fontVariantNumeric: "tabular-nums",
+                }}>{d.share_pct.toFixed(1)}%</span>
+              </span>
             </div>
           );
         })}
@@ -1005,15 +1015,15 @@ function OperationalBars({ kpis, t, L }: { kpis: OperationalKPIRow[]; t: Tokens;
     }
   };
   return (
-    <div>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", justifyContent: "space-between" }}>
       {kpis.map((k, i) => {
         const c = colorFor(k.color_hint);
         return (
           <div key={k.key} style={{
             display: "grid", gridTemplateColumns: "1fr auto",
-            alignItems: "center", padding: "10px 0",
+            alignItems: "center", padding: "6px 0",
             borderBottom: i === kpis.length - 1 ? "none" : `1px solid ${t.border}`,
-            gap: 12,
+            gap: 12, flex: 1, minHeight: 0,
           }}>
             <div>
               <div style={{ fontSize: 12, color: t.textMid, fontWeight: 500 }}>{L.tr(k.label)}</div>
@@ -1040,17 +1050,18 @@ function AlertList({ alerts, t, L, onClick }: {
   if (!alerts?.length) return <EmptyMsg t={t} msg={L.noAlerts} color={t.good} />;
   const accentFor = (s: string) => s === "urgent" ? (t.bad || "#EF4444") : s === "high" ? (t.warn || "#F59E0B") : (t.nova || "#33B2F5");
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, height: "100%", justifyContent: "space-between" }}>
       {alerts.map((a, i) => {
         const accent = accentFor(a.severity);
         return (
           <div key={i} onClick={() => onClick?.(a)}
             style={{
               display: "grid", gridTemplateColumns: "auto 1fr auto",
-              alignItems: "center", gap: 10, padding: "10px 12px",
-              background: t.panel2 || t.panel, borderRadius: 10,
+              alignItems: "center", gap: 10, padding: "8px 10px",
+              background: withAlpha(t.panel2 || t.panel || "#0F1729", 0.55), borderRadius: 8,
               borderLeft: `3px solid ${accent}`,
               cursor: onClick ? "pointer" : "default",
+              flex: 1, minHeight: 0,
             }}>
             <span style={{
               textTransform: "uppercase", letterSpacing: "0.08em",
@@ -1151,26 +1162,28 @@ function FinancialKPIs({ kpis, t, L, onClick }: {
     }
   };
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, height: "100%" }}>
       {kpis.slice(0, 4).map(k => {
         const accent = accentFor(k.status);
         return (
           <div key={k.key} onClick={onClick}
             title={onClick ? "Ir a Contabilidad → Balance General" : undefined}
             style={{
-              padding: 12,
-              background: k.available ? (t.panel2 || t.panel) : (t.panel2 || t.panel) + "88",
-              borderRadius: 10,
+              padding: "8px 10px",
+              display: "flex", flexDirection: "column", justifyContent: "center",
+              background: withAlpha(t.panel2 || t.panel || "#0F1729", k.available ? 0.55 : 0.35),
+              borderRadius: 8,
               borderLeft: `3px solid ${accent}`,
               cursor: onClick ? "pointer" : "default",
               transition: "transform .12s",
+              minHeight: 0,
             }}
             onMouseEnter={(e) => { if (onClick) (e.currentTarget as HTMLDivElement).style.transform = "translateY(-1px)"; }}
             onMouseLeave={(e) => { if (onClick) (e.currentTarget as HTMLDivElement).style.transform = "none"; }}
           >
-            <div style={{ fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.textLo, fontWeight: 700, marginBottom: 4 }}>{L.tr(k.label)}</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: k.available ? t.textHi : t.textLo, fontVariantNumeric: "tabular-nums" }}>{k.display}</div>
-            {k.subtitle && <div style={{ fontSize: 10.5, color: t.textLo, marginTop: 2 }}>{L.tr(k.subtitle)}</div>}
+            <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: t.textLo, fontWeight: 700, marginBottom: 3, lineHeight: 1.2 }}>{L.tr(k.label)}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: k.available ? t.textHi : t.textLo, fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{k.display}</div>
+            {k.subtitle && <div style={{ fontSize: 10, color: t.textLo, marginTop: 2, lineHeight: 1.25 }}>{L.tr(k.subtitle)}</div>}
           </div>
         );
       })}
