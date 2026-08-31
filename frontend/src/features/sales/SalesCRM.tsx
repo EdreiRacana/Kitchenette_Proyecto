@@ -863,16 +863,23 @@ export default function SalesCRM({ t, s, initialQuery }: { t: unknown; s: unknow
   const pages = Math.max(1, Math.ceil(total / PAGE));
 
   const KpiCard = ({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: string }) => (
-    <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, flex: 1, minWidth: 170 }}>
-      <div style={{ background: color + "22", color, borderRadius: 10, padding: 9, display: "flex" }}>{icon}</div>
-      <div><div style={{ fontSize: 12, color: tk.textLo, marginBottom: 2 }}>{label}</div><div style={{ fontSize: 19, fontWeight: 800, color: tk.textHi }}>{value}</div></div>
+    <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 200, overflow: "hidden" }}>
+      <div style={{ background: color + "22", color, borderRadius: 10, padding: 9, display: "flex", flexShrink: 0 }}>{icon}</div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div title={label} style={{ fontSize: 12, color: tk.textLo, marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+        <div title={value} style={{
+          fontSize: "clamp(15px, 1.3vw, 19px)", fontWeight: 800, color: tk.textHi,
+          fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em",
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>{value}</div>
+      </div>
     </div>
   );
 
   const KpiSkeleton = () => (
-    <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, flex: 1, minWidth: 170 }}>
+    <div style={{ background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 200 }}>
       <Skel tk={tk} w={38} h={38} r={10} />
-      <div style={{ flex: 1 }}><Skel tk={tk} w="60%" h={10} style={{ marginBottom: 8 }} /><Skel tk={tk} w="42%" h={16} /></div>
+      <div style={{ flex: 1, minWidth: 0 }}><Skel tk={tk} w="60%" h={10} style={{ marginBottom: 8 }} /><Skel tk={tk} w="42%" h={16} /></div>
     </div>
   );
 
