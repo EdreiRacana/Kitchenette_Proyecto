@@ -51,11 +51,16 @@ function coreCirclePath(size: number = 100): { cx: number; cy: number; r: number
 // mente cada 2.4s. Ese pulso es lo que le da la sensación de "presencia
 // viva" tipo holograma, sin ser invasivo.
 let _gid = 0;
-function MetallicTriangle({ size = 32, glow = true, pulse = false }: {
-  size?: number; glow?: boolean; pulse?: boolean;
+function MetallicTriangle({ size = 32, glow = true, pulse = false, outlined = false }: {
+  size?: number; glow?: boolean; pulse?: boolean; outlined?: boolean;
 }) {
   const gid = useMemo(() => `mt${++_gid}`, []);
-  const filter = glow ? `drop-shadow(0 0 ${size * 0.09}px rgba(140,200,255,0.28))` : undefined;
+  const glowShadow = glow ? `drop-shadow(0 0 ${size * 0.09}px rgba(140,200,255,0.28))` : "";
+  // Cuando outlined=true, refuerza el halo azul cyan para hacer notable el borde.
+  const outlineShadow = outlined
+    ? " drop-shadow(0 0 1px rgba(120,200,255,0.9)) drop-shadow(0 0 6px rgba(90,180,255,0.55))"
+    : "";
+  const filter = (glowShadow + outlineShadow).trim() || undefined;
   const core = coreCirclePath(100);
   return (
     <svg
@@ -92,12 +97,12 @@ function MetallicTriangle({ size = 32, glow = true, pulse = false }: {
         </clipPath>
       </defs>
 
-      {/* Silueta principal glassy */}
+      {/* Silueta principal glassy — stroke reforzado cuando outlined=true */}
       <path
         d={trianglePath(100, 3)}
         fill={`url(#${gid}-body)`}
-        stroke="rgba(180,220,255,0.55)"
-        strokeWidth="0.7"
+        stroke={outlined ? "rgba(120,200,255,0.95)" : "rgba(180,220,255,0.55)"}
+        strokeWidth={outlined ? "2.2" : "0.7"}
         strokeLinejoin="round"
       />
 
@@ -454,10 +459,25 @@ export default function Assistant() {
     return region ? `${name} (${region})` : name;
   };
 
+  // Elimina marcadores de markdown que ensucian la lectura y el render en
+  // texto plano: **bold**, *italic*, __bold__, _italic_, `code`, # heading,
+  // enlaces [txt](url) → txt. Se aplica antes de mostrar y antes de TTS.
+  const stripMarkdown = (text: string): string => {
+    if (!text) return "";
+    return text
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      .replace(/__(.+?)__/g, "$1")
+      .replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, "$1$2")
+      .replace(/(^|[^_])_([^_\n]+?)_(?!_)/g, "$1$2")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/^\s*#{1,6}\s+/gm, "")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  };
+
   // Texto a voz nativo (SpeechSynthesis). Sin costo, calidad del sistema.
   const speak = (text: string, voiceOverride?: SpeechSynthesisVoice) => {
     try {
-      const u = new SpeechSynthesisUtterance(text);
+      const u = new SpeechSynthesisUtterance(stripMarkdown(text));
       const chosen = voiceOverride
         || voices.find(v => v.name === selectedVoiceName)
         || voices.find(v => v.lang.toLowerCase().startsWith("es-mx"))
@@ -543,7 +563,7 @@ export default function Assistant() {
       {/* FAB flotante — triángulo cristalino sin fondo, con label debajo */}
       <div style={{
         position: "fixed", right: 24, bottom: 22, zIndex: 9998,
-        display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 0,
       }}>
         <button
           onClick={() => { setOpen(o => !o); if (showWelcome) dismissWelcome(); }}
@@ -551,28 +571,28 @@ export default function Assistant() {
           aria-label="Abrir asistente"
           className="assistant-fab"
           style={{
-            width: 72, height: 82, borderRadius: 16,
+            width: 52, height: 52, borderRadius: 14,
             background: "transparent",
             border: "none", padding: 0,
             cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
             transition: "opacity .2s, transform .2s",
-            opacity: 1,
+            opacity: open ? 1 : 0.9,
           }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = open ? "1" : "0.9"; }}
         >
           <span className="assistant-fab-inner" style={{ display: "flex", transition: "transform .2s" }}>
-            <MetallicTriangle size={58} glow={true} pulse={!open} />
+            <MetallicTriangle size={40} glow={true} pulse={!open} outlined />
           </span>
         </button>
-        {/* Label "Asistente" — mas prominente para ser notable */}
+        {/* Label "Asistente" — pegado al triangulo, notable pero discreto */}
         <div style={{
-          fontSize: 11, letterSpacing: 1.6, textTransform: "uppercase",
-          color: "rgba(210,225,250,0.95)", fontWeight: 700,
+          fontSize: 9.5, letterSpacing: 1.4, textTransform: "uppercase",
+          color: "rgba(200,220,250,0.9)", fontWeight: 600,
           animation: "assistant-label-pulse 3.4s ease-in-out infinite",
-          userSelect: "none", marginTop: 2,
-          textShadow: "0 0 10px rgba(120,170,255,0.6)",
+          userSelect: "none", marginTop: -2,
+          textShadow: "0 0 8px rgba(120,170,255,0.5)",
         }}>Asistente</div>
       </div>
 
@@ -597,15 +617,14 @@ export default function Assistant() {
             position: "fixed", right: 20, bottom: 96, zIndex: 9999,
             width: 440, maxWidth: "calc(100vw - 40px)",
             height: "min(720px, calc(100vh - 130px))",
-            // Cristal muy translúcido (~30% opaco) + blur fuerte para
-            // legibilidad. El fondo del ERP se ve a través pero el texto
-            // permanece nítido gracias al backdrop-filter saturado.
-            background: "rgba(12, 20, 38, 0.32)",
-            backdropFilter: "blur(40px) saturate(180%)",
-            WebkitBackdropFilter: "blur(40px) saturate(180%)",
-            border: "1px solid rgba(180,215,255,0.18)",
+            // Cristal frosted: fondo con gradient translucido + blur intenso
+            // + doble sombra interna para simular grosor de vidrio.
+            background: "linear-gradient(160deg, rgba(30,45,80,0.28) 0%, rgba(10,18,36,0.22) 60%, rgba(15,25,48,0.30) 100%)",
+            backdropFilter: "blur(48px) saturate(200%)",
+            WebkitBackdropFilter: "blur(48px) saturate(200%)",
+            border: "1px solid rgba(180,215,255,0.28)",
             borderRadius: 22,
-            boxShadow: "0 28px 70px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08)",
+            boxShadow: "0 28px 70px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -1px 0 rgba(0,0,0,0.25)",
             display: "flex", flexDirection: "column", overflow: "hidden",
             animation: "assistant-slide-in .24s ease-out",
             color: "#E4ECFB",
@@ -785,7 +804,7 @@ export default function Assistant() {
                     <MetallicTriangle size={22} glow={false} />
                   </div>
                   <div style={{ flex: 1, color: "#E0E9F9", fontSize: 13.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-                    {m.text}
+                    {stripMarkdown(m.text)}
                     {streaming && i === msgs.length - 1 && (
                       <span style={{ display: "inline-block", width: 8, height: 14,
                                       background: "rgba(200,215,240,0.7)",
@@ -797,7 +816,7 @@ export default function Assistant() {
                         <button className="assistant-action-btn" onClick={() => speak(m.text)}
                           style={actionBtn}>🔊 Escuchar</button>
                         <button className="assistant-action-btn"
-                          onClick={() => navigator.clipboard?.writeText(m.text).catch(() => {})}
+                          onClick={() => navigator.clipboard?.writeText(stripMarkdown(m.text)).catch(() => {})}
                           style={actionBtn}>📋 Copiar</button>
                         {m.tool && isExportable(m.data) && (
                           <button className="assistant-action-btn"
