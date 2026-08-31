@@ -609,6 +609,7 @@ function ByDimensionCard({
         borderRadius: 8, border: "none", cursor: "pointer",
         background: dim === v ? tk.accent + "22" : "transparent",
         color: dim === v ? tk.accent : tk.textMid, fontSize: 12, fontWeight: 600,
+        whiteSpace: "nowrap",
       }}
     >
       {icon}{label}
@@ -617,12 +618,19 @@ function ByDimensionCard({
   return (
     <div style={{
       background: tk.panel, border: `1px solid ${tk.border}`, borderRadius: 12, padding: 16, minHeight: 260,
+      overflow: "hidden",
     }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span style={{ fontSize: 14, fontWeight: 600, color: tk.textHi }}>
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        marginBottom: 10, gap: 8, flexWrap: "wrap",
+      }}>
+        <span style={{ fontSize: 14, fontWeight: 600, color: tk.textHi, whiteSpace: "nowrap" }}>
           {tr("forecast.concentradoTitle", "Concentrado")}
         </span>
-        <div style={{ display: "flex", gap: 4, background: tk.panel2, padding: 4, borderRadius: 10, border: `1px solid ${tk.border}` }}>
+        <div style={{
+          display: "flex", gap: 4, background: tk.panel2, padding: 4, borderRadius: 10,
+          border: `1px solid ${tk.border}`, flexWrap: "wrap",
+        }}>
           <DimBtn v="customer" icon={<Users size={12} />} label={tr("forecast.byCustomer", "Cliente")} />
           <DimBtn v="product" icon={<Package size={12} />} label={tr("forecast.byProduct", "Producto")} />
           <DimBtn v="salesperson" icon={<UserCircle2 size={12} />} label={tr("forecast.bySalesperson", "Vendedor")} />
