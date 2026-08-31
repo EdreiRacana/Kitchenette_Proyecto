@@ -169,7 +169,7 @@ function tr(s: string | null | undefined, lang: "es" | "en"): string {
   out = out.replace(/\bsin\s+activo/gi, "no assets");
 
   // Sub del KPI CxC dinamico
-  out = out.replace(/^(\d+)\s+ó?rdenes?\s+con\s+saldo$/i, (_m, n) => `${n} order${n === "1" ? "" : "s"} with balance`);
+  out = out.replace(/^(\d+)\s+[oó]rdenes?\s+con\s+saldo$/i, (_m, n) => `${n} order${n === "1" ? "" : "s"} with balance`);
   out = out.replace(/^(\d+)\s+pedidos?$/i, (_m, n) => `${n} order${n === "1" ? "" : "s"}`);
 
   // Unidades cortas
@@ -419,11 +419,11 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       <div style={{ ...gridBase, marginBottom: 14 }}>
         <PanelCard t={t} title={L.salesPeriod} subtitle={L.vsPrev}
           hint={data.trend_sales?.length ? `${mxn(sumPoints(data.trend_sales, "revenue"))} / ${mxn(sumPoints(data.trend_sales, "prev_revenue"))} ${L.anterior}` : undefined}
-          span={isMobile ? undefined : 8} minH={320}>
+          span={isMobile ? undefined : 8} minH={280}>
           <SalesTrendChart data={data.trend_sales || []} t={t} L={L} />
         </PanelCard>
         <PanelCard t={t} title={L.top5Cust} hint={L.ofPeriod}
-          span={isMobile ? undefined : 4} minH={320}>
+          span={isMobile ? undefined : 4} minH={280}>
           <TopCustomers rows={data.top_customers || []} t={t} L={L}
             onSelect={(id) => id && nav("clientes")} />
         </PanelCard>
@@ -437,17 +437,17 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
               : data.meta_vs_real.basis === "none" ? L.basisNone
                 : L.basisForecast
           }
-          span={isMobile ? undefined : 4}>
+          span={isMobile ? undefined : 4} minH={260}>
           <MetaBubble data={data.meta_vs_real} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.channels} hint={L.ofPeriod}
-          span={isMobile ? undefined : 4}>
+          span={isMobile ? undefined : 4} minH={260}>
           <ChannelDonut data={data.channel_sales.channels || []} total={data.channel_sales.total_revenue} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.geoDist} hint={L.topStates}
-          span={isMobile ? undefined : 4}>
+          span={isMobile ? undefined : 4} minH={260}>
           <GeoBig geo={data.geographic} t={t} L={L} />
         </PanelCard>
       </div>
@@ -455,18 +455,18 @@ export default function ExecutiveDashboard({ t, lang = "es", setPage, isMobile =
       {/* Fila 4 — Alertas (4) + KPIs Op (4) + Financieros (4) */}
       <div style={{ ...gridBase }}>
         <PanelCard t={t} title={L.alerts} hint={L.top4}
-          span={isMobile ? undefined : 4}>
+          span={isMobile ? undefined : 4} minH={240}>
           <AlertList alerts={(data.alerts || []).slice(0, 4)} t={t} L={L}
             onClick={(a) => nav(a.module === "finance" ? "finanzas" : a.module === "retail" ? "retail" : "inventario")} />
         </PanelCard>
 
         <PanelCard t={t} title={L.opKpis} hint={L.opSub}
-          span={isMobile ? undefined : 4}>
+          span={isMobile ? undefined : 4} minH={240}>
           <OperationalBars kpis={data.operational_kpis || []} t={t} L={L} />
         </PanelCard>
 
         <PanelCard t={t} title={L.finKpis} hint={L.finSub}
-          span={isMobile ? undefined : 4}>
+          span={isMobile ? undefined : 4} minH={240}>
           <FinancialKPIs kpis={data.financial_kpis || []} t={t} L={L}
             onClick={() => nav("contabilidad")} />
         </PanelCard>
@@ -580,23 +580,23 @@ function KpiHero({
       </span>
 
       {/* Header: icono + titulo lado a lado. El titulo puede ocupar hasta 2 lineas. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, paddingRight: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
         <div style={{
-          width: 26, height: 26, borderRadius: 7,
+          width: 24, height: 24, borderRadius: 6,
           background: accent + "2E", color: accent,
           display: "grid", placeItems: "center", flexShrink: 0,
         }}>
-          <Icon size={14} />
+          <Icon size={13} />
         </div>
         <div style={{
-          fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase",
+          fontSize: 9.5, letterSpacing: "0.08em", textTransform: "uppercase",
           color: t.textLo, fontWeight: 700,
-          lineHeight: 1.2,
+          lineHeight: 1.15,
           display: "-webkit-box",
           WebkitLineClamp: 2,
           WebkitBoxOrient: "vertical",
           overflow: "hidden",
-          wordBreak: "break-word",
+          overflowWrap: "anywhere",
           minWidth: 0, flex: 1,
         }}>{L.tr(kpi.label)}</div>
       </div>
@@ -691,7 +691,7 @@ function SalesTrendChart({ data, t, L }: { data: TrendPoint[]; t: Tokens; L: any
   const cur = hover && safe[hover.i] ? safe[hover.i] : null;
 
   return (
-    <div style={{ position: "relative", width: "100%", height: 260, display: "flex", flexDirection: "column" }}
+    <div style={{ position: "relative", width: "100%", height: 220, display: "flex", flexDirection: "column" }}
       onMouseMove={onMove} onMouseLeave={onLeave}>
       <div style={{ flex: 1, minHeight: 0 }}>
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%", display: "block" }}>
@@ -866,7 +866,7 @@ function MetaBubble({ data, t, L }: { data: any; t: Tokens; L: any }) {
             sub={L.ofGoal}
             hue="blue"
             liquidOpacity={0.62}
-            style={{ maxWidth: 260 }}
+            style={{ maxWidth: 200 }}
           />
         ) : (
           <div style={{ textAlign: "center", padding: 20 }}>
@@ -922,9 +922,9 @@ function ChannelDonut({ data, total, t, L }: {
   const focusColor = CHANNEL_PALETTE[focusIdx % CHANNEL_PALETTE.length];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 18, alignItems: "center", height: "100%", padding: "4px 2px" }}>
-      {/* Donut mas compacto; los % viven en el centro, la leyenda respira mas */}
-      <div style={{ position: "relative", width: 140, height: 140, flexShrink: 0 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: 14, alignItems: "center", height: "100%", padding: "2px 0" }}>
+      {/* Donut compacto; los % viven en el centro para no cortar labels */}
+      <div style={{ position: "relative", width: 128, height: 128, flexShrink: 0 }}>
         <svg viewBox="0 0 42 42" style={{ width: "100%", height: "100%" }}>
           <circle cx={cx} cy={cy} r={r} fill="transparent" stroke={t.border || "#1B2540"} strokeWidth={w} />
           {rings}
@@ -935,20 +935,17 @@ function ChannelDonut({ data, total, t, L }: {
           alignItems: "center", justifyContent: "center",
           pointerEvents: "none", textAlign: "center", padding: 6,
         }}>
-          <div style={{ fontSize: 24, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: focusColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>
             {focused ? focused.share_pct.toFixed(0) : 0}%
           </div>
-          <div style={{ fontSize: 9, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.14em", marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110, fontWeight: 700 }}>
+          <div style={{ fontSize: 8.5, color: t.textLo, textTransform: "uppercase", letterSpacing: "0.12em", marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 96, fontWeight: 700 }}>
             {focused ? L.tr(focused.label) : "—"}
-          </div>
-          <div style={{ fontSize: 10, color: t.textMid, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
-            {focused ? mxn(focused.revenue) : ""}
           </div>
         </div>
       </div>
 
-      {/* Leyenda con mas aire; el % vive dentro del donut para no cortarse */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+      {/* Leyenda apilada (label arriba, monto abajo) para no cortar textos largos */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
         {data.map((d, i) => {
           const color = CHANNEL_PALETTE[i % CHANNEL_PALETTE.length];
           const isHover = hoverIdx === i;
@@ -958,23 +955,28 @@ function ChannelDonut({ data, total, t, L }: {
               onMouseEnter={() => setHoverIdx(i)}
               onMouseLeave={() => setHoverIdx(null)}
               style={{
-                display: "grid", gridTemplateColumns: "12px minmax(0, 1fr) auto",
-                alignItems: "center", columnGap: 10, fontSize: 12,
-                padding: "7px 10px", borderRadius: 7,
+                display: "grid", gridTemplateColumns: "10px minmax(0, 1fr) auto",
+                alignItems: "center", columnGap: 9,
+                padding: "5px 8px", borderRadius: 6,
                 background: isHover ? withAlpha(color, 0.12) : "transparent",
                 borderLeft: `2px solid ${isHover ? color : withAlpha(color, 0.35)}`,
                 opacity: dim ? 0.5 : 1,
                 transition: "background .15s, opacity .15s, border-color .15s",
                 cursor: "pointer",
               }}>
-              {/* Swatch translucido */}
               <span style={{
-                width: 12, height: 12, borderRadius: 3,
+                width: 10, height: 10, borderRadius: 2,
                 background: withAlpha(color, 0.65),
                 boxShadow: `inset 0 0 0 1px ${withAlpha(color, 0.9)}`,
               }} />
-              <span style={{ color: t.textMid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{L.tr(d.label)}</span>
-              <span style={{ color: t.textHi, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{mxn(d.revenue)}</span>
+              <span style={{
+                color: t.textMid, fontSize: 12, fontWeight: 500,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0,
+              }}>{L.tr(d.label)}</span>
+              <span style={{
+                color: t.textHi, fontWeight: 700, fontSize: 12,
+                fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+              }}>{mxn(d.revenue)}</span>
             </div>
           );
         })}
