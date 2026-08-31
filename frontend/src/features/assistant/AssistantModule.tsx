@@ -551,28 +551,28 @@ export default function Assistant() {
           aria-label="Abrir asistente"
           className="assistant-fab"
           style={{
-            width: 52, height: 60, borderRadius: 14,
+            width: 72, height: 82, borderRadius: 16,
             background: "transparent",
             border: "none", padding: 0,
             cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
             transition: "opacity .2s, transform .2s",
-            opacity: open ? 1 : 0.85,
+            opacity: 1,
           }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = open ? "1" : "0.85"; }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
         >
           <span className="assistant-fab-inner" style={{ display: "flex", transition: "transform .2s" }}>
-            <MetallicTriangle size={40} glow={true} pulse={!open} />
+            <MetallicTriangle size={58} glow={true} pulse={!open} />
           </span>
         </button>
-        {/* Label "Asistente" — pulsa muy suave y discreto */}
+        {/* Label "Asistente" — mas prominente para ser notable */}
         <div style={{
-          fontSize: 9.5, letterSpacing: 1.2, textTransform: "uppercase",
-          color: "rgba(200,215,240,0.72)", fontWeight: 500,
+          fontSize: 11, letterSpacing: 1.6, textTransform: "uppercase",
+          color: "rgba(210,225,250,0.95)", fontWeight: 700,
           animation: "assistant-label-pulse 3.4s ease-in-out infinite",
-          userSelect: "none", marginTop: 1,
-          textShadow: "0 0 6px rgba(120,170,255,0.35)",
+          userSelect: "none", marginTop: 2,
+          textShadow: "0 0 10px rgba(120,170,255,0.6)",
         }}>Asistente</div>
       </div>
 
