@@ -949,9 +949,9 @@ function ChannelDonut({ data, total, t, L }: {
   const focusColor = CHANNEL_PALETTE[focusIdx % CHANNEL_PALETTE.length];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: 14, alignItems: "center", height: "100%", padding: "2px 0" }}>
-      {/* Anillo a la izquierda, ocupa el alto natural del panel */}
-      <div style={{ position: "relative", width: 110, height: 110, flexShrink: 0 }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, height: "100%", padding: "2px 0" }}>
+      {/* Anillo a la izquierda, mas grande al eliminar el hueco de la leyenda */}
+      <div style={{ position: "relative", width: 140, height: 140, flexShrink: 0 }}>
         <svg viewBox="0 0 42 42" style={{ width: "100%", height: "100%" }}>
           <circle cx={cx} cy={cy} r={r} fill="transparent" stroke={withAlpha(t.border || "#1B2540", 0.3)} strokeWidth={w} />
           {rings}
@@ -972,10 +972,10 @@ function ChannelDonut({ data, total, t, L }: {
         </div>
       </div>
 
-      {/* Leyenda a la derecha del anillo, ocupa el resto */}
+      {/* Leyenda al lado del anillo — ancho segun contenido, sin hueco intermedio */}
       <div style={{
         display: "flex", flexDirection: "column", gap: 4,
-        minWidth: 0, height: "100%", justifyContent: "center",
+        minWidth: 0, justifyContent: "center",
       }}>
         {data.map((d, i) => {
           const color = CHANNEL_PALETTE[i % CHANNEL_PALETTE.length];
@@ -986,8 +986,8 @@ function ChannelDonut({ data, total, t, L }: {
               onMouseEnter={() => setHoverIdx(i)}
               onMouseLeave={() => setHoverIdx(null)}
               style={{
-                display: "grid", gridTemplateColumns: "10px minmax(0, 1fr) auto",
-                alignItems: "center", columnGap: 9,
+                display: "grid", gridTemplateColumns: "10px auto auto",
+                alignItems: "center", columnGap: 10,
                 padding: "5px 8px", borderRadius: 6,
                 background: isHover ? withAlpha(color, 0.12) : "transparent",
                 borderLeft: `2px solid ${isHover ? color : withAlpha(color, 0.35)}`,
