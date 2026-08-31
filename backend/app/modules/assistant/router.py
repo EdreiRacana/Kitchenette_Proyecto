@@ -49,6 +49,8 @@ class SuggestionItem(BaseModel):
     tool: str
     prompt: str
     score: float
+    type: Optional[str] = None      # "tool" | "store" | "customer" | "employee" | "module"
+    sublabel: Optional[str] = None  # etiqueta secundaria mostrada en el typeahead
 
 
 class SuggestResponse(BaseModel):
@@ -63,12 +65,29 @@ async def get_budget(db: DB, current_user: CurrentUser):
 
 
 @router.get("/suggest", response_model=SuggestResponse)
-async def get_suggestions(current_user: CurrentUser, q: str = ""):
-    """Autocompletado del asistente. Devuelve las top N plantillas de
-    preguntas que más se parecen a lo que el usuario está escribiendo,
-    filtradas por el RBAC del usuario. Cero AI, sub-50ms típico."""
-    items = suggestions.suggest(q, current_user, limit=6)
-    return {"items": items}
+async def get_suggestions(db: DB, current_user: CurrentUser, q: str = ""):
+    """Autocompletado del asistente. Combina:
+      1) Plantillas de preguntas (PROMPT_HINTS por tool, RBAC-filtradas).
+      2) Entidades reales del sistema (tiendas retail, clientes, empleados)
+         cuyo nombre matchee el query — así "satelite" encuentra "Plaza
+         Satelite" aunque no esté en el diccionario de prompts.
+      3) Sinónimos de módulos (forecast, tablero, BI…) que suelen preguntarse.
+    Todo ordenado por score, top N. Cero AI, sub-100ms típico."""
+    static_items = suggestions.suggest(q, current_user, limit=6)
+    for it in static_items:
+        it.setdefault("type", "tool")
+    entity_items = await suggestions.suggest_entities(db, q, current_user, limit=8)
+    combined = static_items + entity_items
+    combined.sort(key=lambda r: r["score"], reverse=True)
+    # Dedup por prompt exacto (case-insensitive)
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for r in combined:
+        key = (r.get("prompt") or "").strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(r)
+    return {"items": unique[:10]}
 
 
 @router.post("/export-xlsx")

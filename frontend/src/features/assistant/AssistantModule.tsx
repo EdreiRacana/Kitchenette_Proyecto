@@ -250,7 +250,11 @@ function triggerDownload(blob: Blob, filename: string) {
   }, 100);
 }
 
-type Suggestion = { tool: string; prompt: string; score: number };
+type SuggestionType = "tool" | "store" | "customer" | "employee" | "module";
+type Suggestion = {
+  tool: string; prompt: string; score: number;
+  type?: SuggestionType; sublabel?: string;
+};
 
 async function fetchSuggestions(q: string): Promise<Suggestion[]> {
   try {
@@ -858,23 +862,37 @@ export default function Assistant() {
                                padding: "4px 8px" }}>
                   Sugerencias · ↑↓ para elegir, Enter para enviar
                 </div>
-                {suggestions.map((s, i) => (
-                  <div
-                    key={`${s.tool}-${i}`}
-                    onMouseEnter={() => setActiveSuggest(i)}
-                    onMouseDown={(e) => { e.preventDefault(); applySuggestion(s); }}
-                    style={{
-                      padding: "8px 10px", borderRadius: 8,
-                      background: activeSuggest === i
-                        ? "rgba(70,120,200,0.28)" : "transparent",
-                      color: "#DEE9FB", fontSize: 13, cursor: "pointer",
-                      display: "flex", alignItems: "center", gap: 8,
-                    }}
-                  >
-                    <span style={{ color: "rgba(140,200,255,0.85)" }}>→</span>
-                    <span style={{ flex: 1 }}>{s.prompt}</span>
-                  </div>
-                ))}
+                {suggestions.map((s, i) => {
+                  const icon = s.type === "store" ? "🏬"
+                    : s.type === "customer" ? "👤"
+                    : s.type === "employee" ? "💼"
+                    : s.type === "module" ? "📊"
+                    : "→";
+                  return (
+                    <div
+                      key={`${s.tool}-${s.prompt}-${i}`}
+                      onMouseEnter={() => setActiveSuggest(i)}
+                      onMouseDown={(e) => { e.preventDefault(); applySuggestion(s); }}
+                      style={{
+                        padding: "8px 10px", borderRadius: 8,
+                        background: activeSuggest === i
+                          ? "rgba(70,120,200,0.28)" : "transparent",
+                        color: "#DEE9FB", fontSize: 13, cursor: "pointer",
+                        display: "flex", alignItems: "center", gap: 10,
+                      }}
+                    >
+                      <span style={{ color: "rgba(140,200,255,0.85)", width: 16, textAlign: "center" }}>{icon}</span>
+                      <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.prompt}</span>
+                      {s.sublabel && (
+                        <span style={{
+                          fontSize: 10, color: "rgba(160,180,220,0.55)",
+                          textTransform: "uppercase", letterSpacing: 0.5,
+                          flexShrink: 0,
+                        }}>{s.sublabel}</span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
             <div style={{
