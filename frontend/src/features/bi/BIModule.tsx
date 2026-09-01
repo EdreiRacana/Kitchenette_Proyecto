@@ -20,6 +20,7 @@ import { inventoryService, type ReorderAlert } from "../inventory/service";
 import { hrApi } from "../hr/api";
 import { biService, type OmnichannelData } from "./service";
 import ExecutiveLive from "./ExecutiveLive";
+import { tr as trI18n, detectLang } from "../../utils/i18n";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Period = "week" | "month" | "quarter" | "year";
@@ -1016,6 +1017,11 @@ async function loadBIState(period: Period): Promise<BIState> {
 
 // ── Main Module ───────────────────────────────────────────────────────────
 export default function BIModule({ t, s }: { t: any; s: any }) {
+  const langBI = detectLang(s);
+  // trBI queda disponible para textos del backend en el futuro (ahora los
+  // labels van con ternario porque son estaticos y explicitos).
+  const trBI = (v: string | null | undefined) => trI18n(v, langBI);
+  void trBI;
   void s;
   const [tab, setTab] = useState<"executive" | "sales" | "inventory" | "finance" | "hr" | "omnichannel" | "custom" | "reports">("executive");
   const [period, setPeriod] = useState<Period>("month");
@@ -1052,27 +1058,27 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
   });
 
   const TABS = [
-    { id: "executive", label: "Ejecutivo", icon: LayoutDashboard },
-    { id: "sales", label: "Ventas", icon: ShoppingCart },
-    { id: "inventory", label: "Inventario", icon: Package },
-    { id: "finance", label: "Finanzas", icon: Wallet },
-    { id: "hr", label: "RH", icon: Users },
-    { id: "omnichannel", label: "Omnicanal", icon: Store },
-    { id: "custom", label: "Personalizado", icon: Sliders },
-    { id: "reports", label: "Reportes", icon: FileText },
+    { id: "executive", label: langBI === "en" ? "Executive" : "Ejecutivo", icon: LayoutDashboard },
+    { id: "sales", label: langBI === "en" ? "Sales" : "Ventas", icon: ShoppingCart },
+    { id: "inventory", label: langBI === "en" ? "Inventory" : "Inventario", icon: Package },
+    { id: "finance", label: langBI === "en" ? "Finance" : "Finanzas", icon: Wallet },
+    { id: "hr", label: langBI === "en" ? "HR" : "RH", icon: Users },
+    { id: "omnichannel", label: langBI === "en" ? "Omnichannel" : "Omnicanal", icon: Store },
+    { id: "custom", label: langBI === "en" ? "Custom" : "Personalizado", icon: Sliders },
+    { id: "reports", label: langBI === "en" ? "Reports" : "Reportes", icon: FileText },
   ] as const;
 
   const ALL_KPIS = useMemo(() => {
     if (!D) return [];
     return [
-      { id: "ventas", label: "Ventas totales (cobradas)", value: D.ventas, prev: D.ventasPrev, format: "money" as const, icon: TrendingUp, color: t.good },
-      { id: "utilidad", label: "Utilidad neta", value: D.utilidad, prev: D.utilidadPrev, format: "money" as const, icon: DollarSign, color: t.nova },
-      { id: "pedidos", label: "Pedidos", value: D.pedidos, prev: D.pedidosPrev, format: "number" as const, icon: ShoppingCart, color: "#A78BFA" },
-      { id: "ticket", label: "Ticket promedio", value: D.ticket, prev: D.ticketPrev, format: "money" as const, icon: Star, color: t.warn },
-      { id: "margen", label: "Margen neto", value: D.margenNeto, prev: D.margenNetoPrev, format: "percent" as const, icon: Activity, color: t.good },
-      { id: "gastos", label: "Gastos totales", value: D.gastos, prev: D.gastosPrev, format: "money" as const, icon: TrendingDown, color: t.bad },
-      { id: "inventario", label: "Valor inventario", value: D.inventarioVal, prev: null, noHistory: true, format: "money" as const, icon: Package, color: t.nova },
-      { id: "cxc", label: "Por cobrar (CXC)", value: D.cxc, prev: null, noHistory: true, format: "money" as const, icon: Clock, color: t.warn },
+      { id: "ventas", label: langBI === "en" ? "Total sales (collected)" : "Ventas totales (cobradas)", value: D.ventas, prev: D.ventasPrev, format: "money" as const, icon: TrendingUp, color: t.good },
+      { id: "utilidad", label: langBI === "en" ? "Net profit" : "Utilidad neta", value: D.utilidad, prev: D.utilidadPrev, format: "money" as const, icon: DollarSign, color: t.nova },
+      { id: "pedidos", label: langBI === "en" ? "Orders" : "Pedidos", value: D.pedidos, prev: D.pedidosPrev, format: "number" as const, icon: ShoppingCart, color: "#A78BFA" },
+      { id: "ticket", label: langBI === "en" ? "Avg. ticket" : "Ticket promedio", value: D.ticket, prev: D.ticketPrev, format: "money" as const, icon: Star, color: t.warn },
+      { id: "margen", label: langBI === "en" ? "Net margin" : "Margen neto", value: D.margenNeto, prev: D.margenNetoPrev, format: "percent" as const, icon: Activity, color: t.good },
+      { id: "gastos", label: langBI === "en" ? "Total expenses" : "Gastos totales", value: D.gastos, prev: D.gastosPrev, format: "money" as const, icon: TrendingDown, color: t.bad },
+      { id: "inventario", label: langBI === "en" ? "Inventory value" : "Valor inventario", value: D.inventarioVal, prev: null, noHistory: true, format: "money" as const, icon: Package, color: t.nova },
+      { id: "cxc", label: langBI === "en" ? "Receivables (AR)" : "Por cobrar (CXC)", value: D.cxc, prev: null, noHistory: true, format: "money" as const, icon: Clock, color: t.warn },
       { id: "pendientes", label: "Pendiente de cobro (período)", value: D.pendientes, prev: D.pendientesPrev, format: "money" as const, icon: Clock, color: t.warn },
     ];
   }, [D, t]);

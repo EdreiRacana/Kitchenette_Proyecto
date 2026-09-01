@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { loyaltyApi, type LoyaltyTier, type LoyaltyProgramConfig } from "./loyaltyApi";
 import { resolveTheme, makeTr, money } from "../sales/theme";
+import { tr as trI18n, detectLang } from "../../utils/i18n";
 import type { Tokens } from "../sales/theme";
 import { Badge, Button, EmptyState, Spinkeyframes } from "../sales/ui";
 import { customersApi } from "./api";
@@ -32,7 +33,12 @@ const typeColor = (tk: Tokens, t: string | null): string => {
 
 export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s: unknown; initialQuery?: string }) {
   const tk = useMemo<Tokens>(() => resolveTheme(t as Record<string, unknown>), [t]);
-  const tr = useMemo(() => makeTr(s), [s]);
+  // El `tr` de Sales busca la key en `s`. Si `s` no la trae (App le pasa el
+  // bundle base sin diccionario custom), cae al fallback ES; ese fallback lo
+  // pasamos por el util compartido para traducir a EN cuando aplique.
+  const langMode = detectLang(s);
+  const trBase = useMemo(() => makeTr(s), [s]);
+  const tr = (key: string, fallback: string) => trI18n(trBase(key, fallback), langMode);
 
   const [items, setItems] = useState<Customer[]>([]);
   const [total, setTotal] = useState(0);
@@ -205,8 +211,8 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
       {/* Tab switcher */}
       <div style={{ display: "flex", gap: 4, borderBottom: `1px solid ${tk.border}` }}>
         {([
-          { id: "list", label: "Clientes", icon: Users },
-          { id: "loyalty", label: "Programa de fidelidad", icon: Award },
+          { id: "list", label: tr("cust_tab_list", "Clientes"), icon: Users },
+          { id: "loyalty", label: tr("cust_tab_loyalty", "Programa de fidelidad"), icon: Award },
         ] as const).map(tab => {
           const active = view === tab.id;
           const Icon = tab.icon;
@@ -247,16 +253,16 @@ export default function CustomersModule({ t, s, initialQuery }: { t: unknown; s:
       {/* Desgloses (mezcla real de la cartera). Clic → filtra la lista. */}
       {stats && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
-          <MixCard tk={tk} title="Por relación comercial" buckets={stats.by_relationship_type ?? []}
+          <MixCard tk={tk} title={langMode === "en" ? "By business relationship" : "Por relación comercial"} buckets={stats.by_relationship_type ?? []}
             active={relationshipType}
             onSelect={(v) => setRelationshipType(v === relationshipType ? "" : v)} />
-          <MixCard tk={tk} title="Por tipo (crédito/contado)" buckets={stats.by_client_type ?? []}
+          <MixCard tk={tk} title={langMode === "en" ? "By type (credit/cash)" : "Por tipo (crédito/contado)"} buckets={stats.by_client_type ?? []}
             active={clientType}
             onSelect={(v) => setClientType(v === clientType ? "" : v)} />
-          <MixCard tk={tk} title="Por origen (sucursal)" buckets={stats.by_origin ?? []}
+          <MixCard tk={tk} title={langMode === "en" ? "By origin (branch)" : "Por origen (sucursal)"} buckets={stats.by_origin ?? []}
             active={sucursal}
             onSelect={(v) => setSucursal(v === sucursal ? "" : v)} />
-          <MixCard tk={tk} title="Por marketplace" buckets={stats.by_marketplace_platform ?? []}
+          <MixCard tk={tk} title={langMode === "en" ? "By marketplace" : "Por marketplace"} buckets={stats.by_marketplace_platform ?? []}
             active={marketplacePlatform}
             onSelect={(v) => setMarketplacePlatform(v === marketplacePlatform ? "" : v)} />
         </div>

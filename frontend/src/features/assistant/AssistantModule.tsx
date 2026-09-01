@@ -287,7 +287,7 @@ async function downloadExcel(tool: string, data: any, question?: string) {
 }
 
 // ── Assistant (componente principal, se monta en App root) ─────────────
-export default function Assistant() {
+export default function Assistant({ lang = "es" }: { lang?: "es" | "en" } = {}) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -571,7 +571,7 @@ export default function Assistant() {
       }}>
         <button
           onClick={() => { setOpen(o => !o); if (showWelcome) dismissWelcome(); }}
-          title="Asistente (Ctrl+K)"
+          title={lang === "en" ? "Assistant (Ctrl+K)" : "Asistente (Ctrl+K)"}
           aria-label="Abrir asistente"
           className="assistant-fab"
           style={{
@@ -597,7 +597,7 @@ export default function Assistant() {
           animation: "assistant-label-pulse 3.4s ease-in-out infinite",
           userSelect: "none", marginTop: -2,
           textShadow: "0 0 8px rgba(120,170,255,0.5)",
-        }}>Asistente</div>
+        }}>{lang === "en" ? "Assistant" : "Asistente"}</div>
       </div>
 
       {/* Backdrop translúcido — cierra al tocar fuera */}
@@ -642,7 +642,7 @@ export default function Assistant() {
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <MetallicTriangle size={30} glow={true} pulse={streaming} />
               <div>
-                <div style={{ fontSize: 14.5, fontWeight: 500, letterSpacing: 0.1 }}>Asistente</div>
+                <div style={{ fontSize: 14.5, fontWeight: 500, letterSpacing: 0.1 }}>{lang === "en" ? "Assistant" : "Asistente"}</div>
                 <div style={{ fontSize: 11, color: "rgba(180,200,235,0.55)", marginTop: 1 }}>
                   {streaming ? "Analizando…" : "Análisis inteligente del negocio"}
                 </div>
@@ -944,7 +944,11 @@ export default function Assistant() {
                     }
                   }
                 }}
-                placeholder={speech.listening ? "Escuchando…" : "Pregúntame algo del negocio…"}
+                placeholder={
+                  speech.listening
+                    ? (lang === "en" ? "Listening…" : "Escuchando…")
+                    : (lang === "en" ? "Ask me something about the business…" : "Pregúntame algo del negocio…")
+                }
                 rows={1}
                 style={{
                   flex: 1, background: "transparent", border: "none", outline: "none",

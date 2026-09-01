@@ -3346,7 +3346,7 @@ export default function App() {
       </div>
       {/* Asistente flotante — capa por encima de todos los módulos,
           no invasivo, se abre con click al FAB o Ctrl+K. */}
-      <Assistant />
+      <Assistant lang={lang} />
     </div>
   );
 }
