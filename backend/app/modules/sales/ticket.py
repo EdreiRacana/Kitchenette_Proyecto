@@ -1,7 +1,6 @@
 """Render ticket de venta para envío por correo o WhatsApp."""
 from __future__ import annotations
 
-import base64
 from datetime import date, datetime
 from typing import Optional, Dict, List
 from urllib.parse import quote
@@ -53,19 +52,27 @@ def _biz_name(company: Optional[CompanyProfile]) -> str:
     return (company.legal_name if company and company.legal_name else "Kitchenette")
 
 
-def _logo_data_uri(company: Optional[CompanyProfile]) -> str:
-    """Convierte los bytes del logo en un data URI base64. Se inlinea en el
-    HTML del correo para que TODO cliente lo muestre — Gmail y Outlook
-    bloquean o rompen imágenes referenciadas por URL relativa/http, pero un
-    data URI siempre se pinta."""
-    if not company or not getattr(company, "logo_bytes", None):
-        return ""
-    try:
-        mime = company.logo_mime or "image/png"
-        b64 = base64.b64encode(company.logo_bytes).decode("ascii")
-        return f"data:{mime};base64,{b64}"
-    except Exception:
-        return ""
+# Content-ID compartido para el logo — el HTML lo referencia como
+# <img src="cid:erp-logo"/> y el sender lo adjunta con el mismo cid.
+LOGO_CID = "erp-logo"
+
+
+def _has_logo(company: Optional[CompanyProfile]) -> bool:
+    return bool(company and getattr(company, "logo_bytes", None))
+
+
+def logo_inline_attachment(
+    company: Optional[CompanyProfile],
+) -> Optional[tuple[str, bytes, str, str]]:
+    """Devuelve el 4-tuple (filename, bytes, subtype, content_id) para
+    adjuntar el logo como imagen inline al email — o None si no hay logo.
+    El HTML del ticket referencia src="cid:erp-logo". Gmail y Outlook
+    bloquean data:base64 en <img>, pero renderizan CID sin problemas."""
+    if not _has_logo(company):
+        return None
+    mime = ((company.logo_mime or "image/png")).lower()
+    subtype = mime.split("/", 1)[1] if "/" in mime else "png"
+    return (f"logo.{subtype}", company.logo_bytes, subtype, LOGO_CID)
 
 
 def _classify_customer_tone(order: models.Order) -> str:
@@ -108,10 +115,14 @@ def render_ticket_html(order: models.Order, company: Optional[CompanyProfile] = 
 def _render_ticket_html_pos(order: models.Order, company: Optional[CompanyProfile] = None) -> str:
     """Versión mostrador / POS: 'Hola Carlos, gracias por tu compra…'."""
     biz = _biz_name(company)
-    # Nota: Gmail/Outlook bloquean data:base64 en <img>, asi que la imagen
-    # del logo NO va en el cuerpo del email. El logo si aparece en el PDF
-    # adjunto. En el body dejamos solo el nombre de la empresa grande.
-    logo_html = ""
+    # Logo via CID inline attachment — el sender debe adjuntar el logo con
+    # Content-ID "erp-logo" (usa logo_inline_attachment(company) para eso).
+    # Gmail/Outlook renderizan CID correctamente; el data:base64 anterior era
+    # bloqueado silenciosamente en varios clientes.
+    logo_html = (
+        f'<img src="cid:{LOGO_CID}" alt="{biz}" width="130" '
+        f'style="width:130px;height:auto;max-width:130px;display:block;margin:0 auto"/>'
+    ) if _has_logo(company) else ""
 
     accent = (company.brand_color if company and company.brand_color else "#111827")
     folio = order.folio or f"#{order.id}"
@@ -225,11 +236,11 @@ def _render_ticket_html_b2b(order: models.Order, company: Optional[CompanyProfil
     al pedido con folio + orden de compra si aplica, términos de pago y
     persona de contacto para logística."""
     biz = _biz_name(company)
-    logo_uri = _logo_data_uri(company)
+    # Logo via CID inline attachment (mismo mecanismo que el ticket POS).
     logo_html = (
-        f'<img src="{logo_uri}" alt="{biz}" width="130" '
+        f'<img src="cid:{LOGO_CID}" alt="{biz}" width="130" '
         f'style="width:130px;height:auto;max-width:130px;display:block;margin:0 auto"/>'
-    ) if logo_uri else ""
+    ) if _has_logo(company) else ""
 
     accent = (company.brand_color if company and company.brand_color else "#111827")
     folio = order.folio or f"#{order.id}"
