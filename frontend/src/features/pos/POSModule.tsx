@@ -31,7 +31,12 @@ const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFract
 
 type CartItem = POSSaleItem & { line_total: number };
 
-export default function POSModule({ t }: { t: any }) {
+export default function POSModule({ t, s }: { t: any; s?: any }) {
+  // Detecta el idioma del bundle. POS tiene ~4000 lineas — esta pasada solo
+  // traduce los textos MAS visibles (metodos de pago, labels de transacciones,
+  // encabezados principales). Los flujos secundarios quedan para una tanda
+  // dedicada.
+  const langPOS: "es" | "en" = (s?.nav?.dashboard || "").toLowerCase().includes("dash") ? "en" : "es";
   const [terminals, setTerminals] = useState<POSTerminal[]>([]);
   const [session, setSession] = useState<POSSession | null>(null);
   const [loading, setLoading] = useState(true);
@@ -555,7 +560,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
             )}
           </div>
           <button onClick={() => setQuery("")}
-            title="Ver todas las acciones (Ventas, Fondo, Cerrar turno, etc.)"
+            title={langPOS === "en" ? "View all actions (Sales, Cash-in, Close shift, etc.)" : "Ver todas las acciones (Ventas, Fondo, Cerrar turno, etc.)"}
             style={{ background: t.panel2, border: `1px solid ${t.border}`, color: t.textMid, cursor: "pointer", width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <Grid3x3 size={16} />
           </button>
@@ -620,7 +625,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
         >
           <button onClick={() => setShowHistory(true)} title="Historial de ventas del turno"
             style={{ ...iconBtn, background: t.nova + "16", border: `1px solid ${t.nova}44`, color: t.nova, fontWeight: 600 }}>
-            <Receipt size={14} /> Ventas
+            <Receipt size={14} /> {langPOS === "en" ? "Sales" : "Ventas"}
             {historyRefresh > 0 && <span style={{ background: t.nova, color: "#fff", borderRadius: 999, padding: "1px 7px", fontSize: 10, fontWeight: 800 }}>{historyRefresh}</span>}
           </button>
           <button onClick={() => setShowPrev(true)} title="Turno anterior" style={iconBtn}>
@@ -628,7 +633,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
           </button>
           {parked.length > 0 && (
             <button onClick={() => setShowParked(true)}
-              title="Ventas pausadas en este turno"
+              title={langPOS === "en" ? "Sales paused in this shift" : "Ventas pausadas en este turno"}
               style={{ ...iconBtn, background: t.warn + "18", border: `1px solid ${t.warn}55`, color: t.warn, fontWeight: 700 }}>
               <Clock size={14} /> En espera
               <span style={{ background: t.warn, color: "#fff", borderRadius: 999, padding: "1px 7px", fontSize: 10, fontWeight: 800 }}>{parked.length}</span>
@@ -1350,7 +1355,7 @@ function ParkedSalesDrawer({ t, parked, onClose, onResume, onDiscard }: {
         <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.border}`, background: t.panel2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <div style={{ fontSize: 16, fontWeight: 800, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}>
-              <Clock size={16} color={t.warn} /> Ventas en espera
+              <Clock size={16} color={t.warn} /> {langPOS === "en" ? "Parked sales" : "Ventas en espera"}
             </div>
             <div style={{ fontSize: 11.5, color: t.textLo, marginTop: 3 }}>
               {parked.length === 0 ? "Sin ventas pausadas" : `${parked.length} venta${parked.length === 1 ? "" : "s"} pausada${parked.length === 1 ? "" : "s"}`}

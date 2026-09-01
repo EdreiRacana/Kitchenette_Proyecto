@@ -192,6 +192,10 @@ const glass = (t: any): React.CSSProperties =>
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function HRModule({ t, s }: { t: any; s: any }) {
+  // Detecta el idioma del bundle. HR queda casi todo en espanol por vocabulario
+  // fiscal MX (ISR, IMSS, INFONAVIT, PTU, RFC, CURP, LFT), pero los tabs y
+  // labels generales SI se traducen.
+  const langHR: "es" | "en" = (s?.nav?.dashboard || "").toLowerCase().includes("dash") ? "en" : "es";
   const [tab, setTab] = useState<"dashboard" | "employees" | "attendance" | "checker" | "payroll" | "dispersion" | "reports" | "communication" | "budget" | "ptu" | "annualisr" | "cedulas" | "avisos">("dashboard");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
@@ -291,21 +295,23 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
   const tabBtn = (active: boolean): React.CSSProperties => ({ padding: "10px 16px", borderRadius: "10px 10px 0 0", border: "none", cursor: "pointer", fontWeight: active ? 700 : 500, fontSize: 13, background: active ? t.panel : "transparent", color: active ? t.nova : t.textLo, borderBottom: active ? `2px solid ${t.nova}` : "2px solid transparent", transition: "all .15s", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 });
 
   const TABS = [
-    { id: "dashboard", label: "Dashboard", icon: BarChart3 },
-    { id: "employees", label: "Empleados", icon: Users },
-    { id: "attendance", label: "Asistencia", icon: Clock },
-    { id: "checker", label: "Checador", icon: Fingerprint },
-    { id: "payroll", label: "Nómina", icon: Receipt },
-    { id: "dispersion", label: "Dispersión", icon: Banknote },
-    { id: "budget", label: "Presupuesto", icon: TrendingDown },
+    { id: "dashboard", label: langHR === "en" ? "Dashboard" : "Dashboard", icon: BarChart3 },
+    { id: "employees", label: langHR === "en" ? "Employees" : "Empleados", icon: Users },
+    { id: "attendance", label: langHR === "en" ? "Attendance" : "Asistencia", icon: Clock },
+    { id: "checker", label: langHR === "en" ? "Time clock" : "Checador", icon: Fingerprint },
+    { id: "payroll", label: langHR === "en" ? "Payroll" : "Nómina", icon: Receipt },
+    { id: "dispersion", label: langHR === "en" ? "Dispersion" : "Dispersión", icon: Banknote },
+    { id: "budget", label: langHR === "en" ? "Budget" : "Presupuesto", icon: TrendingDown },
+    // Terminos fiscales MX se dejan intactos incluso en EN — son referencias
+    // a leyes/formatos SAT/IMSS que no se traducen en la practica contable.
     { id: "ptu", label: "PTU", icon: DollarSign },
-    { id: "annualisr", label: "Ajuste ISR", icon: Calculator },
-    { id: "cedulas", label: "Cédulas IMSS", icon: Shield },
-    { id: "avisos", label: "Avisos IMSS", icon: FileSignature },
-    { id: "communication", label: "Comunicación", icon: Megaphone },
-    { id: "contracts", label: "Contratos", icon: FileSignature },
-    { id: "settlements", label: "Liquidaciones", icon: Scale },
-    { id: "reports", label: "Reportes", icon: FileText },
+    { id: "annualisr", label: langHR === "en" ? "Annual ISR" : "Ajuste ISR", icon: Calculator },
+    { id: "cedulas", label: langHR === "en" ? "IMSS statements" : "Cédulas IMSS", icon: Shield },
+    { id: "avisos", label: langHR === "en" ? "IMSS notices" : "Avisos IMSS", icon: FileSignature },
+    { id: "communication", label: langHR === "en" ? "Communication" : "Comunicación", icon: Megaphone },
+    { id: "contracts", label: langHR === "en" ? "Contracts" : "Contratos", icon: FileSignature },
+    { id: "settlements", label: langHR === "en" ? "Settlements" : "Liquidaciones", icon: Scale },
+    { id: "reports", label: langHR === "en" ? "Reports" : "Reportes", icon: FileText },
   ] as const;
 
   return (
@@ -313,7 +319,7 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
       {/* Error banner */}
       {(errors.employees || errors.alerts || errors.periods) && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, background: t.bad + "18", border: `1px solid ${t.bad}44`, color: t.bad, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 16 }}>
-          <AlertTriangle size={16} /> No se pudo cargar información del servidor. Intenta recargar.
+          <AlertTriangle size={16} /> {langHR === "en" ? "Could not load information from the server. Try reloading." : "No se pudo cargar información del servidor. Intenta recargar."}
         </div>
       )}
 

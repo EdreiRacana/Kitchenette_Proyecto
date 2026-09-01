@@ -3303,7 +3303,7 @@ export default function App() {
     dashboard: <ExecutiveDashboard t={t} lang={lang} setPage={setPage} isMobile={isMobile} />,
     inventario: <InventoryModule t={t} s={s} initialQuery={qFor("inventario")} />,
     ventas: <SalesCRM t={t} s={{ ...s, ...SALES_I18N[lang] }} initialQuery={qFor("ventas")} />,
-    pos: <POSModule t={t} />,
+    pos: <POSModule t={t} s={s} />,
     forecast: <ForecastModule t={t} s={{ ...s, ...FORECAST_I18N[lang] }} />,
     retail: <RetailModule t={t} lang={lang} />,
     clientes: <CustomersModule t={t} s={s} initialQuery={qFor("clientes")} />,
