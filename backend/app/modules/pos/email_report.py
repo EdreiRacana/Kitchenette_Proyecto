@@ -7,9 +7,29 @@ mención del PDF adjunto y despedida cordial.
 """
 from __future__ import annotations
 
-import base64
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Tuple
+
+
+# Content-ID compartido para el logo — el HTML lo referencia como
+# <img src="cid:erp-logo"/> y el sender lo adjunta con este mismo cid.
+LOGO_CID = "erp-logo"
+
+
+def logo_inline_attachment(company: Optional[dict]) -> Optional[Tuple[str, bytes, str, str]]:
+    """Devuelve el 4-tuple (filename, bytes, subtype, content_id) para adjuntar
+    el logo como imagen inline al email — o None si la empresa no tiene logo.
+    Los renderers HTML esperan src="cid:erp-logo". El sender debe pasar este
+    tuple en `attachments` a send_email para que la referencia se resuelva."""
+    if not company:
+        return None
+    bts = company.get("logo_bytes")
+    if not bts:
+        return None
+    mime = (company.get("logo_mime") or "image/png").lower()
+    subtype = mime.split("/", 1)[1] if "/" in mime else "png"
+    filename = f"logo.{subtype}"
+    return (filename, bts, subtype, LOGO_CID)
 
 
 def _money(v: float | None) -> str:
@@ -31,22 +51,6 @@ def _fmt_dt(v) -> str:
         return str(v)
 
 
-def _logo_data_uri_from_dict(company: Optional[dict]) -> str:
-    """Igual que en sales/ticket.py pero recibe un dict — el POS pasa
-    company como dict (via _get_company_dict), no como CompanyProfile ORM."""
-    if not company:
-        return ""
-    bts = company.get("logo_bytes")
-    if not bts:
-        return ""
-    try:
-        mime = company.get("logo_mime") or "image/png"
-        b64 = base64.b64encode(bts).decode("ascii")
-        return f"data:{mime};base64,{b64}"
-    except Exception:
-        return ""
-
-
 def render_session_close_html(
     company: dict, session: dict, report: dict, *,
     kind: str = "Z", extra_notes: Optional[str] = None,
@@ -55,10 +59,14 @@ def render_session_close_html(
     mención del PDF adjunto y despedida. El detalle vive en el PDF."""
     biz = (company or {}).get("legal_name") or "Sthenova"
     accent = (company or {}).get("brand_color") or "#111827"
-    # Nota: Gmail y otros clientes de correo bloquean data:base64 en <img>,
-    # asi que la imagen del logo NO va en el cuerpo del email. El logo si
-    # aparece en el PDF adjunto. En el body dejamos solo el nombre grande.
-    logo_html = ""
+    # Logo via CID inline attachment — el sender adjunta el logo con
+    # Content-ID "erp-logo" y aqui lo referenciamos. Gmail/Outlook renderizan
+    # CID correctamente (bloquean data:base64, por eso no usamos data URI).
+    has_logo = bool((company or {}).get("logo_bytes"))
+    logo_html = (
+        f'<img src="cid:{LOGO_CID}" alt="{biz}" width="130" '
+        f'style="width:130px;height:auto;max-width:130px;display:block;margin:0 auto"/>'
+    ) if has_logo else ""
 
     kind_label = "Cierre de turno" if kind == "Z" else "Corte intermedio"
     kind_word = "cierre" if kind == "Z" else "corte"

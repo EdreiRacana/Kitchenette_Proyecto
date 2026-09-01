@@ -423,6 +423,12 @@ async def send_ticket_email(order_id: int, payload: schemas.TicketSendRequest, d
             # falla no rompemos el envío — solo se pierde el adjunto.
             print(f"[ticket-email] no se pudo generar PDF adjunto: {e}")
 
+    # Logo inline para que se vea en el body del correo (Gmail/Outlook
+    # bloquean data:base64 en <img>, pero CID inline se renderiza sin problema).
+    logo_att = ticket_mod.logo_inline_attachment(company)
+    if logo_att:
+        attachments = [*attachments, logo_att]
+
     ok = await send_email(db, to=recipient, subject=subject, body_html=html,
                           attachments=attachments or None)
     if not ok:

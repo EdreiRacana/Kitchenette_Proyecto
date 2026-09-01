@@ -406,9 +406,16 @@ async def email_session_to_accounting(
                f" · {biz}")
     fname = f"reporte_{kind}_turno_{session_id}.pdf"
 
+    # Logo inline para que se vea en el body del correo (CID resuelto por
+    # el sender, ver core/email.py y pos/email_report.py::LOGO_CID).
+    attachments = [(fname, pdf, "pdf")]
+    logo_att = pos_email.logo_inline_attachment(company_dict)
+    if logo_att:
+        attachments.append(logo_att)
+
     ok = await send_email(
         db, to=recipient, subject=subject, body_html=html,
-        attachments=[(fname, pdf, "pdf")],
+        attachments=attachments,
     )
     if not ok:
         return schemas.SessionEmailAccountingResult(

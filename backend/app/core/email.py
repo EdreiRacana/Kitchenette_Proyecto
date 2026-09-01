@@ -21,10 +21,21 @@ import ssl
 import base64
 import smtplib
 from email.utils import parseaddr, formataddr
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple, Union
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
+from email.mime.image import MIMEImage
+
+
+# Attachment: (filename, bytes, subtype) o (filename, bytes, subtype, content_id).
+# Cuando trae content_id, el attachment es INLINE (referenciable desde el HTML
+# con <img src="cid:content_id"/>) — asi mostramos el logo en el cuerpo del
+# correo en Gmail/Outlook (que bloquean data:base64 en img).
+AttachmentTuple = Union[
+    Tuple[str, bytes, str],
+    Tuple[str, bytes, str, Optional[str]],
+]
 
 import httpx
 from sqlalchemy import select
@@ -67,8 +78,23 @@ async def _company_identity(db: AsyncSession) -> Tuple[Optional[str], Optional[s
     return None, None
 
 
+def _normalize_attachments(attachments) -> list:
+    """Convierte tuplas mixtas (3 o 4 elementos) a lista uniforme de 4-tuples
+    con content_id=None para las de 3. Simplifica el manejo aguas abajo."""
+    out = []
+    for att in (attachments or []):
+        if len(att) == 4:
+            out.append(att)
+        else:
+            fn, content, st = att
+            out.append((fn, content, st, None))
+    return out
+
+
 def _b64_attachments(attachments) -> list:
-    return [(fn, base64.b64encode(content).decode("ascii"), st) for fn, content, st in (attachments or [])]
+    """Codifica en base64 y devuelve (filename, b64, subtype, content_id)."""
+    norm = _normalize_attachments(attachments)
+    return [(fn, base64.b64encode(content).decode("ascii"), st, cid) for fn, content, st, cid in norm]
 
 
 async def _send_http(provider: str, api_key: str, mail_from: str, *, to: str, subject: str,
@@ -87,7 +113,15 @@ async def _send_http(provider: str, api_key: str, mail_from: str, *, to: str, su
                 payload["reply_to"] = reply_to
             atts = _b64_attachments(attachments)
             if atts:
-                payload["attachments"] = [{"filename": fn, "content": c} for fn, c, _st in atts]
+                # Resend soporta inline images via content_id (referenciables
+                # desde el HTML como <img src="cid:xxx"/>). Sin cid es adjunto normal.
+                payload["attachments"] = [
+                    {
+                        "filename": fn, "content": c,
+                        **({"content_id": f"<{cid}>", "content_type": f"image/{st}"} if cid else {}),
+                    }
+                    for fn, c, st, cid in atts
+                ]
             async with httpx.AsyncClient(timeout=20) as client:
                 r = await client.post("https://api.resend.com/emails",
                                       headers={"Authorization": f"Bearer {api_key}"}, json=payload)
@@ -102,8 +136,15 @@ async def _send_http(provider: str, api_key: str, mail_from: str, *, to: str, su
                 msg["reply_to"] = {"email": reply_to}
             atts = _b64_attachments(attachments)
             if atts:
-                msg["attachments"] = [{"content": c, "filename": fn, "type": f"application/{st}",
-                                       "disposition": "attachment"} for fn, c, st in atts]
+                msg["attachments"] = [
+                    {
+                        "content": c, "filename": fn,
+                        "type": (f"image/{st}" if cid else f"application/{st}"),
+                        "disposition": "inline" if cid else "attachment",
+                        **({"content_id": cid} if cid else {}),
+                    }
+                    for fn, c, st, cid in atts
+                ]
             async with httpx.AsyncClient(timeout=20) as client:
                 r = await client.post("https://api.sendgrid.com/v3/mail/send",
                                       headers={"Authorization": f"Bearer {api_key}"}, json=msg)
@@ -118,7 +159,10 @@ async def _send_http(provider: str, api_key: str, mail_from: str, *, to: str, su
                 payload["replyTo"] = {"email": reply_to}
             atts = _b64_attachments(attachments)
             if atts:
-                payload["attachment"] = [{"name": fn, "content": c} for fn, c, _st in atts]
+                # Brevo no expone content_id via API — inline images NO se
+                # muestran en el body con este proveedor. Se envian como
+                # attachment normal para no perderlos, y el HTML no ve el img.
+                payload["attachment"] = [{"name": fn, "content": c} for fn, c, _st, _cid in atts]
             async with httpx.AsyncClient(timeout=20) as client:
                 r = await client.post("https://api.brevo.com/v3/smtp/email",
                                       headers={"api-key": api_key, "accept": "application/json"}, json=payload)
@@ -161,14 +205,23 @@ def _deliver(*, host: str, port: int, use_tls: bool, username: Optional[str],
 
 def _build_mime(*, from_name: str, from_email: str, to: str, subject: str,
                 body_html: str, attachments=None) -> MIMEMultipart:
-    msg = MIMEMultipart("alternative")
+    # multipart/related soporta HTML + inline images (via CID) + attachments
+    # regulares en un solo mensaje. Los clientes de correo lo interpretan bien.
+    msg = MIMEMultipart("related")
     msg["Subject"] = subject
     msg["From"] = f"{from_name} <{from_email}>"
     msg["To"] = to
     msg.attach(MIMEText(body_html, "html"))
-    for filename, content, subtype in (attachments or []):
-        part = MIMEApplication(content, _subtype=subtype)
-        part.add_header("Content-Disposition", "attachment", filename=filename)
+    for att in _normalize_attachments(attachments):
+        filename, content, subtype, cid = att
+        if cid:
+            # Inline image referenciada desde el HTML como <img src="cid:xxx"/>
+            part = MIMEImage(content, _subtype=subtype)
+            part.add_header("Content-ID", f"<{cid}>")
+            part.add_header("Content-Disposition", "inline", filename=filename)
+        else:
+            part = MIMEApplication(content, _subtype=subtype)
+            part.add_header("Content-Disposition", "attachment", filename=filename)
         msg.attach(part)
     return msg
 
@@ -201,10 +254,15 @@ async def _send_smtp(db: AsyncSession, *, to: str, subject: str, body_html: str,
 # ── API pública ───────────────────────────────────────────────────────────────
 
 async def send_email(db: AsyncSession, *, to: str, subject: str, body_html: str,
-                     attachments: Optional[Sequence[Tuple[str, bytes, str]]] = None) -> bool:
+                     attachments: Optional[Sequence[AttachmentTuple]] = None) -> bool:
     """Envía un correo. Prefiere el proveedor HTTP de plataforma; si no hay,
-    cae al SMTP por empresa. Devuelve True si se envió. `attachments` es una
-    lista de (nombre_archivo, contenido_bytes, subtipo_mime)."""
+    cae al SMTP por empresa. Devuelve True si se envió.
+
+    `attachments`: lista de tuplas (filename, bytes, subtype) para adjuntos
+    normales, o (filename, bytes, subtype, content_id) para imágenes inline
+    referenciables desde el HTML como <img src="cid:content_id"/>. Usa cid
+    para logos/marcas dentro del body — Gmail/Outlook bloquean data:base64
+    pero renderizan CID sin problemas."""
     if not to:
         return False
     from_name, reply_to = await _company_identity(db)
