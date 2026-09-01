@@ -31,7 +31,10 @@ const TYPE_COLOR: Record<string, string> = {
 type Tab = "accounts" | "entries" | "ledger" | "reports" | "balance" | "diot" | "budgets" | "assets" | "close" | "sat" | "config";
 
 export default function AccountingModule({ t, s }: { t: any; s: any }) {
-  const lang = s?.nav ? "es" : "en";
+  // BUG previo: `s?.nav ? "es" : "en"` siempre daba "es" porque s.nav es
+  // obligatorio. El toggle de idioma se detecta viendo si el bundle esta
+  // en ingles (s.nav.dashboard === "Dashboard") o en espanol ("Tablero").
+  const lang: "es" | "en" = (s?.nav?.dashboard || "").toLowerCase().includes("dash") ? "en" : "es";
   const [tab, setTab] = useState<Tab>("accounts");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [entries, setEntries] = useState<JournalEntry[]>([]);

@@ -192,7 +192,8 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
     catch (err: any) { alert(errorMessage(err, "No se pudo eliminar la sucursal.")); }
   };
 
-  const lang = "es";
+  // Detecta el idioma real del bundle en vez de hardcodear "es".
+  const lang: "es" | "en" = (s?.nav?.dashboard || "").toLowerCase().includes("dash") ? "en" : "es";
 
   const loadCompanyProfile = useCallback(async () => {
     try {
@@ -380,17 +381,17 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const tabBtn = (active: boolean): React.CSSProperties => ({ padding: "10px 14px", borderRadius: "10px 10px 0 0", border: "none", cursor: "pointer", fontWeight: active ? 700 : 500, fontSize: 12.5, background: active ? t.panel : "transparent", color: active ? t.nova : t.textLo, borderBottom: active ? `2px solid ${t.nova}` : "2px solid transparent", transition: "all .15s", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 });
 
   const TABS = [
-    { id: "company", label: "Empresa", icon: Building2 },
-    { id: "members", label: "Miembros de la marca", icon: UserPlus },
-    { id: "users", label: "Usuarios (globales)", icon: Users },
-    { id: "roles", label: "Roles y Permisos", icon: Shield },
-    { id: "approvals", label: "Aprobaciones", icon: Shield },
-    { id: "agents", label: "Agentes / Comisiones", icon: UserPlus },
-    { id: "fiscal", label: "Fiscal", icon: Receipt },
-    { id: "integrations", label: "Integraciones", icon: Plug },
-    { id: "automation", label: "Automatización", icon: Workflow },
-    { id: "security", label: "Seguridad", icon: Lock },
-    { id: "preferences", label: "Preferencias", icon: Settings },
+    { id: "company", label: lang === "en" ? "Company" : "Empresa", icon: Building2 },
+    { id: "members", label: lang === "en" ? "Brand members" : "Miembros de la marca", icon: UserPlus },
+    { id: "users", label: lang === "en" ? "Users (global)" : "Usuarios (globales)", icon: Users },
+    { id: "roles", label: lang === "en" ? "Roles & Permissions" : "Roles y Permisos", icon: Shield },
+    { id: "approvals", label: lang === "en" ? "Approvals" : "Aprobaciones", icon: Shield },
+    { id: "agents", label: lang === "en" ? "Agents / Commissions" : "Agentes / Comisiones", icon: UserPlus },
+    { id: "fiscal", label: lang === "en" ? "Tax" : "Fiscal", icon: Receipt },
+    { id: "integrations", label: lang === "en" ? "Integrations" : "Integraciones", icon: Plug },
+    { id: "automation", label: lang === "en" ? "Automation" : "Automatización", icon: Workflow },
+    { id: "security", label: lang === "en" ? "Security" : "Seguridad", icon: Lock },
+    { id: "preferences", label: lang === "en" ? "Preferences" : "Preferencias", icon: Settings },
   ] as const;
 
   // card usa glass — todos los paneles que usan style={card} heredan el vidrio de golpe
