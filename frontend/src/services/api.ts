@@ -152,6 +152,32 @@ api.interceptors.response.use(
     }
 );
 
+// Convierte cualquier error de axios/FastAPI a un string legible por humanos.
+// Maneja los 3 shapes tipicos de detail:
+//   - string: FastAPI raise HTTPException(detail="mensaje")
+//   - array de objetos: FastAPI 422 ValidationError (Pydantic) — {type, loc, msg, input}
+//   - objeto: casos edge (custom exception handlers)
+// Sin esto, un 422 se pasa como objeto y React crashea al intentar renderizarlo.
+export function errMsg(e: any, fallback = "Error"): string {
+  const d = e?.response?.data?.detail;
+  if (typeof d === "string" && d) return d;
+  if (Array.isArray(d)) {
+    const parts = d.map((x) => {
+      if (typeof x === "string") return x;
+      const loc = Array.isArray(x?.loc) ? x.loc.filter((s: any) => s !== "body" && s !== "query").join(".") : "";
+      const msg = x?.msg || x?.message || "";
+      return loc ? `${loc}: ${msg}` : msg;
+    }).filter(Boolean);
+    if (parts.length) return parts.join("; ");
+  }
+  if (d && typeof d === "object") {
+    if (typeof d.msg === "string") return d.msg;
+    try { return JSON.stringify(d); } catch { /* fallthrough */ }
+  }
+  if (typeof e?.message === "string" && e.message) return e.message;
+  return fallback;
+}
+
 export default api;
 
 

@@ -913,6 +913,15 @@ _TENANCY_STATEMENTS = [
     """UPDATE retail_channels SET company_id = (
         SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
     ) WHERE company_id IS NULL""",
+
+    # ── POS terminals (multi-tenancy) ────────────────────────────────
+    # Las cajas registradas en Elias Jabari se veian en otras empresas
+    # porque pos_terminals no tenia company_id. Backfill al tenant original.
+    "ALTER TABLE pos_terminals ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_pos_terminals_company_id ON pos_terminals(company_id)",
+    """UPDATE pos_terminals SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
 ]
 
 

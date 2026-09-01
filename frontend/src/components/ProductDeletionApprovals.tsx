@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Check, X, Trash2, Clock, ShieldCheck } from "lucide-react";
 import { inventoryService } from "../features/inventory/service";
+import { errMsg } from "../services/api";
 
 interface DeletionRequest {
   id: number;
@@ -41,7 +42,7 @@ export default function ProductDeletionApprovals({ t }: { t: any }) {
       const rows = await inventoryService.listDeletionRequests(filter);
       setItems(rows || []);
     } catch (e: any) {
-      setErr(e?.response?.data?.detail || e?.message || "Error");
+      setErr(errMsg(e));
     } finally { setLoading(false); }
   }, [filter]);
 
@@ -54,7 +55,7 @@ export default function ProductDeletionApprovals({ t }: { t: any }) {
       await inventoryService.approveDeletionRequest(r.id);
       await load();
     } catch (e: any) {
-      alert(e?.response?.data?.detail || e?.message || "Error");
+      alert(errMsg(e));
     }
   };
 
@@ -65,7 +66,7 @@ export default function ProductDeletionApprovals({ t }: { t: any }) {
       setRejecting(null);
       await load();
     } catch (e: any) {
-      alert(e?.response?.data?.detail || e?.message || "Error");
+      alert(errMsg(e));
     }
   };
 
@@ -113,7 +114,7 @@ export default function ProductDeletionApprovals({ t }: { t: any }) {
         <div style={{ padding: 10, borderRadius: 8,
                        background: (t.bad || "#ef4444") + "18",
                        color: t.bad || "#ef4444", fontSize: 12.5, marginBottom: 12 }}>
-          {err}
+          {typeof err === "string" ? err : JSON.stringify(err)}
         </div>
       )}
 
