@@ -922,6 +922,26 @@ _TENANCY_STATEMENTS = [
     """UPDATE pos_terminals SET company_id = (
         SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
     ) WHERE company_id IS NULL""",
+
+    # ── POS sessions y transactions: backfill company_id via terminal ──
+    # POSSession y POSTransaction ya tenian columna company_id (definida
+    # en el modelo), pero registros creados antes del deploy del PR 259
+    # quedaron con NULL — el hook auto-tenancy no los devolvia, causando
+    # "sesion no abierta" y 500 al cobrar. Backfill via join al terminal.
+    "CREATE INDEX IF NOT EXISTS ix_pos_sessions_company_id ON pos_sessions(company_id)",
+    """UPDATE pos_sessions s SET company_id = t.company_id
+        FROM pos_terminals t
+        WHERE s.terminal_id = t.id AND s.company_id IS NULL AND t.company_id IS NOT NULL""",
+    """UPDATE pos_sessions SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    "CREATE INDEX IF NOT EXISTS ix_pos_transactions_company_id ON pos_transactions(company_id)",
+    """UPDATE pos_transactions x SET company_id = s.company_id
+        FROM pos_sessions s
+        WHERE x.session_id = s.id AND x.company_id IS NULL AND s.company_id IS NOT NULL""",
+    """UPDATE pos_transactions SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
 ]
 
 

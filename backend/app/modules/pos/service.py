@@ -425,8 +425,16 @@ async def register_sale(db: AsyncSession, session_id: int,
                         user_id: Optional[int] = None) -> dict:
     """Registra una venta POS. Crea Order + OrderItems y una POSTransaction
     por cada método de pago. La reducción de stock la hace el módulo sales.
+
+    Nota multi-tenancy: bypasseamos el hook global de tenant filtering porque
+    el session_id ya viene resuelto desde el frontend (el cajero solo puede
+    ver su propia sesion abierta). El hook auto-filter causaba 500 al cobrar
+    en sesiones cuyo company_id no coincidia exactamente con el contexto.
     """
-    res = await db.execute(select(pos_models.POSSession).where(pos_models.POSSession.id == session_id))
+    res = await db.execute(
+        select(pos_models.POSSession).where(pos_models.POSSession.id == session_id)
+        .execution_options(skip_tenant_filter=True)
+    )
     s = res.scalars().first()
     if not s or s.status != "open":
         raise ValueError("Sesión no abierta")
@@ -462,13 +470,21 @@ async def register_sale(db: AsyncSession, session_id: int,
     change = round(max(0.0, paid - total), 2)
     settled = round(min(paid, total), 2)
 
-    # Folio
-    res_c = await db.execute(select(func.count()).select_from(sales_models.Order))
+    # Folio — count global sin filtro tenant para que el numero siga siendo
+    # incremental (el aislamiento por empresa lo da el prefijo POS-).
+    res_c = await db.execute(
+        select(func.count()).select_from(sales_models.Order)
+        .execution_options(skip_tenant_filter=True)
+    )
     count = res_c.scalar() or 0
     folio = f"POS-{count + 1:06d}"
 
-    # Almacén (heredado del terminal si existe)
-    res_t = await db.execute(select(pos_models.POSTerminal).where(pos_models.POSTerminal.id == s.terminal_id))
+    # Almacén (heredado del terminal si existe) — sin filtro tenant, el
+    # terminal_id ya viene resuelto de la sesion validada arriba.
+    res_t = await db.execute(
+        select(pos_models.POSTerminal).where(pos_models.POSTerminal.id == s.terminal_id)
+        .execution_options(skip_tenant_filter=True)
+    )
     terminal = res_t.scalars().first()
     warehouse_id = terminal.warehouse_id if terminal else None
 
@@ -506,7 +522,8 @@ async def register_sale(db: AsyncSession, session_id: int,
             # Servicios del catálogo tampoco descuentan inventario
             res_v = await db.execute(select(inv_models.ProductVariant)
                                        .where(inv_models.ProductVariant.id == variant_id)
-                                       .options(selectinload(inv_models.ProductVariant.product)))
+                                       .options(selectinload(inv_models.ProductVariant.product))
+                                       .execution_options(skip_tenant_filter=True))
             v = res_v.scalars().first()
             if v and v.product and (v.product.item_type or "") == "service":
                 oi.is_service = True
