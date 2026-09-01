@@ -1029,24 +1029,41 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                 <div style={{ fontSize: 13, fontWeight: 500 }}>Agrega productos para empezar</div>
               </div>
             ) : cart.map((it, i) => (
-              <div key={i} style={{ padding: "14px 16px", borderBottom: `1px solid ${t.border}44`, display: "flex", alignItems: "center", gap: 10, transition: "background .15s" }}
+              // Layout de 2 filas por item:
+              //  - Fila 1: nombre completo del producto (ocupa todo el ancho, wrap
+              //    a 2 lineas maximo, con title tooltip para ver el resto)
+              //  - Fila 2: controles -/qty/+ | precio unit | line total | X
+              // Antes el nombre estaba en la misma fila con controles y quedaba
+              // cortado con ellipsis a "PROGRAMA REJUV..." en tickets angostos.
+              <div key={i} style={{ padding: "12px 14px", borderBottom: `1px solid ${t.border}44`, display: "flex", flexDirection: "column", gap: 8, transition: "background .15s" }}
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = t.panel2 + "88"}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.product_name}</div>
-                  <div style={{ fontSize: 11, color: t.textLo, marginTop: 2, fontFamily: "monospace" }}>{mxn(it.unit_price)}</div>
+                {/* Nombre del producto — full width, hasta 2 lineas */}
+                <div title={it.product_name}
+                  style={{
+                    fontSize: 13.5, fontWeight: 600, color: t.textHi, lineHeight: 1.3,
+                    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+                    overflow: "hidden", wordBreak: "break-word",
+                  }}>
+                  {it.product_name}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 4, background: t.panel2, borderRadius: 8, padding: 3 }}>
-                  <button onClick={() => changeQty(i, -1)} title="Menos" style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "transparent", color: t.textMid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={14} /></button>
-                  <div style={{ minWidth: 26, textAlign: "center", fontSize: 14, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{it.quantity}</div>
-                  <button onClick={() => changeQty(i, 1)} title="Más" style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: t.nova + "22", color: t.nova, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={14} /></button>
+                {/* Controles debajo, alineados con el line total a la derecha */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, background: t.panel2, borderRadius: 8, padding: 3, flexShrink: 0 }}>
+                    <button onClick={() => changeQty(i, -1)} title="Menos" style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "transparent", color: t.textMid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={14} /></button>
+                    <div style={{ minWidth: 26, textAlign: "center", fontSize: 14, fontWeight: 700, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{it.quantity}</div>
+                    <button onClick={() => changeQty(i, 1)} title="Más" style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: t.nova + "22", color: t.nova, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={14} /></button>
+                  </div>
+                  <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace", flexShrink: 0 }}>× {mxn(it.unit_price)}</div>
+                  <div style={{ flex: 1, minWidth: 0 }} />
+                  <div style={{ fontSize: 14, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{mxn(it.line_total)}</div>
+                  <button onClick={() => removeLine(i)} title="Quitar"
+                    style={{ width: 26, height: 26, borderRadius: 6, border: "none", background: "transparent", color: t.textLo, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "color .15s, background .15s", flexShrink: 0 }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = t.bad; (e.currentTarget as HTMLElement).style.background = t.bad + "22"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = t.textLo; (e.currentTarget as HTMLElement).style.background = "transparent"; }}>
+                    <X size={14} />
+                  </button>
                 </div>
-                <div style={{ minWidth: 90, textAlign: "right", fontSize: 14, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums" }}>{mxn(it.line_total)}</div>
-                <button onClick={() => removeLine(i)} title="Quitar" style={{ width: 26, height: 26, borderRadius: 6, border: "none", background: "transparent", color: t.textLo, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "color .15s, background .15s" }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = t.bad; (e.currentTarget as HTMLElement).style.background = t.bad + "22"; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = t.textLo; (e.currentTarget as HTMLElement).style.background = "transparent"; }}>
-                  <X size={14} />
-                </button>
               </div>
             ))}
           </div>
