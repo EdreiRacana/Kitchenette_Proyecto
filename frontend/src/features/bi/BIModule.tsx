@@ -1082,7 +1082,8 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
       { id: "cxc", label: langBI === "en" ? "Receivables (AR)" : "Por cobrar (CXC)", value: D.cxc, prev: null, noHistory: true, format: "money" as const, icon: Clock, color: t.warn },
       { id: "pendientes", label: L("Pendiente de cobro (período)"), value: D.pendientes, prev: D.pendientesPrev, format: "money" as const, icon: Clock, color: t.warn },
     ];
-  }, [D, t]);
+    // langBI en deps: si el usuario cambia idioma, los labels se recomputan.
+  }, [D, t, langBI]);
 
   const sparkFor = (k: any) => [k.prev, k.value];
 
@@ -1099,7 +1100,7 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
       base.push({ label: L("Nómina"), tl: light(D.nomina, D.nominaPrev ?? D.nomina), value: fmt(D.nomina, "money"), delta: delta(D.nomina, D.nominaPrev ?? D.nomina) });
     }
     return base;
-  }, [D]);
+  }, [D, langBI]);
 
   const handleSchedule = () => {
     setSchedSaved(`Reporte ${schedFreq.toLowerCase()} en ${schedFmt}${schedEmail ? ` a ${schedEmail}` : ""}`);
@@ -1670,8 +1671,8 @@ function BIModuleBody({
       {tab === "custom" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>Dashboard personalizado</div>
-            <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 16 }}>Selecciona los indicadores que quieres monitorear en tu vista personal.</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 6 }}>{isEN ? "Custom dashboard" : "Dashboard personalizado"}</div>
+            <div style={{ fontSize: 12.5, color: t.textLo, marginBottom: 16 }}>{isEN ? "Select the indicators you want to monitor in your personal view." : "Selecciona los indicadores que quieres monitorear en tu vista personal."}</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {ALL_KPIS.map((k: any) => (
                 <button key={k.id} onClick={() => setCustomKPIs((prev: string[]) => prev.includes(k.id) ? prev.filter(x => x !== k.id) : [...prev, k.id])} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: `1px solid ${customKPIs.includes(k.id) ? t.nova : t.border}`, background: customKPIs.includes(k.id) ? t.nova + "18" : t.panel2, color: customKPIs.includes(k.id) ? t.nova : t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600, transition: "all .15s" }}>
@@ -1692,33 +1693,33 @@ function BIModuleBody({
 
           {customKPIs.length > 0 && (
             <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 14 }}>Tendencia de ventas (referencia para los indicadores seleccionados)</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 14 }}>{isEN ? "Sales trend (reference for the selected indicators)" : "Tendencia de ventas (referencia para los indicadores seleccionados)"}</div>
               <LineBarChart data={D.chartSales} t={t} height={200} />
             </div>
           )}
 
           <div style={{ background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 20 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 14 }}>Programar reporte automático</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 14 }}>{isEN ? "Schedule automated report" : "Programar reporte automático"}</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>Frecuencia</label>
+                <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>{isEN ? "Frequency" : "Frecuencia"}</label>
                 <select value={schedFreq} onChange={(e: any) => setSchedFreq(e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none" }}>
-                  <option>Diario</option><option>Semanal</option><option>Quincenal</option><option>Mensual</option>
+                  <option>{isEN ? "Daily" : "Diario"}</option><option>{isEN ? "Weekly" : "Semanal"}</option><option>{isEN ? "Biweekly" : "Quincenal"}</option><option>{isEN ? "Monthly" : "Mensual"}</option>
                 </select>
               </div>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>Formato</label>
+                <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>{isEN ? "Format" : "Formato"}</label>
                 <select value={schedFmt} onChange={(e: any) => setSchedFmt(e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none" }}>
-                  <option>PDF</option><option>Excel</option><option>Ambos</option>
+                  <option>PDF</option><option>Excel</option><option>{isEN ? "Both" : "Ambos"}</option>
                 </select>
               </div>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>Email destino</label>
-                <input value={schedEmail} onChange={(e: any) => setSchedEmail(e.target.value)} placeholder="correo@empresa.mx" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
+                <label style={{ fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" }}>{isEN ? "Destination email" : "Email destino"}</label>
+                <input value={schedEmail} onChange={(e: any) => setSchedEmail(e.target.value)} placeholder={isEN ? "mail@company.com" : "correo@empresa.mx"} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
               </div>
             </div>
             <button onClick={handleSchedule} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-              <Mail size={14} /> Activar reporte automático
+              <Mail size={14} /> {isEN ? "Activate automated report" : "Activar reporte automático"}
             </button>
           </div>
         </div>
