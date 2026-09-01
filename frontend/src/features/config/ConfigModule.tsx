@@ -397,7 +397,29 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   // card usa glass — todos los paneles que usan style={card} heredan el vidrio de golpe
   const card: React.CSSProperties = { ...glass(t), borderRadius: 12, padding: 20 };
 
+  // Diccionario ES → EN de titulos de seccion — traducidos on-the-fly
+  // dentro de sectionTitle() para no tocar cada llamada.
+  const CFG_SECTION_TR: Record<string, string> = {
+    "Identidad de la empresa": "Company identity",
+    "Datos fiscales": "Tax data",
+    "Documentos y branding": "Documents & branding",
+    "Configuración regional": "Regional settings",
+    "Empresas / Sucursales": "Companies / Branches",
+    "Facturación CFDI 4.0": "CFDI 4.0 invoicing",
+    "Certificados CSD": "CSD certificates",
+    "Impuestos configurados": "Configured taxes",
+    "Política de contraseñas": "Password policy",
+    "Apariencia": "Appearance",
+    "Formatos regionales": "Regional formats",
+    "Notificaciones por email": "Email notifications",
+    "Cambiar mi contraseña": "Change my password",
+    "Autenticación de dos factores (2FA)": "Two-factor authentication (2FA)",
+    "Registro de auditoría": "Audit log",
+    "Zona de peligro": "Danger zone",
+  };
   const sectionTitle = (icon: any, title: string, color: string) => {
+    const finalTitle = lang === "en" && CFG_SECTION_TR[title] ? CFG_SECTION_TR[title] : title;
+    title = finalTitle;
     const Icon = icon;
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>

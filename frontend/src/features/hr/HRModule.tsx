@@ -359,11 +359,11 @@ export default function HRModule({ t, s }: { t: any; s: any }) {
           {/* KPI Cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
             {[
-              { label: "Total empleados", value: String(kpis.total), icon: Users, color: t.nova, sub: `${kpis.active} activos` },
-              { label: "Costo nómina/mes", value: mxnShort(kpis.totalPayroll * 2), icon: DollarSign, color: t.good, sub: mxn(kpis.totalPayroll * 2) },
-              { label: "En período prueba", value: String(kpis.onTrial), icon: Clock3, color: t.warn, sub: "requieren decisión" },
-              { label: "Contratos por vencer", value: String(kpis.expiring30), icon: AlertTriangle, color: t.bad, sub: "próximos 30 días" },
-              { label: "Presentes hoy", value: String(kpis.presentToday), icon: UserCheck, color: t.good, sub: `${kpis.absentToday} faltas` },
+              { label: langHR === "en" ? "Total employees" : "Total empleados", value: String(kpis.total), icon: Users, color: t.nova, sub: `${kpis.active} ${langHR === "en" ? "active" : "activos"}` },
+              { label: langHR === "en" ? "Payroll cost / month" : "Costo nómina/mes", value: mxnShort(kpis.totalPayroll * 2), icon: DollarSign, color: t.good, sub: mxn(kpis.totalPayroll * 2) },
+              { label: langHR === "en" ? "In probation" : "En período prueba", value: String(kpis.onTrial), icon: Clock3, color: t.warn, sub: langHR === "en" ? "require decision" : "requieren decisión" },
+              { label: langHR === "en" ? "Contracts expiring" : "Contratos por vencer", value: String(kpis.expiring30), icon: AlertTriangle, color: t.bad, sub: langHR === "en" ? "next 30 days" : "próximos 30 días" },
+              { label: langHR === "en" ? "Present today" : "Presentes hoy", value: String(kpis.presentToday), icon: UserCheck, color: t.good, sub: `${kpis.absentToday} ${langHR === "en" ? "absences" : "faltas"}` },
             ].map(k => (
               <div key={k.label} style={{ ...glass(t), borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
                 <div style={{ background: k.color + "22", color: k.color, borderRadius: 10, padding: 10, display: "flex", flexShrink: 0 }}><k.icon size={20} /></div>

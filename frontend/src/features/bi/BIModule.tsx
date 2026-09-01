@@ -1079,7 +1079,7 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
       { id: "gastos", label: langBI === "en" ? "Total expenses" : "Gastos totales", value: D.gastos, prev: D.gastosPrev, format: "money" as const, icon: TrendingDown, color: t.bad },
       { id: "inventario", label: langBI === "en" ? "Inventory value" : "Valor inventario", value: D.inventarioVal, prev: null, noHistory: true, format: "money" as const, icon: Package, color: t.nova },
       { id: "cxc", label: langBI === "en" ? "Receivables (AR)" : "Por cobrar (CXC)", value: D.cxc, prev: null, noHistory: true, format: "money" as const, icon: Clock, color: t.warn },
-      { id: "pendientes", label: "Pendiente de cobro (período)", value: D.pendientes, prev: D.pendientesPrev, format: "money" as const, icon: Clock, color: t.warn },
+      { id: "pendientes", label: L("Pendiente de cobro (período)"), value: D.pendientes, prev: D.pendientesPrev, format: "money" as const, icon: Clock, color: t.warn },
     ];
   }, [D, t]);
 
@@ -1088,14 +1088,14 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
   const moduleHealth = useMemo(() => {
     if (!D) return [];
     const base = [
-      { label: "Ventas", tl: light(D.ventas, D.ventasPrev), value: fmt(D.ventas, "money"), delta: delta(D.ventas, D.ventasPrev) },
-      { label: "Inventario (valor actual)", tl: D.inventarioAgotados > 0 ? "red" as TrafficLight : D.inventarioBajoStock > 0 ? "yellow" as TrafficLight : "green" as TrafficLight, value: fmt(D.inventarioVal, "money"), delta: 0 },
-      { label: "Utilidad neta", tl: light(D.utilidad, D.utilidadPrev), value: fmt(D.utilidad, "money"), delta: delta(D.utilidad, D.utilidadPrev) },
-      { label: "Margen neto", tl: D.margenNeto >= 15 ? "green" as TrafficLight : D.margenNeto >= 5 ? "yellow" as TrafficLight : "red" as TrafficLight, value: D.margenNeto.toFixed(1) + "%", delta: delta(D.margenNeto, D.margenNetoPrev) },
+      { label: L("Ventas"), tl: light(D.ventas, D.ventasPrev), value: fmt(D.ventas, "money"), delta: delta(D.ventas, D.ventasPrev) },
+      { label: L("Inventario (valor actual)"), tl: D.inventarioAgotados > 0 ? "red" as TrafficLight : D.inventarioBajoStock > 0 ? "yellow" as TrafficLight : "green" as TrafficLight, value: fmt(D.inventarioVal, "money"), delta: 0 },
+      { label: L("Utilidad neta"), tl: light(D.utilidad, D.utilidadPrev), value: fmt(D.utilidad, "money"), delta: delta(D.utilidad, D.utilidadPrev) },
+      { label: L("Margen neto"), tl: D.margenNeto >= 15 ? "green" as TrafficLight : D.margenNeto >= 5 ? "yellow" as TrafficLight : "red" as TrafficLight, value: D.margenNeto.toFixed(1) + "%", delta: delta(D.margenNeto, D.margenNetoPrev) },
       { label: "CXC por cobrar", tl: D.cxc > D.ventas ? "red" as TrafficLight : "yellow" as TrafficLight, value: fmt(D.cxc, "money"), delta: 0 },
     ];
     if (D.nomina !== null) {
-      base.push({ label: "Nómina", tl: light(D.nomina, D.nominaPrev ?? D.nomina), value: fmt(D.nomina, "money"), delta: delta(D.nomina, D.nominaPrev ?? D.nomina) });
+      base.push({ label: L("Nómina"), tl: light(D.nomina, D.nominaPrev ?? D.nomina), value: fmt(D.nomina, "money"), delta: delta(D.nomina, D.nominaPrev ?? D.nomina) });
     }
     return base;
   }, [D]);
@@ -1123,7 +1123,7 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
     schedSaved={schedSaved} setSchedSaved={setSchedSaved}
     handleSchedule={handleSchedule}
     ALL_KPIS={ALL_KPIS} moduleHealth={moduleHealth} sparkFor={sparkFor}
-    tabBtn={tabBtn} TABS={TABS} />;
+    tabBtn={tabBtn} TABS={TABS} langBI={langBI} trBI={trBI} />;
 }
 
 // ── Cuerpo visual (separado para mantener el componente principal legible) ──
@@ -1134,12 +1134,16 @@ function BIModuleBody({
   schedOpen, setSchedOpen, schedFreq, setSchedFreq, schedFmt, setSchedFmt,
   schedEmail, setSchedEmail, schedSaved, setSchedSaved, handleSchedule,
   ALL_KPIS, moduleHealth, sparkFor, tabBtn, TABS,
+  langBI, trBI,
 }: any) {
+  // Alias local por comodidad — todos los labels ES pasan por aqui.
+  const L = (v: string) => (trBI ? trBI(v) : v);
+  const isEN = langBI === "en";
   // Embudo de conversión: solo etapas reales y derivables (sin multiplicadores ficticios)
   const funnel = [
-    { label: "Cotizaciones generadas", value: D.quotesCount, color: "#A78BFA", pct: 100 },
-    { label: "Pedidos confirmados", value: D.pedidos, color: t.nova, pct: D.quotesCount ? Math.min(100, Math.round((D.pedidos / D.quotesCount) * 100)) : 100 },
-    { label: "Pedidos pagados", value: Math.round(D.pedidos * (D.paidRate / 100)), color: t.good, pct: Math.round(D.paidRate) },
+    { label: L("Cotizaciones generadas"), value: D.quotesCount, color: "#A78BFA", pct: 100 },
+    { label: L("Pedidos confirmados"), value: D.pedidos, color: t.nova, pct: D.quotesCount ? Math.min(100, Math.round((D.pedidos / D.quotesCount) * 100)) : 100 },
+    { label: L("Pedidos pagados"), value: Math.round(D.pedidos * (D.paidRate / 100)), color: t.good, pct: Math.round(D.paidRate) },
   ];
 
   // Análisis ABC real: cumulativo sobre by_category (ya viene ordenado desc por valor)
@@ -1251,12 +1255,12 @@ function BIModuleBody({
               />
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {[
-                  { label: "Ventas", c: D.ventas, p: D.ventasPrev, f: "money" as const },
-                  { label: "Utilidad neta", c: D.utilidad, p: D.utilidadPrev, f: "money" as const },
-                  { label: "Pedidos", c: D.pedidos, p: D.pedidosPrev, f: "number" as const },
-                  { label: "Ticket promedio", c: D.ticket, p: D.ticketPrev, f: "money" as const },
-                  { label: "Margen neto", c: D.margenNeto, p: D.margenNetoPrev, f: "percent" as const },
-                  { label: "Cotizaciones", c: D.quotesCount, p: D.quotesCountPrev, f: "number" as const },
+                  { label: L("Ventas"), c: D.ventas, p: D.ventasPrev, f: "money" as const },
+                  { label: L("Utilidad neta"), c: D.utilidad, p: D.utilidadPrev, f: "money" as const },
+                  { label: L("Pedidos"), c: D.pedidos, p: D.pedidosPrev, f: "number" as const },
+                  { label: L("Ticket promedio"), c: D.ticket, p: D.ticketPrev, f: "money" as const },
+                  { label: L("Margen neto"), c: D.margenNeto, p: D.margenNetoPrev, f: "percent" as const },
+                  { label: L("Cotizaciones"), c: D.quotesCount, p: D.quotesCountPrev, f: "number" as const },
                 ].map(row => {
                   const dd = delta(row.c, row.p);
                   return (
@@ -1277,7 +1281,7 @@ function BIModuleBody({
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi }}>Tendencia de ventas</div>
                 <div style={{ display: "flex", gap: 14 }}>
-                  {[{ color: t.nova, label: "Actual" }, { color: t.textLo, label: "Anterior", dash: true }].map(l => (
+                  {[{ color: t.nova, label: L("Actual") }, { color: t.textLo, label: L("Anterior"), dash: true }].map(l => (
                     <span key={l.label} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: t.textMid }}>
                       <span style={{ width: 16, height: 2, background: l.dash ? "transparent" : l.color, borderTop: l.dash ? `2px dashed ${l.color}` : "none", display: "inline-block" }} />{l.label}
                     </span>
@@ -1319,10 +1323,10 @@ function BIModuleBody({
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>
             {[
-              { id: "s_ventas", label: "Ventas totales", value: D.ventas, prev: D.ventasPrev, format: "money" as const, icon: TrendingUp, color: t.good },
-              { id: "s_pedidos", label: "Pedidos cerrados", value: D.pedidos, prev: D.pedidosPrev, format: "number" as const, icon: ShoppingCart, color: t.nova },
-              { id: "s_ticket", label: "Ticket promedio", value: D.ticket, prev: D.ticketPrev, format: "money" as const, icon: Star, color: t.warn },
-              { id: "s_cotiz", label: "Cotizaciones", value: D.quotesCount, prev: D.quotesCountPrev, format: "number" as const, icon: Target, color: "#A78BFA" },
+              { id: "s_ventas", label: L("Ventas totales"), value: D.ventas, prev: D.ventasPrev, format: "money" as const, icon: TrendingUp, color: t.good },
+              { id: "s_pedidos", label: L("Pedidos cerrados"), value: D.pedidos, prev: D.pedidosPrev, format: "number" as const, icon: ShoppingCart, color: t.nova },
+              { id: "s_ticket", label: L("Ticket promedio"), value: D.ticket, prev: D.ticketPrev, format: "money" as const, icon: Star, color: t.warn },
+              { id: "s_cotiz", label: L("Cotizaciones"), value: D.quotesCount, prev: D.quotesCountPrev, format: "number" as const, icon: Target, color: "#A78BFA" },
             ].map((k: any) => <KPIBlock key={k.id} {...k} t={t} sparkData={sparkFor(k)} onClick={() => openDrill(k)} />)}
           </div>
 
@@ -1412,10 +1416,10 @@ function BIModuleBody({
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>
             {[
-              { id: "i_val", label: "Valor total", value: D.inventarioVal, prev: null, noHistory: true, format: "money" as const, icon: Package, color: t.nova },
-              { id: "i_und", label: "Unidades disponibles", value: D.inventarioUnidades, prev: null, noHistory: true, format: "number" as const, icon: Activity, color: t.good },
-              { id: "i_bajo", label: "Productos en stock bajo", value: D.inventarioBajoStock, prev: null, noHistory: true, format: "number" as const, icon: AlertTriangle, color: t.warn },
-              { id: "i_ago", label: "Agotados", value: D.inventarioAgotados, prev: null, noHistory: true, format: "number" as const, icon: XCircle, color: t.bad },
+              { id: "i_val", label: L("Valor total"), value: D.inventarioVal, prev: null, noHistory: true, format: "money" as const, icon: Package, color: t.nova },
+              { id: "i_und", label: L("Unidades disponibles"), value: D.inventarioUnidades, prev: null, noHistory: true, format: "number" as const, icon: Activity, color: t.good },
+              { id: "i_bajo", label: L("Productos en stock bajo"), value: D.inventarioBajoStock, prev: null, noHistory: true, format: "number" as const, icon: AlertTriangle, color: t.warn },
+              { id: "i_ago", label: L("Agotados"), value: D.inventarioAgotados, prev: null, noHistory: true, format: "number" as const, icon: XCircle, color: t.bad },
             ].map((k: any) => <KPIBlock key={k.id} {...k} t={t} sparkData={sparkFor(k)} onClick={() => openDrill(k)} />)}
           </div>
 
@@ -1491,10 +1495,10 @@ function BIModuleBody({
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>
             {[
-              { id: "f_ing", label: "Ingresos totales", value: D.ingresos, prev: D.ingresosPrev, format: "money" as const, icon: TrendingUp, color: t.good },
-              { id: "f_uti", label: "Utilidad neta", value: D.utilidad, prev: D.utilidadPrev, format: "money" as const, icon: DollarSign, color: t.nova },
-              { id: "f_mar", label: "Margen neto", value: D.margenNeto, prev: D.margenNetoPrev, format: "percent" as const, icon: Activity, color: t.warn },
-              { id: "f_gas", label: "Gastos totales", value: D.gastos, prev: D.gastosPrev, format: "money" as const, icon: TrendingDown, color: t.bad },
+              { id: "f_ing", label: L("Ingresos totales"), value: D.ingresos, prev: D.ingresosPrev, format: "money" as const, icon: TrendingUp, color: t.good },
+              { id: "f_uti", label: L("Utilidad neta"), value: D.utilidad, prev: D.utilidadPrev, format: "money" as const, icon: DollarSign, color: t.nova },
+              { id: "f_mar", label: L("Margen neto"), value: D.margenNeto, prev: D.margenNetoPrev, format: "percent" as const, icon: Activity, color: t.warn },
+              { id: "f_gas", label: L("Gastos totales"), value: D.gastos, prev: D.gastosPrev, format: "money" as const, icon: TrendingDown, color: t.bad },
               { id: "f_cxc", label: "CXC por cobrar", value: D.cxc, prev: null, noHistory: true, format: "money" as const, icon: Clock, color: t.warn },
               { id: "f_cxp", label: "CXP por pagar", value: D.cxp, prev: null, noHistory: true, format: "money" as const, icon: TrendingDown, color: t.bad },
             ].map((k: any) => <KPIBlock key={k.id} {...k} t={t} sparkData={sparkFor(k)} onClick={() => openDrill(k)} />)}
@@ -1545,9 +1549,9 @@ function BIModuleBody({
             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 16 }}>Razones financieras (calculadas con datos reales)</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
               {[
-                { label: "Margen neto", value: `${D.margenNeto.toFixed(1)}%`, ref: ">15% saludable", tl: (D.margenNeto > 15 ? "green" : D.margenNeto > 5 ? "yellow" : "red") as TrafficLight },
-                { label: "Gastos / Ingresos", value: D.ingresos ? `${((D.gastos / D.ingresos) * 100).toFixed(1)}%` : "N/D", ref: "<85% saludable", tl: (D.ingresos && (D.gastos / D.ingresos) < 0.85 ? "green" : "yellow") as TrafficLight },
-                ...(D.nomina !== null ? [{ label: "Nómina / Ingresos", value: D.ingresos ? `${((D.nomina / D.ingresos) * 100).toFixed(1)}%` : "N/D", ref: "<20% saludable", tl: (D.ingresos && (D.nomina / D.ingresos) < 0.2 ? "green" : "yellow") as TrafficLight }] : []),
+                { label: L("Margen neto"), value: `${D.margenNeto.toFixed(1)}%`, ref: isEN ? ">15% healthy" : ">15% saludable", tl: (D.margenNeto > 15 ? "green" : D.margenNeto > 5 ? "yellow" : "red") as TrafficLight },
+                { label: isEN ? "Expenses / Income" : "Gastos / Ingresos", value: D.ingresos ? `${((D.gastos / D.ingresos) * 100).toFixed(1)}%` : "N/D", ref: isEN ? "<85% healthy" : "<85% saludable", tl: (D.ingresos && (D.gastos / D.ingresos) < 0.85 ? "green" : "yellow") as TrafficLight },
+                ...(D.nomina !== null ? [{ label: isEN ? "Payroll / Income" : "Nómina / Ingresos", value: D.ingresos ? `${((D.nomina / D.ingresos) * 100).toFixed(1)}%` : "N/D", ref: isEN ? "<20% healthy" : "<20% saludable", tl: (D.ingresos && (D.nomina / D.ingresos) < 0.2 ? "green" : "yellow") as TrafficLight }] : []),
               ].map(r => {
                 const c = lightColor(r.tl, t);
                 return (
@@ -1571,13 +1575,13 @@ function BIModuleBody({
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>
             {[
-              { id: "hr_tot", label: "Empleados totales", value: D.hrTotal, format: "number" as const, icon: Users, color: "#A78BFA" },
-              { id: "hr_act", label: "Empleados activos", value: D.hrActive, format: "number" as const, icon: CheckCircle, color: t.good },
-              { id: "hr_tri", label: "En periodo de prueba", value: D.hrOnTrial, format: "number" as const, icon: Clock, color: t.warn },
-              { id: "hr_exp", label: "Contratos por vencer (30 días)", value: D.hrExpiring30, format: "number" as const, icon: AlertTriangle, color: t.bad },
-              { id: "hr_pay", label: "Nómina mensual", value: D.hrPayrollMonthly, format: "money" as const, icon: DollarSign, color: t.nova },
-              { id: "hr_pre", label: "Asistencia hoy (presentes)", value: D.hrPresentToday, format: "number" as const, icon: TrendingUp, color: t.good },
-              { id: "hr_abs", label: "Ausentes hoy", value: D.hrAbsentToday, format: "number" as const, icon: TrendingDown, color: t.bad },
+              { id: "hr_tot", label: isEN ? "Total employees" : "Empleados totales", value: D.hrTotal, format: "number" as const, icon: Users, color: "#A78BFA" },
+              { id: "hr_act", label: isEN ? "Active employees" : "Empleados activos", value: D.hrActive, format: "number" as const, icon: CheckCircle, color: t.good },
+              { id: "hr_tri", label: isEN ? "In probation" : "En periodo de prueba", value: D.hrOnTrial, format: "number" as const, icon: Clock, color: t.warn },
+              { id: "hr_exp", label: isEN ? "Contracts expiring (30 days)" : "Contratos por vencer (30 días)", value: D.hrExpiring30, format: "number" as const, icon: AlertTriangle, color: t.bad },
+              { id: "hr_pay", label: isEN ? "Monthly payroll" : "Nómina mensual", value: D.hrPayrollMonthly, format: "money" as const, icon: DollarSign, color: t.nova },
+              { id: "hr_pre", label: isEN ? "Attendance today (present)" : "Asistencia hoy (presentes)", value: D.hrPresentToday, format: "number" as const, icon: TrendingUp, color: t.good },
+              { id: "hr_abs", label: isEN ? "Absent today" : "Ausentes hoy", value: D.hrAbsentToday, format: "number" as const, icon: TrendingDown, color: t.bad },
             ].map((k: any) => <KPIBlock key={k.id} {...k} t={t} onClick={() => openDrill(k)} />)}
           </div>
 
