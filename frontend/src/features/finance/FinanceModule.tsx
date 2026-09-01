@@ -14,6 +14,7 @@ import {
   Wallet, FileText, History, Paperclip, CalendarClock, Ban, Mail, Bell,
 } from "lucide-react";
 import { financeService, downloadCSV } from "./service";
+import { tr as trI18n, detectLang } from "../../utils/i18n";
 import type { SupplierBill, SupplierBillDraft, BillsStats as BillsStatsData } from "./service";
 import { useServerRecovery } from "../../hooks/useServerRecovery";
 import api from "../../services/api";
@@ -89,6 +90,9 @@ const CATEGORIES: Record<string, { label: string; color: string }> = {
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function FinanceModule({ t, s }: { t: any; s: any }) {
+  // Detecta el idioma del bundle (el mismo que usa el resto del app).
+  const lang = detectLang(s);
+  const tr = (v: string | null | undefined) => trI18n(v, lang);
   const [tab, setTab] = useState<"dashboard" | "cxc" | "cxp" | "banks" | "reconciliation" | "transactions" | "flow" | "advanced">("dashboard");
   const [demo, setDemo] = useState(false); // legado: ya nunca se activa (sin datos ficticios)
   const [loadError, setLoadError] = useState(false);
@@ -233,14 +237,14 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
   const ghostBtn: React.CSSProperties = { display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 };
 
   const TABS = [
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "cxc", label: "Por cobrar", icon: TrendingUp },
-    { id: "cxp", label: "Por pagar", icon: TrendingDown },
-    { id: "banks", label: "Bancos", icon: Building2 },
-    { id: "reconciliation", label: "Conciliación", icon: CheckCircle },
-    { id: "transactions", label: "Transacciones", icon: ArrowLeftRight },
-    { id: "flow", label: "Flujo de caja", icon: BarChart3 },
-    { id: "advanced", label: "Avanzado", icon: Wallet },
+    { id: "dashboard", label: tr("Dashboard"), icon: LayoutDashboard },
+    { id: "cxc", label: lang === "en" ? "Receivables" : "Por cobrar", icon: TrendingUp },
+    { id: "cxp", label: lang === "en" ? "Payables" : "Por pagar", icon: TrendingDown },
+    { id: "banks", label: tr("Bancos"), icon: Building2 },
+    { id: "reconciliation", label: tr("Conciliación"), icon: CheckCircle },
+    { id: "transactions", label: tr("Transacciones"), icon: ArrowLeftRight },
+    { id: "flow", label: tr("Flujo de caja"), icon: BarChart3 },
+    { id: "advanced", label: lang === "en" ? "Advanced" : "Avanzado", icon: Wallet },
   ] as const;
 
   return (
@@ -282,13 +286,13 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
             {[
-              { label: "Ingresos del periodo", value: mxn(kpis.totalIncome), icon: TrendingUp, color: t.good, sub: `${transactions.filter(tx => tx.type === "income").length} transacciones` },
-              { label: "Egresos del periodo", value: mxn(kpis.totalExpenses), icon: TrendingDown, color: t.bad, sub: `${transactions.filter(tx => tx.type === "expense").length} transacciones` },
-              { label: "Utilidad neta", value: mxn(kpis.netProfit), icon: DollarSign, color: kpis.netProfit >= 0 ? t.good : t.bad, sub: `${Math.round((kpis.netProfit / (kpis.totalIncome || 1)) * 100)}% margen` },
-              { label: "Por cobrar", value: mxn(kpis.totalCXC), icon: Receipt, color: t.warn, sub: `${mxn(kpis.overdueCXC)} vencido` },
-              { label: "Por pagar", value: mxn(kpis.totalCXP), icon: CreditCard, color: "#F87171", sub: `${cxp.filter(c => c.status === "overdue").length} facturas vencidas` },
-              { label: "Saldo en bancos", value: mxn(kpis.totalBankBalance), icon: PiggyBank, color: t.nova, sub: `${banks.length} cuentas` },
-              { label: "Saldo proyectado", value: dash?.projected_balance != null ? mxn(dash.projected_balance) : "—", icon: Wallet, color: t.good, sub: "Bancos + CXC − CXP" },
+              { label: lang === "en" ? "Income in period" : "Ingresos del periodo", value: mxn(kpis.totalIncome), icon: TrendingUp, color: t.good, sub: `${transactions.filter(tx => tx.type === "income").length} ${lang === "en" ? "transactions" : "transacciones"}` },
+              { label: lang === "en" ? "Expenses in period" : "Egresos del periodo", value: mxn(kpis.totalExpenses), icon: TrendingDown, color: t.bad, sub: `${transactions.filter(tx => tx.type === "expense").length} ${lang === "en" ? "transactions" : "transacciones"}` },
+              { label: lang === "en" ? "Net profit" : "Utilidad neta", value: mxn(kpis.netProfit), icon: DollarSign, color: kpis.netProfit >= 0 ? t.good : t.bad, sub: `${Math.round((kpis.netProfit / (kpis.totalIncome || 1)) * 100)}% ${lang === "en" ? "margin" : "margen"}` },
+              { label: lang === "en" ? "Receivables" : "Por cobrar", value: mxn(kpis.totalCXC), icon: Receipt, color: t.warn, sub: `${mxn(kpis.overdueCXC)} ${lang === "en" ? "overdue" : "vencido"}` },
+              { label: lang === "en" ? "Payables" : "Por pagar", value: mxn(kpis.totalCXP), icon: CreditCard, color: "#F87171", sub: `${cxp.filter(c => c.status === "overdue").length} ${lang === "en" ? "overdue invoices" : "facturas vencidas"}` },
+              { label: lang === "en" ? "Bank balance" : "Saldo en bancos", value: mxn(kpis.totalBankBalance), icon: PiggyBank, color: t.nova, sub: `${banks.length} ${lang === "en" ? "accounts" : "cuentas"}` },
+              { label: lang === "en" ? "Projected balance" : "Saldo proyectado", value: dash?.projected_balance != null ? mxn(dash.projected_balance) : "—", icon: Wallet, color: t.good, sub: lang === "en" ? "Banks + AR − AP" : "Bancos + CXC − CXP" },
             ].map(k => (
               <div key={k.label} style={{ ...glass(t), borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
                 <div style={{ background: k.color + "22", color: k.color, borderRadius: 10, padding: 10, display: "flex", flexShrink: 0 }}><k.icon size={20} /></div>

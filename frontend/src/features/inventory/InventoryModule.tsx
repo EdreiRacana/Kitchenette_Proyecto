@@ -160,7 +160,10 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
   const [recipeQ, setRecipeQ] = useState("");
   const [prodOrderQ, setProdOrderQ] = useState("");
 
-  const lang = s?.nav ? "es" : "en";
+  // BUG previo: `s?.nav ? "es" : "en"` siempre daba "es" porque s.nav es
+  // obligatorio. El toggle de idioma se detecta viendo si el bundle esta
+  // en ingles (s.nav.dashboard === "Dashboard") o en espanol ("Tablero").
+  const lang: "es" | "en" = (s?.nav?.dashboard || "").toLowerCase().includes("dash") ? "en" : "es";
 
   const load = useCallback(async () => {
     setLoading(true);
