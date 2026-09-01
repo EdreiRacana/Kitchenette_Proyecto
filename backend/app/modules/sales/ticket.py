@@ -108,15 +108,10 @@ def render_ticket_html(order: models.Order, company: Optional[CompanyProfile] = 
 def _render_ticket_html_pos(order: models.Order, company: Optional[CompanyProfile] = None) -> str:
     """Versión mostrador / POS: 'Hola Carlos, gracias por tu compra…'."""
     biz = _biz_name(company)
-    logo_uri = _logo_data_uri(company)
-    # width HTML attribute + height auto — Outlook y Gmail ignoran max-width
-    # de CSS en imágenes data:base64, pero SÍ respetan el width del <img>.
-    # Sin esto el logo se muestra a su tamaño intrínseco (1200x1200 o lo que
-    # sea) y explota el correo.
-    logo_html = (
-        f'<img src="{logo_uri}" alt="{biz}" width="130" '
-        f'style="width:130px;height:auto;max-width:130px;display:block;margin:0 auto"/>'
-    ) if logo_uri else ""
+    # Nota: Gmail/Outlook bloquean data:base64 en <img>, asi que la imagen
+    # del logo NO va en el cuerpo del email. El logo si aparece en el PDF
+    # adjunto. En el body dejamos solo el nombre de la empresa grande.
+    logo_html = ""
 
     accent = (company.brand_color if company and company.brand_color else "#111827")
     folio = order.folio or f"#{order.id}"

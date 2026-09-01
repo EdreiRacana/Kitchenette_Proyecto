@@ -55,13 +55,10 @@ def render_session_close_html(
     mención del PDF adjunto y despedida. El detalle vive en el PDF."""
     biz = (company or {}).get("legal_name") or "Sthenova"
     accent = (company or {}).get("brand_color") or "#111827"
-    logo_uri = _logo_data_uri_from_dict(company)
-    # width HTML attribute + height auto — Gmail y Outlook ignoran max-width
-    # de CSS en imágenes data:base64, pero SÍ respetan el width del <img>.
-    logo_html = (
-        f'<img src="{logo_uri}" alt="{biz}" width="130" '
-        f'style="width:130px;height:auto;max-width:130px;display:block;margin:0 auto"/>'
-    ) if logo_uri else ""
+    # Nota: Gmail y otros clientes de correo bloquean data:base64 en <img>,
+    # asi que la imagen del logo NO va en el cuerpo del email. El logo si
+    # aparece en el PDF adjunto. En el body dejamos solo el nombre grande.
+    logo_html = ""
 
     kind_label = "Cierre de turno" if kind == "Z" else "Corte intermedio"
     kind_word = "cierre" if kind == "Z" else "corte"
