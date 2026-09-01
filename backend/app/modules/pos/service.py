@@ -676,12 +676,19 @@ async def list_session_sales(db: AsyncSession, session_id: int) -> List[dict]:
         items_count[it.order_id] = items_count.get(it.order_id, 0) + (it.quantity or 0)
 
     customer_names: dict = {}
+    # Correo y telefono viajan con la venta para que el historial pueda
+    # reenviar el ticket sin volver a consultar al cliente. Si la venta fue a
+    # publico general, quedan en None y la interfaz los pide en el momento.
+    customer_emails: dict = {}
+    customer_phones: dict = {}
     cust_ids = [o.customer_id for o in orders if o.customer_id]
     if cust_ids:
         from app.modules.customers.models import Customer
         res_c = await db.execute(select(Customer).where(Customer.id.in_(cust_ids)))
         for c in res_c.scalars().all():
             customer_names[c.id] = c.razon_social or c.name
+            customer_emails[c.id] = getattr(c, "email", None)
+            customer_phones[c.id] = getattr(c, "phone", None)
 
     out = []
     for o in orders:
@@ -699,6 +706,8 @@ async def list_session_sales(db: AsyncSession, session_id: int) -> List[dict]:
             "items_count": items_count.get(o.id, 0),
             "customer_id": o.customer_id,
             "customer_name": customer_names.get(o.customer_id) if o.customer_id else None,
+            "customer_email": customer_emails.get(o.customer_id) if o.customer_id else None,
+            "customer_phone": customer_phones.get(o.customer_id) if o.customer_id else None,
             "payment_methods": [p["method"] for p in pays] or [primary_method],
             "payments": pays,
         })

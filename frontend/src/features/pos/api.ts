@@ -190,6 +190,10 @@ export interface SessionSale {
   items_count: number;
   customer_id: number | null;
   customer_name: string | null;
+  /** Contacto del cliente registrado, para reenviar el ticket desde el
+   *  historial sin volver a preguntarlo. null en ventas a publico general. */
+  customer_email?: string | null;
+  customer_phone?: string | null;
   payment_methods: string[];
   payments: { method: string; amount: number }[];
 }

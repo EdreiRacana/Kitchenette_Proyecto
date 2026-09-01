@@ -2145,6 +2145,7 @@ function SalesHistoryDrawer({ t, session, refreshKey, onClose }: {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [returnFor, setReturnFor] = useState<SessionSale | null>(null);
+  const [sentFor, setSentFor] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true); setError(null);
@@ -2179,6 +2180,63 @@ function SalesHistoryDrawer({ t, session, refreshKey, onClose }: {
       URL.revokeObjectURL(url);
     } catch { alert("Error al descargar ticket"); }
     finally { setBusy(null); }
+  };
+
+  // ── Reenvío del ticket desde el historial ──────────────────────────
+  // El modal que sale al cobrar desaparece al cerrarlo, así que sin esto no
+  // había forma de mandarle el ticket a un cliente que lo pide después.
+  // Si la venta tiene cliente registrado, su contacto viene precargado y el
+  // cajero solo confirma; si fue a público general, se captura en el momento.
+  const emailTicket = async (s: SessionSale) => {
+    const to = prompt(
+      s.customer_email
+        ? `Enviar ticket ${s.folio || ""} por correo\n\nCorreo del cliente:`
+        : `Enviar ticket ${s.folio || ""} por correo\n\nEsta venta no tiene cliente registrado.\nCaptura el correo:`,
+      s.customer_email || "",
+    );
+    if (!to || !to.trim()) return;
+    setBusy(s.order_id);
+    try {
+      const res = await salesApi.sendTicketEmail(s.order_id, to.trim());
+      if (res.sent) {
+        setSentFor(s.order_id);
+        setTimeout(() => setSentFor(null), 3000);
+      } else {
+        alert(res.reason || "No se pudo enviar el correo.");
+      }
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "Error al enviar el correo");
+    } finally { setBusy(null); }
+  };
+
+  const whatsappTicket = async (s: SessionSale) => {
+    setBusy(s.order_id);
+    try {
+      // Igual que al cobrar: primero se intenta el share sheet nativo con el
+      // PDF adjunto; si el navegador no lo soporta, se cae a wa.me con texto.
+      const [{ text, phone: defaultPhone }, blob] = await Promise.all([
+        salesApi.getTicketText(s.order_id),
+        posApi.downloadTicket(s.order_id, 80).catch(() => null as any),
+      ]);
+      if (blob) {
+        const file = new File([blob], `ticket_${s.folio || s.order_id}.pdf`,
+                              { type: "application/pdf" });
+        const shared = await shareFile(file, {
+          title: `Ticket ${s.folio || s.order_id}`, text,
+        });
+        if (shared) return;
+      }
+      const phone = prompt(
+        s.customer_phone
+          ? `Enviar ticket ${s.folio || ""} por WhatsApp\n\nNúmero del cliente (10 dígitos):`
+          : `Enviar ticket ${s.folio || ""} por WhatsApp\n\nEsta venta no tiene cliente registrado.\nCaptura el número (10 dígitos):`,
+        s.customer_phone || defaultPhone || "",
+      );
+      if (!phone || !phone.trim()) return;
+      openWhatsApp(phone.trim(), text);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || "No se pudo abrir WhatsApp");
+    } finally { setBusy(null); }
   };
 
   const totalSold = sales.reduce((a, s) => a + (s.total_amount || 0), 0);
@@ -2320,6 +2378,22 @@ function SalesHistoryDrawer({ t, session, refreshKey, onClose }: {
                         title="Descargar PDF"
                         style={{ padding: "5px 8px", borderRadius: 7, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: isWorking ? "wait" : "pointer", display: "flex", alignItems: "center", fontSize: 11.5 }}>
                         <Download size={11} />
+                      </button>
+                      <button disabled={isWorking} onClick={() => emailTicket(s)}
+                        title={s.customer_email
+                          ? `Enviar ticket a ${s.customer_email}`
+                          : "Enviar ticket por correo (se captura la dirección)"}
+                        style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${t.good}55`, background: t.good + "18", color: t.good, cursor: isWorking ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600 }}>
+                        {sentFor === s.order_id
+                          ? <><Check size={11} /> Enviado</>
+                          : <><Mail size={11} /> Correo</>}
+                      </button>
+                      <button disabled={isWorking} onClick={() => whatsappTicket(s)}
+                        title={s.customer_phone
+                          ? `Enviar ticket por WhatsApp a ${s.customer_phone}`
+                          : "Enviar ticket por WhatsApp (se captura el número)"}
+                        style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #25D36655", background: "#25D36618", color: "#25D366", cursor: isWorking ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600 }}>
+                        <MessageCircle size={11} /> WhatsApp
                       </button>
                     </div>
                   </div>
