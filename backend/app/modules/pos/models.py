@@ -18,17 +18,23 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.db.session import Base
+from app.core.tenancy import register_tenant_scoped
 
 
 # ── Denominaciones estándar México (billetes y monedas) ─────────────
 DENOMINATIONS_MXN = [1000, 500, 200, 100, 50, 20, 10, 5, 2, 1, 0.50]
 
 
+@register_tenant_scoped
 class POSTerminal(Base):
-    """Caja registradora física (o virtual). Puede haber varias por almacén."""
+    """Caja registradora física (o virtual). Puede haber varias por almacén.
+    Multi-tenant: cada terminal pertenece a una empresa (company_id) — el
+    filtrado por tenant lo hace automáticamente el hook global de tenancy."""
     __tablename__ = "pos_terminals"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id", ondelete="CASCADE"),
+                         nullable=True, index=True)
     name = Column(String, nullable=False)  # "Caja 1", "Caja Mostrador Sur"
     code = Column(String, nullable=True, index=True)  # "CJ-01"
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=True)
