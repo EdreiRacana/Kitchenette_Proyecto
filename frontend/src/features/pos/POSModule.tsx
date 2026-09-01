@@ -682,7 +682,10 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
           pinneado abajo. En tablet/desktop, dos columnas como antes. */}
       <div style={{
         display: "grid",
-        gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr",
+        // 3 columnas en desktop: (1) catalogo/buscador, (2) items del ticket,
+        // (3) totales + cobrar + metodos de pago. En movil apila vertical y
+        // el ticket vive como bottom sheet como antes.
+        gridTemplateColumns: isMobile ? "1fr" : "1.2fr 1.05fr 0.85fr",
         gap: 12, flex: 1, minHeight: 0,
         paddingBottom: isMobile ? 92 : 0,  // hueco para la barra flotante
       }}>
@@ -939,10 +942,10 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
           </div>
         </div>
 
-        {/* ─── Panel derecho: ticket + total + cobrar ───
-            En móvil se convierte en bottom sheet (fixed, ocupa toda la pantalla
-            cuando cartSheetOpen=true, si no, oculto — la barra flotante de abajo
-            hace de resumen y de invitación a abrirlo). */}
+        {/* ─── Panel MEDIO: ticket (header + items) ───
+            En movil todo el ticket (medio + der) se combina como bottom sheet;
+            en desktop el ticket vive en la columna medio y los totales/cobrar
+            en la columna derecha (panel siguiente). */}
         <div style={
           isMobile
             ? {
@@ -1070,58 +1073,112 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
             ))}
           </div>
 
-          {/* Totales + Cobrar */}
-          <div style={{ padding: 18, borderTop: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2} 0%, ${t.panel} 100%)` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: t.textMid, marginBottom: 8 }}>
-              <span>Subtotal</span>
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>{mxn(subtotal)}</span>
-            </div>
-            {tierDiscount > 0 && (
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: customer?.tier?.color_hex || "#A78BFA", marginBottom: 8, fontWeight: 700 }}>
-                <span>Descuento {customer?.tier?.name} ({tierDiscountPct.toFixed(0)}%)</span>
-                <span style={{ fontVariantNumeric: "tabular-nums" }}>−{mxn(tierDiscount)}</span>
+          {/* Totales + Cobrar SOLO en movil (junto con la lista en el sheet).
+              En desktop viven en el panel siguiente (columna derecha). */}
+          {isMobile && (
+            <div style={{ padding: 18, borderTop: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2} 0%, ${t.panel} 100%)` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: t.textMid, marginBottom: 8 }}>
+                <span>Subtotal</span>
+                <span style={{ fontVariantNumeric: "tabular-nums" }}>{mxn(subtotal)}</span>
               </div>
-            )}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "10px 0", borderTop: `1px solid ${t.border}` }}>
-              <span style={{ fontSize: 14, color: t.textMid, fontWeight: 600, letterSpacing: 0.5 }}>TOTAL</span>
-              <span style={{ fontSize: 32, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums", letterSpacing: -1 }}>{mxn(total)}</span>
-            </div>
-            <button disabled={cart.length === 0} onClick={() => setShowPay(true)}
-              style={{
-                marginTop: 8, width: "100%", padding: "18px 20px", borderRadius: 12, border: "none",
-                background: cart.length === 0 ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`,
-                color: cart.length === 0 ? t.textLo : "#fff",
-                fontSize: 16, fontWeight: 800, cursor: cart.length === 0 ? "not-allowed" : "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                boxShadow: cart.length === 0 ? "none" : `0 6px 16px ${t.good}55`,
-                letterSpacing: 0.3, transition: "transform .1s, box-shadow .15s",
-              }}
-              onMouseEnter={e => { if (cart.length > 0) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "none"; }}>
-              <DollarSign size={20} /> COBRAR {mxn(total)}
-            </button>
-            {cart.length > 0 && (
-              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                <button onClick={() => setShowPay(true)} title="Efectivo rápido"
-                  style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
-                  <Banknote size={13} /> Efectivo
-                </button>
-                <button onClick={() => setShowPay(true)} title="Tarjeta"
-                  style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
-                  <CreditCard size={13} /> Tarjeta
-                </button>
-                <button onClick={() => setShowPay(true)} title="Transferencia"
-                  style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
-                  <ArrowLeftRight size={13} /> Transferencia
-                </button>
-                <button onClick={() => setShowPay(true)} title="Pago mixto"
-                  style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
-                  <Sparkles size={13} /> Mixto
-                </button>
+              {tierDiscount > 0 && (
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: customer?.tier?.color_hex || "#A78BFA", marginBottom: 8, fontWeight: 700 }}>
+                  <span>Descuento {customer?.tier?.name} ({tierDiscountPct.toFixed(0)}%)</span>
+                  <span style={{ fontVariantNumeric: "tabular-nums" }}>−{mxn(tierDiscount)}</span>
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "10px 0", borderTop: `1px solid ${t.border}` }}>
+                <span style={{ fontSize: 14, color: t.textMid, fontWeight: 600, letterSpacing: 0.5 }}>TOTAL</span>
+                <span style={{ fontSize: 32, fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums", letterSpacing: -1 }}>{mxn(total)}</span>
               </div>
-            )}
-          </div>
+              <button disabled={cart.length === 0} onClick={() => setShowPay(true)}
+                style={{
+                  marginTop: 8, width: "100%", padding: "18px 20px", borderRadius: 12, border: "none",
+                  background: cart.length === 0 ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`,
+                  color: cart.length === 0 ? t.textLo : "#fff",
+                  fontSize: 16, fontWeight: 800, cursor: cart.length === 0 ? "not-allowed" : "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                  boxShadow: cart.length === 0 ? "none" : `0 6px 16px ${t.good}55`,
+                  letterSpacing: 0.3, transition: "transform .1s, box-shadow .15s",
+                }}>
+                <DollarSign size={20} /> COBRAR {mxn(total)}
+              </button>
+              {cart.length > 0 && (
+                <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                  <button onClick={() => setShowPay(true)} title="Efectivo rápido" style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><Banknote size={13} /> Efectivo</button>
+                  <button onClick={() => setShowPay(true)} title="Tarjeta" style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><CreditCard size={13} /> Tarjeta</button>
+                  <button onClick={() => setShowPay(true)} title="Transferencia" style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><ArrowLeftRight size={13} /> Transferencia</button>
+                  <button onClick={() => setShowPay(true)} title="Pago mixto" style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><Sparkles size={13} /> Mixto</button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        {/* ─── Panel DERECHO (solo desktop): Subtotal + TOTAL + COBRAR + metodos ─── */}
+        {!isMobile && (
+          <div style={{ background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.10)"}` }}>
+            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2} 0%, ${t.panel} 100%)` }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}>
+                <DollarSign size={16} color={t.good} /> Cobrar
+              </div>
+              <div style={{ fontSize: 11, color: t.textLo, marginTop: 2 }}>
+                Revisa el total y elige metodo de pago
+              </div>
+            </div>
+            <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: t.textMid }}>
+                <span>Subtotal</span>
+                <span style={{ fontVariantNumeric: "tabular-nums" }}>{mxn(subtotal)}</span>
+              </div>
+              {tierDiscount > 0 && (
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: customer?.tier?.color_hex || "#A78BFA", fontWeight: 700 }}>
+                  <span>Descuento {customer?.tier?.name} ({tierDiscountPct.toFixed(0)}%)</span>
+                  <span style={{ fontVariantNumeric: "tabular-nums" }}>−{mxn(tierDiscount)}</span>
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 0", borderTop: `1px solid ${t.border}`, borderBottom: `1px solid ${t.border}` }}>
+                <span style={{ fontSize: 14, color: t.textMid, fontWeight: 600, letterSpacing: 0.5 }}>TOTAL</span>
+                <span style={{ fontSize: "clamp(24px, 2.4vw, 34px)", fontWeight: 800, color: t.textHi, fontVariantNumeric: "tabular-nums", letterSpacing: -1 }}>{mxn(total)}</span>
+              </div>
+              <button disabled={cart.length === 0} onClick={() => setShowPay(true)}
+                style={{
+                  marginTop: 6, width: "100%", padding: "18px 20px", borderRadius: 12, border: "none",
+                  background: cart.length === 0 ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`,
+                  color: cart.length === 0 ? t.textLo : "#fff",
+                  fontSize: 16, fontWeight: 800, cursor: cart.length === 0 ? "not-allowed" : "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                  boxShadow: cart.length === 0 ? "none" : `0 6px 16px ${t.good}55`,
+                  letterSpacing: 0.3, transition: "transform .1s, box-shadow .15s",
+                }}
+                onMouseEnter={e => { if (cart.length > 0) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "none"; }}>
+                <DollarSign size={20} /> COBRAR {mxn(total)}
+              </button>
+              {cart.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 4 }}>
+                  <button onClick={() => setShowPay(true)} title="Efectivo rápido" style={{ padding: "12px 8px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <Banknote size={14} /> Efectivo
+                  </button>
+                  <button onClick={() => setShowPay(true)} title="Tarjeta" style={{ padding: "12px 8px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <CreditCard size={14} /> Tarjeta
+                  </button>
+                  <button onClick={() => setShowPay(true)} title="Transferencia" style={{ padding: "12px 8px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <ArrowLeftRight size={14} /> Transferencia
+                  </button>
+                  <button onClick={() => setShowPay(true)} title="Pago mixto" style={{ padding: "12px 8px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <Sparkles size={14} /> Mixto
+                  </button>
+                </div>
+              )}
+              {cart.length === 0 && (
+                <div style={{ marginTop: 10, padding: 14, borderRadius: 10, background: t.panel2, border: `1px dashed ${t.border}`, color: t.textLo, fontSize: 12, textAlign: "center" }}>
+                  Agrega productos al ticket para habilitar el cobro
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Barra flotante inferior — solo en móvil cuando el sheet está cerrado.
