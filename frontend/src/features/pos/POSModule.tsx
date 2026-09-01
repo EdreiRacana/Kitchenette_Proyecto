@@ -31,12 +31,22 @@ const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFract
 
 type CartItem = POSSaleItem & { line_total: number };
 
+// Holder module-level del `s` (strings) para que los subcomponentes
+// (POSFloor, ParkedSalesDrawer, etc.) puedan leer el idioma actual sin
+// que POSModule tenga que propagar el prop en cascada. POSModule asigna
+// _posSHolder = s en cada render, y los subcomponentes leen via getLangPOS().
+let _posSHolder: any = null;
+function getLangPOS(): "es" | "en" {
+  return (_posSHolder?.nav?.dashboard || "").toLowerCase().includes("dash") ? "en" : "es";
+}
+
 export default function POSModule({ t, s }: { t: any; s?: any }) {
   // Detecta el idioma del bundle. POS tiene ~4000 lineas — esta pasada solo
   // traduce los textos MAS visibles (metodos de pago, labels de transacciones,
   // encabezados principales). Los flujos secundarios quedan para una tanda
   // dedicada.
-  const langPOS: "es" | "en" = (s?.nav?.dashboard || "").toLowerCase().includes("dash") ? "en" : "es";
+  _posSHolder = s;
+  const langPOS: "es" | "en" = getLangPOS();
   const [terminals, setTerminals] = useState<POSTerminal[]>([]);
   const [session, setSession] = useState<POSSession | null>(null);
   const [loading, setLoading] = useState(true);
@@ -284,6 +294,7 @@ function clearPersistedPOS(sessionId: number) {
 }
 
 function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClosed: () => void }) {
+  const langPOS = getLangPOS();
   // Rehidratar carrito y cliente si el cajero volvió a este turno.
   const [cart, setCart] = useState<CartItem[]>(() => loadPersistedPOS(session.id).cart);
   const [query, setQuery] = useState("");
@@ -1333,6 +1344,7 @@ function ParkedSalesDrawer({ t, parked, onClose, onResume, onDiscard }: {
   onResume: (id: string) => void;
   onDiscard: (id: string) => void;
 }) {
+  const langPOS = getLangPOS();
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", h);
