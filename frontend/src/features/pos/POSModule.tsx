@@ -1021,8 +1021,10 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
             </div>
           </div>
 
-          {/* Lista de items */}
-          <div style={{ flex: 1, overflowY: "auto" }}>
+          {/* Lista de items — minHeight garantiza que aunque el footer del
+              ticket (Subtotal + TOTAL + COBRAR + metodos) sea alto, la lista
+              conserve al menos ~3 items visibles con sus controles */}
+          <div style={{ flex: 1, overflowY: "auto", minHeight: 240 }}>
             {cart.length === 0 ? (
               <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, color: t.textLo, gap: 10 }}>
                 <ShoppingCart size={48} style={{ opacity: 0.25 }} />
