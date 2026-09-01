@@ -3315,7 +3315,22 @@ export default function App() {
   };
 
   return (
-    <div style={{ display: "flex", background: t.base, minHeight: "100vh", fontFamily: "Inter, system-ui, Arial, sans-serif", color: t.textMid }}>
+    <div style={{
+      display: "flex", minHeight: "100vh",
+      fontFamily: "Inter, system-ui, Arial, sans-serif",
+      color: t.textMid,
+      // Fondo global con iluminacion tipo "sol" desde la esquina superior
+      // derecha, difundida al resto del fondo. Se combina un radial-gradient
+      // suave sobre el color base para que los contenedores tipo vidrio dejen
+      // ver la textura sutilmente. Fixed para que no se desplace al scrollear.
+      backgroundColor: t.base,
+      backgroundImage: `
+        radial-gradient(ellipse 85% 70% at 95% 5%, rgba(51,178,245,0.22) 0%, rgba(51,178,245,0.10) 30%, rgba(51,178,245,0.03) 60%, transparent 85%),
+        radial-gradient(ellipse 60% 45% at 90% 15%, rgba(139,196,255,0.14) 0%, transparent 65%)
+      `,
+      backgroundAttachment: "fixed",
+      backgroundRepeat: "no-repeat",
+    }}>
       <style>{`
         .nova-glow{animation:pulse 3.4s ease-in-out infinite}
         @keyframes pulse{0%,100%{opacity:.45}50%{opacity:.85}}
