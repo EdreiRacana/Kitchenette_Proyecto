@@ -1021,7 +1021,8 @@ export default function BIModule({ t, s }: { t: any; s: any }) {
   // trBI queda disponible para textos del backend en el futuro (ahora los
   // labels van con ternario porque son estaticos y explicitos).
   const trBI = (v: string | null | undefined) => trI18n(v, langBI);
-  void trBI;
+  // Alias corto para envolver labels ES dentro de este scope.
+  const L = (v: string) => trBI(v) as string;
   void s;
   const [tab, setTab] = useState<"executive" | "sales" | "inventory" | "finance" | "hr" | "omnichannel" | "custom" | "reports">("executive");
   const [period, setPeriod] = useState<Period>("month");
