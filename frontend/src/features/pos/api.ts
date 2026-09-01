@@ -76,6 +76,9 @@ export interface POSProduct {
   variant_label?: string;
   unit_price: number;
   unit_cost: number;
+  /** Miniatura del producto. Sirve el storage configurado (Supabase en
+   *  produccion). Puede ser null: la UI cae a un icono. */
+  image_url?: string | null;
 }
 
 export interface POSSaleItem {

@@ -2,7 +2,7 @@
 // Flujo: seleccionar terminal → abrir turno → vender → arqueo/cerrar
 // Pensado para tablet/pantalla táctil pero funciona con teclado + lector.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import {
   Store, ShoppingCart, DollarSign, Plus, Minus, Trash2, Search,
@@ -39,6 +39,34 @@ let _posSHolder: any = null;
 function getLangPOS(): "es" | "en" {
   return (_posSHolder?.nav?.dashboard || "").toLowerCase().includes("dash") ? "en" : "es";
 }
+
+/** Miniatura de producto para el POS.
+ *
+ *  Reserva SIEMPRE el mismo espacio, haya imagen o no, para que la retícula no
+ *  salte mientras cargan. Si el producto no tiene imagen, o la URL falla
+ *  (borrada del storage, enlace roto), cae a un icono neutro en lugar de
+ *  mostrar el icono de imagen rota del navegador. */
+function ProductThumb({ url, size, t, radius = 8 }: {
+  url?: string | null; size: number; t: any; radius?: number;
+}) {
+  const [failed, setFailed] = useState(false);
+  const box: CSSProperties = {
+    width: size, height: size, borderRadius: radius, flexShrink: 0,
+    background: t.panel3 || t.panel2, overflow: "hidden",
+    display: "flex", alignItems: "center", justifyContent: "center",
+  };
+  if (!url || failed) {
+    return <div style={box}><Package size={Math.round(size * 0.42)} color={t.textLo} /></div>;
+  }
+  return (
+    <div style={box}>
+      <img src={url} alt="" loading="lazy" decoding="async"
+        onError={() => setFailed(true)}
+        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+    </div>
+  );
+}
+
 
 export default function POSModule({ t, s }: { t: any; s?: any }) {
   // Detecta el idioma del bundle. POS tiene ~4000 lineas — esta pasada solo
@@ -692,18 +720,20 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
         {/* ─── Panel izquierdo: búsqueda + resultados ─── */}
         <div style={{ background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.10)"}` }}>
           {/* Buscador gigante con feedback de escáner */}
-          <div style={{ padding: 16, borderBottom: `1px solid ${t.border}` }}>
+          <div style={{ padding: 12, borderBottom: `1px solid ${t.border}` }}>
             <div style={{ position: "relative" }}>
-              <Barcode size={20} color={scanState === "error" ? t.bad : scanState === "ok" ? t.good : t.nova}
-                style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)" }} />
+              <Barcode size={18} color={scanState === "error" ? t.bad : scanState === "ok" ? t.good : t.nova}
+                style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
               <input ref={searchRef} value={query} onChange={e => setQuery(e.target.value)}
                 onKeyDown={onSearchKeyDown}
                 placeholder="Escanear código o buscar producto…"
                 autoFocus autoComplete="off" spellCheck={false}
                 style={{
-                  width: "100%", padding: `18px ${isMobile ? 60 : 18}px 18px 52px`, borderRadius: 12,
-                  border: `2px solid ${scanState === "error" ? t.bad : scanState === "ok" ? t.good : t.nova + "55"}`,
-                  background: t.inputBg, color: t.textHi, fontSize: 17, fontWeight: 500, outline: "none",
+                  // 12px de padding + fuente 15 => ~46px de alto: por encima del
+                  // minimo tactil de 44px, pero 15px mas compacto que antes.
+                  width: "100%", padding: `12px ${isMobile ? 54 : 14}px 12px 44px`, borderRadius: 10,
+                  border: `1.5px solid ${scanState === "error" ? t.bad : scanState === "ok" ? t.good : t.nova + "55"}`,
+                  background: t.inputBg, color: t.textHi, fontSize: 15, fontWeight: 500, outline: "none",
                   transition: "border-color .2s, box-shadow .2s",
                   boxShadow: scanState !== "idle" ? `0 0 0 4px ${(scanState === "error" ? t.bad : t.good)}22` : "none",
                   boxSizing: "border-box",
@@ -713,12 +743,12 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
               <button onClick={() => setShowScanner(true)}
                 title="Escanear con la cámara"
                 style={{
-                  position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
-                  width: 44, height: 44, borderRadius: 10, border: "none",
+                  position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
+                  width: 36, height: 36, borderRadius: 9, border: "none",
                   background: t.nova + "22", color: t.nova, cursor: "pointer",
                   display: "flex", alignItems: "center", justifyContent: "center",
                 }}>
-                <Camera size={20} />
+                <Camera size={18} />
               </button>
               {scanFlash && (
                 <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: scanState === "error" ? t.bad : t.good, background: (scanState === "error" ? t.bad : t.good) + "22", padding: "5px 12px", borderRadius: 999, pointerEvents: "none" }}>
@@ -734,8 +764,6 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
               </span>
               <span style={{ opacity: 0.4 }}>·</span>
               <span>Enter para agregar</span>
-              <span style={{ opacity: 0.4 }}>·</span>
-              <span>F2 para descuento (próximo)</span>
             </div>
           </div>
 
@@ -758,7 +786,8 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {popular.map(p => (
                         <button key={p.variant_id} onClick={() => addToCart(p)}
-                          style={{ textAlign: "left", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, minHeight: 56 }}>
+                          style={{ textAlign: "left", padding: "8px 10px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", display: "flex", alignItems: "center", gap: 9, minHeight: 56 }}>
+                          <ProductThumb url={p.image_url} size={38} t={t} radius={7} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.product_name}</div>
                             {p.sku && <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace", marginTop: 2 }}>{p.sku}</div>}
@@ -774,8 +803,12 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10 }}>
                       {popular.map(p => (
                         <button key={p.variant_id} onClick={() => addToCart(p)}
-                          style={{ textAlign: "left", padding: 12, borderRadius: 12, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", display: "flex", flexDirection: "column", gap: 4, minHeight: 88 }}>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi, lineHeight: 1.3, minHeight: 34, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.product_name}</div>
+                          style={{ textAlign: "left", padding: 10, borderRadius: 12, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", display: "flex", flexDirection: "column", gap: 6, minHeight: 84 }}>
+                          <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
+                            <ProductThumb url={p.image_url} size={40} t={t} />
+                            <div title={p.product_name}
+                              style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, color: t.textHi, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{p.product_name}</div>
+                          </div>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
                             <div style={{ fontSize: 15, fontWeight: 800, color: t.good }}>{mxn(p.unit_price)}</div>
                             <div style={{ width: 26, height: 26, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -895,10 +928,11 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                   {results.map(p => (
                     <button key={p.variant_id} onClick={() => addToCart(p)}
                       style={{
-                        textAlign: "left", padding: "10px 12px", borderRadius: 10,
+                        textAlign: "left", padding: "8px 10px", borderRadius: 10,
                         border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer",
-                        display: "flex", alignItems: "center", gap: 10, minHeight: 56,
+                        display: "flex", alignItems: "center", gap: 9, minHeight: 56,
                       }}>
+                      <ProductThumb url={p.image_url} size={38} t={t} radius={7} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {p.product_name}
@@ -923,11 +957,19 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 10 }}>
                   {results.map(p => (
                     <button key={p.variant_id} onClick={() => addToCart(p)}
-                      style={{ textAlign: "left", padding: 14, borderRadius: 12, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", transition: "transform .1s, border-color .15s, box-shadow .15s", display: "flex", flexDirection: "column", gap: 6 }}
+                      style={{ textAlign: "left", padding: 10, borderRadius: 12, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", transition: "transform .1s, border-color .15s, box-shadow .15s", display: "flex", flexDirection: "column", gap: 6 }}
                       onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = t.nova; (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 12px ${t.nova}22`; }}
                       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = t.border; (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 700, color: t.textHi, lineHeight: 1.3, minHeight: 34 }}>{p.product_name}</div>
-                      {p.sku && <div style={{ fontSize: 10.5, color: t.textLo, fontFamily: "monospace", letterSpacing: 0.5 }}>{p.sku}</div>}
+                      <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
+                        <ProductThumb url={p.image_url} size={44} t={t} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div title={p.product_name}
+                            style={{ fontSize: 13, fontWeight: 700, color: t.textHi, lineHeight: 1.3,
+                              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+                              overflow: "hidden", wordBreak: "break-word" }}>{p.product_name}</div>
+                          {p.sku && <div style={{ fontSize: 10.5, color: t.textLo, fontFamily: "monospace", letterSpacing: 0.5, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.sku}</div>}
+                        </div>
+                      </div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
                         <div style={{ fontSize: 17, fontWeight: 800, color: t.good, letterSpacing: -0.3 }}>{mxn(p.unit_price)}</div>
                         <div style={{ width: 28, height: 28, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -957,7 +999,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
             : { background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.10)"}` }
         }>
           {/* Header del ticket */}
-          <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2} 0%, ${t.panel} 100%)`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ padding: "10px 14px", borderBottom: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2} 0%, ${t.panel} 100%)`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ background: t.nova + "22", color: t.nova, borderRadius: 10, padding: 8 }}>
                 <ShoppingCart size={18} />
@@ -1040,7 +1082,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
               //  - Fila 2: controles -/qty/+ | precio unit | line total | X
               // Antes el nombre estaba en la misma fila con controles y quedaba
               // cortado con ellipsis a "PROGRAMA REJUV..." en tickets angostos.
-              <div key={i} style={{ padding: "12px 14px", borderBottom: `1px solid ${t.border}44`, display: "flex", flexDirection: "column", gap: 8, transition: "background .15s" }}
+              <div key={i} style={{ padding: "9px 13px", borderBottom: `1px solid ${t.border}44`, display: "flex", flexDirection: "column", gap: 6, transition: "background .15s" }}
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = t.panel2 + "88"}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}>
                 {/* Nombre del producto — full width, hasta 2 lineas */}
@@ -1118,7 +1160,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
         {/* ─── Panel DERECHO (solo desktop): Subtotal + TOTAL + COBRAR + metodos ─── */}
         {!isMobile && (
           <div style={{ background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: `0 2px 12px ${t.shadow || "rgba(0,0,0,0.10)"}` }}>
-            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2} 0%, ${t.panel} 100%)` }}>
+            <div style={{ padding: "10px 14px", borderBottom: `1px solid ${t.border}`, background: `linear-gradient(135deg, ${t.panel2} 0%, ${t.panel} 100%)` }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, display: "flex", alignItems: "center", gap: 8 }}>
                 <DollarSign size={16} color={t.good} /> Cobrar
               </div>
@@ -1126,7 +1168,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                 Revisa el total y elige metodo de pago
               </div>
             </div>
-            <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
+            <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: t.textMid }}>
                 <span>Subtotal</span>
                 <span style={{ fontVariantNumeric: "tabular-nums" }}>{mxn(subtotal)}</span>
@@ -1143,12 +1185,15 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
               </div>
               <button disabled={cart.length === 0} onClick={() => setShowPay(true)}
                 style={{
-                  marginTop: 6, width: "100%", padding: "18px 20px", borderRadius: 12, border: "none",
+                  // Sigue siendo la accion primaria: se mantiene grande (52px) y
+                  // legible. Solo se suaviza el halo verde, que era el que hacia
+                  // ver el boton como un objeto flotante pesado.
+                  marginTop: 4, width: "100%", padding: "15px 18px", borderRadius: 12, border: "none",
                   background: cart.length === 0 ? t.panel3 : `linear-gradient(135deg, ${t.good}, #059669)`,
                   color: cart.length === 0 ? t.textLo : "#fff",
                   fontSize: 16, fontWeight: 800, cursor: cart.length === 0 ? "not-allowed" : "pointer",
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                  boxShadow: cart.length === 0 ? "none" : `0 6px 16px ${t.good}55`,
+                  boxShadow: cart.length === 0 ? "none" : `0 2px 8px ${t.good}40`,
                   letterSpacing: 0.3, transition: "transform .1s, box-shadow .15s",
                 }}
                 onMouseEnter={e => { if (cart.length > 0) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}

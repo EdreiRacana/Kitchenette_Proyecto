@@ -718,6 +718,9 @@ async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List
             "variant_label": getattr(v, "label", None) or getattr(v, "attributes", None),
             "unit_price": getattr(v, "price", 0.0) or 0.0,
             "unit_cost": getattr(v, "cost_price", 0.0) or 0.0,
+            # La miniatura del POS. El JOIN con Product ya existe, asi que no
+            # cuesta una consulta extra. Puede ser None: la UI cae a un icono.
+            "image_url": getattr(p, "image_url", None),
         }
 
     # 1) Match EXACTO por SKU o barcode (lector de código de barras)
@@ -788,6 +791,7 @@ async def get_popular_products(db: AsyncSession, limit: int = 12) -> List[dict]:
             "variant_label": getattr(v, "label", None) or getattr(v, "attributes", None),
             "unit_price": getattr(v, "price", 0.0) or 0.0,
             "unit_cost": getattr(v, "cost_price", 0.0) or 0.0,
+            "image_url": getattr(p, "image_url", None),
         }
     # Respetar el orden de más vendido a menos
     return [by_id[vid] for vid in variant_ids if vid in by_id]
