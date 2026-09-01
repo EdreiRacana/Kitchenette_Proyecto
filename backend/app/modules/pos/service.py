@@ -28,7 +28,19 @@ async def _log(db: AsyncSession, user_id: Optional[int], action: str, descriptio
 
 # ── Terminales ────────────────────────────────────────────────────────────
 async def list_terminals(db: AsyncSession) -> List[dict]:
-    res = await db.execute(select(pos_models.POSTerminal).order_by(pos_models.POSTerminal.name))
+    # Filtro EXPLICITO por tenant — no usamos @register_tenant_scoped en el
+    # modelo porque el hook global rompia el flujo de cobro (500). Aqui el
+    # filtro es claro y solo aplica al listado, no a otras queries internas.
+    from app.core.tenancy import get_company_context
+    cid = get_company_context()
+    stmt = select(pos_models.POSTerminal)
+    if cid:
+        stmt = stmt.where(
+            (pos_models.POSTerminal.company_id == cid)
+            | (pos_models.POSTerminal.company_id.is_(None))
+        )
+    stmt = stmt.order_by(pos_models.POSTerminal.name)
+    res = await db.execute(stmt)
     terms = res.scalars().all()
     out = []
     for t in terms:
@@ -65,7 +77,11 @@ async def list_terminals(db: AsyncSession) -> List[dict]:
 
 async def create_terminal(db: AsyncSession, data: schemas.POSTerminalCreate,
                           user_id: Optional[int] = None) -> pos_models.POSTerminal:
+    from app.core.tenancy import get_company_context
+    cid = get_company_context()
     t = pos_models.POSTerminal(**data.model_dump())
+    if cid and not getattr(t, "company_id", None):
+        t.company_id = cid
     db.add(t)
     await db.commit()
     await db.refresh(t)

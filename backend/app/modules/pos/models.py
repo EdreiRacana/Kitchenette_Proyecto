@@ -18,18 +18,18 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.db.session import Base
-from app.core.tenancy import register_tenant_scoped
 
 
 # ── Denominaciones estándar México (billetes y monedas) ─────────────
 DENOMINATIONS_MXN = [1000, 500, 200, 100, 50, 20, 10, 5, 2, 1, 0.50]
 
 
-@register_tenant_scoped
 class POSTerminal(Base):
     """Caja registradora física (o virtual). Puede haber varias por almacén.
-    Multi-tenant: cada terminal pertenece a una empresa (company_id) — el
-    filtrado por tenant lo hace automáticamente el hook global de tenancy."""
+    Multi-tenant: cada terminal pertenece a una empresa (company_id). El
+    filtrado por tenant se hace EXPLICITAMENTE en el service (list_terminals),
+    NO con el hook global @register_tenant_scoped — ese hook interfería con
+    el flujo de cobro (SELECT interno tras flush del Order rompia con 500)."""
     __tablename__ = "pos_terminals"
 
     id = Column(Integer, primary_key=True, index=True)
