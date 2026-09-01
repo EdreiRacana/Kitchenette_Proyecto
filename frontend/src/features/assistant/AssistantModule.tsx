@@ -478,10 +478,36 @@ export default function Assistant({ lang = "es" }: { lang?: "es" | "en" } = {}) 
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
   };
 
+  // Prepara el texto para lectura de voz. El TTS pronuncia "$" como
+  // "dolares", pero todos los importes del sistema son MXN, asi que
+  // reescribimos "$1,234.56" → "1234 pesos con 56 centavos" (y "$1M" →
+  // "1 millon de pesos"). Se aplica SOLO al TTS, no al texto visible.
+  const speakFriendly = (text: string): string => {
+    let s = stripMarkdown(text);
+    // Millones: $4.5M / $4M → "4.5 millones de pesos" / "4 millones de pesos"
+    s = s.replace(/\$\s*([\d,]+(?:\.\d+)?)\s*M\b/g, (_m, n) => {
+      const val = n.replace(/,/g, "");
+      return `${val} ${val === "1" ? "millón" : "millones"} de pesos`;
+    });
+    // Miles: $4.5K / $4K → "4500 pesos" / "4000 pesos"
+    s = s.replace(/\$\s*([\d,]+(?:\.\d+)?)\s*K\b/g, (_m, n) => {
+      const raw = parseFloat(n.replace(/,/g, ""));
+      if (isNaN(raw)) return `${n} pesos`;
+      return `${Math.round(raw * 1000)} pesos`;
+    });
+    // Importes normales: $1,234.56 / $1,234 → "1234 pesos con 56 centavos"
+    s = s.replace(/\$\s*([\d,]+)(?:\.(\d{1,2}))?/g, (_m, entero, cents) => {
+      const int = entero.replace(/,/g, "");
+      if (cents && cents !== "00") return `${int} pesos con ${cents.padEnd(2, "0")} centavos`;
+      return `${int} pesos`;
+    });
+    return s;
+  };
+
   // Texto a voz nativo (SpeechSynthesis). Sin costo, calidad del sistema.
   const speak = (text: string, voiceOverride?: SpeechSynthesisVoice) => {
     try {
-      const u = new SpeechSynthesisUtterance(stripMarkdown(text));
+      const u = new SpeechSynthesisUtterance(speakFriendly(text));
       const chosen = voiceOverride
         || voices.find(v => v.name === selectedVoiceName)
         || voices.find(v => v.lang.toLowerCase().startsWith("es-mx"))
