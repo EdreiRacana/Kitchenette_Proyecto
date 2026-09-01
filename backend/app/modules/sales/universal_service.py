@@ -66,7 +66,45 @@ async def _get_company_dict(db: AsyncSession, company_id: str | None = None) -> 
     # en cada deploy.
     logo_bytes = getattr(cp, "logo_bytes", None) or None
     logo_path = None
-    if not logo_bytes and cp.logo_url:
+
+    # El logo puede estar guardado de tres formas distintas y el generador de
+    # PDF solo entiende bytes. Antes unicamente se resolvia el archivo en
+    # disco, asi que un logo alojado en Supabase (o embebido como data URI) se
+    # veia en el navegador pero salia en blanco en el ticket.
+    #
+    # En los dos casos remotos se hace backfill de logo_bytes: la primera
+    # impresion paga la descarga, las siguientes leen de la base. Cualquier
+    # fallo se traga en silencio — un logo ausente nunca debe tumbar un ticket.
+    if not logo_bytes and cp.logo_url and cp.logo_url.startswith("data:"):
+        try:
+            import base64 as _b64
+            header, _, payload = cp.logo_url.partition(",")
+            if payload and ";base64" in header:
+                cp.logo_bytes = _b64.b64decode(payload)
+                cp.logo_mime = header[5:].split(";")[0] or "image/png"
+                await db.commit()
+                logo_bytes = cp.logo_bytes
+        except Exception as e:
+            print(f"[company] no se pudo decodificar el data URI del logo: {e}")
+
+    if not logo_bytes and cp.logo_url and cp.logo_url.startswith("http"):
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                resp = await client.get(cp.logo_url)
+            resp.raise_for_status()
+            content_type = (resp.headers.get("content-type") or "").split(";")[0].strip()
+            if resp.content and content_type.startswith("image/"):
+                cp.logo_bytes = resp.content
+                cp.logo_mime = content_type
+                await db.commit()
+                logo_bytes = cp.logo_bytes
+            else:
+                print(f"[company] el logo remoto no es una imagen: {content_type!r}")
+        except Exception as e:
+            print(f"[company] no se pudo descargar el logo remoto: {e}")
+
+    if not logo_bytes and cp.logo_url and not cp.logo_url.startswith(("http", "data:")):
         rel = cp.logo_url.lstrip("/")
         if rel.startswith("static/"):
             rel = rel[len("static/"):]
