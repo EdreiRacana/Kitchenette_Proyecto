@@ -25,9 +25,40 @@ from app.modules.sales.report_importers import (
 
 
 # ── PDF Documents ────────────────────────────────────────────────────────
-async def _get_company_dict(db: AsyncSession) -> dict:
-    res = await db.execute(select(cfg_models.CompanyProfile).limit(1))
-    cp = res.scalars().first()
+async def _get_company_dict(db: AsyncSession, company_id: str | None = None) -> dict:
+    """Datos de la empresa que ENCABEZA un documento (ticket, cotizacion,
+    remision, recibo de nomina, reporte contable...).
+
+    Orden de resolucion, del mas fuerte al mas debil:
+
+      1. `company_id` explicito del documento. Es el unico correcto para un
+         documento ya emitido: un ticket de Nene Gardoqui debe seguir
+         diciendo Nene Gardoqui aunque lo reimprima un admin de otra
+         empresa. Los datos fiscales de un documento no dependen de quien
+         lo mira.
+      2. Empresa activa del request (X-Company-Id), para documentos que se
+         generan en vivo y aun no tienen dueno propio.
+      3. Primera empresa de la tabla, solo como respaldo para instalaciones
+         de una sola empresa.
+
+    Antes esta funcion hacia `select(CompanyProfile).limit(1)` sin ningun
+    filtro. CompanyProfile es la tabla que DEFINE las empresas, asi que el
+    filtro automatico de tenancy no aplica sobre ella: el resultado era que
+    TODOS los documentos de TODAS las empresas salian con el nombre, RFC,
+    domicilio y telefono de la primera empresa de la tabla.
+    """
+    from app.core.tenancy import get_company_context
+
+    cp = None
+    cid = company_id or get_company_context()
+    if cid:
+        res = await db.execute(
+            select(cfg_models.CompanyProfile).where(cfg_models.CompanyProfile.id == cid)
+        )
+        cp = res.scalars().first()
+    if cp is None:
+        res = await db.execute(select(cfg_models.CompanyProfile).limit(1))
+        cp = res.scalars().first()
     if not cp:
         return {"legal_name": "Mi Empresa", "commercial_name": "Mi Empresa"}
     # Preferimos los bytes de la DB (persistentes cross-deploy) sobre el

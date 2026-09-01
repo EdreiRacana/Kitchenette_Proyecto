@@ -620,7 +620,10 @@ async def prepare_ticket_data(db: AsyncSession, order_id: int) -> Optional[dict]
         if c:
             customer_name = c.razon_social or c.name
 
-    company = await _get_company_dict(db)
+    # La empresa del ENCABEZADO sale de la venta, no de quien imprime: un
+    # ticket de Nene Gardoqui debe seguir diciendo Nene Gardoqui aunque lo
+    # reimprima un admin posicionado en otra empresa.
+    company = await _get_company_dict(db, getattr(order, "company_id", None))
     order_dict = {
         "id": order.id, "folio": order.folio,
         "subtotal": order.subtotal,
