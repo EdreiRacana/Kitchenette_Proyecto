@@ -229,7 +229,7 @@ async def update_integration(
     return await service.update_integration(db=db, db_obj=integration, obj_in=integration_in)
 
 
-from pydantic import BaseModel  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
 
 
 class EmailTestRequest(BaseModel):
@@ -326,6 +326,112 @@ async def test_email_integration(
         "smtp_from": (smtp.meta_data or {}).get("from_email") if smtp else None,
     }
     return {"ok": ok, "error": error, "to": dest, "diagnostic": diag}
+
+class ShopifyConfigRequest(BaseModel):
+    shop_domain: str = Field(min_length=3, max_length=255, description="p.ej. mi-tienda.myshopify.com")
+    access_token: str = Field(min_length=8, max_length=255)
+    is_active: bool = True
+
+
+@router.get("/integrations/shopify")
+async def get_shopify_integration(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_superuser),
+):
+    """Devuelve la config actual de Shopify (token enmascarado). El aislamiento
+    por empresa lo hace el hook global de tenancy sobre SystemIntegration."""
+    from sqlalchemy import select
+    from app.modules.core_config.models import SystemIntegration, IntegrationType
+    res = await db.execute(
+        select(SystemIntegration).where(
+            SystemIntegration.integration_type == IntegrationType.MARKETPLACE_SHOPIFY,
+        )
+    )
+    intg = res.scalars().first()
+    if not intg:
+        return {"configured": False}
+    meta = intg.meta_data or {}
+    token = intg.api_key or ""
+    return {
+        "configured": True,
+        "id": intg.id,
+        "is_active": bool(intg.is_active),
+        "shop_domain": meta.get("shop_domain", ""),
+        "access_token_masked": ("•••••••••" + token[-4:]) if token else "",
+    }
+
+
+@router.put("/integrations/shopify")
+async def upsert_shopify_integration(
+    payload: ShopifyConfigRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_superuser),
+):
+    """Crea o actualiza la integración Shopify (una por empresa). Guarda el
+    access_token en api_key y el shop_domain en meta_data.shop_domain."""
+    from sqlalchemy import select
+    from app.modules.core_config.models import SystemIntegration, IntegrationType
+    domain = payload.shop_domain.strip().rstrip("/").replace("https://", "").replace("http://", "")
+    if not domain.endswith(".myshopify.com") and "." not in domain:
+        raise HTTPException(400, "El dominio debe ser tu-tienda.myshopify.com")
+
+    res = await db.execute(
+        select(SystemIntegration).where(
+            SystemIntegration.integration_type == IntegrationType.MARKETPLACE_SHOPIFY,
+        )
+    )
+    intg = res.scalars().first()
+    if intg:
+        intg.api_key = payload.access_token
+        intg.meta_data = {**(intg.meta_data or {}), "shop_domain": domain}
+        intg.is_active = payload.is_active
+    else:
+        intg = SystemIntegration(
+            name="Shopify",
+            integration_type=IntegrationType.MARKETPLACE_SHOPIFY,
+            api_key=payload.access_token,
+            meta_data={"shop_domain": domain},
+            is_active=payload.is_active,
+        )
+        db.add(intg)
+    await db.commit()
+    await db.refresh(intg)
+    return {"ok": True, "id": intg.id}
+
+
+@router.post("/integrations/shopify/test")
+async def test_shopify_integration(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_superuser),
+):
+    """Ping a Shopify Admin API con las credenciales guardadas — devuelve el
+    nombre y plan de la tienda si OK, o el error legible si falla."""
+    from sqlalchemy import select
+    from app.modules.core_config.models import SystemIntegration, IntegrationType
+    import httpx
+    res = await db.execute(
+        select(SystemIntegration).where(
+            SystemIntegration.integration_type == IntegrationType.MARKETPLACE_SHOPIFY,
+        )
+    )
+    intg = res.scalars().first()
+    if not intg or not intg.api_key:
+        return {"ok": False, "error": "Shopify no está configurado todavía."}
+    domain = (intg.meta_data or {}).get("shop_domain")
+    if not domain:
+        return {"ok": False, "error": "Falta el dominio de la tienda."}
+    url = f"https://{domain}/admin/api/2024-01/shop.json"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(url, headers={"X-Shopify-Access-Token": intg.api_key})
+        if r.status_code == 200:
+            shop = r.json().get("shop", {})
+            return {"ok": True, "shop_name": shop.get("name"), "plan": shop.get("plan_display_name"),
+                    "email": shop.get("email"), "domain": shop.get("domain")}
+        return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
 
 @router.delete("/integrations/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_integration(

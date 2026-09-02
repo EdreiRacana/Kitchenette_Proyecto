@@ -119,6 +119,20 @@ const configService = {
     deleteIntegration: async (id: string) => { await api.delete(`/config/integrations/${id}`); },
     testEmail: async (to?: string) => (await api.post<{ ok: boolean; error: string | null; to: string | null }>('/config/integrations/email/test', { to: to || null })).data,
 
+    // ── Shopify (marketplace) ──
+    getShopifyIntegration: async () => (await api.get<{
+        configured: boolean;
+        id?: string;
+        is_active?: boolean;
+        shop_domain?: string;
+        access_token_masked?: string;
+    }>('/config/integrations/shopify')).data,
+    saveShopifyIntegration: async (data: { shop_domain: string; access_token: string; is_active: boolean }) =>
+        (await api.put<{ ok: boolean; id: string }>('/config/integrations/shopify', data)).data,
+    testShopifyIntegration: async () => (await api.post<{
+        ok: boolean; error?: string; shop_name?: string; plan?: string; email?: string; domain?: string;
+    }>('/config/integrations/shopify/test')).data,
+
     // ── Zona de peligro: reset total de datos (solo superusuario) ──
     resetAllData: async (password: string, confirm: string) =>
         (await api.post<{ wiped_tables: string[]; message: string }>('/config/danger/reset-data', { password, confirm })).data,
