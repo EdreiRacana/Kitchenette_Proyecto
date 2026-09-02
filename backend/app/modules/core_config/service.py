@@ -103,15 +103,33 @@ async def update_company_profile(db: AsyncSession, db_obj: CompanyProfile, obj_i
 # -- System Integrations --
 
 async def get_integrations(db: AsyncSession, skip: int = 0, limit: int = 100):
-    result = await db.execute(select(SystemIntegration).offset(skip).limit(limit))
+    # Multi-tenant: solo integraciones de la empresa activa.
+    from app.core.tenancy import get_company_context
+    cid = get_company_context()
+    stmt = select(SystemIntegration)
+    if cid:
+        stmt = stmt.where(SystemIntegration.company_id == cid)
+    stmt = stmt.offset(skip).limit(limit)
+    result = await db.execute(stmt)
     return result.scalars().all()
 
 async def get_integration(db: AsyncSession, integration_id: str):
-    result = await db.execute(select(SystemIntegration).filter(SystemIntegration.id == integration_id))
+    # Filtro por tenant para que una empresa no acceda al registro de otra
+    # (aunque conozca el uuid).
+    from app.core.tenancy import get_company_context
+    cid = get_company_context()
+    stmt = select(SystemIntegration).filter(SystemIntegration.id == integration_id)
+    if cid:
+        stmt = stmt.where(SystemIntegration.company_id == cid)
+    result = await db.execute(stmt)
     return result.scalars().first()
 
 async def create_integration(db: AsyncSession, obj_in: SystemIntegrationCreate):
+    from app.core.tenancy import get_company_context
+    cid = get_company_context()
     db_obj = SystemIntegration(**obj_in.model_dump())
+    if cid and not getattr(db_obj, "company_id", None):
+        db_obj.company_id = cid
     db.add(db_obj)
     await db.commit()
     await db.refresh(db_obj)

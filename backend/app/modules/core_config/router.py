@@ -333,19 +333,29 @@ class ShopifyConfigRequest(BaseModel):
     is_active: bool = True
 
 
+def _q_by_type_and_tenant(select_stmt, model, integration_type):
+    """Helper: aplica filtro por integration_type + current_company_id.
+    Cuando no hay tenant en el contexto (background jobs), no filtra por
+    company_id — igual funciona pero solo debe usarse asi en admin tools."""
+    from app.core.tenancy import get_company_context
+    cid = get_company_context()
+    stmt = select_stmt.where(model.integration_type == integration_type)
+    if cid:
+        stmt = stmt.where(model.company_id == cid)
+    return stmt
+
+
 @router.get("/integrations/shopify")
 async def get_shopify_integration(
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_superuser),
 ):
-    """Devuelve la config actual de Shopify (token enmascarado). El aislamiento
-    por empresa lo hace el hook global de tenancy sobre SystemIntegration."""
+    """Devuelve la config actual de Shopify de LA EMPRESA ACTIVA. Cada
+    empresa tiene sus propias credenciales — filtro explicito por company_id."""
     from sqlalchemy import select
     from app.modules.core_config.models import SystemIntegration, IntegrationType
     res = await db.execute(
-        select(SystemIntegration).where(
-            SystemIntegration.integration_type == IntegrationType.MARKETPLACE_SHOPIFY,
-        )
+        _q_by_type_and_tenant(select(SystemIntegration), SystemIntegration, IntegrationType.MARKETPLACE_SHOPIFY)
     )
     intg = res.scalars().first()
     if not intg:
@@ -375,10 +385,10 @@ async def upsert_shopify_integration(
     if not domain.endswith(".myshopify.com") and "." not in domain:
         raise HTTPException(400, "El dominio debe ser tu-tienda.myshopify.com")
 
+    from app.core.tenancy import get_company_context
+    cid = get_company_context()
     res = await db.execute(
-        select(SystemIntegration).where(
-            SystemIntegration.integration_type == IntegrationType.MARKETPLACE_SHOPIFY,
-        )
+        _q_by_type_and_tenant(select(SystemIntegration), SystemIntegration, IntegrationType.MARKETPLACE_SHOPIFY)
     )
     intg = res.scalars().first()
     if intg:
@@ -392,6 +402,7 @@ async def upsert_shopify_integration(
             api_key=payload.access_token,
             meta_data={"shop_domain": domain},
             is_active=payload.is_active,
+            company_id=cid,
         )
         db.add(intg)
     await db.commit()
@@ -410,9 +421,7 @@ async def test_shopify_integration(
     from app.modules.core_config.models import SystemIntegration, IntegrationType
     import httpx
     res = await db.execute(
-        select(SystemIntegration).where(
-            SystemIntegration.integration_type == IntegrationType.MARKETPLACE_SHOPIFY,
-        )
+        _q_by_type_and_tenant(select(SystemIntegration), SystemIntegration, IntegrationType.MARKETPLACE_SHOPIFY)
     )
     intg = res.scalars().first()
     if not intg or not intg.api_key:
@@ -451,9 +460,7 @@ async def get_sufactura_integration(
     from sqlalchemy import select
     from app.modules.core_config.models import SystemIntegration, IntegrationType
     res = await db.execute(
-        select(SystemIntegration).where(
-            SystemIntegration.integration_type == IntegrationType.INVOICING_SUFACTURA,
-        )
+        _q_by_type_and_tenant(select(SystemIntegration), SystemIntegration, IntegrationType.INVOICING_SUFACTURA)
     )
     intg = res.scalars().first()
     if not intg:
@@ -488,9 +495,7 @@ async def upsert_sufactura_integration(
     rfc = payload.rfc.upper().strip()
 
     res = await db.execute(
-        select(SystemIntegration).where(
-            SystemIntegration.integration_type == IntegrationType.INVOICING_SUFACTURA,
-        )
+        _q_by_type_and_tenant(select(SystemIntegration), SystemIntegration, IntegrationType.INVOICING_SUFACTURA)
     )
     intg = res.scalars().first()
     if intg:
@@ -499,6 +504,8 @@ async def upsert_sufactura_integration(
         intg.meta_data = {**(intg.meta_data or {}), "rfc": rfc, "environment": env}
         intg.is_active = payload.is_active
     else:
+        from app.core.tenancy import get_company_context
+        cid = get_company_context()
         intg = SystemIntegration(
             name="Sufactura",
             integration_type=IntegrationType.INVOICING_SUFACTURA,
@@ -506,6 +513,7 @@ async def upsert_sufactura_integration(
             api_secret=payload.password,
             meta_data={"rfc": rfc, "environment": env},
             is_active=payload.is_active,
+            company_id=cid,
         )
         db.add(intg)
     await db.commit()
@@ -524,9 +532,7 @@ async def test_sufactura_integration(
     from app.modules.core_config.models import SystemIntegration, IntegrationType
     import httpx
     res = await db.execute(
-        select(SystemIntegration).where(
-            SystemIntegration.integration_type == IntegrationType.INVOICING_SUFACTURA,
-        )
+        _q_by_type_and_tenant(select(SystemIntegration), SystemIntegration, IntegrationType.INVOICING_SUFACTURA)
     )
     intg = res.scalars().first()
     if not intg or not intg.api_key or not intg.api_secret:

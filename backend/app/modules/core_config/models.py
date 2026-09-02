@@ -126,19 +126,27 @@ class Branch(Base):
 
 
 class SystemIntegration(Base):
+    """Credenciales/config de una integracion externa (Shopify, Sufactura,
+    SMTP, PAC, etc). Multi-tenant: cada empresa tiene sus PROPIAS credenciales.
+    El filtrado por company_id se hace EXPLICITAMENTE en cada endpoint (no via
+    @register_tenant_scoped — el hook auto interfiere con flujos que usan flush
+    interno, como pasa en POSTerminal)."""
     __tablename__ = "system_integrations"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
-    provider_name = Column(Enum(IntegrationProvider), nullable=False)
+    company_id = Column(String, ForeignKey("company_profile.id", ondelete="CASCADE"),
+                        nullable=True, index=True)
+    name = Column(String, nullable=True)  # texto libre para etiquetar la integracion
+    provider_name = Column(Enum(IntegrationProvider), nullable=True)
     integration_type = Column(Enum(IntegrationType), nullable=False)
     is_active = Column(Boolean, default=False)
     environment = Column(Enum(IntegrationEnvironment), default=IntegrationEnvironment.SANDBOX)
-    
+
     # Encrypted in production ideally, plain text here for MVP unless specified otherwise
     api_key = Column(String, nullable=True)
     api_secret = Column(String, nullable=True)
     webhook_secret = Column(String, nullable=True)
-    
+
     # For extra settings unique to an API
     meta_data = Column(JSON, nullable=True)
 
