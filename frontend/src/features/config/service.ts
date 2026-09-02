@@ -133,6 +133,22 @@ const configService = {
         ok: boolean; error?: string; shop_name?: string; plan?: string; email?: string; domain?: string;
     }>('/config/integrations/shopify/test')).data,
 
+    // ── Sufactura (PAC de facturacion CFDI 4.0) ──
+    getSufacturaIntegration: async () => (await api.get<{
+        configured: boolean;
+        id?: string;
+        is_active?: boolean;
+        username?: string;
+        rfc?: string;
+        environment?: string;
+        password_masked?: string;
+    }>('/config/integrations/sufactura')).data,
+    saveSufacturaIntegration: async (data: { username: string; password: string; rfc: string; environment: string; is_active: boolean }) =>
+        (await api.put<{ ok: boolean; id: string }>('/config/integrations/sufactura', data)).data,
+    testSufacturaIntegration: async () => (await api.post<{
+        ok: boolean; error?: string; environment?: string; rfc?: string; balance?: number | string; plan?: string;
+    }>('/config/integrations/sufactura/test')).data,
+
     // ── Zona de peligro: reset total de datos (solo superusuario) ──
     resetAllData: async (password: string, confirm: string) =>
         (await api.post<{ wiped_tables: string[]; message: string }>('/config/danger/reset-data', { password, confirm })).data,
