@@ -433,6 +433,140 @@ async def test_shopify_integration(
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+class SufacturaConfigRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=255, description="Usuario Sufactura")
+    password: str = Field(min_length=1, max_length=255, description="Contrasena / api key")
+    rfc: str = Field(min_length=12, max_length=13)
+    environment: str = Field(default="production", description="'sandbox' o 'production'")
+    is_active: bool = True
+
+
+@router.get("/integrations/sufactura")
+async def get_sufactura_integration(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_superuser),
+):
+    """Estado de la integracion Sufactura (PAC/facturacion CFDI 4.0).
+    Devuelve solo campos publicos + password enmascarado."""
+    from sqlalchemy import select
+    from app.modules.core_config.models import SystemIntegration, IntegrationType
+    res = await db.execute(
+        select(SystemIntegration).where(
+            SystemIntegration.integration_type == IntegrationType.INVOICING_SUFACTURA,
+        )
+    )
+    intg = res.scalars().first()
+    if not intg:
+        return {"configured": False}
+    meta = intg.meta_data or {}
+    pwd = intg.api_secret or ""
+    return {
+        "configured": True,
+        "id": intg.id,
+        "is_active": bool(intg.is_active),
+        "username": intg.api_key or "",
+        "rfc": meta.get("rfc", ""),
+        "environment": meta.get("environment", "production"),
+        "password_masked": ("••••••" + pwd[-3:]) if pwd else "",
+    }
+
+
+@router.put("/integrations/sufactura")
+async def upsert_sufactura_integration(
+    payload: SufacturaConfigRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_superuser),
+):
+    """Crea o actualiza la integracion Sufactura (una por empresa). Guarda
+    el usuario en api_key, la contrasena en api_secret y (rfc, environment)
+    en meta_data."""
+    from sqlalchemy import select
+    from app.modules.core_config.models import SystemIntegration, IntegrationType
+    env = (payload.environment or "production").lower().strip()
+    if env not in ("sandbox", "production"):
+        raise HTTPException(400, "environment debe ser 'sandbox' o 'production'.")
+    rfc = payload.rfc.upper().strip()
+
+    res = await db.execute(
+        select(SystemIntegration).where(
+            SystemIntegration.integration_type == IntegrationType.INVOICING_SUFACTURA,
+        )
+    )
+    intg = res.scalars().first()
+    if intg:
+        intg.api_key = payload.username
+        intg.api_secret = payload.password
+        intg.meta_data = {**(intg.meta_data or {}), "rfc": rfc, "environment": env}
+        intg.is_active = payload.is_active
+    else:
+        intg = SystemIntegration(
+            name="Sufactura",
+            integration_type=IntegrationType.INVOICING_SUFACTURA,
+            api_key=payload.username,
+            api_secret=payload.password,
+            meta_data={"rfc": rfc, "environment": env},
+            is_active=payload.is_active,
+        )
+        db.add(intg)
+    await db.commit()
+    await db.refresh(intg)
+    return {"ok": True, "id": intg.id}
+
+
+@router.post("/integrations/sufactura/test")
+async def test_sufactura_integration(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_superuser),
+):
+    """Prueba la conexion con Sufactura. Hace un ping autenticado a su API
+    para validar credenciales — sin timbrar nada, solo GET informativo."""
+    from sqlalchemy import select
+    from app.modules.core_config.models import SystemIntegration, IntegrationType
+    import httpx
+    res = await db.execute(
+        select(SystemIntegration).where(
+            SystemIntegration.integration_type == IntegrationType.INVOICING_SUFACTURA,
+        )
+    )
+    intg = res.scalars().first()
+    if not intg or not intg.api_key or not intg.api_secret:
+        return {"ok": False, "error": "Sufactura no esta configurado todavia."}
+
+    meta = intg.meta_data or {}
+    env = (meta.get("environment") or "production").lower()
+    rfc = meta.get("rfc", "")
+    # Sufactura tiene endpoints separados para sandbox y production.
+    # Verifica credenciales pidiendo el saldo de la cuenta (endpoint GET
+    # autenticado con Basic Auth username/password + header X-RFC).
+    base = "https://sandbox.sufactura.com.mx" if env == "sandbox" else "https://sufactura.com.mx"
+    url = f"{base}/api/v1/account/balance"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                url,
+                auth=(intg.api_key, intg.api_secret),
+                headers={"X-RFC": rfc, "Accept": "application/json"},
+            )
+        if r.status_code == 200:
+            try:
+                data = r.json()
+            except Exception:
+                data = {}
+            return {
+                "ok": True,
+                "environment": env,
+                "rfc": rfc,
+                "balance": data.get("balance"),
+                "plan": data.get("plan") or data.get("plan_name"),
+                "raw": r.text[:400],
+            }
+        if r.status_code in (401, 403):
+            return {"ok": False, "error": f"Credenciales invalidas (HTTP {r.status_code})."}
+        return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 @router.delete("/integrations/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_integration(
     *,

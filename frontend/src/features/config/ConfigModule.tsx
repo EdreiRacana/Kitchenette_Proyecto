@@ -42,21 +42,35 @@ const emptyGrant = () => ({ view: false, create: false, edit: false, delete: fal
 interface Integration {
   id: string; name: string; category: string; icon: any; color: string;
   connected: boolean; last_sync?: string; description: string;
+  // logo_slug: nombre del brand en simpleicons.org (cdn publico gratis)
+  // para renderizar el logo oficial como <img> en la card. Si no aplica,
+  // se cae al icon de lucide.
+  logo_slug?: string;
 }
 
 
-// Catálogo de integraciones futuras (ninguna conectada — es una hoja de ruta,
-// no estado real; el correo SMTP de arriba sí es una integración funcional).
+// Catalogo de integraciones. Shopify y Sufactura son funcionales (backend
+// conectado). El resto es hoja de ruta que muestra "proximamente".
 const AVAILABLE_INTEGRATIONS: Integration[] = [
-  { id: "mercadolibre", name: "MercadoLibre", category: "Marketplace", icon: ShoppingBag, color: "#FFE600", connected: false, description: "Sincroniza stock y órdenes con tu tienda de MercadoLibre" },
-  { id: "amazon", name: "Amazon Seller", category: "Marketplace", icon: ShoppingBag, color: "#FF9900", connected: false, description: "Conecta tu cuenta de vendedor de Amazon" },
-  { id: "shopify", name: "Shopify", category: "Marketplace", icon: ShoppingBag, color: "#96BF48", connected: false, description: "Sincroniza productos, stock y pedidos con Shopify" },
-  { id: "bbva", name: "BBVA", category: "Banco", icon: Banknote, color: "#004481", connected: false, description: "Dispersión de nómina y conciliación bancaria" },
-  { id: "fedex", name: "FedEx", category: "Paquetería", icon: Truck, color: "#4D148C", connected: false, description: "Generación de guías de envío y rastreo" },
-  { id: "estafeta", name: "Estafeta", category: "Paquetería", icon: Truck, color: "#EE3124", connected: false, description: "Generación de guías y rastreo de paquetes" },
-  { id: "finkok", name: "Finkok", category: "Facturación", icon: Receipt, color: "#33B2F5", connected: false, description: "PAC para timbrado de CFDI 4.0" },
-  { id: "zkteco", name: "ZKTeco", category: "Checador", icon: Fingerprint, color: "#34D399", connected: false, description: "Checador biométrico de huella y rostro" },
+  { id: "mercadolibre", name: "MercadoLibre", category: "Marketplace", icon: ShoppingBag, color: "#FFE600", connected: false, description: "Sincroniza stock y ordenes con tu tienda de MercadoLibre", logo_slug: "mercadopago" },
+  { id: "amazon", name: "Amazon Seller", category: "Marketplace", icon: ShoppingBag, color: "#FF9900", connected: false, description: "Conecta tu cuenta de vendedor de Amazon", logo_slug: "amazon" },
+  { id: "shopify", name: "Shopify", category: "Marketplace", icon: ShoppingBag, color: "#96BF48", connected: false, description: "Sincroniza productos, stock y pedidos con Shopify", logo_slug: "shopify" },
+  { id: "bbva", name: "BBVA", category: "Banco", icon: Banknote, color: "#004481", connected: false, description: "Dispersion de nomina y conciliacion bancaria", logo_slug: "bbva" },
+  { id: "fedex", name: "FedEx", category: "Paquetería", icon: Truck, color: "#4D148C", connected: false, description: "Generacion de guias de envio y rastreo", logo_slug: "fedex" },
+  { id: "estafeta", name: "Estafeta", category: "Paquetería", icon: Truck, color: "#EE3124", connected: false, description: "Generacion de guias y rastreo de paquetes" },
+  { id: "sufactura", name: "Sufactura", category: "Facturación", icon: Receipt, color: "#E11D48", connected: false, description: "PAC autorizado por el SAT para timbrar CFDI 4.0" },
+  { id: "finkok", name: "Finkok", category: "Facturación", icon: Receipt, color: "#33B2F5", connected: false, description: "PAC alterno para timbrado de CFDI 4.0" },
+  { id: "zkteco", name: "ZKTeco", category: "Checador", icon: Fingerprint, color: "#34D399", connected: false, description: "Checador biometrico de huella y rostro" },
 ];
+
+
+// URL del logo oficial en simpleicons.org — CDN publico, SVG, tinted al color.
+// Ej: https://cdn.simpleicons.org/shopify/96BF48
+function brandLogoUrl(slug?: string, colorHex?: string): string | null {
+  if (!slug) return null;
+  const c = (colorHex || "#94A3B8").replace("#", "");
+  return `https://cdn.simpleicons.org/${slug}/${c}`;
+}
 
 function errorMessage(err: any, fallback: string): string {
   const detail = err?.response?.data?.detail;
@@ -95,6 +109,22 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
         setShopifyForm({ shop_domain: s.shop_domain || "", access_token: "", is_active: !!s.is_active });
       }
     } catch { /* silencioso — no bloquea la vista */ }
+  }, []);
+  // Sufactura (PAC facturacion)
+  const [sufacturaStatus, setSufacturaStatus] = useState<{ configured: boolean; is_active?: boolean; username?: string; rfc?: string; environment?: string; password_masked?: string }>({ configured: false });
+  const [sufacturaModal, setSufacturaModal] = useState(false);
+  const [sufacturaForm, setSufacturaForm] = useState({ username: "", password: "", rfc: "", environment: "production", is_active: true });
+  const [sufacturaMsg, setSufacturaMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [sufacturaSaving, setSufacturaSaving] = useState(false);
+  const [sufacturaTesting, setSufacturaTesting] = useState(false);
+  const loadSufactura = useCallback(async () => {
+    try {
+      const s = await configService.getSufacturaIntegration();
+      setSufacturaStatus(s);
+      if (s.configured) {
+        setSufacturaForm({ username: s.username || "", password: "", rfc: s.rfc || "", environment: s.environment || "production", is_active: !!s.is_active });
+      }
+    } catch { /* silencioso */ }
   }, []);
   const [userForm, setUserForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -325,7 +355,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
     } catch { /* sin backend (modo demo) */ }
   }, []);
 
-  useEffect(() => { if (tab === "integrations") { loadEmailIntegration(); loadShopify(); } }, [tab, loadEmailIntegration, loadShopify]);
+  useEffect(() => { if (tab === "integrations") { loadEmailIntegration(); loadShopify(); loadSufactura(); } }, [tab, loadEmailIntegration, loadShopify, loadSufactura]);
 
   const handleSaveEmailIntegration = async (): Promise<boolean> => {
     setEmailSaving(true); setEmailMsg("");
@@ -961,37 +991,75 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
             return (
               <div key={cat}>
                 <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textLo, letterSpacing: 0.5, marginBottom: 10, textTransform: "uppercase" }}>{cat}</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
                   {items.map(intg => {
-                    // Shopify: refleja el estado real leido del backend.
-                    // Resto de integraciones: quedan como "proximamente".
+                    // Shopify y Sufactura: reflejan el estado real leido del backend.
+                    // Resto: siguen como "proximamente".
                     const isShopify = intg.id === "shopify";
-                    const isConnected = isShopify ? (shopifyStatus.configured && !!shopifyStatus.is_active) : intg.connected;
+                    const isSufactura = intg.id === "sufactura";
+                    const funcional = isShopify || isSufactura;
+                    const status = isShopify ? shopifyStatus : isSufactura ? sufacturaStatus : null;
+                    const isConnected = funcional && !!status?.configured && !!status?.is_active;
+                    const isConfiguredInactive = funcional && !!status?.configured && !status?.is_active;
+                    const logoUrl = brandLogoUrl(intg.logo_slug, intg.color);
+                    const openModal = () => {
+                      if (isShopify) { setShopifyMsg(null); setShopifyModal(true); }
+                      else if (isSufactura) { setSufacturaMsg(null); setSufacturaModal(true); }
+                    };
+                    const subInfo = (
+                      isShopify && shopifyStatus.configured && shopifyStatus.shop_domain
+                        ? shopifyStatus.shop_domain
+                        : isSufactura && sufacturaStatus.configured
+                          ? `${sufacturaStatus.rfc || ""} · ${sufacturaStatus.environment || ""}`.replace(/^ · $/, "")
+                          : ""
+                    );
                     return (
-                    <div key={intg.id} style={{ ...glass(t), border: `1px solid ${isConnected ? intg.color + "55" : t.border}`, borderRadius: 12, padding: 18 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-                        <div style={{ background: intg.color + "22", color: intg.color, borderRadius: 10, padding: 10, display: "flex" }}><intg.icon size={20} /></div>
-                        {isConnected
-                          ? <span style={{ fontSize: 11, fontWeight: 700, color: t.good, background: t.good + "18", padding: "3px 9px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: 99, background: t.good }} />Conectado</span>
-                          : isShopify && shopifyStatus.configured
-                            ? <span style={{ fontSize: 11, fontWeight: 700, color: t.warn, background: t.warn + "18", padding: "3px 9px", borderRadius: 20 }}>Configurado · inactivo</span>
-                            : <span style={{ fontSize: 11, fontWeight: 700, color: t.textLo, background: t.panel3, padding: "3px 9px", borderRadius: 20 }}>No conectado</span>}
+                    <div key={intg.id} style={{
+                      ...glass(t),
+                      border: `1px solid ${isConnected ? intg.color + "55" : t.border}`,
+                      borderRadius: 10, padding: 12,
+                      display: "flex", flexDirection: "column", gap: 8, minHeight: 148,
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                        <div title={intg.name} style={{
+                          background: intg.color + "18", borderRadius: 8, padding: 6,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          width: 36, height: 36, flexShrink: 0,
+                        }}>
+                          {logoUrl ? (
+                            <img src={logoUrl} alt={intg.name} width={22} height={22}
+                              style={{ display: "block" }}
+                              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                          ) : (
+                            <intg.icon size={18} color={intg.color} />
+                          )}
+                        </div>
+                        {isConnected ? (
+                          <span style={{ fontSize: 9.5, fontWeight: 700, color: t.good, background: t.good + "18", padding: "3px 7px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ width: 5, height: 5, borderRadius: 99, background: t.good }} />ACTIVO
+                          </span>
+                        ) : isConfiguredInactive ? (
+                          <span style={{ fontSize: 9.5, fontWeight: 700, color: t.warn, background: t.warn + "18", padding: "3px 7px", borderRadius: 20 }}>INACTIVO</span>
+                        ) : (
+                          <span style={{ fontSize: 9.5, fontWeight: 700, color: t.textLo, background: t.panel3, padding: "3px 7px", borderRadius: 20 }}>OFF</span>
+                        )}
                       </div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 5 }}>{intg.name}</div>
-                      <div style={{ fontSize: 12, color: t.textLo, lineHeight: 1.4, marginBottom: 14, minHeight: 34 }}>{intg.description}</div>
-                      {isShopify && shopifyStatus.configured && shopifyStatus.shop_domain && (
-                        <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 12, fontFamily: "monospace" }}>
-                          {shopifyStatus.shop_domain}
+                      <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>{intg.name}</div>
+                      <div style={{ fontSize: 11, color: t.textLo, lineHeight: 1.35, flex: 1 }}>{intg.description}</div>
+                      {subInfo && (
+                        <div style={{ fontSize: 10.5, color: t.textLo, fontFamily: "monospace",
+                          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {subInfo}
                         </div>
                       )}
-                      {isShopify ? (
-                        <button onClick={() => { setShopifyMsg(null); setShopifyModal(true); }}
-                          style={{ width: "100%", padding: "9px", borderRadius: 8, border: `1px solid ${intg.color}55`, background: intg.color + "18", color: intg.color, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }}>
-                          {shopifyStatus.configured ? "Editar credenciales" : "Configurar Shopify"}
+                      {funcional ? (
+                        <button onClick={openModal}
+                          style={{ width: "100%", padding: "7px 8px", borderRadius: 7, border: `1px solid ${intg.color}55`, background: intg.color + "18", color: intg.color, cursor: "pointer", fontSize: 11.5, fontWeight: 700 }}>
+                          {status?.configured ? "Editar" : "Configurar"}
                         </button>
                       ) : (
                         <button onClick={() => alert(`La integración con ${intg.name} estará disponible próximamente. Contáctanos para priorizarla.`)}
-                          style={{ width: "100%", padding: "9px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+                          style={{ width: "100%", padding: "7px 8px", borderRadius: 7, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 11.5, fontWeight: 600 }}>
                           Próximamente
                         </button>
                       )}
@@ -1134,6 +1202,116 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
         <BranchFormModal t={t} lbl={lbl} inp={inp} editing={editingBranch}
           onClose={() => { setBranchForm(false); setEditingBranch(null); }}
           onSaved={async () => { setBranchForm(false); setEditingBranch(null); await loadBranches(); }} />
+      )}
+
+      {/* ── MODAL: Configurar Sufactura (PAC de facturación) ── */}
+      {sufacturaModal && createPortal(
+        <div onClick={() => setSufacturaModal(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 900, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, width: "100%", maxWidth: 520, boxShadow: "0 20px 60px rgba(0,0,0,0.45)" }}>
+            <div style={{ padding: "16px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ background: "#E11D48" + "22", color: "#E11D48", borderRadius: 8, padding: 8, display: "flex" }}><Receipt size={18} /></div>
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>Configurar Sufactura</h2>
+              </div>
+              <button onClick={() => setSufacturaModal(false)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+            </div>
+            <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={lbl}>Usuario Sufactura *</label>
+                <input value={sufacturaForm.username}
+                  onChange={e => setSufacturaForm(f => ({ ...f, username: e.target.value }))}
+                  placeholder="usuario@empresa.com" style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Contraseña / API password *</label>
+                <input type="password" value={sufacturaForm.password}
+                  onChange={e => setSufacturaForm(f => ({ ...f, password: e.target.value }))}
+                  placeholder={sufacturaStatus.configured ? (sufacturaStatus.password_masked || "•••••••• (sin cambios)") : "Tu contraseña"} style={inp} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={lbl}>RFC del emisor *</label>
+                  <input value={sufacturaForm.rfc}
+                    onChange={e => setSufacturaForm(f => ({ ...f, rfc: e.target.value.toUpperCase() }))}
+                    placeholder="ABCD010203XYZ" maxLength={13} style={inp} />
+                </div>
+                <div>
+                  <label style={lbl}>Entorno</label>
+                  <select value={sufacturaForm.environment}
+                    onChange={e => setSufacturaForm(f => ({ ...f, environment: e.target.value }))}
+                    style={inp}>
+                    <option value="production">Producción</option>
+                    <option value="sandbox">Sandbox</option>
+                  </select>
+                </div>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: t.textMid, cursor: "pointer" }}>
+                <input type="checkbox" checked={sufacturaForm.is_active}
+                  onChange={e => setSufacturaForm(f => ({ ...f, is_active: e.target.checked }))} />
+                Activar timbrado automático de CFDI 4.0
+              </label>
+              {sufacturaMsg && (
+                <div style={{ padding: 10, borderRadius: 8,
+                  background: (sufacturaMsg.ok ? t.good : t.bad) + "18",
+                  color: sufacturaMsg.ok ? t.good : t.bad, fontSize: 12.5, whiteSpace: "pre-wrap" }}>
+                  {sufacturaMsg.text}
+                </div>
+              )}
+            </div>
+            <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "space-between", flexWrap: "wrap" }}>
+              <button
+                onClick={async () => {
+                  if (!sufacturaStatus.configured) { setSufacturaMsg({ ok: false, text: "Guarda las credenciales primero." }); return; }
+                  setSufacturaTesting(true); setSufacturaMsg(null);
+                  try {
+                    const r = await configService.testSufacturaIntegration();
+                    if (r.ok) setSufacturaMsg({ ok: true, text: `Conectado. RFC ${r.rfc || "—"} · ${r.environment || ""}${r.plan ? " · Plan " + r.plan : ""}${r.balance != null ? " · Saldo " + r.balance : ""}` });
+                    else setSufacturaMsg({ ok: false, text: r.error || "No se pudo conectar" });
+                  } catch (e: any) { setSufacturaMsg({ ok: false, text: errorMessage(e, "Error al probar la conexión") }); }
+                  finally { setSufacturaTesting(false); }
+                }}
+                disabled={sufacturaTesting || !sufacturaStatus.configured}
+                style={{ padding: "10px 18px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: sufacturaStatus.configured ? "pointer" : "not-allowed", fontSize: 13, fontWeight: 600, opacity: sufacturaStatus.configured ? 1 : 0.5 }}>
+                {sufacturaTesting ? "Probando…" : "Probar conexión"}
+              </button>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setSufacturaModal(false)}
+                  style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>
+                  Cancelar
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!sufacturaForm.username.trim()) { setSufacturaMsg({ ok: false, text: "Falta el usuario." }); return; }
+                    if (!sufacturaForm.rfc.trim() || sufacturaForm.rfc.trim().length < 12) { setSufacturaMsg({ ok: false, text: "RFC inválido (12–13 caracteres)." }); return; }
+                    const pwd = sufacturaForm.password.trim();
+                    if (!pwd && !sufacturaStatus.configured) { setSufacturaMsg({ ok: false, text: "Falta la contraseña." }); return; }
+                    setSufacturaSaving(true); setSufacturaMsg(null);
+                    try {
+                      const payload = {
+                        username: sufacturaForm.username.trim(),
+                        password: pwd || (sufacturaStatus.password_masked || ""),
+                        rfc: sufacturaForm.rfc.trim().toUpperCase(),
+                        environment: sufacturaForm.environment,
+                        is_active: sufacturaForm.is_active,
+                      };
+                      if (!payload.password) throw new Error("Falta la contraseña.");
+                      await configService.saveSufacturaIntegration(payload);
+                      setSufacturaMsg({ ok: true, text: "Credenciales guardadas." });
+                      await loadSufactura();
+                    } catch (e: any) { setSufacturaMsg({ ok: false, text: errorMessage(e, "No se pudo guardar") }); }
+                    finally { setSufacturaSaving(false); }
+                  }}
+                  disabled={sufacturaSaving}
+                  style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: "linear-gradient(135deg, #E11D48, #9F1239)", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+                  {sufacturaSaving ? "Guardando…" : "Guardar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
       {/* ── MODAL: Configurar Shopify ── */}

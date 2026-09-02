@@ -943,9 +943,10 @@ _TENANCY_STATEMENTS = [
         SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
     ) WHERE company_id IS NULL""",
 
-    # ── IntegrationType enum: agregar MARKETPLACE_SHOPIFY ────────────────
+    # ── IntegrationType enum: agregar valores nuevos ─────────────────────
     # PostgreSQL requiere ALTER TYPE ADD VALUE. Idempotente con IF NOT EXISTS.
     "ALTER TYPE integrationtype ADD VALUE IF NOT EXISTS 'MARKETPLACE_SHOPIFY'",
+    "ALTER TYPE integrationtype ADD VALUE IF NOT EXISTS 'INVOICING_SUFACTURA'",
 ]
 
 
