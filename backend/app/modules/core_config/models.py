@@ -17,6 +17,7 @@ class IntegrationType(str, enum.Enum):
     EMAIL = "EMAIL"
     STORAGE = "STORAGE"
     ACCOUNTING = "ACCOUNTING"
+    MARKETPLACE_SHOPIFY = "MARKETPLACE_SHOPIFY"
     OTHER = "OTHER"
 
 class IntegrationEnvironment(str, enum.Enum):

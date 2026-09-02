@@ -79,6 +79,23 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
   const [rbacLoading, setRbacLoading] = useState(false);
   const [rbacError, setRbacError] = useState("");
   const integrations = AVAILABLE_INTEGRATIONS;
+  // Estado real de Shopify (leido del backend) — el resto siguen como
+  // "proximamente" hasta que las conectemos.
+  const [shopifyStatus, setShopifyStatus] = useState<{ configured: boolean; is_active?: boolean; shop_domain?: string; access_token_masked?: string }>({ configured: false });
+  const [shopifyModal, setShopifyModal] = useState(false);
+  const [shopifyForm, setShopifyForm] = useState({ shop_domain: "", access_token: "", is_active: true });
+  const [shopifyMsg, setShopifyMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [shopifySaving, setShopifySaving] = useState(false);
+  const [shopifyTesting, setShopifyTesting] = useState(false);
+  const loadShopify = useCallback(async () => {
+    try {
+      const s = await configService.getShopifyIntegration();
+      setShopifyStatus(s);
+      if (s.configured) {
+        setShopifyForm({ shop_domain: s.shop_domain || "", access_token: "", is_active: !!s.is_active });
+      }
+    } catch { /* silencioso — no bloquea la vista */ }
+  }, []);
   const [userForm, setUserForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [roleForm, setRoleForm] = useState(false);
@@ -308,7 +325,7 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
     } catch { /* sin backend (modo demo) */ }
   }, []);
 
-  useEffect(() => { if (tab === "integrations") loadEmailIntegration(); }, [tab, loadEmailIntegration]);
+  useEffect(() => { if (tab === "integrations") { loadEmailIntegration(); loadShopify(); } }, [tab, loadEmailIntegration, loadShopify]);
 
   const handleSaveEmailIntegration = async (): Promise<boolean> => {
     setEmailSaving(true); setEmailMsg("");
@@ -437,14 +454,44 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
         <p style={{ margin: "4px 0 0", color: t.textLo, fontSize: 13 }}>Administración del sistema, usuarios, permisos e integraciones</p>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", borderBottom: `1px solid ${t.border}`, marginBottom: 20, overflowX: "auto", gap: 2 }}>
-        {TABS.map(({ id, label, icon: Icon }) => (
-          <button key={id} onClick={() => setTab(id as any)} style={tabBtn(tab === id)}>
-            <Icon size={14} />{label}
-          </button>
-        ))}
-      </div>
+      {/* Tabs — desktop en 2 filas para que ninguna quede oculta ni haga
+          scroll horizontal. Movil mantiene scroll para no romper. Split en
+          la mitad para balance visual. */}
+      {(() => {
+        const isMobileTabs = typeof window !== "undefined" && window.innerWidth < 780;
+        if (isMobileTabs) {
+          return (
+            <div style={{ display: "flex", borderBottom: `1px solid ${t.border}`, marginBottom: 20, overflowX: "auto", gap: 2 }}>
+              {TABS.map(({ id, label, icon: Icon }) => (
+                <button key={id} onClick={() => setTab(id as any)} style={tabBtn(tab === id)}>
+                  <Icon size={14} />{label}
+                </button>
+              ))}
+            </div>
+          );
+        }
+        const mid = Math.ceil(TABS.length / 2);
+        const row1 = TABS.slice(0, mid);
+        const row2 = TABS.slice(mid);
+        return (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+              {row1.map(({ id, label, icon: Icon }) => (
+                <button key={id} onClick={() => setTab(id as any)} style={tabBtn(tab === id)}>
+                  <Icon size={14} />{label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 2, flexWrap: "wrap", borderBottom: `1px solid ${t.border}` }}>
+              {row2.map(({ id, label, icon: Icon }) => (
+                <button key={id} onClick={() => setTab(id as any)} style={tabBtn(tab === id)}>
+                  <Icon size={14} />{label}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── TAB: Company ── */}
       {tab === "company" && (
@@ -915,27 +962,42 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
               <div key={cat}>
                 <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textLo, letterSpacing: 0.5, marginBottom: 10, textTransform: "uppercase" }}>{cat}</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
-                  {items.map(intg => (
-                    <div key={intg.id} style={{ ...glass(t), border: `1px solid ${intg.connected ? intg.color + "55" : t.border}`, borderRadius: 12, padding: 18 }}>
+                  {items.map(intg => {
+                    // Shopify: refleja el estado real leido del backend.
+                    // Resto de integraciones: quedan como "proximamente".
+                    const isShopify = intg.id === "shopify";
+                    const isConnected = isShopify ? (shopifyStatus.configured && !!shopifyStatus.is_active) : intg.connected;
+                    return (
+                    <div key={intg.id} style={{ ...glass(t), border: `1px solid ${isConnected ? intg.color + "55" : t.border}`, borderRadius: 12, padding: 18 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                         <div style={{ background: intg.color + "22", color: intg.color, borderRadius: 10, padding: 10, display: "flex" }}><intg.icon size={20} /></div>
-                        {intg.connected
+                        {isConnected
                           ? <span style={{ fontSize: 11, fontWeight: 700, color: t.good, background: t.good + "18", padding: "3px 9px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: 99, background: t.good }} />Conectado</span>
-                          : <span style={{ fontSize: 11, fontWeight: 700, color: t.textLo, background: t.panel3, padding: "3px 9px", borderRadius: 20 }}>No conectado</span>}
+                          : isShopify && shopifyStatus.configured
+                            ? <span style={{ fontSize: 11, fontWeight: 700, color: t.warn, background: t.warn + "18", padding: "3px 9px", borderRadius: 20 }}>Configurado · inactivo</span>
+                            : <span style={{ fontSize: 11, fontWeight: 700, color: t.textLo, background: t.panel3, padding: "3px 9px", borderRadius: 20 }}>No conectado</span>}
                       </div>
                       <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, marginBottom: 5 }}>{intg.name}</div>
                       <div style={{ fontSize: 12, color: t.textLo, lineHeight: 1.4, marginBottom: 14, minHeight: 34 }}>{intg.description}</div>
-                      {intg.connected && intg.last_sync && (
-                        <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 12, display: "flex", alignItems: "center", gap: 5 }}>
-                          <RefreshCw size={12} /> Última sync: {intg.last_sync}
+                      {isShopify && shopifyStatus.configured && shopifyStatus.shop_domain && (
+                        <div style={{ fontSize: 11.5, color: t.textLo, marginBottom: 12, fontFamily: "monospace" }}>
+                          {shopifyStatus.shop_domain}
                         </div>
                       )}
-                      <button onClick={() => alert(`La integración con ${intg.name} estará disponible próximamente. Contáctanos para priorizarla.`)}
-                        style={{ width: "100%", padding: "9px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
-                        Próximamente
-                      </button>
+                      {isShopify ? (
+                        <button onClick={() => { setShopifyMsg(null); setShopifyModal(true); }}
+                          style={{ width: "100%", padding: "9px", borderRadius: 8, border: `1px solid ${intg.color}55`, background: intg.color + "18", color: intg.color, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }}>
+                          {shopifyStatus.configured ? "Editar credenciales" : "Configurar Shopify"}
+                        </button>
+                      ) : (
+                        <button onClick={() => alert(`La integración con ${intg.name} estará disponible próximamente. Contáctanos para priorizarla.`)}
+                          style={{ width: "100%", padding: "9px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+                          Próximamente
+                        </button>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -1072,6 +1134,106 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
         <BranchFormModal t={t} lbl={lbl} inp={inp} editing={editingBranch}
           onClose={() => { setBranchForm(false); setEditingBranch(null); }}
           onSaved={async () => { setBranchForm(false); setEditingBranch(null); await loadBranches(); }} />
+      )}
+
+      {/* ── MODAL: Configurar Shopify ── */}
+      {shopifyModal && createPortal(
+        <div onClick={() => setShopifyModal(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 900, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: t.panel, borderRadius: 14, border: `1px solid ${t.border}`, width: "100%", maxWidth: 520, boxShadow: "0 20px 60px rgba(0,0,0,0.45)" }}>
+            <div style={{ padding: "16px 24px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ background: "#96BF48" + "22", color: "#96BF48", borderRadius: 8, padding: 8, display: "flex" }}><ShoppingBag size={18} /></div>
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>Configurar Shopify</h2>
+              </div>
+              <button onClick={() => setShopifyModal(false)} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
+            </div>
+            <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={lbl}>Dominio de la tienda *</label>
+                <input value={shopifyForm.shop_domain}
+                  onChange={e => setShopifyForm(f => ({ ...f, shop_domain: e.target.value }))}
+                  placeholder="mi-tienda.myshopify.com" style={inp} />
+                <div style={{ fontSize: 11, color: t.textLo, marginTop: 4 }}>Sin https://. Ej: <b>vane-store.myshopify.com</b></div>
+              </div>
+              <div>
+                <label style={lbl}>Access Token de la Admin API *</label>
+                <input type="password" value={shopifyForm.access_token}
+                  onChange={e => setShopifyForm(f => ({ ...f, access_token: e.target.value }))}
+                  placeholder={shopifyStatus.configured ? (shopifyStatus.access_token_masked || "•••••••• (sin cambios)") : "shpat_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"} style={inp} />
+                <div style={{ fontSize: 11, color: t.textLo, marginTop: 4 }}>Crea una Custom App en Shopify Admin → Apps → Develop apps → API credentials.</div>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: t.textMid, cursor: "pointer" }}>
+                <input type="checkbox" checked={shopifyForm.is_active}
+                  onChange={e => setShopifyForm(f => ({ ...f, is_active: e.target.checked }))} />
+                Activar sincronización de productos, stock y pedidos
+              </label>
+              {shopifyMsg && (
+                <div style={{ padding: 10, borderRadius: 8,
+                  background: (shopifyMsg.ok ? t.good : t.bad) + "18",
+                  color: shopifyMsg.ok ? t.good : t.bad, fontSize: 12.5,
+                  whiteSpace: "pre-wrap" }}>
+                  {shopifyMsg.text}
+                </div>
+              )}
+            </div>
+            <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", gap: 10, justifyContent: "space-between", flexWrap: "wrap" }}>
+              <button
+                onClick={async () => {
+                  if (!shopifyStatus.configured) { setShopifyMsg({ ok: false, text: "Guarda las credenciales primero." }); return; }
+                  setShopifyTesting(true); setShopifyMsg(null);
+                  try {
+                    const r = await configService.testShopifyIntegration();
+                    if (r.ok) setShopifyMsg({ ok: true, text: `Conectado a ${r.shop_name || r.domain} · Plan ${r.plan || "—"}` });
+                    else setShopifyMsg({ ok: false, text: r.error || "No se pudo conectar" });
+                  } catch (e: any) { setShopifyMsg({ ok: false, text: errorMessage(e, "Error al probar la conexión") }); }
+                  finally { setShopifyTesting(false); }
+                }}
+                disabled={shopifyTesting || !shopifyStatus.configured}
+                style={{ padding: "10px 18px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: shopifyStatus.configured ? "pointer" : "not-allowed", fontSize: 13, fontWeight: 600, opacity: shopifyStatus.configured ? 1 : 0.5 }}>
+                {shopifyTesting ? "Probando…" : "Probar conexión"}
+              </button>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => setShopifyModal(false)}
+                  style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>
+                  Cancelar
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!shopifyForm.shop_domain.trim()) { setShopifyMsg({ ok: false, text: "Falta el dominio." }); return; }
+                    // Si esta editando y no cambio el token, conservar el anterior
+                    // mandando string vacio — el backend requiere >=8, asi que
+                    // reutilizamos el token existente cuando el campo esta vacio.
+                    const token = shopifyForm.access_token.trim();
+                    if (!token && !shopifyStatus.configured) { setShopifyMsg({ ok: false, text: "Falta el access token." }); return; }
+                    setShopifySaving(true); setShopifyMsg(null);
+                    try {
+                      // Cuando el token esta vacio en edicion, mandamos un placeholder
+                      // que el backend interpretara como "sin cambios" — pero como
+                      // el backend actual sobrescribe siempre, prevenimos exigiendo
+                      // token en el frontend cuando el campo esta vacio para nuevo.
+                      const payload = {
+                        shop_domain: shopifyForm.shop_domain.trim(),
+                        access_token: token || (shopifyStatus.access_token_masked || ""),
+                        is_active: shopifyForm.is_active,
+                      };
+                      if (!payload.access_token) throw new Error("Falta el access token.");
+                      await configService.saveShopifyIntegration(payload);
+                      setShopifyMsg({ ok: true, text: "Credenciales guardadas." });
+                      await loadShopify();
+                    } catch (e: any) { setShopifyMsg({ ok: false, text: errorMessage(e, "No se pudo guardar") }); }
+                    finally { setShopifySaving(false); }
+                  }}
+                  disabled={shopifySaving}
+                  style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: "linear-gradient(135deg, #96BF48, #6b8f2f)", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+                  {shopifySaving ? "Guardando…" : "Guardar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );
