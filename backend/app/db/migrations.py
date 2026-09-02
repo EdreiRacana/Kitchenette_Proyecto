@@ -947,6 +947,20 @@ _TENANCY_STATEMENTS = [
     # PostgreSQL requiere ALTER TYPE ADD VALUE. Idempotente con IF NOT EXISTS.
     "ALTER TYPE integrationtype ADD VALUE IF NOT EXISTS 'MARKETPLACE_SHOPIFY'",
     "ALTER TYPE integrationtype ADD VALUE IF NOT EXISTS 'INVOICING_SUFACTURA'",
+
+    # ── SystemIntegration multi-tenancy ───────────────────────────────────
+    # Cada empresa cliente debe tener sus propias credenciales (Shopify,
+    # Sufactura, SMTP…). Sin esto, todas las empresas comparten los mismos
+    # registros — desastre para multiempresa.
+    "ALTER TABLE system_integrations ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id) ON DELETE CASCADE",
+    "ALTER TABLE system_integrations ADD COLUMN IF NOT EXISTS name VARCHAR",
+    "CREATE INDEX IF NOT EXISTS ix_system_integrations_company_id ON system_integrations(company_id)",
+    # provider_name era NOT NULL; ahora Shopify/Sufactura no lo usan.
+    "ALTER TABLE system_integrations ALTER COLUMN provider_name DROP NOT NULL",
+    # Backfill: los registros existentes van a la primera empresa (Elias Jabari).
+    """UPDATE system_integrations SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
 ]
 
 

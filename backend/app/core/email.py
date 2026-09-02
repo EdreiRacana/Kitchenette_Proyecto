@@ -176,12 +176,18 @@ async def _send_http(provider: str, api_key: str, mail_from: str, *, to: str, su
 # ── SMTP por empresa (fallback) ───────────────────────────────────────────────
 
 async def get_active_email_integration(db: AsyncSession) -> SystemIntegration | None:
-    res = await db.execute(
-        select(SystemIntegration).where(
-            SystemIntegration.integration_type == IntegrationType.EMAIL,
-            SystemIntegration.is_active == True,  # noqa: E712
-        )
+    """SMTP activo de LA EMPRESA ACTIVA (multi-tenant). Cada empresa cliente
+    puede tener su propio Gmail/Office365 configurado; el filtro por
+    company_id lo tomamos explicitamente del contexto de tenancy."""
+    from app.core.tenancy import get_company_context
+    cid = get_company_context()
+    stmt = select(SystemIntegration).where(
+        SystemIntegration.integration_type == IntegrationType.EMAIL,
+        SystemIntegration.is_active == True,  # noqa: E712
     )
+    if cid:
+        stmt = stmt.where(SystemIntegration.company_id == cid)
+    res = await db.execute(stmt)
     return res.scalars().first()
 
 
