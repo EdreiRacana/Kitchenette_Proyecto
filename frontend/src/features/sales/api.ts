@@ -141,10 +141,79 @@ function draftToPayload(d: OrderDraft) {
   };
 }
 
+// ── Notas de Credito CFDI 4.0 ─────────────────────────────────────────
+export interface CreditNoteItem {
+  id: number; order_item_id?: number | null;
+  product_name: string; sku?: string | null;
+  quantity: number; unit_price: number;
+  subtotal: number; tax_amount: number; total: number;
+}
+export interface CreditNote {
+  id: number; folio: string; order_id: number;
+  kind: "total" | "parcial";
+  motivo_sat: string; motivo_sat_label: string;
+  reason?: string | null;
+  subtotal: number; tax_amount: number; total: number;
+  currency: string;
+  status: "draft" | "stamped" | "cancelled";
+  cfdi_uuid?: string | null; cfdi_serie?: string | null; cfdi_folio?: string | null;
+  stamped_at?: string | null; cancelled_at?: string | null;
+  cancellation_motivo?: string | null;
+  created_at?: string | null;
+  items: CreditNoteItem[];
+}
+export interface CreditNoteLineDraft {
+  order_item_id?: number | null; variant_id?: number | null;
+  product_name: string; sku?: string | null;
+  quantity: number; unit_price: number;
+  discount_amount?: number; tax_rate?: number;
+  clave_prod_serv?: string | null; clave_unidad?: string | null; unidad?: string | null;
+}
+
 export const salesApi = {
   async list(filters: OrderFilters): Promise<Paginated<Order>> {
     const { data } = await api.get<Paginated<Order>>(`/sales/${qs(filters)}`);
     return data;
+  },
+  // ── CFDI: timbrado + Notas de credito ──
+  async stampOrder(id: number): Promise<{ ok: boolean; uuid: string; serie?: string; folio?: string; stamped_at?: string }> {
+    const { data } = await api.post(`/sales/orders/${id}/stamp`);
+    return data;
+  },
+  async listMotivosSAT(): Promise<{ motivos: { codigo: string; descripcion: string }[] }> {
+    const { data } = await api.get(`/sales/credit-notes/motivos-sat`);
+    return data;
+  },
+  async listCreditNotes(orderId?: number, status?: string): Promise<CreditNote[]> {
+    const params: any = {};
+    if (orderId) params.order_id = orderId;
+    if (status) params.status = status;
+    const { data } = await api.get<CreditNote[]>(`/sales/credit-notes`, { params });
+    return data;
+  },
+  async createCreditNote(payload: {
+    order_id: number; motivo_sat: string; kind: "total" | "parcial";
+    reason?: string; restocks_inventory?: boolean; warehouse_id?: number | null;
+    lines: CreditNoteLineDraft[];
+  }): Promise<CreditNote> {
+    const { data } = await api.post<CreditNote>(`/sales/credit-notes`, payload);
+    return data;
+  },
+  async stampCreditNote(id: number): Promise<CreditNote> {
+    const { data } = await api.post<CreditNote>(`/sales/credit-notes/${id}/stamp`);
+    return data;
+  },
+  async cancelCreditNote(id: number, motivo: string, folio_sustituto?: string): Promise<CreditNote> {
+    const { data } = await api.post<CreditNote>(`/sales/credit-notes/${id}/cancel`, { motivo, folio_sustituto });
+    return data;
+  },
+  async downloadCreditNotePDF(id: number): Promise<Blob> {
+    const res = await api.get(`/sales/credit-notes/${id}/pdf`, { responseType: "blob" });
+    return res.data as Blob;
+  },
+  async downloadCreditNoteXML(id: number): Promise<Blob> {
+    const res = await api.get(`/sales/credit-notes/${id}/xml`, { responseType: "blob" });
+    return res.data as Blob;
   },
   async get(id: number): Promise<Order> {
     const { data } = await api.get<Order>(`/sales/${id}`);
