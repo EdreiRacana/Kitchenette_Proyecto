@@ -4,15 +4,17 @@
 import { useEffect, useState } from "react";
 import {
   X, CreditCard, CheckCircle, XCircle, Pencil, ArrowRightLeft, Printer, FileText, MessageCircle, Mail,
+  Stamp, FileMinus,
 } from "lucide-react";
 import type { Tokens, Translator } from "./theme";
 import { money, dateTime, paymentLabel, statusColors, statusMeta } from "./theme";
 import type { Order } from "./types";
 import { Badge, Button, IconButton } from "./ui";
 import configService from "../config/service";
-import { resolveMediaUrl } from "../../services/api";
+import { resolveMediaUrl, errMsg } from "../../services/api";
 import { openWhatsApp } from "../../utils/whatsapp";
 import { salesApi } from "./api";
+import { CreditNoteModal, CreditNotesPanel } from "./CreditNotes";
 
 async function emailTicket(order: Order) {
   const suggested = order.customer?.email || "";
@@ -130,10 +132,37 @@ export function OrderDrawer({
     return () => { cancelled = true; };
   }, [order?.id]);
 
+  // Estado local para acciones CFDI (timbrar factura + emitir NC).
+  const [creditNoteOpen, setCreditNoteOpen] = useState(false);
+  const [ncRefreshKey, setNcRefreshKey] = useState(0);
+  const [stampingInvoice, setStampingInvoice] = useState(false);
+  const [invoiceMsg, setInvoiceMsg] = useState<string | null>(null);
+
+  const stampInvoice = async () => {
+    if (!order) return;
+    if (!window.confirm(
+      "¿Timbrar la factura CFDI 4.0 de esta venta ante el SAT?\n\n" +
+      "Se usarán las credenciales de Sufactura de esta empresa. Una vez timbrada, " +
+      "cualquier corrección deberá hacerse con nota de crédito."
+    )) return;
+    setStampingInvoice(true); setInvoiceMsg(null);
+    try {
+      const r = await salesApi.stampOrder(order.id);
+      setInvoiceMsg(`✓ Factura timbrada. UUID ${r.uuid?.slice(0, 8)}…`);
+      // Recargar la orden desde el server para que aparezcan cfdi_uuid/status
+      // Como no tenemos setter aqui, forzamos refresh del panel NC.
+      setNcRefreshKey(k => k + 1);
+    } catch (e: any) {
+      setInvoiceMsg(errMsg(e, "No se pudo timbrar la factura"));
+    } finally { setStampingInvoice(false); }
+  };
+
   if (!order) return null;
   const sc = statusColors(tk, order.status);
   const isQuote = order.kind === "quote";
   const closed = order.status === "cancelled" || order.status === "converted";
+  const canStampInvoice = !isQuote && !order.cfdi_uuid && order.status !== "cancelled";
+  const canEmitCreditNote = !isQuote && !!order.cfdi_uuid && order.status !== "cancelled";
   const td: React.CSSProperties = { padding: "8px 10px", fontSize: 13, color: tk.textMid };
 
   return (
@@ -305,6 +334,37 @@ export function OrderDrawer({
             </Section>
           )}
 
+          {/* Estado CFDI + panel de Notas de Credito */}
+          {!isQuote && (
+            <Section tk={tk} title={tr("sales_detail_cfdi", "Facturación CFDI 4.0")}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: tk.textMid }}>
+                {order.cfdi_uuid ? (
+                  <>
+                    <CheckCircle size={14} color={tk.good} />
+                    <span>Factura timbrada</span>
+                    <span style={{ fontFamily: "monospace", fontSize: 11, color: tk.textLo }}>
+                      {order.cfdi_uuid}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <FileText size={14} color={tk.textLo} />
+                    <span>Sin factura timbrada</span>
+                  </>
+                )}
+              </div>
+              {invoiceMsg && (
+                <div style={{ marginTop: 8, padding: 8, borderRadius: 6,
+                  background: invoiceMsg.startsWith("✓") ? tk.good + "18" : tk.bad + "18",
+                  color: invoiceMsg.startsWith("✓") ? tk.good : tk.bad, fontSize: 12 }}>
+                  {invoiceMsg}
+                </div>
+              )}
+              <CreditNotesPanel tk={tk} orderId={order.id}
+                refreshKey={ncRefreshKey} onChanged={() => setNcRefreshKey(k => k + 1)} />
+            </Section>
+          )}
+
           {/* Audit timeline */}
           {order.events && order.events.length > 0 && (
             <Section tk={tk} title={tr("sales_detail_history", "Bitácora")}>
@@ -398,12 +458,30 @@ export function OrderDrawer({
               <Button tk={tk} variant="ghost" icon={<Mail size={16} />} onClick={() => emailTicket(order)}>{tr("sales_email_ticket", "Enviar por correo")}</Button>
               <Button tk={tk} variant="ghost" icon={<FileText size={16} />} onClick={() => onInvoice(order)}>{tr("sales_invoice", "CFDI")}</Button>
               {!closed && order.status !== "paid" && <Button tk={tk} variant="ghost" icon={<Pencil size={16} />} onClick={() => onEdit(order)}>{tr("sales_edit", "Editar")}</Button>}
+              {canStampInvoice && (
+                <Button tk={tk} variant="primary" icon={<Stamp size={16} />}
+                  onClick={stampInvoice}
+                  disabled={stampingInvoice}>
+                  {stampingInvoice ? "Timbrando…" : "Timbrar factura"}
+                </Button>
+              )}
+              {canEmitCreditNote && (
+                <Button tk={tk} variant="ghost" icon={<FileMinus size={16} />}
+                  onClick={() => setCreditNoteOpen(true)}>
+                  Emitir nota de crédito
+                </Button>
+              )}
               <div style={{ flex: 1 }} />
               {order.status !== "cancelled" && <Button tk={tk} variant="danger" icon={<XCircle size={16} />} onClick={() => onCancel(order)}>{tr("sales_btn_cancel", "Cancelar venta")}</Button>}
             </>
           )}
         </div>
       </div>
+      {creditNoteOpen && (
+        <CreditNoteModal tk={tk} order={order}
+          onClose={() => setCreditNoteOpen(false)}
+          onCreated={() => { setCreditNoteOpen(false); setNcRefreshKey(k => k + 1); }} />
+      )}
     </>
   );
 }
