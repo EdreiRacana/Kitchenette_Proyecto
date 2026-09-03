@@ -67,6 +67,7 @@ from app.modules.auth import models as auth_models
 from app.modules.inventory import models as inventory_models
 from app.modules.customers import models as customer_models
 from app.modules.sales import models as sales_models
+from app.modules.sales import credit_notes_models as sales_credit_notes_models  # noqa: F401
 from app.modules.finance import models as finance_models
 from app.modules.accounting import models as accounting_models
 # IMPORTANT: this import registers every company-owned accounting entity with
