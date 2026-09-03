@@ -1242,8 +1242,9 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                   <select value={sufacturaForm.environment}
                     onChange={e => setSufacturaForm(f => ({ ...f, environment: e.target.value }))}
                     style={inp}>
-                    <option value="production">Producción</option>
-                    <option value="sandbox">Sandbox</option>
+                    <option value="production">Producción (SAT real)</option>
+                    <option value="sandbox">Sandbox (Sufactura)</option>
+                    <option value="mock">Mock (pruebas locales, sin conexión)</option>
                   </select>
                 </div>
               </div>
@@ -1283,20 +1284,21 @@ export default function ConfigModule({ t, s, company }: { t: any; s: any; compan
                 </button>
                 <button
                   onClick={async () => {
-                    if (!sufacturaForm.username.trim()) { setSufacturaMsg({ ok: false, text: "Falta el usuario." }); return; }
+                    const isMock = sufacturaForm.environment === "mock";
+                    if (!isMock && !sufacturaForm.username.trim()) { setSufacturaMsg({ ok: false, text: "Falta el usuario." }); return; }
                     if (!sufacturaForm.rfc.trim() || sufacturaForm.rfc.trim().length < 12) { setSufacturaMsg({ ok: false, text: "RFC inválido (12–13 caracteres)." }); return; }
                     const pwd = sufacturaForm.password.trim();
-                    if (!pwd && !sufacturaStatus.configured) { setSufacturaMsg({ ok: false, text: "Falta la contraseña." }); return; }
+                    if (!isMock && !pwd && !sufacturaStatus.configured) { setSufacturaMsg({ ok: false, text: "Falta la contraseña." }); return; }
                     setSufacturaSaving(true); setSufacturaMsg(null);
                     try {
                       const payload = {
-                        username: sufacturaForm.username.trim(),
-                        password: pwd || (sufacturaStatus.password_masked || ""),
+                        username: sufacturaForm.username.trim() || (isMock ? "mock" : ""),
+                        password: pwd || (sufacturaStatus.password_masked || "") || (isMock ? "mock" : ""),
                         rfc: sufacturaForm.rfc.trim().toUpperCase(),
                         environment: sufacturaForm.environment,
                         is_active: sufacturaForm.is_active,
                       };
-                      if (!payload.password) throw new Error("Falta la contraseña.");
+                      if (!isMock && !payload.password) throw new Error("Falta la contraseña.");
                       await configService.saveSufacturaIntegration(payload);
                       setSufacturaMsg({ ok: true, text: "Credenciales guardadas." });
                       await loadSufactura();

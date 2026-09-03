@@ -443,10 +443,13 @@ async def test_shopify_integration(
 
 
 class SufacturaConfigRequest(BaseModel):
-    username: str = Field(min_length=1, max_length=255, description="Usuario Sufactura")
-    password: str = Field(min_length=1, max_length=255, description="Contrasena / api key")
+    # username/password son opcionales cuando environment == "mock" (pruebas
+    # locales que no llaman al PAC). En production/sandbox el endpoint valida
+    # que estén presentes y lanza 400 con mensaje legible.
+    username: str = Field(default="", max_length=255, description="Usuario Sufactura")
+    password: str = Field(default="", max_length=255, description="Contrasena / api key")
     rfc: str = Field(min_length=12, max_length=13)
-    environment: str = Field(default="production", description="'sandbox' o 'production'")
+    environment: str = Field(default="production", description="'sandbox', 'production' o 'mock'")
     is_active: bool = True
 
 
@@ -490,8 +493,12 @@ async def upsert_sufactura_integration(
     from sqlalchemy import select
     from app.modules.core_config.models import SystemIntegration, IntegrationType
     env = (payload.environment or "production").lower().strip()
-    if env not in ("sandbox", "production"):
-        raise HTTPException(400, "environment debe ser 'sandbox' o 'production'.")
+    if env not in ("sandbox", "production", "mock"):
+        raise HTTPException(400, "environment debe ser 'sandbox', 'production' o 'mock'.")
+    # En modo mock aceptamos credenciales vacías (el MockPAC no las usa).
+    # En production/sandbox son obligatorias.
+    if env != "mock" and (not payload.username.strip() or not payload.password.strip()):
+        raise HTTPException(400, "En sandbox/producción se requieren usuario y contraseña de Sufactura.")
     rfc = payload.rfc.upper().strip()
 
     res = await db.execute(
@@ -541,6 +548,16 @@ async def test_sufactura_integration(
     meta = intg.meta_data or {}
     env = (meta.get("environment") or "production").lower()
     rfc = meta.get("rfc", "")
+
+    # Modo MOCK: retorna ok directo sin llamar al PAC (para pruebas locales).
+    if env == "mock":
+        return {
+            "ok": True, "environment": "mock", "rfc": rfc,
+            "plan": "Mock/Pruebas",
+            "raw": "Modo mock activo — el timbrado usará un PAC simulado local. "
+                   "Los CFDIs generados NO son válidos ante el SAT.",
+        }
+
     # Sufactura tiene endpoints separados para sandbox y production.
     # Verifica credenciales pidiendo el saldo de la cuenta (endpoint GET
     # autenticado con Basic Auth username/password + header X-RFC).

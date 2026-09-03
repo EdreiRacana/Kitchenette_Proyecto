@@ -205,10 +205,12 @@ class SufacturaPAC:
 
 
 # ── Factory helper ────────────────────────────────────────────────────────
-async def get_sufactura_client_for_current_company(db) -> SufacturaPAC:
-    """Instancia un cliente Sufactura con las credenciales de la empresa
-    activa (leídas via el hook multi-tenant). Lanza PACError si no está
-    configurado — el caller debe capturar y devolver 400 al frontend."""
+async def get_sufactura_client_for_current_company(db):
+    """Instancia un cliente PAC con las credenciales de la empresa activa.
+    - Si environment == "mock" -> retorna MockPAC (no requiere red ni credenciales
+      reales, ideal para pruebas locales / demos).
+    - Si environment == "sandbox" o "production" -> retorna SufacturaPAC real.
+    Lanza PACError si no está configurado."""
     from sqlalchemy import select
     from app.modules.core_config.models import SystemIntegration, IntegrationType
     from app.core.tenancy import get_company_context
@@ -226,9 +228,20 @@ async def get_sufactura_client_for_current_company(db) -> SufacturaPAC:
         raise PACError("Sufactura no está configurado o no está activo para esta empresa. "
                         "Ve a Configuración → Integraciones → Sufactura.")
     meta = intg.meta_data or {}
+    env = (meta.get("environment") or "production").lower()
+    rfc = meta.get("rfc", "")
+
+    if env == "mock":
+        from .mock import MockPAC
+        return MockPAC(rfc=rfc)
+
+    if not intg.api_key or not intg.api_secret:
+        raise PACError("Faltan credenciales de Sufactura para esta empresa. "
+                        "Configura usuario y contraseña, o cambia el entorno a "
+                        "'mock' para pruebas sin conexión al PAC.")
     return SufacturaPAC(
-        username=intg.api_key or "",
-        password=intg.api_secret or "",
-        rfc=meta.get("rfc", ""),
-        environment=meta.get("environment", "production"),
+        username=intg.api_key,
+        password=intg.api_secret,
+        rfc=rfc,
+        environment=env,
     )
