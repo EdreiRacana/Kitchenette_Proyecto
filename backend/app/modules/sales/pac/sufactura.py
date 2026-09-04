@@ -210,23 +210,51 @@ async def get_sufactura_client_for_current_company(db):
     - Si environment == "mock" -> retorna MockPAC (no requiere red ni credenciales
       reales, ideal para pruebas locales / demos).
     - Si environment == "sandbox" o "production" -> retorna SufacturaPAC real.
-    Lanza PACError si no está configurado."""
+
+    Estrategia de búsqueda (evita "no configurado" falso cuando la empresa
+    activa cambia pero solo hay UNA config de Sufactura en el ERP):
+      1) Config activa para company_id == cid actual.
+      2) Fallback: config activa "global" (company_id IS NULL) — legacy o
+         cuando la configuración se guardó antes de que existiera multi-tenancy.
+      3) Si el filtro de tenant está desactivado (skip_tenant_filter en la
+         consulta de la orden), cualquier config activa sirve.
+    Lanza PACError con el nombre de la empresa activa si nada aplica."""
     from sqlalchemy import select
-    from app.modules.core_config.models import SystemIntegration, IntegrationType
+    from app.modules.core_config.models import SystemIntegration, IntegrationType, CompanyProfile
     from app.core.tenancy import get_company_context
 
     cid = get_company_context()
-    stmt = select(SystemIntegration).where(
+    base = select(SystemIntegration).where(
         SystemIntegration.integration_type == IntegrationType.INVOICING_SUFACTURA,
         SystemIntegration.is_active == True,  # noqa: E712
     )
+    intg = None
     if cid:
-        stmt = stmt.where(SystemIntegration.company_id == cid)
-    res = await db.execute(stmt)
-    intg = res.scalars().first()
+        res = await db.execute(base.where(SystemIntegration.company_id == cid)
+                               .execution_options(skip_tenant_filter=True))
+        intg = res.scalars().first()
     if not intg:
-        raise PACError("Sufactura no está configurado o no está activo para esta empresa. "
-                        "Ve a Configuración → Integraciones → Sufactura.")
+        # Fallback 1: config global (sin company_id) — legacy o setup único
+        res = await db.execute(base.where(SystemIntegration.company_id.is_(None))
+                               .execution_options(skip_tenant_filter=True))
+        intg = res.scalars().first()
+    if not intg and not cid:
+        # Sin tenant activo: cualquier config activa sirve
+        res = await db.execute(base.execution_options(skip_tenant_filter=True))
+        intg = res.scalars().first()
+
+    if not intg:
+        # Mensaje diagnóstico: nombre de la empresa activa si existe
+        cname = ""
+        if cid:
+            r = await db.execute(select(CompanyProfile).where(CompanyProfile.id == cid)
+                                 .execution_options(skip_tenant_filter=True))
+            cp = r.scalars().first()
+            cname = cp.legal_name if cp else cid
+        detail = f' para la empresa activa "{cname}"' if cname else ""
+        raise PACError(f"Sufactura no está configurado o no está activo{detail}. "
+                       "Ve a Configuración → Integraciones → Sufactura y guarda las credenciales "
+                       "estando dentro de esta empresa.")
     meta = intg.meta_data or {}
     env = (meta.get("environment") or "production").lower()
     rfc = meta.get("rfc", "")
