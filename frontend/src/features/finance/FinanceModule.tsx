@@ -89,11 +89,15 @@ const CATEGORIES: Record<string, { label: string; color: string }> = {
 };
 
 // ── Main Component ─────────────────────────────────────────────────────────
-export default function FinanceModule({ t, s }: { t: any; s: any }) {
+export default function FinanceModule({ t, s, initialTab }: { t: any; s: any; initialTab?: string }) {
   // Detecta el idioma del bundle (el mismo que usa el resto del app).
   const lang = detectLang(s);
   const tr = (v: string | null | undefined) => trI18n(v, lang);
-  const [tab, setTab] = useState<"dashboard" | "cxc" | "cxp" | "banks" | "reconciliation" | "transactions" | "flow" | "advanced">("dashboard");
+  type FinTab = "dashboard" | "cxc" | "cxp" | "banks" | "reconciliation" | "transactions" | "flow" | "advanced" | "facturar";
+  const validTabs: FinTab[] = ["dashboard", "cxc", "cxp", "banks", "reconciliation", "transactions", "flow", "advanced", "facturar"];
+  const startTab: FinTab = (initialTab && (validTabs as string[]).includes(initialTab)) ? (initialTab as FinTab) : "dashboard";
+  const [tab, setTab] = useState<FinTab>(startTab);
+  useEffect(() => { if (initialTab && (validTabs as string[]).includes(initialTab)) setTab(initialTab as FinTab); }, [initialTab]);
   const [demo, setDemo] = useState(false); // legado: ya nunca se activa (sin datos ficticios)
   const [loadError, setLoadError] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -245,6 +249,7 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
     { id: "transactions", label: tr("Transacciones"), icon: ArrowLeftRight },
     { id: "flow", label: tr("Flujo de caja"), icon: BarChart3 },
     { id: "advanced", label: lang === "en" ? "Advanced" : "Avanzado", icon: Wallet },
+    { id: "facturar", label: lang === "en" ? "Invoice" : "Facturar", icon: Receipt },
   ] as const;
 
   return (
@@ -884,6 +889,9 @@ export default function FinanceModule({ t, s }: { t: any; s: any }) {
 
       {/* ── TAB: Avanzado (presupuestos, recurrentes, reportes, auditoría) ── */}
       {tab === "advanced" && <AdvancedPanel t={t} demo={demo} />}
+
+      {/* ── TAB: Facturar por folio (CFDI 4.0) ── */}
+      {tab === "facturar" && <FacturarPanel t={t} />}
 
       {/* ── MODALS ── */}
       {txForm && (
@@ -2111,4 +2119,192 @@ function BillMultiPayModal({ t, bills, banks, onClose, onSaved }: { t: any; bill
       </div>
     </div>
   , document.body);
+}
+
+
+// ── Facturación centralizada: buscar por folio, capturar datos si faltan, timbrar
+function FacturarPanel({ t }: { t: any }) {
+  const [folio, setFolio] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [order, setOrder] = useState<any | null>(null);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [stamping, setStamping] = useState(false);
+  const [fiscal, setFiscal] = useState({ rfc: "", name: "", regime: "612", use: "G03", zip: "", save_to_customer: true });
+
+  const inp: React.CSSProperties = { width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textHi, fontSize: 13, outline: "none" };
+  const lbl: React.CSSProperties = { fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4, display: "block" };
+
+  const buscar = async () => {
+    if (!folio.trim()) { setMsg({ ok: false, text: "Ingresa un folio (ej. ORD-000042 o 42)." }); return; }
+    setLoading(true); setMsg(null); setOrder(null);
+    try {
+      // Buscar por folio literal primero. Endpoint /sales soporta ?search=
+      const { data } = await api.get(`/sales/`, { params: { search: folio.trim(), page_size: 5 } });
+      const items = data?.items || data?.results || (Array.isArray(data) ? data : []);
+      const found = items.find((o: any) => (o.folio || "").toLowerCase() === folio.trim().toLowerCase()) || items[0];
+      if (!found) { setMsg({ ok: false, text: "No se encontró un pedido con ese folio." }); return; }
+      // Cargar detalle completo
+      const detail = await api.get(`/sales/${found.id}`);
+      setOrder(detail.data);
+      const o = detail.data;
+      setFiscal({
+        rfc: o.bill_rfc || o.customer?.rfc || "",
+        name: o.bill_name || o.customer?.name || "",
+        regime: o.bill_regime || o.customer?.regimen_fiscal || "612",
+        use: o.bill_use || o.customer?.uso_cfdi || "G03",
+        zip: o.bill_zip || o.customer?.codigo_postal || "",
+        save_to_customer: true,
+      });
+    } catch (e: any) {
+      setMsg({ ok: false, text: e?.response?.data?.detail || "Error buscando el pedido" });
+    } finally { setLoading(false); }
+  };
+
+  const timbrar = async () => {
+    if (!order) return;
+    if (!fiscal.rfc || fiscal.rfc.length < 12) { setMsg({ ok: false, text: "El RFC del receptor es obligatorio." }); return; }
+    setStamping(true); setMsg(null);
+    try {
+      // 1) Guardar/actualizar datos fiscales (y opcionalmente propagar a Customer)
+      await api.patch(`/sales/${order.id}/fiscal-data`, {
+        rfc: fiscal.rfc.toUpperCase().trim(),
+        name: fiscal.name.trim(),
+        regime: fiscal.regime, use: fiscal.use,
+        zip: fiscal.zip.trim(), save_to_customer: fiscal.save_to_customer,
+      });
+      // 2) Timbrar
+      const { data: r } = await api.post(`/sales/orders/${order.id}/stamp`);
+      setMsg({ ok: true, text: `✓ Timbrado exitoso. UUID ${r.uuid?.slice(0, 8)}…` });
+      // 3) Recargar detalle para tener cfdi_uuid
+      const detail = await api.get(`/sales/${order.id}`);
+      setOrder(detail.data);
+    } catch (e: any) {
+      setMsg({ ok: false, text: e?.response?.data?.detail || "No se pudo timbrar" });
+    } finally { setStamping(false); }
+  };
+
+  const download = async (kind: "pdf" | "xml") => {
+    if (!order) return;
+    try {
+      const res = await api.get(`/sales/orders/${order.id}/cfdi/${kind}`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data as Blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `CFDI_${order.folio || order.id}.${kind}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch { setMsg({ ok: false, text: `No se pudo descargar el ${kind.toUpperCase()}` }); }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ ...glass(t), padding: 20, borderRadius: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <Receipt size={18} color={t.nova} />
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: t.textHi }}>Facturar por folio</h2>
+        </div>
+        <p style={{ margin: "0 0 14px", color: t.textLo, fontSize: 12.5 }}>
+          Captura el folio de la venta. Si el cliente aún no tiene RFC/datos fiscales, complétalos aquí y se guardarán en su ficha para futuras facturas.
+        </p>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={folio} onChange={e => setFolio(e.target.value)} onKeyDown={e => e.key === "Enter" && buscar()}
+            placeholder="Ej. ORD-000042" style={{ ...inp, fontFamily: "monospace" }} />
+          <button onClick={buscar} disabled={loading}
+            style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${t.nova}, ${t.navy})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>
+            {loading ? "Buscando…" : "Buscar"}
+          </button>
+        </div>
+        {msg && (
+          <div style={{ marginTop: 12, padding: 10, borderRadius: 8, fontSize: 12.5,
+            background: (msg.ok ? t.good : t.bad) + "18", color: msg.ok ? t.good : t.bad }}>
+            {msg.text}
+          </div>
+        )}
+      </div>
+
+      {order && (
+        <div style={{ ...glass(t), padding: 20, borderRadius: 14, display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Info del pedido */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+            {[
+              ["Folio", order.folio],
+              ["Cliente", order.customer?.name || "Mostrador"],
+              ["Total", mxn(order.total_amount || 0)],
+              ["Estado", order.status],
+              ["Fecha", fmtDate(order.created_at)],
+            ].map(([k, v]) => (
+              <div key={k as string} style={{ padding: "8px 10px", background: t.panel2, borderRadius: 8 }}>
+                <div style={{ fontSize: 10, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>{k}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: t.textHi, marginTop: 2 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Ya timbrado */}
+          {order.cfdi_uuid ? (
+            <div style={{ background: t.good + "12", border: `1px solid ${t.good}44`, padding: 14, borderRadius: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: t.good, fontWeight: 700, marginBottom: 6 }}>
+                <CheckCircle size={16} /> Factura ya timbrada
+              </div>
+              <div style={{ fontFamily: "monospace", fontSize: 12, color: t.textMid, wordBreak: "break-all" }}>{order.cfdi_uuid}</div>
+              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                <button onClick={() => download("pdf")} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                  <FileText size={13} style={{ verticalAlign: "middle", marginRight: 4 }} /> PDF
+                </button>
+                <button onClick={() => download("xml")} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                  <FileText size={13} style={{ verticalAlign: "middle", marginRight: 4 }} /> XML
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Datos fiscales editables */}
+              <div>
+                <h3 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: t.textHi }}>Datos fiscales del receptor</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
+                  <div><label style={lbl}>Razón social</label>
+                    <input value={fiscal.name} onChange={e => setFiscal(f => ({ ...f, name: e.target.value }))} style={inp} /></div>
+                  <div><label style={lbl}>RFC *</label>
+                    <input value={fiscal.rfc} onChange={e => setFiscal(f => ({ ...f, rfc: e.target.value.toUpperCase() }))} maxLength={13} style={{ ...inp, fontFamily: "monospace" }} /></div>
+                  <div><label style={lbl}>Régimen fiscal</label>
+                    <select value={fiscal.regime} onChange={e => setFiscal(f => ({ ...f, regime: e.target.value }))} style={inp}>
+                      <option value="601">601 · General Ley Personas Morales</option>
+                      <option value="603">603 · Personas Morales Sin Fines Lucrativos</option>
+                      <option value="605">605 · Sueldos y Salarios</option>
+                      <option value="606">606 · Arrendamiento</option>
+                      <option value="612">612 · Personas Físicas Actividad Empresarial</option>
+                      <option value="616">616 · Sin obligaciones fiscales</option>
+                      <option value="621">621 · Incorporación Fiscal</option>
+                      <option value="626">626 · RESICO</option>
+                    </select></div>
+                  <div><label style={lbl}>Uso CFDI</label>
+                    <select value={fiscal.use} onChange={e => setFiscal(f => ({ ...f, use: e.target.value }))} style={inp}>
+                      <option value="G01">G01 · Adquisición de mercancías</option>
+                      <option value="G03">G03 · Gastos en general</option>
+                      <option value="I01">I01 · Construcciones</option>
+                      <option value="P01">P01 · Por definir</option>
+                      <option value="D01">D01 · Honorarios médicos</option>
+                      <option value="S01">S01 · Sin efectos fiscales</option>
+                    </select></div>
+                  <div><label style={lbl}>Código postal</label>
+                    <input value={fiscal.zip} onChange={e => setFiscal(f => ({ ...f, zip: e.target.value }))} maxLength={5} style={inp} /></div>
+                  <div style={{ display: "flex", alignItems: "flex-end", paddingBottom: 8, gap: 6 }}>
+                    <input type="checkbox" checked={fiscal.save_to_customer}
+                      onChange={e => setFiscal(f => ({ ...f, save_to_customer: e.target.checked }))} />
+                    <label style={{ fontSize: 11.5, color: t.textMid }}>Guardar en la ficha del cliente</label>
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button onClick={timbrar} disabled={stamping}
+                  style={{ padding: "12px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.good}, ${t.nova})`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700, opacity: stamping ? 0.6 : 1 }}>
+                  <Receipt size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                  {stamping ? "Timbrando…" : "Timbrar CFDI 4.0"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
