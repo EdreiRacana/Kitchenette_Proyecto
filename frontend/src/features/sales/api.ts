@@ -215,6 +215,14 @@ export const salesApi = {
     const res = await api.get(`/sales/credit-notes/${id}/xml`, { responseType: "blob" });
     return res.data as Blob;
   },
+  async downloadOrderCFDIPDF(id: number): Promise<Blob> {
+    const res = await api.get(`/sales/orders/${id}/cfdi/pdf`, { responseType: "blob" });
+    return res.data as Blob;
+  },
+  async downloadOrderCFDIXML(id: number): Promise<Blob> {
+    const res = await api.get(`/sales/orders/${id}/cfdi/xml`, { responseType: "blob" });
+    return res.data as Blob;
+  },
   async get(id: number): Promise<Order> {
     const { data } = await api.get<Order>(`/sales/${id}`);
     return data;

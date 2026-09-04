@@ -23,6 +23,7 @@ from sqlalchemy import (
     Float,
     Text,
     Boolean,
+    LargeBinary,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -101,6 +102,10 @@ class Order(Base):
     bill_zip = Column(String, nullable=True)        # código postal
     cfdi_uuid = Column(String, nullable=True)       # folio fiscal once stamped
     cfdi_status = Column(String, nullable=True)     # none | pending | stamped | cancelled
+    cfdi_serie = Column(String(32), nullable=True)
+    cfdi_folio = Column(String(32), nullable=True)
+    cfdi_xml = Column(LargeBinary, nullable=True)   # XML timbrado del PAC (SAT)
+    cfdi_pdf = Column(LargeBinary, nullable=True)   # PDF entregable del PAC
     invoiced_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
