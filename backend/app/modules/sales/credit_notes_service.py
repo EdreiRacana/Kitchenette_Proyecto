@@ -189,6 +189,7 @@ def _build_stamp_payload(nc: CreditNote, order: sales_models.Order,
     for it in items:
         conceptos.append({
             "clave_prod_serv": it.clave_prod_serv or "01010101",  # genérico
+            "sku": getattr(it, "sku", None) or "",
             "cantidad": it.quantity,
             "clave_unidad": it.clave_unidad or "ACT",
             "unidad": it.unidad or "Actividad",

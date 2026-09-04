@@ -228,6 +228,7 @@ def _build_invoice_payload(order: sales_models.Order, items) -> Dict[str, Any]:
         unidad = "Pieza"
         conceptos.append({
             "clave_prod_serv": clave_ps,
+            "sku": getattr(it, "sku", None) or "",
             "cantidad": it.quantity,
             "clave_unidad": clave_u,
             "unidad": unidad,
