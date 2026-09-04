@@ -282,8 +282,39 @@ async def stamp_order_invoice(order_id: int, db: AsyncSession = DB, current_user
         raise HTTPException(400, f"Esta venta ya está timbrada (UUID {order.cfdi_uuid}).")
     if order.status == "cancelled":
         raise HTTPException(400, "No se puede timbrar una venta cancelada.")
+
+    # ── FALLBACK a datos fiscales del CLIENTE cuando el pedido no los trae ──
+    # POS y muchos flujos no copian bill_* al pedido — si el Customer si los
+    # tiene (Customer.rfc, .regimen_fiscal, .uso_cfdi, .codigo_postal, .name),
+    # los promovemos al pedido antes de validar. Esto ademas los persiste,
+    # dejando el snapshot fiscal en la venta como registro historico.
+    from app.modules.customers import models as customer_models
+    cust = None
+    if getattr(order, "customer_id", None):
+        r_cust = await db.execute(
+            select(customer_models.Customer)
+            .where(customer_models.Customer.id == order.customer_id)
+            .execution_options(skip_tenant_filter=True)
+        )
+        cust = r_cust.scalars().first()
+    if cust:
+        if not (order.bill_rfc or "").strip() and (cust.rfc or "").strip():
+            order.bill_rfc = cust.rfc.upper().strip()
+        if not (order.bill_name or "").strip():
+            # Preferir razon social si viene, si no el name comercial
+            order.bill_name = getattr(cust, "razon_social", None) or cust.name
+        if not (order.bill_regime or "").strip() and (cust.regimen_fiscal or "").strip():
+            order.bill_regime = cust.regimen_fiscal
+        if not (order.bill_use or "").strip() and (cust.uso_cfdi or "").strip():
+            order.bill_use = cust.uso_cfdi
+        if not (order.bill_zip or "").strip() and (cust.codigo_postal or "").strip():
+            order.bill_zip = cust.codigo_postal
+
     if not (order.bill_rfc or "").strip():
-        raise HTTPException(400, "Agrega el RFC del cliente (datos de facturación) antes de timbrar.")
+        raise HTTPException(400,
+            "Falta el RFC del cliente. Registralo en la ficha del cliente "
+            "(Ventas -> Clientes -> abrir cliente -> Datos fiscales) o desde "
+            "la vista del pedido con 'Editar datos fiscales', y vuelve a timbrar.")
 
     res_i = await db.execute(
         select(sales_models.OrderItem).where(sales_models.OrderItem.order_id == order.id)
