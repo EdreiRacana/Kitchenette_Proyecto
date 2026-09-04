@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
 from app.modules.auth.models import User
-from app.modules.sales import schemas, service
+from app.modules.sales import schemas, service, models
 
 router = APIRouter()
 
