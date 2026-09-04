@@ -298,6 +298,26 @@ async def stamp_order_invoice(order_id: int, db: AsyncSession = DB, current_user
         raise HTTPException(400, str(e))
 
     payload = _build_invoice_payload(order, items)
+    # Enriquecer con emisor (para el PDF que genera el PAC/mock).
+    from app.modules.core_config.service import get_company_profile
+    company = await get_company_profile(db)
+    if company:
+        payload["emisor"] = {
+            "rfc": company.tax_id or "",
+            "nombre": company.legal_name or "",
+            "nombre_comercial": company.commercial_name or "",
+            "regimen_fiscal": company.regimen_fiscal or "601",
+            "codigo_postal": "",
+            "domicilio": company.address or "",
+            "telefono": company.contact_phone or "",
+            "email": company.contact_email or "",
+        }
+        payload["_branding"] = {
+            "logo_bytes": bytes(company.logo_bytes) if company.logo_bytes else None,
+            "logo_mime": company.logo_mime or "image/png",
+            "brand_color": company.brand_color or "#33B2F5",
+            "footer": company.document_footer or "",
+        }
     result = await pac.stamp(payload)
     if not result.ok:
         raise HTTPException(400, f"El PAC rechazó el timbrado: {result.error}")
