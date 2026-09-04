@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 
@@ -216,7 +216,12 @@ async def create_integration(
 @router.put("/integrations/{integration_id}", response_model=schemas.SystemIntegrationResponse)
 async def update_integration(
     *,
-    integration_id: str,
+    # Restringido a UUID para que rutas nombradas como
+    # /integrations/sufactura o /integrations/shopify no colisionen con
+    # este handler generico y NO pasen por schemas.SystemIntegrationUpdate
+    # (cuyo enum IntegrationEnvironment solo acepta SANDBOX/PRODUCTION,
+    # rechazando "mock").
+    integration_id: str = Path(..., pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
     db: AsyncSession = Depends(deps.get_db),
     integration_in: schemas.SystemIntegrationUpdate,
     current_user: User = Depends(deps.get_current_superuser)
@@ -593,7 +598,7 @@ async def test_sufactura_integration(
 @router.delete("/integrations/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_integration(
     *,
-    integration_id: str,
+    integration_id: str = Path(..., pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_superuser)
 ):
