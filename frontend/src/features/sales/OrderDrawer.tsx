@@ -337,7 +337,7 @@ export function OrderDrawer({
           {/* Estado CFDI + panel de Notas de Credito */}
           {!isQuote && (
             <Section tk={tk} title={tr("sales_detail_cfdi", "Facturación CFDI 4.0")}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: tk.textMid }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: tk.textMid, flexWrap: "wrap" }}>
                 {order.cfdi_uuid ? (
                   <>
                     <CheckCircle size={14} color={tk.good} />
@@ -353,6 +353,32 @@ export function OrderDrawer({
                   </>
                 )}
               </div>
+              {order.cfdi_uuid && (
+                <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                  <Button tk={tk} variant="ghost" icon={<FileText size={14} />}
+                    onClick={async () => {
+                      try {
+                        const blob = await salesApi.downloadOrderCFDIPDF(order.id);
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url; a.download = `CFDI_${order.folio || order.id}.pdf`;
+                        document.body.appendChild(a); a.click(); a.remove();
+                        URL.revokeObjectURL(url);
+                      } catch (e: any) { setInvoiceMsg(errMsg(e, "No se pudo descargar el PDF")); }
+                    }}>PDF de la factura</Button>
+                  <Button tk={tk} variant="ghost" icon={<FileText size={14} />}
+                    onClick={async () => {
+                      try {
+                        const blob = await salesApi.downloadOrderCFDIXML(order.id);
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url; a.download = `CFDI_${order.folio || order.id}.xml`;
+                        document.body.appendChild(a); a.click(); a.remove();
+                        URL.revokeObjectURL(url);
+                      } catch (e: any) { setInvoiceMsg(errMsg(e, "No se pudo descargar el XML")); }
+                    }}>XML timbrado</Button>
+                </div>
+              )}
               {invoiceMsg && (
                 <div style={{ marginTop: 8, padding: 8, borderRadius: 6,
                   background: invoiceMsg.startsWith("✓") ? tk.good + "18" : tk.bad + "18",

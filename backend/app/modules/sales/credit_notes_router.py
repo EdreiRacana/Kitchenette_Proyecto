@@ -304,8 +304,14 @@ async def stamp_order_invoice(order_id: int, db: AsyncSession = DB, current_user
 
     order.cfdi_uuid = result.uuid
     order.cfdi_status = "stamped"
-    # Nota: Order no tiene campos xml/pdf hoy. Un roadmap posterior puede
-    # almacenar el XML en cfdi_documents table. Por ahora dejamos UUID.
+    order.cfdi_serie = result.serie or getattr(order, "cfdi_serie", None)
+    order.cfdi_folio = result.folio or (str(order.id) if not getattr(order, "cfdi_folio", None) else order.cfdi_folio)
+    if result.xml:
+        order.cfdi_xml = result.xml
+    if result.pdf:
+        order.cfdi_pdf = result.pdf
+    from datetime import datetime as _dt
+    order.invoiced_at = _dt.utcnow()
     await db.commit()
 
     from app.modules.core_config.service import create_audit_log
@@ -321,3 +327,44 @@ async def stamp_order_invoice(order_id: int, db: AsyncSession = DB, current_user
         "ok": True, "order_id": order.id, "uuid": result.uuid,
         "serie": result.serie, "folio": result.folio, "stamped_at": result.stamped_at,
     }
+
+
+@router.get("/orders/{order_id}/cfdi/pdf")
+async def download_order_cfdi_pdf(order_id: int, db: AsyncSession = DB, current_user: User = CU):
+    """Descarga el PDF de la factura CFDI 4.0 timbrada para esta venta."""
+    res = await db.execute(
+        select(sales_models.Order).where(sales_models.Order.id == order_id)
+        .execution_options(skip_tenant_filter=True)
+    )
+    order = res.scalars().first()
+    if not order:
+        raise HTTPException(404, "Venta no encontrada")
+    if not order.cfdi_uuid:
+        raise HTTPException(400, "Esta venta no está timbrada todavía.")
+    pdf = getattr(order, "cfdi_pdf", None)
+    if not pdf:
+        raise HTTPException(404, "No hay PDF guardado para esta factura. "
+                                  "Vuelve a timbrar si el PAC lo permite, o descárgalo del portal del PAC.")
+    fname = f"CFDI_{order.cfdi_serie or 'F'}-{order.cfdi_folio or order.id}_{(order.cfdi_uuid or '')[:8]}.pdf"
+    return Response(content=pdf, media_type="application/pdf",
+                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/orders/{order_id}/cfdi/xml")
+async def download_order_cfdi_xml(order_id: int, db: AsyncSession = DB, current_user: User = CU):
+    """Descarga el XML timbrado (CFDI 4.0) para esta venta."""
+    res = await db.execute(
+        select(sales_models.Order).where(sales_models.Order.id == order_id)
+        .execution_options(skip_tenant_filter=True)
+    )
+    order = res.scalars().first()
+    if not order:
+        raise HTTPException(404, "Venta no encontrada")
+    if not order.cfdi_uuid:
+        raise HTTPException(400, "Esta venta no está timbrada todavía.")
+    xml = getattr(order, "cfdi_xml", None)
+    if not xml:
+        raise HTTPException(404, "No hay XML guardado para esta factura.")
+    fname = f"CFDI_{order.cfdi_serie or 'F'}-{order.cfdi_folio or order.id}_{(order.cfdi_uuid or '')[:8]}.xml"
+    return Response(content=xml, media_type="application/xml",
+                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
