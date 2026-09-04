@@ -423,6 +423,15 @@ async def send_ticket_email(order_id: int, payload: schemas.TicketSendRequest, d
             # falla no rompemos el envío — solo se pierde el adjunto.
             print(f"[ticket-email] no se pudo generar PDF adjunto: {e}")
 
+    # 3) CFDI 4.0 — si la venta ya esta timbrada, adjuntar PDF+XML.
+    # Practica estandar en MX: el cliente y su contador necesitan ambos.
+    if getattr(order, "cfdi_uuid", None):
+        base = f"CFDI_{order.cfdi_serie or 'F'}-{order.cfdi_folio or order.id}_{(order.cfdi_uuid or '')[:8]}"
+        if getattr(order, "cfdi_pdf", None):
+            attachments = [*attachments, (f"{base}.pdf", bytes(order.cfdi_pdf), "pdf")]
+        if getattr(order, "cfdi_xml", None):
+            attachments = [*attachments, (f"{base}.xml", bytes(order.cfdi_xml), "xml")]
+
     # Logo inline para que se vea en el body del correo (Gmail/Outlook
     # bloquean data:base64 en <img>, pero CID inline se renderiza sin problema).
     logo_att = ticket_mod.logo_inline_attachment(company)
