@@ -171,7 +171,9 @@ export function errMsg(e: any, fallback = "Error"): string {
     if (parts.length) return parts.join("; ");
   }
   if (d && typeof d === "object") {
-    if (typeof d.msg === "string") return d.msg;
+    // Convenciones internas: {code, message, ...} -> devolver message.
+    if (typeof (d as any).message === "string") return (d as any).message;
+    if (typeof (d as any).msg === "string") return (d as any).msg;
     try { return JSON.stringify(d); } catch { /* fallthrough */ }
   }
   if (typeof e?.message === "string" && e.message) return e.message;

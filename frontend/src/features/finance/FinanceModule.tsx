@@ -2179,7 +2179,17 @@ function FacturarPanel({ t }: { t: any }) {
       const detail = await api.get(`/sales/${order.id}`);
       setOrder(detail.data);
     } catch (e: any) {
-      setMsg({ ok: false, text: e?.response?.data?.detail || "No se pudo timbrar" });
+      const st = e?.response?.status;
+      const det = e?.response?.data?.detail;
+      // 409: ya timbrada. Refrescamos el detalle para que la UI muestre
+      // "Factura ya timbrada" con UUID + PDF/XML.
+      if (st === 409) {
+        const uuid = det?.uuid || "";
+        setMsg({ ok: false, text: `⚠ Esta venta ya fue facturada${uuid ? ` (UUID ${uuid.slice(0, 8)}…)` : ""}.` });
+        try { const detail = await api.get(`/sales/${order.id}`); setOrder(detail.data); } catch {}
+      } else {
+        setMsg({ ok: false, text: (typeof det === "string" ? det : det?.message) || "No se pudo timbrar" });
+      }
     } finally { setStamping(false); }
   };
 
