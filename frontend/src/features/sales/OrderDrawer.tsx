@@ -138,6 +138,46 @@ export function OrderDrawer({
   const [stampingInvoice, setStampingInvoice] = useState(false);
   const [invoiceMsg, setInvoiceMsg] = useState<string | null>(null);
 
+  // Edicion in-place de datos fiscales del pedido
+  const [fiscalOpen, setFiscalOpen] = useState(false);
+  const [fiscalSaving, setFiscalSaving] = useState(false);
+  const [fiscalForm, setFiscalForm] = useState({
+    rfc: "", name: "", regime: "612", use: "G03", zip: "", save_to_customer: true,
+  });
+  useEffect(() => {
+    if (order) {
+      setFiscalForm({
+        rfc: order.bill_rfc || (order.customer as any)?.rfc || "",
+        name: order.bill_name || order.customer?.name || "",
+        regime: (order as any).bill_regime || (order.customer as any)?.regimen_fiscal || "612",
+        use: (order as any).bill_use || (order.customer as any)?.uso_cfdi || "G03",
+        zip: (order as any).bill_zip || (order.customer as any)?.codigo_postal || "",
+        save_to_customer: true,
+      });
+    }
+  }, [order?.id]);
+  const saveFiscal = async () => {
+    if (!order) return;
+    if (!fiscalForm.rfc || fiscalForm.rfc.length < 12) {
+      setInvoiceMsg("El RFC es obligatorio (12-13 caracteres)."); return;
+    }
+    setFiscalSaving(true); setInvoiceMsg(null);
+    try {
+      await salesApi.patchFiscalData(order.id, {
+        rfc: fiscalForm.rfc.toUpperCase().trim(),
+        name: fiscalForm.name.trim(),
+        regime: fiscalForm.regime, use: fiscalForm.use,
+        zip: fiscalForm.zip.trim(),
+        save_to_customer: fiscalForm.save_to_customer,
+      });
+      setInvoiceMsg("✓ Datos fiscales guardados" + (fiscalForm.save_to_customer ? " (y en el cliente)." : "."));
+      setFiscalOpen(false);
+      setNcRefreshKey(k => k + 1);
+    } catch (e: any) {
+      setInvoiceMsg(errMsg(e, "No se pudieron guardar los datos fiscales"));
+    } finally { setFiscalSaving(false); }
+  };
+
   const stampInvoice = async () => {
     if (!order) return;
     if (!window.confirm(
@@ -167,10 +207,10 @@ export function OrderDrawer({
 
   return (
     <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.6)", zIndex: 50 }} />
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(3,8,22,0.6)", zIndex: 900 }} />
       <div style={{
-        position: "fixed", top: 0, right: 0, height: "100%", width: 460, maxWidth: "96vw",
-        background: tk.panel, borderLeft: `1px solid ${tk.border}`, zIndex: 55,
+        position: "fixed", top: 64, right: 0, height: "calc(100vh - 64px)", width: 480, maxWidth: "96vw",
+        background: tk.panel, borderLeft: `1px solid ${tk.border}`, zIndex: 901,
         display: "flex", flexDirection: "column", boxShadow: "-8px 0 32px rgba(0,0,0,0.45)",
       }}>
         {/* Header */}
@@ -353,6 +393,82 @@ export function OrderDrawer({
                   </>
                 )}
               </div>
+              {!order.cfdi_uuid && (
+                <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: tk.panel2, border: `1px solid ${tk.border}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontSize: 12, color: tk.textMid }}>
+                      <div style={{ fontWeight: 700, color: tk.textHi, marginBottom: 2 }}>Datos fiscales</div>
+                      {order.bill_rfc
+                        ? <span>{order.bill_rfc} · {(order as any).bill_regime || "—"} · CP {(order as any).bill_zip || "—"}</span>
+                        : <span style={{ color: tk.warn }}>Faltan datos fiscales — captúralos antes de timbrar.</span>}
+                    </div>
+                    <button onClick={() => setFiscalOpen(o => !o)}
+                      style={{ background: "transparent", border: `1px solid ${tk.border}`, color: tk.textMid, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>
+                      {fiscalOpen ? "Cerrar" : (order.bill_rfc ? "Editar" : "Capturar")}
+                    </button>
+                  </div>
+                  {fiscalOpen && (
+                    <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div style={{ gridColumn: "1 / -1" }}>
+                        <label style={{ fontSize: 10, color: tk.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Razón social</label>
+                        <input value={fiscalForm.name} onChange={e => setFiscalForm(f => ({ ...f, name: e.target.value }))}
+                          placeholder="Ej. Sanborns Hermanos S.A. de C.V."
+                          style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${tk.border}`, background: tk.panel, color: tk.textHi, fontSize: 12 }} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 10, color: tk.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>RFC *</label>
+                        <input value={fiscalForm.rfc} onChange={e => setFiscalForm(f => ({ ...f, rfc: e.target.value.toUpperCase() }))}
+                          maxLength={13} placeholder="AAA010101AAA"
+                          style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${tk.border}`, background: tk.panel, color: tk.textHi, fontFamily: "monospace", fontSize: 12 }} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 10, color: tk.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>CP</label>
+                        <input value={fiscalForm.zip} onChange={e => setFiscalForm(f => ({ ...f, zip: e.target.value }))}
+                          maxLength={5} placeholder="03100"
+                          style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${tk.border}`, background: tk.panel, color: tk.textHi, fontSize: 12 }} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 10, color: tk.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Régimen fiscal</label>
+                        <select value={fiscalForm.regime} onChange={e => setFiscalForm(f => ({ ...f, regime: e.target.value }))}
+                          style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${tk.border}`, background: tk.panel, color: tk.textHi, fontSize: 12 }}>
+                          <option value="601">601 · General Ley Personas Morales</option>
+                          <option value="603">603 · Personas Morales con Fines no Lucrativos</option>
+                          <option value="605">605 · Sueldos y Salarios</option>
+                          <option value="606">606 · Arrendamiento</option>
+                          <option value="612">612 · Personas Físicas Actividad Empresarial</option>
+                          <option value="616">616 · Sin obligaciones fiscales</option>
+                          <option value="621">621 · Incorporación Fiscal</option>
+                          <option value="626">626 · RESICO</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 10, color: tk.textLo, textTransform: "uppercase", letterSpacing: 0.5 }}>Uso CFDI</label>
+                        <select value={fiscalForm.use} onChange={e => setFiscalForm(f => ({ ...f, use: e.target.value }))}
+                          style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${tk.border}`, background: tk.panel, color: tk.textHi, fontSize: 12 }}>
+                          <option value="G01">G01 · Adquisición de mercancías</option>
+                          <option value="G03">G03 · Gastos en general</option>
+                          <option value="I01">I01 · Construcciones</option>
+                          <option value="P01">P01 · Por definir</option>
+                          <option value="D01">D01 · Honorarios médicos</option>
+                          <option value="S01">S01 · Sin efectos fiscales</option>
+                        </select>
+                      </div>
+                      <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                        <input type="checkbox" checked={fiscalForm.save_to_customer}
+                          onChange={e => setFiscalForm(f => ({ ...f, save_to_customer: e.target.checked }))} />
+                        <label style={{ fontSize: 11, color: tk.textMid }}>
+                          Guardar también en la ficha del cliente para futuras ventas
+                        </label>
+                      </div>
+                      <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: 6 }}>
+                        <Button tk={tk} variant="primary" onClick={saveFiscal} disabled={fiscalSaving}>
+                          {fiscalSaving ? "Guardando…" : "Guardar datos fiscales"}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               {order.cfdi_uuid && (
                 <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                   <Button tk={tk} variant="ghost" icon={<FileText size={14} />}

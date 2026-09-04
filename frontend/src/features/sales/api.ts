@@ -180,6 +180,13 @@ export const salesApi = {
     const { data } = await api.post(`/sales/orders/${id}/stamp`);
     return data;
   },
+  async patchFiscalData(id: number, payload: {
+    rfc?: string; name?: string; regime?: string; use?: string; zip?: string;
+    save_to_customer?: boolean;
+  }): Promise<Order> {
+    const { data } = await api.patch<Order>(`/sales/${id}/fiscal-data`, payload);
+    return data;
+  },
   async listMotivosSAT(): Promise<{ motivos: { codigo: string; descripcion: string }[] }> {
     const { data } = await api.get(`/sales/credit-notes/motivos-sat`);
     return data;

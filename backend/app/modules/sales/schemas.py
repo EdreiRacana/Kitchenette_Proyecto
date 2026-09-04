@@ -157,6 +157,17 @@ class StatusUpdate(BaseModel):
     message: Optional[str] = None
 
 
+class FiscalDataPatch(BaseModel):
+    """Payload para PATCH /sales/{id}/fiscal-data — edicion in-place de
+    los datos fiscales del pedido, con opcion de propagar al Customer."""
+    rfc: Optional[str] = None
+    name: Optional[str] = None
+    regime: Optional[str] = None   # regimen fiscal SAT (601, 612, 626, 616...)
+    use: Optional[str] = None      # uso CFDI (G01, G03, P01...)
+    zip: Optional[str] = None      # codigo postal
+    save_to_customer: bool = True   # true = persistir en la ficha del cliente
+
+
 class CustomerLite(BaseModel):
     id: int
     name: str

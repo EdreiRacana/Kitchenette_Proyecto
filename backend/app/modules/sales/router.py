@@ -258,6 +258,48 @@ async def update_order(order_id: int, data: schemas.OrderUpdate, db: DB, user: C
     return await service.get_order_detail(db, order_id)
 
 
+@router.patch("/{order_id}/fiscal-data", response_model=schemas.OrderDetail)
+async def update_fiscal_data(order_id: int, payload: schemas.FiscalDataPatch,
+                              db: DB, user: CurrentUser):
+    """Actualiza los datos fiscales del pedido (RFC, razon social, regimen,
+    uso CFDI, CP) y opcionalmente los guarda tambien en la ficha del cliente
+    para que no haga falta volver a capturarlos en futuras ventas."""
+    from sqlalchemy import select as _sel
+    from app.modules.customers import models as customer_models
+    res = await db.execute(_sel(models.Order).where(models.Order.id == order_id)
+                             .execution_options(skip_tenant_filter=True))
+    order = res.scalars().first()
+    if not order:
+        raise HTTPException(404, "Pedido no encontrado")
+    if order.cfdi_uuid:
+        raise HTTPException(400, "No se puede editar: la factura ya esta timbrada.")
+    # Aplicar al pedido
+    if payload.rfc is not None:
+        order.bill_rfc = (payload.rfc or "").upper().strip()
+    if payload.name is not None:
+        order.bill_name = payload.name
+    if payload.regime is not None:
+        order.bill_regime = payload.regime
+    if payload.use is not None:
+        order.bill_use = payload.use
+    if payload.zip is not None:
+        order.bill_zip = payload.zip
+    # Propagar al cliente si se pidio
+    if payload.save_to_customer and order.customer_id:
+        r_cust = await db.execute(_sel(customer_models.Customer)
+                                     .where(customer_models.Customer.id == order.customer_id)
+                                     .execution_options(skip_tenant_filter=True))
+        cust = r_cust.scalars().first()
+        if cust:
+            if payload.rfc: cust.rfc = payload.rfc.upper().strip()
+            if payload.regime: cust.regimen_fiscal = payload.regime
+            if payload.use: cust.uso_cfdi = payload.use
+            if payload.zip: cust.codigo_postal = payload.zip
+            # Nombre fiscal solo se guarda en cust si no rompe el existente
+    await db.commit()
+    return await service.get_order_detail(db, order_id)
+
+
 @router.patch("/{order_id}/status", response_model=schemas.OrderDetail)
 async def update_status(order_id: int, payload: schemas.StatusUpdate, db: DB, user: CurrentUser):
     order = await service.change_status(db, order_id, payload.status, payload.message, user_id=user.id)
