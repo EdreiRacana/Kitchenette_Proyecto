@@ -234,22 +234,22 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
         except Exception:
             pass
 
-    # Titulo derecha
-    c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 22)
-    c.drawRightString(RIGHT, header_top - 7 * mm, tipo_label)
-    c.setFont("Helvetica", 9); c.setFillColorRGB(*brand)
-    c.drawRightString(RIGHT, header_top - 12 * mm, tipo_sub)
+    # Titulo derecha (compacto, no exagerado)
+    serie = payload.get("serie", "F"); serie_folio = f"Serie {serie}   ·   Folio {payload.get('folio', '')}"
+    c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 16)
+    c.drawRightString(RIGHT, header_top - 5 * mm, tipo_label)
+    c.setFont("Helvetica", 8.5); c.setFillColorRGB(*brand)
+    c.drawRightString(RIGHT, header_top - 9.5 * mm, tipo_sub)
 
-    serie = payload.get("serie", "F"); folio = payload.get("folio", "")
-    # Chip de serie/folio con fondo tenue
-    chip_w = 60 * mm
+    # Chip serie/folio: ancho ajustado al contenido, no fijo
+    from reportlab.pdfbase.pdfmetrics import stringWidth as _sw2
+    sf_w = _sw2(serie_folio, "Helvetica-Bold", 9.5) + 10 * mm
     c.setFillColorRGB(*brand_tint)
-    c.roundRect(RIGHT - chip_w, header_top - 22 * mm, chip_w, 8 * mm, 2, stroke=0, fill=1)
-    c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 10)
-    c.drawRightString(RIGHT - 4 * mm, header_top - 17 * mm,
-                       f"Serie {serie}   ·   Folio {folio}")
-    c.setFillColorRGB(*ink_mid); c.setFont("Helvetica", 8)
-    c.drawRightString(RIGHT, header_top - 26 * mm,
+    c.roundRect(RIGHT - sf_w, header_top - 15 * mm, sf_w, 6.5 * mm, 2, stroke=0, fill=1)
+    c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 9.5)
+    c.drawRightString(RIGHT - 5 * mm, header_top - 11 * mm, serie_folio)
+    c.setFillColorRGB(*ink_mid); c.setFont("Helvetica", 7.5)
+    c.drawRightString(RIGHT, header_top - 19 * mm,
                        datetime.utcnow().strftime("%d %b %Y · %H:%M UTC").upper())
 
     # Emisor bajo el logo
@@ -288,16 +288,20 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
                   f"Lugar de expedición: {payload.get('lugar_expedicion','00000')}   ·   "
                   f"Tipo comprobante: {tipo}")
 
-    def _kv(x, top, k, v):
+    def _kv_right(x_right, top, k, v):
+        """KV alineado a la derecha para que 4 columnas quepan sin encimar."""
         c.setFillColorRGB(*ink_mid); c.setFont("Helvetica", 6.8)
-        c.drawString(x, top, k)
+        c.drawRightString(x_right, top, k)
         c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 10)
-        c.drawString(x, top - 5 * mm, v)
+        c.drawRightString(x_right, top - 5 * mm, v)
 
-    _kv(LEFT + 110 * mm, band_y + 15 * mm, "MONEDA", payload.get("moneda", "MXN"))
-    _kv(LEFT + 132 * mm, band_y + 15 * mm, "FORMA PAGO", payload.get("forma_pago", "01"))
-    _kv(LEFT + 156 * mm, band_y + 15 * mm, "MÉTODO", payload.get("metodo_pago", "PUE"))
-    _kv(RIGHT - 22 * mm, band_y + 15 * mm, "USO CFDI", (receptor.get("uso_cfdi") or "G03"))
+    # 4 columnas espaciadas 22mm entre bordes derechos: USO CFDI a la derecha,
+    # y METODO, FORMA PAGO, MONEDA a la izquierda. Todas right-aligned para
+    # que las etiquetas y valores queden ordenados aunque tengan distinto ancho.
+    _kv_right(RIGHT,               band_y + 15 * mm, "USO CFDI",  (receptor.get("uso_cfdi") or "G03"))
+    _kv_right(RIGHT - 22 * mm,     band_y + 15 * mm, "MÉTODO",    payload.get("metodo_pago", "PUE"))
+    _kv_right(RIGHT - 44 * mm,     band_y + 15 * mm, "FORMA PAGO", payload.get("forma_pago", "01"))
+    _kv_right(RIGHT - 68 * mm,     band_y + 15 * mm, "MONEDA",    payload.get("moneda", "MXN"))
 
     # ── RECEPTOR: card sobria ───────────────────────────────────────
     rec_y = band_y - 4 * mm
@@ -339,24 +343,24 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
     COL_SKU = LEFT + 14 * mm
     COL_CLAVE = LEFT + 38 * mm
     COL_DESC = LEFT + 58 * mm
-    COL_UNIT = RIGHT - 52 * mm     # limite derecho de la DESCRIPCION
+    COL_UNIT_R = RIGHT - 52 * mm   # right-edge de UNIDAD (label + valor right-aligned)
     COL_PU = RIGHT - 28 * mm
     COL_IMP = RIGHT - 3 * mm
-    DESC_MAX_W = COL_UNIT - COL_DESC - 4 * mm  # gap visual antes de UNIDAD
+    DESC_MAX_W = COL_UNIT_R - COL_DESC - 12 * mm  # gap visual generoso antes de UNIDAD
 
     row_top = y - 4.5 * mm
     c.drawString(COL_CANT, row_top, "CANT")
     c.drawString(COL_SKU, row_top, "SKU")
     c.drawString(COL_CLAVE, row_top, "CLAVE SAT")
     c.drawString(COL_DESC, row_top, "DESCRIPCIÓN")
-    c.drawString(COL_UNIT, row_top, "UNIDAD")
+    c.drawRightString(COL_UNIT_R, row_top, "UNIDAD")
     c.drawRightString(COL_PU, row_top, "P. UNITARIO")
     c.drawRightString(COL_IMP, row_top, "IMPORTE")
     y -= 9 * mm
 
     from reportlab.pdfbase.pdfmetrics import stringWidth as _sw
 
-    def _wrap(text: str, max_w: float, font: str = "Helvetica", size: float = 9) -> list:
+    def _wrap(text: str, max_w: float, font: str = "Helvetica", size: float = 8.5) -> list:
         """Envuelve `text` en varias lineas para no exceder max_w. Divide
         por palabras; si una palabra sola no cabe, la parte por caracteres."""
         words = str(text).split()
@@ -385,10 +389,10 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
             lines.append(cur)
         return lines or [""]
 
-    c.setFont("Helvetica", 9); zebra = False
+    c.setFont("Helvetica", 8.5); zebra = False
     conceptos = (payload.get("conceptos") or [])[:40]
-    LINE_H = 4.6 * mm
-    ROW_PAD = 2.5 * mm  # margen vertical dentro de la fila
+    LINE_H = 4.0 * mm
+    ROW_PAD = 2.2 * mm  # margen vertical dentro de la fila
 
     for it in conceptos:
         desc_lines = _wrap(str(it.get("descripcion", "")), DESC_MAX_W)
@@ -408,14 +412,14 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
         c.setFont("Courier", 7.5); c.setFillColorRGB(*ink_mid)
         c.drawString(COL_CLAVE, text_y, str(it.get("clave_prod_serv", "01010101")))
         c.setFont("Helvetica", 8); c.setFillColorRGB(*ink_mid)
-        c.drawString(COL_UNIT, text_y, str(it.get("unidad", "Pieza"))[:14])
+        c.drawRightString(COL_UNIT_R, text_y, str(it.get("unidad", "Pieza"))[:14])
         c.setFont("Helvetica", 9); c.setFillColorRGB(*ink)
         c.drawRightString(COL_PU, text_y, f"${float(it.get('valor_unitario', 0)):,.2f}")
         c.setFont("Helvetica-Bold", 9)
         c.drawRightString(COL_IMP, text_y, f"${float(it.get('importe', 0)):,.2f}")
 
         # descripcion multilinea
-        c.setFont("Helvetica", 9); c.setFillColorRGB(*ink)
+        c.setFont("Helvetica", 8.5); c.setFillColorRGB(*ink)
         line_y = text_y
         for ln in desc_lines:
             c.drawString(COL_DESC, line_y, ln)
