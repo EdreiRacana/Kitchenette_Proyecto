@@ -213,27 +213,6 @@ async def create_integration(
     await service.create_audit_log(db, user_id=current_user.id, action="CREATE_INTEGRATION", module="config", description=f"Created integration: {integration_in.provider_name}")
     return res
 
-@router.put("/integrations/{integration_id}", response_model=schemas.SystemIntegrationResponse)
-async def update_integration(
-    *,
-    # Restringido a UUID para que rutas nombradas como
-    # /integrations/sufactura o /integrations/shopify no colisionen con
-    # este handler generico y NO pasen por schemas.SystemIntegrationUpdate
-    # (cuyo enum IntegrationEnvironment solo acepta SANDBOX/PRODUCTION,
-    # rechazando "mock").
-    integration_id: str = Path(..., pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
-    db: AsyncSession = Depends(deps.get_db),
-    integration_in: schemas.SystemIntegrationUpdate,
-    current_user: User = Depends(deps.get_current_superuser)
-):
-    integration = await service.get_integration(db, integration_id)
-    if not integration:
-        raise HTTPException(status_code=404, detail="System Integration not found")
-    
-    await service.create_audit_log(db, user_id=current_user.id, action="UPDATE_INTEGRATION", module="config", description=f"Updated integration: {integration.provider_name}")
-    return await service.update_integration(db=db, db_obj=integration, obj_in=integration_in)
-
-
 from pydantic import BaseModel, Field  # noqa: E402
 
 
@@ -595,18 +574,42 @@ async def test_sufactura_integration(
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# PUT/DELETE parametricos de integraciones — DEBEN ir al final del modulo:
+# FastAPI matchea rutas en ORDEN de declaracion, y /integrations/{id}
+# capturaria /integrations/sufactura o /integrations/shopify si estuviera
+# antes. Al declararse aqui, las rutas nombradas de arriba ganan primero.
+# ─────────────────────────────────────────────────────────────────────────
+@router.put("/integrations/{integration_id}", response_model=schemas.SystemIntegrationResponse)
+async def update_integration(
+    *,
+    integration_id: str,
+    db: AsyncSession = Depends(deps.get_db),
+    integration_in: schemas.SystemIntegrationUpdate,
+    current_user: User = Depends(deps.get_current_superuser)
+):
+    integration = await service.get_integration(db, integration_id)
+    if not integration:
+        raise HTTPException(status_code=404, detail="System Integration not found")
+    await service.create_audit_log(db, user_id=current_user.id, action="UPDATE_INTEGRATION",
+                                    module="config",
+                                    description=f"Updated integration: {integration.provider_name}")
+    return await service.update_integration(db=db, db_obj=integration, obj_in=integration_in)
+
+
 @router.delete("/integrations/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_integration(
     *,
-    integration_id: str = Path(..., pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    integration_id: str,
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_superuser)
 ):
     integration = await service.get_integration(db, integration_id)
     if not integration:
         raise HTTPException(status_code=404, detail="System Integration not found")
-    
-    await service.create_audit_log(db, user_id=current_user.id, action="DELETE_INTEGRATION", module="config", description=f"Deleted integration: {integration.provider_name}")
+    await service.create_audit_log(db, user_id=current_user.id, action="DELETE_INTEGRATION",
+                                    module="config",
+                                    description=f"Deleted integration: {integration.provider_name}")
     await service.delete_integration(db=db, db_obj=integration)
     return None
 
