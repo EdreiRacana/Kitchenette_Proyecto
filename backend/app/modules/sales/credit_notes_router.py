@@ -303,13 +303,22 @@ async def stamp_order_invoice(order_id: int, db: AsyncSession = DB, current_user
     # los promovemos al pedido antes de validar. Esto ademas los persiste,
     # dejando el snapshot fiscal en la venta como registro historico.
     from app.modules.customers import models as customer_models
+    from app.core.tenancy import get_company_context
     cust = None
     if getattr(order, "customer_id", None):
-        r_cust = await db.execute(
-            select(customer_models.Customer)
-            .where(customer_models.Customer.id == order.customer_id)
-            .execution_options(skip_tenant_filter=True)
+        # IMPORTANTE: NO usar skip_tenant_filter aqui. El Customer debe
+        # pertenecer a la MISMA empresa que timbra. Si por alguna razon el
+        # cliente esta en otro tenant, tratamos como "sin datos fiscales
+        # heredables" — no exponer datos de otra empresa a esta factura.
+        stmt = select(customer_models.Customer).where(
+            customer_models.Customer.id == order.customer_id
         )
+        # Aplicamos filtro explicito por si el auto-scope no matchea (Order
+        # se lee con skip_tenant_filter arriba). Esto garantiza el aislamiento.
+        cid = get_company_context()
+        if cid:
+            stmt = stmt.where(customer_models.Customer.company_id == cid)
+        r_cust = await db.execute(stmt)
         cust = r_cust.scalars().first()
     if cust:
         if not (order.bill_rfc or "").strip() and (cust.rfc or "").strip():
