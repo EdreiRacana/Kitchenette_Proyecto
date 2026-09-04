@@ -279,7 +279,21 @@ async def stamp_order_invoice(order_id: int, db: AsyncSession = DB, current_user
     if (order.kind or "order") != "order":
         raise HTTPException(400, "Solo pedidos pueden timbrarse (no cotizaciones)")
     if order.cfdi_uuid:
-        raise HTTPException(400, f"Esta venta ya está timbrada (UUID {order.cfdi_uuid}).")
+        # Ya timbrada: nunca duplicar. Devolvemos 409 Conflict con el UUID
+        # existente + serie/folio SAT para que el cliente pueda referenciarlo
+        # y descargar el PDF/XML sin re-timbrar.
+        raise HTTPException(
+            409,
+            {
+                "code": "already_stamped",
+                "message": f"Esta venta ya fue facturada. UUID {order.cfdi_uuid}. "
+                           "Para corregirla emite una nota de crédito.",
+                "uuid": order.cfdi_uuid,
+                "serie": getattr(order, "cfdi_serie", None),
+                "folio": getattr(order, "cfdi_folio", None),
+                "invoiced_at": order.invoiced_at.isoformat() if getattr(order, "invoiced_at", None) else None,
+            },
+        )
     if order.status == "cancelled":
         raise HTTPException(400, "No se puede timbrar una venta cancelada.")
 
@@ -353,6 +367,30 @@ async def stamp_order_invoice(order_id: int, db: AsyncSession = DB, current_user
     result = await pac.stamp(payload)
     if not result.ok:
         raise HTTPException(400, f"El PAC rechazó el timbrado: {result.error}")
+
+    # ── Guard anti-race: si otro request timbro la misma orden entre el
+    # check inicial y esta linea, NO sobreescribimos. El PAC ya cobro este
+    # timbrado (irrecuperable) — lo registramos en log y devolvemos el UUID
+    # original al usuario para que use ese.
+    await db.refresh(order)
+    if order.cfdi_uuid and order.cfdi_uuid != result.uuid:
+        from app.modules.core_config.service import create_audit_log
+        try:
+            await create_audit_log(
+                db, user_id=current_user.id, action="STAMP_RACE_DETECTED",
+                module="sales",
+                description=f"Timbrado duplicado detectado en orden {order.folio}: "
+                             f"existente {order.cfdi_uuid}, PAC devolvio {result.uuid}",
+                details={"order_id": order.id, "existing_uuid": order.cfdi_uuid,
+                          "new_uuid_discarded": result.uuid})
+        except Exception:
+            pass
+        raise HTTPException(409, {
+            "code": "already_stamped",
+            "message": f"Esta venta ya fue facturada (UUID {order.cfdi_uuid}). "
+                       "El nuevo timbrado se descarto para evitar duplicado.",
+            "uuid": order.cfdi_uuid,
+        })
 
     order.cfdi_uuid = result.uuid
     order.cfdi_status = "stamped"
