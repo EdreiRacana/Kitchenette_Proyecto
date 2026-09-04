@@ -284,11 +284,18 @@ async def update_fiscal_data(order_id: int, payload: schemas.FiscalDataPatch,
         order.bill_use = payload.use
     if payload.zip is not None:
         order.bill_zip = payload.zip
-    # Propagar al cliente si se pidio
+    # Propagar al cliente si se pidio — SIN saltarse el tenant filter.
+    # El Customer debe pertenecer a la empresa activa; nunca escribir en
+    # una ficha de otra empresa.
     if payload.save_to_customer and order.customer_id:
-        r_cust = await db.execute(_sel(customer_models.Customer)
-                                     .where(customer_models.Customer.id == order.customer_id)
-                                     .execution_options(skip_tenant_filter=True))
+        from app.core.tenancy import get_company_context as _gcc
+        _stmt = _sel(customer_models.Customer).where(
+            customer_models.Customer.id == order.customer_id
+        )
+        _cid = _gcc()
+        if _cid:
+            _stmt = _stmt.where(customer_models.Customer.company_id == _cid)
+        r_cust = await db.execute(_stmt)
         cust = r_cust.scalars().first()
         if cust:
             if payload.rfc: cust.rfc = payload.rfc.upper().strip()
