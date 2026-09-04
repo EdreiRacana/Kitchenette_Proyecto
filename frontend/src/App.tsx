@@ -2019,13 +2019,14 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
       setOpen(false);
       return;
     }
+    // Abrir de inmediato para que se vean shortcuts locales aun sin backend
+    setOpen(true);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
       try {
         const { data } = await api.get("/search/", { params: { q: query, limit: 5 } });
         setResults({ ...EMPTY, ...data });
-        setOpen(true);
       } catch {
         setResults(EMPTY);
       } finally {
@@ -2037,8 +2038,29 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
 
   const sections = ["customers", "orders", "products", "suppliers", "purchase_orders", "employees"];
   const hasResults = sections.some((k) => (results[k] || []).length > 0);
-  const select = (page, q) => { onNavigate(page, q); setQuery(""); setOpen(false); };
+  const select = (page, q, tab) => { onNavigate(page, q, tab); setQuery(""); setOpen(false); };
   const noResultsLabel = lang === "es" ? "Sin resultados" : "No results";
+
+  // Shortcuts locales — keywords que abren pantallas concretas sin pasar por backend.
+  // Cada entry: {keywords: string[], page, tab, title, subtitle}
+  const SHORTCUTS: Array<{ keywords: string[]; page: string; tab?: string; title: string; subtitle: string }> = [
+    { keywords: ["facturar", "facturacion", "factura", "cfdi", "timbrar", "timbrado", "invoice"],
+      page: "finanzas", tab: "facturar",
+      title: lang === "es" ? "Facturar por folio (CFDI 4.0)" : "Invoice by folio (CFDI 4.0)",
+      subtitle: lang === "es" ? "Finanzas · Facturar" : "Finance · Invoice" },
+    { keywords: ["nota de credito", "nota credito", "nc", "credit note"],
+      page: "ventas", tab: undefined,
+      title: lang === "es" ? "Notas de crédito" : "Credit notes",
+      subtitle: lang === "es" ? "Ventas / CRM" : "Sales / CRM" },
+    { keywords: ["sufactura", "pac", "integraciones"],
+      page: "config", tab: undefined,
+      title: lang === "es" ? "Configurar Sufactura (PAC)" : "Configure Sufactura (PAC)",
+      subtitle: lang === "es" ? "Configuración · Integraciones" : "Config · Integrations" },
+  ];
+  const qLower = query.trim().toLowerCase();
+  const matchedShortcuts = qLower.length >= 3
+    ? SHORTCUTS.filter(sc => sc.keywords.some(k => k.includes(qLower) || qLower.includes(k)))
+    : [];
   const sectionLabels = {
     customers: lang === "es" ? "Clientes" : "Customers",
     orders: lang === "es" ? "Pedidos" : "Orders",
@@ -2066,11 +2088,26 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
           <button onClick={() => { setQuery(""); setOpen(false); }} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo, display: "flex" }}><X size={14} /></button>
         )}
       </div>
-      {open && (
+      {(open || matchedShortcuts.length > 0) && query.trim() && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 55 }} />
           <div style={{ position: "absolute", top: 48, left: 0, width: "min(420px, 90vw)", maxHeight: 440, overflowY: "auto", background: t.panel, border: `1px solid ${t.border}`, borderRadius: 12, padding: 6, boxShadow: "0 18px 40px rgba(0,0,0,0.35)", zIndex: 60 }}>
-            {!hasResults && <div style={{ padding: 16, fontSize: 13, color: t.textLo, textAlign: "center" }}>{noResultsLabel}</div>}
+            {matchedShortcuts.length > 0 && (
+              <div style={{ marginBottom: 4 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, color: t.textLo, padding: "8px 10px 4px" }}>{lang === "es" ? "Acciones" : "Actions"}</div>
+                {matchedShortcuts.map((sc, i) => (
+                  <button key={`sc-${i}`} onClick={() => select(sc.page, undefined, sc.tab)}
+                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left", padding: "10px", borderRadius: 9, border: "none", background: (t.nova ?? "#33B2F5") + "11", color: t.textHi, marginBottom: 4 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 8, background: (t.nova ?? "#33B2F5") + "22", display: "grid", placeItems: "center", color: t.nova ?? t.accent }}>→</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>{sc.title}</div>
+                      <div style={{ fontSize: 11, color: t.textLo }}>{sc.subtitle}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {!hasResults && matchedShortcuts.length === 0 && <div style={{ padding: 16, fontSize: 13, color: t.textLo, textAlign: "center" }}>{noResultsLabel}</div>}
             {sections.map((key) => {
               const items = results[key] || [];
               if (items.length === 0) return null;
@@ -3269,8 +3306,8 @@ export default function App() {
   }, [perms, page]);
 
   const goToPage = (id) => { setPage(id); if (isMobile) setMobileNavOpen(false); };
-  const handleSearchNavigate = (targetPage, query) => {
-    setSearchNav({ page: targetPage, query, ts: Date.now() });
+  const handleSearchNavigate = (targetPage, query, tab) => {
+    setSearchNav({ page: targetPage, query, tab, ts: Date.now() });
     goToPage(targetPage);
   };
 
@@ -3298,6 +3335,7 @@ export default function App() {
   }
 
   const qFor = (id) => (searchNav && searchNav.page === id ? searchNav.query : undefined);
+  const tabFor = (id) => (searchNav && searchNav.page === id ? searchNav.tab : undefined);
 
   const PAGES = {
     dashboard: <ExecutiveDashboard t={t} lang={lang} setPage={setPage} isMobile={isMobile} />,
@@ -3307,7 +3345,7 @@ export default function App() {
     forecast: <ForecastModule t={t} s={{ ...s, ...FORECAST_I18N[lang] }} />,
     retail: <RetailModule t={t} lang={lang} />,
     clientes: <CustomersModule t={t} s={s} initialQuery={qFor("clientes")} />,
-    finanzas: <FinanceModule t={t} s={s} />,
+    finanzas: <FinanceModule t={t} s={s} initialTab={tabFor("finanzas")} />,
     contabilidad: <AccountingModule t={t} s={s} />,
     rh: <HRModule t={t} s={s} />,
     reportes: <BIModule t={t} s={s} />,
