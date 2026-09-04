@@ -234,22 +234,25 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
         except Exception:
             pass
 
-    # Titulo derecha (compacto, no exagerado)
+    # Titulo derecha (compacto y bien espaciado)
     serie = payload.get("serie", "F"); serie_folio = f"Serie {serie}   ·   Folio {payload.get('folio', '')}"
     c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 16)
-    c.drawRightString(RIGHT, header_top - 5 * mm, tipo_label)
+    c.drawRightString(RIGHT, header_top - 6 * mm, tipo_label)
     c.setFont("Helvetica", 8.5); c.setFillColorRGB(*brand)
-    c.drawRightString(RIGHT, header_top - 9.5 * mm, tipo_sub)
+    c.drawRightString(RIGHT, header_top - 11 * mm, tipo_sub)
 
-    # Chip serie/folio: ancho ajustado al contenido, no fijo
+    # Chip serie/folio: ancho justo al texto, con MARGEN VERTICAL claro
+    # respecto al subtitulo (subtitulo top ~ header_top-8mm; chip top = header_top-15mm).
     from reportlab.pdfbase.pdfmetrics import stringWidth as _sw2
     sf_w = _sw2(serie_folio, "Helvetica-Bold", 9.5) + 10 * mm
+    chip_bottom = header_top - 22 * mm
+    chip_h = 7 * mm
     c.setFillColorRGB(*brand_tint)
-    c.roundRect(RIGHT - sf_w, header_top - 15 * mm, sf_w, 6.5 * mm, 2, stroke=0, fill=1)
+    c.roundRect(RIGHT - sf_w, chip_bottom, sf_w, chip_h, 2, stroke=0, fill=1)
     c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 9.5)
-    c.drawRightString(RIGHT - 5 * mm, header_top - 11 * mm, serie_folio)
+    c.drawRightString(RIGHT - 5 * mm, chip_bottom + 2.3 * mm, serie_folio)
     c.setFillColorRGB(*ink_mid); c.setFont("Helvetica", 7.5)
-    c.drawRightString(RIGHT, header_top - 19 * mm,
+    c.drawRightString(RIGHT, chip_bottom - 3.5 * mm,
                        datetime.utcnow().strftime("%d %b %Y · %H:%M UTC").upper())
 
     # Emisor bajo el logo
@@ -340,9 +343,9 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
     # Columnas (ajustadas para dar mas aire a DESCRIPCION):
     #   CANT | SKU | CLAVE SAT | DESCRIPCION (wrap) | UNIDAD | P.UNITARIO | IMPORTE
     COL_CANT = LEFT + 3 * mm
-    COL_SKU = LEFT + 14 * mm
-    COL_CLAVE = LEFT + 38 * mm
-    COL_DESC = LEFT + 58 * mm
+    COL_SKU = LEFT + 12 * mm
+    COL_CLAVE = LEFT + 44 * mm     # +6mm: da 32mm al SKU para caber sin encimar
+    COL_DESC = LEFT + 64 * mm
     COL_UNIT_R = RIGHT - 52 * mm   # right-edge de UNIDAD (label + valor right-aligned)
     COL_PU = RIGHT - 28 * mm
     COL_IMP = RIGHT - 3 * mm
@@ -408,7 +411,16 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
         c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 9)
         c.drawString(COL_CANT, text_y, f"{it.get('cantidad', 1)}")
         c.setFont("Courier-Bold", 8.5); c.setFillColorRGB(*brand)
-        c.drawString(COL_SKU, text_y, str(it.get("sku") or "—")[:14])
+        # Truncar SKU por ANCHO real, no chars: si excede el hueco SKU-CLAVE
+        # se le agrega elipsis. Evita cualquier encimado con la columna CLAVE.
+        _sku_txt = str(it.get("sku") or "—")
+        _sku_max = COL_CLAVE - COL_SKU - 2 * mm
+        while _sku_txt and _sw(_sku_txt, "Courier-Bold", 8.5) > _sku_max:
+            _sku_txt = _sku_txt[:-1]
+            if _sw(_sku_txt + "…", "Courier-Bold", 8.5) <= _sku_max:
+                _sku_txt = _sku_txt + "…"
+                break
+        c.drawString(COL_SKU, text_y, _sku_txt)
         c.setFont("Courier", 7.5); c.setFillColorRGB(*ink_mid)
         c.drawString(COL_CLAVE, text_y, str(it.get("clave_prod_serv", "01010101")))
         c.setFont("Helvetica", 8); c.setFillColorRGB(*ink_mid)
