@@ -328,53 +328,99 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
             c.drawString(LEFT, y_after_rec, u)
             y_after_rec -= 4 * mm
 
-    # ── CONCEPTOS: header con brand + zebra sutil ───────────────────
+    # ── CONCEPTOS: header con brand + zebra sutil + wrap por palabra ──
     y = y_after_rec - 8 * mm
     c.setFillColorRGB(*brand)
     c.rect(LEFT, y - 7 * mm, RIGHT - LEFT, 7 * mm, stroke=0, fill=1)
     c.setFillColorRGB(1, 1, 1); c.setFont("Helvetica-Bold", 8)
-    # Columnas: CANT | SKU | CLAVE SAT | DESCRIPCIÓN | UNIDAD | P.UNITARIO | IMPORTE
+    # Columnas (ajustadas para dar mas aire a DESCRIPCION):
+    #   CANT | SKU | CLAVE SAT | DESCRIPCION (wrap) | UNIDAD | P.UNITARIO | IMPORTE
     COL_CANT = LEFT + 3 * mm
-    COL_SKU = LEFT + 15 * mm
-    COL_CLAVE = LEFT + 40 * mm
-    COL_DESC = LEFT + 60 * mm
-    COL_UNIT = RIGHT - 55 * mm
+    COL_SKU = LEFT + 14 * mm
+    COL_CLAVE = LEFT + 38 * mm
+    COL_DESC = LEFT + 58 * mm
+    COL_UNIT = RIGHT - 52 * mm     # limite derecho de la DESCRIPCION
     COL_PU = RIGHT - 28 * mm
     COL_IMP = RIGHT - 3 * mm
+    DESC_MAX_W = COL_UNIT - COL_DESC - 4 * mm  # gap visual antes de UNIDAD
+
     row_top = y - 4.5 * mm
     c.drawString(COL_CANT, row_top, "CANT")
     c.drawString(COL_SKU, row_top, "SKU")
     c.drawString(COL_CLAVE, row_top, "CLAVE SAT")
     c.drawString(COL_DESC, row_top, "DESCRIPCIÓN")
-    c.drawRightString(COL_UNIT, row_top, "UNIDAD")
+    c.drawString(COL_UNIT, row_top, "UNIDAD")
     c.drawRightString(COL_PU, row_top, "P. UNITARIO")
     c.drawRightString(COL_IMP, row_top, "IMPORTE")
     y -= 9 * mm
 
+    from reportlab.pdfbase.pdfmetrics import stringWidth as _sw
+
+    def _wrap(text: str, max_w: float, font: str = "Helvetica", size: float = 9) -> list:
+        """Envuelve `text` en varias lineas para no exceder max_w. Divide
+        por palabras; si una palabra sola no cabe, la parte por caracteres."""
+        words = str(text).split()
+        lines, cur = [], ""
+        for w in words:
+            probe = (cur + " " + w).strip()
+            if _sw(probe, font, size) <= max_w:
+                cur = probe
+                continue
+            # w no cabe con lo que hay: guardar lo acumulado y probar sola
+            if cur:
+                lines.append(cur)
+                cur = ""
+            if _sw(w, font, size) <= max_w:
+                cur = w
+            else:
+                # partir palabra excesivamente larga por caracteres
+                chunk = ""
+                for ch in w:
+                    if _sw(chunk + ch, font, size) <= max_w:
+                        chunk += ch
+                    else:
+                        lines.append(chunk); chunk = ch
+                cur = chunk
+        if cur:
+            lines.append(cur)
+        return lines or [""]
+
     c.setFont("Helvetica", 9); zebra = False
-    row_h = 6.5 * mm
-    conceptos = (payload.get("conceptos") or [])[:25]
+    conceptos = (payload.get("conceptos") or [])[:40]
+    LINE_H = 4.6 * mm
+    ROW_PAD = 2.5 * mm  # margen vertical dentro de la fila
+
     for it in conceptos:
+        desc_lines = _wrap(str(it.get("descripcion", "")), DESC_MAX_W)
+        row_h = max(6.5 * mm, ROW_PAD * 2 + LINE_H * len(desc_lines))
+        # zebra
         if zebra:
             c.setFillColorRGB(*brand_tint)
-            c.rect(LEFT, y - 4.5 * mm, RIGHT - LEFT, row_h, stroke=0, fill=1)
+            c.rect(LEFT, y - row_h + 0.5 * mm, RIGHT - LEFT, row_h, stroke=0, fill=1)
         zebra = not zebra
-        text_y = y - 1 * mm
+
+        # texto de las columnas simples alineado al TOP de la fila
+        text_y = y - ROW_PAD
         c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 9)
         c.drawString(COL_CANT, text_y, f"{it.get('cantidad', 1)}")
         c.setFont("Courier-Bold", 8.5); c.setFillColorRGB(*brand)
-        sku_val = str(it.get("sku") or "—")[:12]
-        c.drawString(COL_SKU, text_y, sku_val)
+        c.drawString(COL_SKU, text_y, str(it.get("sku") or "—")[:14])
         c.setFont("Courier", 7.5); c.setFillColorRGB(*ink_mid)
         c.drawString(COL_CLAVE, text_y, str(it.get("clave_prod_serv", "01010101")))
-        c.setFont("Helvetica", 9); c.setFillColorRGB(*ink)
-        c.drawString(COL_DESC, text_y, str(it.get("descripcion", ""))[:40])
         c.setFont("Helvetica", 8); c.setFillColorRGB(*ink_mid)
-        c.drawRightString(COL_UNIT, text_y, str(it.get("unidad", "Pieza"))[:10])
+        c.drawString(COL_UNIT, text_y, str(it.get("unidad", "Pieza"))[:14])
         c.setFont("Helvetica", 9); c.setFillColorRGB(*ink)
         c.drawRightString(COL_PU, text_y, f"${float(it.get('valor_unitario', 0)):,.2f}")
         c.setFont("Helvetica-Bold", 9)
         c.drawRightString(COL_IMP, text_y, f"${float(it.get('importe', 0)):,.2f}")
+
+        # descripcion multilinea
+        c.setFont("Helvetica", 9); c.setFillColorRGB(*ink)
+        line_y = text_y
+        for ln in desc_lines:
+            c.drawString(COL_DESC, line_y, ln)
+            line_y -= LINE_H
+
         y -= row_h
         if y < 90 * mm:
             break
