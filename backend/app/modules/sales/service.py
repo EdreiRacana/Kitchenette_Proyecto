@@ -150,6 +150,8 @@ async def _apply_stock_for_items(db: AsyncSession, order: models.Order,
             continue
         ref = f"order:{order.id}"
         if direction == "out":
+            from app.modules.inventory.fifo_service import InsufficientStockError as _ISE
+            from fastapi import HTTPException as _HE
             try:
                 # allow_negative=False: bloquea el surtido si no hay stock
                 # suficiente. No se debe poder comprometer mercancía que no
@@ -160,9 +162,12 @@ async def _apply_stock_for_items(db: AsyncSession, order: models.Order,
                     allow_negative=False, commit=False,
                 )
                 it.unit_cost = float(result.get("unit_cost_avg") or 0.0)
-            except ValueError as e:
-                # Sin stock — no confirmamos la orden.
-                from fastapi import HTTPException as _HE
+            except (_ISE, ValueError) as e:
+                # Stock insuficiente — RECHAZAR la venta. NUNCA se permite
+                # crear un pedido si no hay mercancia fisica para surtirlo.
+                # (InsufficientStockError extiende Exception, no ValueError,
+                # por lo que se atrapa explicitamente aqui — antes caia al
+                # fallback _move_stock y decrementaba a negativo silenciosamente.)
                 await db.rollback()
                 raise _HE(
                     status_code=400,
@@ -170,12 +175,15 @@ async def _apply_stock_for_items(db: AsyncSession, order: models.Order,
                             f"(SKU {it.sku or '—'}). {str(e)}"),
                 )
             except Exception as e:
-                log.warning("consume_stock error en venta", extra={"order_id": order.id, "variant_id": it.variant_id, "error": str(e)}, exc_info=True)
-                # Fallback solo para errores no relacionados con stock (DB, red, etc.)
-                await _move_stock(
-                    db, variant_id=it.variant_id, warehouse_id=wh,
-                    qty=qty, direction="out",
-                    order_id=order.id, user_id=user_id,
+                # Solo cae aqui por errores NO de stock (DB, red, bug). Loguea
+                # y aborta la venta para evitar quedar en estado inconsistente.
+                log.error("consume_stock error inesperado en venta",
+                           extra={"order_id": order.id, "variant_id": it.variant_id, "error": str(e)},
+                           exc_info=True)
+                await db.rollback()
+                raise _HE(
+                    status_code=500,
+                    detail=f"Error procesando stock de '{it.product_name or ''}': {e}",
                 )
         else:
             # Devolución/edición: restock con el costo que ya venía snapshoteado.

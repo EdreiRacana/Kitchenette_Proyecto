@@ -528,6 +528,7 @@ async def register_sale(db: AsyncSession, session_id: int,
             if v and v.product and (v.product.item_type or "") == "service":
                 oi.is_service = True
                 continue
+            from app.modules.inventory.fifo_service import InsufficientStockError as _ISE
             try:
                 # allow_negative=False: bloquea la venta si no hay stock
                 # suficiente en el warehouse del POS. Un punto de venta
@@ -539,8 +540,11 @@ async def register_sale(db: AsyncSession, session_id: int,
                     allow_negative=False, commit=False,
                 )
                 oi.unit_cost = float(result.get("unit_cost_avg") or 0.0)
-            except ValueError as e:
-                # Sin stock suficiente — abortar toda la venta.
+            except (_ISE, ValueError) as e:
+                # Sin stock suficiente — abortar toda la venta. NUNCA se
+                # permite vender lo que no existe (InsufficientStockError
+                # extiende Exception, no ValueError — antes se colaba al
+                # except generico y la venta se completaba en negativo).
                 await db.rollback()
                 raise HTTPException(
                     status_code=400,
@@ -549,9 +553,12 @@ async def register_sale(db: AsyncSession, session_id: int,
                             f"punto de venta. {str(e)}"),
                 )
             except Exception as e:
-                log.warning("consume_stock error en venta POS",
+                log.error("consume_stock error inesperado en venta POS",
                             extra={"order_id": order.id, "variant_id": variant_id, "error": str(e)},
                             exc_info=True)
+                await db.rollback()
+                raise HTTPException(status_code=500,
+                    detail=f"Error procesando stock: {e}")
 
     # Registrar Payment(s) y POSTransaction(s) — una por método. El cambio se
     # descuenta del efectivo: lo que realmente entra al cajón por la venta es el

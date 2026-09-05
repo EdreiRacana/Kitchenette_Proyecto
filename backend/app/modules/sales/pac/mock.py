@@ -234,26 +234,33 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
         except Exception:
             pass
 
-    # Emisor: A LA DERECHA DEL LOGO en la misma fila (fuentes -10%)
+    # Emisor: A LA DERECHA DEL LOGO, centrado verticalmente con el logo
     emi_x = LEFT + (logo_w if logo_w else 0) + 6 * mm   # gap 6mm despues del logo
-    emi_x_right = RIGHT - 65 * mm                        # deja espacio para FACTURA
-    ey = header_top - 2 * mm
-    c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 11)   # 12 -> 11
-    c.drawString(emi_x, ey, (emisor.get("nombre_comercial") or emisor.get("nombre") or "EMISOR")[:40])
-    ey -= 4.2 * mm
-    c.setFont("Helvetica", 7.5); c.setFillColorRGB(*ink_mid)   # 8.5 -> 7.5
+    # Contar cuantas lineas se van a dibujar para calcular altura total y centrar
+    emi_lines = []
+    emi_lines.append(("Helvetica-Bold", 11, ink,
+                       (emisor.get("nombre_comercial") or emisor.get("nombre") or "EMISOR")[:40]))
     if emisor.get("nombre") and emisor.get("nombre_comercial") and emisor["nombre"] != emisor["nombre_comercial"]:
-        c.drawString(emi_x, ey, emisor["nombre"][:55])
-        ey -= 3.4 * mm
+        emi_lines.append(("Helvetica", 7.5, ink_mid, emisor["nombre"][:55]))
     if emisor.get("rfc"):
-        c.drawString(emi_x, ey, f"RFC {emisor['rfc']}   ·   Régimen {emisor.get('regimen_fiscal','')}")
-        ey -= 3.4 * mm
+        emi_lines.append(("Helvetica", 7.5, ink_mid,
+                           f"RFC {emisor['rfc']}   ·   Régimen {emisor.get('regimen_fiscal','')}"))
     if emisor.get("domicilio"):
-        c.drawString(emi_x, ey, emisor["domicilio"][:70])
-        ey -= 3.4 * mm
+        emi_lines.append(("Helvetica", 7.5, ink_mid, emisor["domicilio"][:70]))
     contact = "   ·   ".join([x for x in [emisor.get("telefono"), emisor.get("email")] if x])
     if contact:
-        c.drawString(emi_x, ey, contact[:70])
+        emi_lines.append(("Helvetica", 7.5, ink_mid, contact[:70]))
+
+    # Altura total del bloque emisor: primera linea 4.2mm de leading + 3.4mm cada extra
+    emi_total_h = 4.2 * mm + max(0, len(emi_lines) - 1) * 3.4 * mm
+    # Logo va de header_top (top) a header_top - logo_h (bottom). Centro del logo:
+    logo_center_y = header_top - (logo_h if logo_h else LOGO_MAX_H) / 2
+    # Colocar emisor centrado en el mismo centro: primera linea baseline
+    ey = logo_center_y + (emi_total_h / 2) - 3.5 * mm  # -3.5mm compensa el ascender de 11pt
+    for font, size, color, text in emi_lines:
+        c.setFillColorRGB(*color); c.setFont(font, size)
+        c.drawString(emi_x, ey, text)
+        ey -= 4.2 * mm if font == "Helvetica-Bold" else 3.4 * mm
 
     # Titulo derecha (compacto y bien espaciado)
     serie = payload.get("serie", "F"); serie_folio = f"Serie {serie}   ·   Folio {payload.get('folio', '')}"
