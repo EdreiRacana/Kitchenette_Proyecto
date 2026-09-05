@@ -276,6 +276,13 @@ async def stamp_order_invoice(order_id: int, db: AsyncSession = DB, current_user
     order = res.scalars().first()
     if not order:
         raise HTTPException(404, "Venta no encontrada")
+    # Guardarrail multi-tenant: la venta debe pertenecer a la empresa activa.
+    # SIN esto, un usuario autenticado podia timbrar la venta de OTRA empresa
+    # usando sus propias credenciales del PAC (enumeracion por order_id).
+    from app.core.tenancy import get_company_context as _gcc
+    _cid_stamp = _gcc()
+    if _cid_stamp and order.company_id and order.company_id != _cid_stamp:
+        raise HTTPException(404, "Venta no encontrada")
     if (order.kind or "order") != "order":
         raise HTTPException(400, "Solo pedidos pueden timbrarse (no cotizaciones)")
     if order.cfdi_uuid:
@@ -438,6 +445,11 @@ async def download_order_cfdi_pdf(order_id: int, db: AsyncSession = DB, current_
     order = res.scalars().first()
     if not order:
         raise HTTPException(404, "Venta no encontrada")
+    # Aislamiento por empresa: nunca entregar PDF/XML de otra empresa.
+    from app.core.tenancy import get_company_context as _gcc_pdf
+    _cid_pdf = _gcc_pdf()
+    if _cid_pdf and order.company_id and order.company_id != _cid_pdf:
+        raise HTTPException(404, "Venta no encontrada")
     if not order.cfdi_uuid:
         raise HTTPException(400, "Esta venta no está timbrada todavía.")
     pdf = getattr(order, "cfdi_pdf", None)
@@ -458,6 +470,10 @@ async def download_order_cfdi_xml(order_id: int, db: AsyncSession = DB, current_
     )
     order = res.scalars().first()
     if not order:
+        raise HTTPException(404, "Venta no encontrada")
+    from app.core.tenancy import get_company_context as _gcc_xml
+    _cid_xml = _gcc_xml()
+    if _cid_xml and order.company_id and order.company_id != _cid_xml:
         raise HTTPException(404, "Venta no encontrada")
     if not order.cfdi_uuid:
         raise HTTPException(400, "Esta venta no está timbrada todavía.")

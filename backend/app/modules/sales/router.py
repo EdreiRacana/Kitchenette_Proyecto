@@ -271,6 +271,11 @@ async def update_fiscal_data(order_id: int, payload: schemas.FiscalDataPatch,
     order = res.scalars().first()
     if not order:
         raise HTTPException(404, "Pedido no encontrado")
+    # Aislamiento por empresa: no dejar editar datos fiscales de otra empresa
+    from app.core.tenancy import get_company_context as _gcc_fd
+    _cid_fd = _gcc_fd()
+    if _cid_fd and order.company_id and order.company_id != _cid_fd:
+        raise HTTPException(404, "Pedido no encontrado")
     if order.cfdi_uuid:
         raise HTTPException(400, "No se puede editar: la factura ya esta timbrada.")
     # Aplicar al pedido
