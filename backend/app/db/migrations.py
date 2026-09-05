@@ -151,6 +151,9 @@ _SALES_STATEMENTS = [
     "UPDATE orders SET discount_type = 'amount' WHERE discount_type IS NULL",
     "UPDATE orders SET folio = 'ORD-' || lpad(id::text, 6, '0') WHERE folio IS NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS ix_orders_folio ON orders (folio)",
+    # UNIQUE en cfdi_uuid (WHERE NOT NULL) — imposible timbrar dos veces
+    # la misma venta a nivel BD. Backup del anti-duplicado a nivel aplicacion.
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_orders_cfdi_uuid ON orders (cfdi_uuid) WHERE cfdi_uuid IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS ix_orders_kind   ON orders (kind)",
     "CREATE INDEX IF NOT EXISTS ix_orders_status ON orders (status)",
     "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS product_name    VARCHAR",

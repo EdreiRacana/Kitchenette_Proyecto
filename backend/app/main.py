@@ -50,6 +50,86 @@ app.include_router(media.router, prefix=f"{settings.API_V1_STR}/media", tags=["m
 def health_check():
     return {"status": "ok", "app_name": settings.PROJECT_NAME}
 
+
+@app.get("/health/audit")
+async def audit_check(token: str = ""):
+    """Diagnostico de integridad de datos multi-tenant. Devuelve conteos y
+    filas sospechosas sin exponer detalle sensible. Protegido por token
+    fijo en env HEALTH_AUDIT_TOKEN (si no esta seteado, requiere que el
+    caller ya este autenticado como superuser — se hara chequeo en el flow)."""
+    import os
+    from sqlalchemy import text
+    from app.db.session import AsyncSessionLocal
+    expected = os.environ.get("HEALTH_AUDIT_TOKEN", "").strip()
+    if not expected:
+        # Sin token configurado: devuelve solo indicador basico, no detalles
+        return {"status": "audit disabled", "reason": "set HEALTH_AUDIT_TOKEN env var"}
+    if token != expected:
+        return {"status": "forbidden"}
+
+    async with AsyncSessionLocal() as db:
+        # 1) Stock negativo (bug historico corregido en PR 293)
+        r = await db.execute(text(
+            "SELECT COUNT(*)::int AS c, COALESCE(MIN(quantity),0)::int AS min_q "
+            "FROM stock_levels WHERE quantity < 0"))
+        row = r.first()
+        negative_stock = {"rows": row.c, "min_quantity": row.min_q}
+
+        # 2) Ordenes timbradas sin company_id
+        r = await db.execute(text(
+            "SELECT COUNT(*)::int FROM orders "
+            "WHERE cfdi_uuid IS NOT NULL AND company_id IS NULL"))
+        stamped_no_tenant = r.scalar() or 0
+
+        # 3) Duplicados de cfdi_uuid (deberian ser 0 con el UNIQUE del PR)
+        r = await db.execute(text(
+            "SELECT COUNT(*)::int FROM ("
+            "  SELECT cfdi_uuid FROM orders WHERE cfdi_uuid IS NOT NULL "
+            "  GROUP BY cfdi_uuid HAVING COUNT(*) > 1) t"))
+        duplicate_uuids = r.scalar() or 0
+
+        # 4) Clientes con company_id NULL (datos huerfanos)
+        r = await db.execute(text(
+            "SELECT COUNT(*)::int FROM customers WHERE company_id IS NULL"))
+        orphan_customers = r.scalar() or 0
+
+        # 5) StockLevels con company_id NULL
+        r = await db.execute(text(
+            "SELECT COUNT(*)::int FROM stock_levels WHERE company_id IS NULL"))
+        orphan_stock = r.scalar() or 0
+
+        # 6) Total empresas activas
+        r = await db.execute(text(
+            "SELECT COUNT(*)::int FROM company_profile WHERE is_active = true"))
+        active_companies = r.scalar() or 0
+
+        alerts = []
+        if negative_stock["rows"] > 0:
+            alerts.append(f"CRITICO: {negative_stock['rows']} filas de stock negativo "
+                          f"(min={negative_stock['min_quantity']}). Investigar y corregir.")
+        if stamped_no_tenant > 0:
+            alerts.append(f"CRITICO: {stamped_no_tenant} facturas timbradas sin company_id. "
+                          "Backfill urgente.")
+        if duplicate_uuids > 0:
+            alerts.append(f"CRITICO: {duplicate_uuids} UUIDs de CFDI duplicados en ordenes.")
+        if orphan_customers > 0:
+            alerts.append(f"AVISO: {orphan_customers} clientes sin company_id (huerfanos).")
+        if orphan_stock > 0:
+            alerts.append(f"AVISO: {orphan_stock} stock_levels sin company_id (huerfanos).")
+
+        return {
+            "status": "ok" if not alerts else "alerts",
+            "companies_active": active_companies,
+            "checks": {
+                "negative_stock": negative_stock,
+                "stamped_orders_no_tenant": stamped_no_tenant,
+                "duplicate_cfdi_uuids": duplicate_uuids,
+                "orphan_customers": orphan_customers,
+                "orphan_stock_levels": orphan_stock,
+            },
+            "alerts": alerts,
+        }
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error on %s %s", request.method, request.url)
