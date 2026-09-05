@@ -1271,11 +1271,41 @@ _ACCOUNTING_TENANCY_STATEMENTS: list[str] = [
 # Antes: warehouses.name era UNIQUE global -> dos empresas no podian tener
 # almacenes con el mismo nombre. Ahora: unique por (company_id, name).
 _WAREHOUSE_UNIQUE_STATEMENTS: list[str] = [
-    # Elimina el UNIQUE global si existe (constraint autogenerado por SQLAlchemy)
-    "ALTER TABLE warehouses DROP CONSTRAINT IF EXISTS warehouses_name_key",
-    # Y el indice unico historico si viniera de una version diferente
-    "DROP INDEX IF EXISTS ix_warehouses_name_unique",
-    # Crea el nuevo UNIQUE compuesto (idempotente via CREATE UNIQUE INDEX IF NOT EXISTS)
+    # Backfill previo por si el _TENANCY_STATEMENTS no habia corrido: asigna
+    # cualquier warehouse huerfano al PRIMER company_profile (Elias Jabari).
+    """UPDATE warehouses SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    # Y sus hijos: stock_levels, stock_lots, stock_movements que hereden.
+    """UPDATE stock_levels sl SET company_id = w.company_id
+       FROM warehouses w WHERE sl.warehouse_id = w.id AND sl.company_id IS NULL""",
+    """UPDATE stock_lots sl SET company_id = w.company_id
+       FROM warehouses w WHERE sl.warehouse_id = w.id AND sl.company_id IS NULL""",
+    """UPDATE stock_movements sm SET company_id = w.company_id
+       FROM warehouses w WHERE sm.warehouse_id = w.id AND sm.company_id IS NULL""",
+    # Elimina TODOS los indices/constraints UNIQUE que existan solo sobre "name"
+    # (puede haber sido autogenerado como warehouses_name_key o con nombre custom).
+    """DO $$
+    DECLARE r RECORD;
+    BEGIN
+      FOR r IN (
+        SELECT c.conname
+        FROM pg_constraint c JOIN pg_class t ON c.conrelid = t.oid
+        WHERE t.relname = 'warehouses' AND c.contype = 'u'
+          AND (SELECT array_length(c.conkey, 1)) = 1
+          AND (SELECT attname FROM pg_attribute WHERE attrelid = t.oid AND attnum = c.conkey[1]) = 'name'
+      ) LOOP
+        EXECUTE format('ALTER TABLE warehouses DROP CONSTRAINT %I', r.conname);
+      END LOOP;
+      FOR r IN (
+        SELECT i.indexname
+        FROM pg_indexes i
+        WHERE i.tablename = 'warehouses' AND i.indexname LIKE '%name%unique%'
+      ) LOOP
+        EXECUTE format('DROP INDEX %I', r.indexname);
+      END LOOP;
+    END$$""",
+    # Crea el nuevo UNIQUE compuesto
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_warehouses_company_name ON warehouses(company_id, name)",
 ]
 
