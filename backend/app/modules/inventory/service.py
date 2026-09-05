@@ -238,9 +238,21 @@ async def delete_supplier_document(db: AsyncSession, supplier_id: int, document_
 
 # --- Warehouse Services ---
 async def create_warehouse(db: AsyncSession, warehouse_in: schemas.WarehouseCreate) -> Warehouse:
+    from sqlalchemy.exc import IntegrityError
+    from fastapi import HTTPException
     db_warehouse = Warehouse(**warehouse_in.model_dump())
     db.add(db_warehouse)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        # Nombre duplicado en la MISMA empresa (constraint uq_warehouses_company_name)
+        # o algun otro campo UNIQUE. Mensaje claro en vez de 500 opaco.
+        msg = str(e.orig) if hasattr(e, "orig") else str(e)
+        if "uq_warehouses_company_name" in msg or "warehouses_name_key" in msg or "duplicate key" in msg.lower():
+            raise HTTPException(400,
+                f"Ya existe un almacén con el nombre '{warehouse_in.name}' en esta empresa.")
+        raise HTTPException(400, f"No se pudo crear el almacén: {msg[:200]}")
     await db.refresh(db_warehouse)
     return db_warehouse
 

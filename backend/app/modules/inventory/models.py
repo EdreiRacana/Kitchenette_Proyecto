@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, ForeignKey, Float, Enum, Text, JSON
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, ForeignKey, Float, Enum, Text, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
@@ -159,11 +159,16 @@ class ProductVariant(Base):
 
 class Warehouse(Base):
     __tablename__ = "warehouses"
+    __table_args__ = (
+        # Nombre unico POR EMPRESA — antes era unique global, lo que impedia
+        # que dos empresas tuvieran un almacen con el mismo nombre.
+        UniqueConstraint("company_id", "name", name="uq_warehouses_company_name"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     company_id = Column(String, ForeignKey("company_profile.id"),
                           nullable=True, index=True)
-    name = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, index=True, nullable=False)
     location = Column(String, nullable=True)
     type = Column(String, default=WarehouseType.OWN.value, nullable=False)
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)  # sucursal asignada
