@@ -46,7 +46,12 @@ async def get_products(db: AsyncSession, skip: int = 0, limit: int = 100, item_t
 
 EXPORT_HEADERS = ["SKU", "Codigo de barras", "Producto", "Tipo", "Categoria",
                   "Talla", "Color", "Material", "Almacen", "Stock disponible",
-                  "Stock reservado", "Precio", "Costo"]
+                  "Stock reservado", "Precio", "Costo",
+                  # Ultima columna: URL de la imagen del producto. Header
+                  # identico al que la ingesta lee ("imagen_url") para que el
+                  # export sirva de vuelta como archivo de carga masiva sin
+                  # necesidad de renombrar columnas.
+                  "imagen_url"]
 
 
 async def _export_rows(db: AsyncSession, warehouse_id: Optional[int] = None) -> List[list]:
@@ -58,6 +63,7 @@ async def _export_rows(db: AsyncSession, warehouse_id: Optional[int] = None) -> 
 
     rows: List[list] = []
     for p in products:
+        img = p.image_url or ""
         for v in p.variants:
             levels = v.stock_levels
             if warehouse_id:
@@ -68,7 +74,7 @@ async def _export_rows(db: AsyncSession, warehouse_id: Optional[int] = None) -> 
                 rows.append([
                     v.sku, v.barcode or "", p.name, p.item_type, p.category or "",
                     v.size or "", v.color or "", v.material or "", "—", 0, 0,
-                    v.price, v.cost_price or 0,
+                    v.price, v.cost_price or 0, img,
                 ])
                 continue
             for sl in levels:
@@ -77,7 +83,7 @@ async def _export_rows(db: AsyncSession, warehouse_id: Optional[int] = None) -> 
                     v.size or "", v.color or "", v.material or "",
                     sl.warehouse.name if sl.warehouse else "—",
                     sl.quantity, sl.reserved_quantity,
-                    v.price, v.cost_price or 0,
+                    v.price, v.cost_price or 0, img,
                 ])
     return rows
 
@@ -1231,6 +1237,23 @@ def _parse_item_type(v) -> str:
 
 async def bulk_import_products(db: AsyncSession, file_bytes: bytes, filename: str, user_id: Optional[int] = None) -> schemas.BulkImportResult:
     df = _read_table(file_bytes, filename)
+    # Normalizar headers a lowercase + snake_case + alias comunes para que el
+    # archivo exportado desde Inventario (con encabezados como "SKU",
+    # "Producto", "URL Imagen", etc.) tambien sirva como entrada.
+    def _norm(h: str) -> str:
+        s = str(h or "").strip().lower()
+        s = s.replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+        s = s.replace(" ", "_").replace("-", "_")
+        # alias amigables -> canonicos que espera el codigo abajo
+        aliases = {
+            "codigo_de_barras": "codigo_barras", "url_imagen": "imagen_url",
+            "url_de_imagen": "imagen_url", "url_de_la_imagen": "imagen_url",
+            "imagen": "imagen_url",
+            "stock_disponible": "stock_inicial", "stock": "stock_inicial",
+            "almacen_(no_se_usa)": "almacen", "sucursal": "almacen",
+        }
+        return aliases.get(s, s)
+    df.columns = [_norm(c) for c in df.columns]
     missing_cols = [c for c in ("sku", "producto", "precio") if c not in df.columns]
     if missing_cols:
         raise ValueError(f"Faltan columnas requeridas en el archivo: {', '.join(missing_cols)}")
