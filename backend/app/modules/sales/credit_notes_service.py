@@ -263,6 +263,9 @@ async def stamp_credit_note(
     order = res_o.scalars().first()
     if not order:
         raise CreditNoteError("Venta original no encontrada.")
+    # Guardarrail multi-tenant: la venta original debe ser de la misma empresa
+    if cid and order.company_id and order.company_id != cid:
+        raise CreditNoteError("La venta original no pertenece a la empresa activa.")
     if not order.cfdi_uuid:
         raise CreditNoteError(
             "La factura original no está timbrada — sin UUID no se puede emitir NC. "
@@ -376,6 +379,10 @@ async def cancel_credit_note(
     nc = res.scalars().first()
     if not nc:
         raise CreditNoteError("NC no encontrada.")
+    # Guardarrail multi-tenant: no permitir cancelar NC de otra empresa
+    cid = get_company_context()
+    if cid and nc.company_id and nc.company_id != cid:
+        raise CreditNoteError("Esta NC no pertenece a la empresa activa.")
     if nc.status != "stamped":
         raise CreditNoteError(f"Solo NCs timbradas pueden cancelarse — está en '{nc.status}'.")
     if not nc.cfdi_uuid:
@@ -404,6 +411,10 @@ async def cancel_credit_note(
         .execution_options(skip_tenant_filter=True)
     )
     order = res_o.scalars().first()
+    # Solo revertir CxC si la Order pertenece a la misma empresa (defensa
+    # ante datos corruptos: nunca tocar CxC de otro tenant)
+    if order and cid and order.company_id and order.company_id != cid:
+        order = None
     if order:
         order.paid_amount = min((order.total_amount or 0.0),
                                 (order.paid_amount or 0.0) + nc.total)
