@@ -1267,6 +1267,19 @@ _ACCOUNTING_TENANCY_STATEMENTS: list[str] = [
 ]
 
 
+# ── Warehouse: UNIQUE global -> UNIQUE compuesto (company_id, name) ─
+# Antes: warehouses.name era UNIQUE global -> dos empresas no podian tener
+# almacenes con el mismo nombre. Ahora: unique por (company_id, name).
+_WAREHOUSE_UNIQUE_STATEMENTS: list[str] = [
+    # Elimina el UNIQUE global si existe (constraint autogenerado por SQLAlchemy)
+    "ALTER TABLE warehouses DROP CONSTRAINT IF EXISTS warehouses_name_key",
+    # Y el indice unico historico si viniera de una version diferente
+    "DROP INDEX IF EXISTS ix_warehouses_name_unique",
+    # Crea el nuevo UNIQUE compuesto (idempotente via CREATE UNIQUE INDEX IF NOT EXISTS)
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_warehouses_company_name ON warehouses(company_id, name)",
+]
+
+
 def _apply(sync_conn: Connection) -> None:
     if sync_conn.dialect.name != "postgresql":
         return
@@ -1298,6 +1311,7 @@ def _apply(sync_conn: Connection) -> None:
         # Corre DESPUÉS de tenancy: las hijas heredan del padre.
         ("tenancy_children", _TENANCY_CHILDREN_STATEMENTS),
         ("accounting_tenancy", _ACCOUNTING_TENANCY_STATEMENTS),
+        ("warehouse_unique_scope", _WAREHOUSE_UNIQUE_STATEMENTS),
     ]
 
     for label, statements in all_statements:
