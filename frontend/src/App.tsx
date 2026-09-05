@@ -2134,6 +2134,51 @@ function GlobalSearch({ t, s, lang, onNavigate }) {
   );
 }
 
+// Banner que aparece cuando Sufactura esta en modo Mock — evita que se
+// envien facturas "de prueba" a clientes reales por accidente.
+function SufacturaModeBanner({ t, lang }: any) {
+  const [env, setEnv] = useState<string>("");
+  const [configured, setConfigured] = useState<boolean>(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get("/config/integrations/sufactura");
+        if (cancelled) return;
+        setConfigured(!!data?.configured);
+        setEnv((data?.environment || "").toLowerCase());
+      } catch { /* si falla, no molestamos con banner */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  if (!configured || (env !== "mock" && env !== "sandbox")) return null;
+  const isMock = env === "mock";
+  const bg = isMock ? "#DC2626" : "#F59E0B";
+  const label = isMock
+    ? (lang === "es"
+        ? "MODO PRUEBA — Sufactura en MOCK. Las facturas emitidas NO son válidas ante el SAT."
+        : "TEST MODE — Sufactura in MOCK. Emitted invoices are NOT valid at SAT.")
+    : (lang === "es"
+        ? "SANDBOX — timbrado en ambiente de pruebas de Sufactura (no oficial ante SAT)."
+        : "SANDBOX — stamping in Sufactura test environment (not official SAT).");
+  return (
+    <div style={{
+      background: bg, color: "#fff", padding: "6px 16px", fontSize: 12.5,
+      fontWeight: 700, letterSpacing: 0.3, textAlign: "center", zIndex: 15,
+      borderTop: "1px solid rgba(255,255,255,0.15)",
+      borderBottom: "1px solid rgba(0,0,0,0.15)",
+      display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+    }}>
+      <span style={{ fontSize: 14 }}>{isMock ? "⚠" : "⚠"}</span>
+      <span>{label}</span>
+      <a href="#" onClick={(e) => { e.preventDefault(); (window as any).location.hash = "config"; window.dispatchEvent(new HashChangeEvent("hashchange")); }}
+        style={{ color: "#fff", textDecoration: "underline", marginLeft: 8, fontSize: 11.5, opacity: 0.9 }}>
+        {lang === "es" ? "Ir a Configuración" : "Go to Settings"}
+      </a>
+    </div>
+  );
+}
+
 const SCHEDULED_REMINDER_LEAD_DAYS = 2;
 
 function scheduledDueLabel(scheduledDate, lang) {
@@ -3386,6 +3431,7 @@ export default function App() {
       <Sidebar t={t} s={s} page={page} setPage={goToPage} collapsed={collapsed} setCollapsed={setCollapsed} mobile={isMobile} mobileOpen={mobileNavOpen} setMobileOpen={setMobileNavOpen} allowedIds={allowedModuleIds} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
         <Topbar t={t} s={s} lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} onLogout={() => { localStorage.removeItem("token"); setAuthed(false); }} isMobile={isMobile} onMenuClick={() => setMobileNavOpen(true)} onNavigate={handleSearchNavigate} me={me} perms={perms} refreshMe={() => api.get("/auth/me").then(r => setMe(r.data)).catch(() => {})} />
+        <SufacturaModeBanner t={t} lang={lang} />
         <main style={{ flex: 1, padding: isMobile ? 12 : 24, overflowX: "hidden", position: "relative" }}>
           {theme === "dark" && (
             <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>
