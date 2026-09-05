@@ -1214,6 +1214,59 @@ _RBAC_POLICY_UPDATES = [
 ]
 
 
+# ── Contabilidad: multi-tenancy (agrega company_id a las 9 tablas) ──
+_ACCOUNTING_TENANCY_STATEMENTS: list[str] = [
+    "ALTER TABLE accounting_accounts ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_acct_accounts_company ON accounting_accounts(company_id)",
+    "ALTER TABLE accounting_journal_entries ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_acct_je_company ON accounting_journal_entries(company_id)",
+    "ALTER TABLE accounting_account_map ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_acct_am_company ON accounting_account_map(company_id)",
+    "ALTER TABLE accounting_journal_lines ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_acct_jl_company ON accounting_journal_lines(company_id)",
+    "ALTER TABLE accounting_policies ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_acct_pol_company ON accounting_policies(company_id)",
+    "ALTER TABLE accounting_fixed_assets ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_acct_fa_company ON accounting_fixed_assets(company_id)",
+    "ALTER TABLE accounting_period_close ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_acct_pc_company ON accounting_period_close(company_id)",
+    "ALTER TABLE accounting_account_budget ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_acct_ab_company ON accounting_account_budget(company_id)",
+    "ALTER TABLE accounting_balance_sheet ADD COLUMN IF NOT EXISTS company_id VARCHAR REFERENCES company_profile(id)",
+    "CREATE INDEX IF NOT EXISTS ix_acct_bs_company ON accounting_balance_sheet(company_id)",
+    # Backfill: todo lo existente cae al PRIMER company_profile (el original)
+    # para no perder datos historicos.
+    """UPDATE accounting_accounts SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE accounting_journal_entries SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    # Las lineas heredan del entry (parent)
+    """UPDATE accounting_journal_lines jl SET company_id = je.company_id
+       FROM accounting_journal_entries je
+       WHERE jl.entry_id = je.id AND jl.company_id IS NULL""",
+    """UPDATE accounting_account_map SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE accounting_policies SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE accounting_fixed_assets SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE accounting_period_close SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE accounting_account_budget SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+    """UPDATE accounting_balance_sheet SET company_id = (
+        SELECT id FROM company_profile ORDER BY created_at ASC LIMIT 1
+    ) WHERE company_id IS NULL""",
+]
+
+
 def _apply(sync_conn: Connection) -> None:
     if sync_conn.dialect.name != "postgresql":
         return
@@ -1244,6 +1297,7 @@ def _apply(sync_conn: Connection) -> None:
         ("tenancy", _TENANCY_STATEMENTS),
         # Corre DESPUÉS de tenancy: las hijas heredan del padre.
         ("tenancy_children", _TENANCY_CHILDREN_STATEMENTS),
+        ("accounting_tenancy", _ACCOUNTING_TENANCY_STATEMENTS),
     ]
 
     for label, statements in all_statements:

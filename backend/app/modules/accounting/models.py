@@ -4,7 +4,7 @@ Catálogo de cuentas + pólizas (asientos) con movimientos de cargo/abono. Todo
 calculado de pólizas contabilizadas (status='posted'); las canceladas se
 excluyen de saldos. Sin dependencias externas.
 """
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text, JSON, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text, JSON, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -23,6 +23,7 @@ class Account(Base):
     __tablename__ = "accounting_accounts"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"), nullable=True, index=True)
     code = Column(String, index=True, nullable=False)        # número de cuenta (jerárquico)
     name = Column(String, nullable=False)
     account_type = Column(String, nullable=False)            # activo | pasivo | capital | ingreso | costo | gasto | orden
@@ -43,6 +44,7 @@ class JournalEntry(Base):
     __tablename__ = "accounting_journal_entries"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"), nullable=True, index=True)
     folio = Column(String, index=True, nullable=True)        # POL-000001
     date = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     entry_type = Column(String, default="diario", nullable=False)  # ingreso | egreso | diario
@@ -65,6 +67,7 @@ class AccountMap(Base):
     __tablename__ = "accounting_account_map"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"), nullable=True, index=True)
     role = Column(String, unique=True, index=True, nullable=False)
     account_id = Column(Integer, ForeignKey("accounting_accounts.id"), nullable=True)
 
@@ -76,6 +79,7 @@ class JournalLine(Base):
     __tablename__ = "accounting_journal_lines"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"), nullable=True, index=True)
     entry_id = Column(Integer, ForeignKey("accounting_journal_entries.id"), nullable=False, index=True)
     account_id = Column(Integer, ForeignKey("accounting_accounts.id"), nullable=False, index=True)
     debit = Column(Float, default=0.0, nullable=False)
@@ -101,6 +105,7 @@ class AccountingPolicy(Base):
     __tablename__ = "accounting_policies"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"), nullable=True, index=True)
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
 
     # #1 IVA acreditable (compras)
@@ -181,6 +186,7 @@ class FixedAsset(Base):
     __tablename__ = "accounting_fixed_assets"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"), nullable=True, index=True)
     name = Column(String, nullable=False)
     category = Column(String, nullable=True)          # equipo_computo | mobiliario | transporte | maquinaria | edificio | otro
     acquisition_date = Column(DateTime(timezone=True), nullable=False, index=True)
@@ -217,6 +223,7 @@ class PeriodClose(Base):
     __tablename__ = "accounting_period_close"
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"), nullable=True, index=True)
     year = Column(Integer, nullable=False, index=True)
     month = Column(Integer, nullable=False, index=True)
     status = Column(String, default="closed", nullable=False)  # closed | reopened
@@ -243,6 +250,7 @@ class AccountBudget(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"), nullable=True, index=True)
     period_year = Column(Integer, nullable=False, index=True)
     account_id = Column(Integer, ForeignKey("accounting_accounts.id"),
                          nullable=False, index=True)
@@ -281,6 +289,7 @@ class BalanceSheet(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("company_profile.id"), nullable=True, index=True)
     period_year = Column(Integer, nullable=False, index=True)
     period_month = Column(Integer, nullable=False, index=True)   # 1..12
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
@@ -319,3 +328,15 @@ class BalanceSheet(Base):
     updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+from app.core.tenancy import register_tenant_scoped  # noqa: E402
+register_tenant_scoped(Account)
+register_tenant_scoped(JournalEntry)
+register_tenant_scoped(AccountMap)
+register_tenant_scoped(JournalLine)
+register_tenant_scoped(AccountingPolicy)
+register_tenant_scoped(FixedAsset)
+register_tenant_scoped(PeriodClose)
+register_tenant_scoped(AccountBudget)
+register_tenant_scoped(BalanceSheet)
