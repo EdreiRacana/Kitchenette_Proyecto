@@ -240,21 +240,68 @@ async def delete_supplier_document(db: AsyncSession, supplier_id: int, document_
 async def create_warehouse(db: AsyncSession, warehouse_in: schemas.WarehouseCreate) -> Warehouse:
     from sqlalchemy.exc import IntegrityError
     from fastapi import HTTPException
+    from app.core.tenancy import get_company_context
     db_warehouse = Warehouse(**warehouse_in.model_dump())
     db.add(db_warehouse)
     try:
         await db.commit()
+        await db.refresh(db_warehouse)
+        return db_warehouse
     except IntegrityError as e:
         await db.rollback()
-        # Nombre duplicado en la MISMA empresa (constraint uq_warehouses_company_name)
-        # o algun otro campo UNIQUE. Mensaje claro en vez de 500 opaco.
         msg = str(e.orig) if hasattr(e, "orig") else str(e)
-        if "uq_warehouses_company_name" in msg or "warehouses_name_key" in msg or "duplicate key" in msg.lower():
+        # Duplicado detectado. Investigar el warehouse existente para decidir
+        # que hacer: adoptar (si es huerfano), reactivar (si esta inactivo),
+        # o rechazar con mensaje claro (si pertenece a otro tenant activo).
+        if not ("uq_warehouses_company_name" in msg or "warehouses_name_key" in msg
+                or "duplicate key" in msg.lower()):
+            raise HTTPException(400, f"No se pudo crear el almacen: {msg[:200]}")
+
+        cid = get_company_context()
+        # Buscar existente por nombre SIN filtro tenant para verificar estado real
+        existing = (await db.execute(
+            select(Warehouse).where(Warehouse.name == warehouse_in.name)
+            .execution_options(skip_tenant_filter=True)
+            .order_by(Warehouse.id)
+        )).scalars().first()
+        if not existing:
+            # Sin candidato — algo raro
             raise HTTPException(400,
-                f"Ya existe un almacén con el nombre '{warehouse_in.name}' en esta empresa.")
-        raise HTTPException(400, f"No se pudo crear el almacén: {msg[:200]}")
-    await db.refresh(db_warehouse)
-    return db_warehouse
+                f"Ya existe un almacen con el nombre '{warehouse_in.name}'.")
+        # Caso A: huerfano (company_id NULL) -> ADOPTAR al tenant actual
+        if existing.company_id is None and cid:
+            existing.company_id = cid
+            # Aplicar tambien los cambios del form (branch, tipo, ubicacion, is_active)
+            # Actualizar con los datos del form. Uso model_dump completo para
+            # que campos como branch_id que el user marco "Sin asignar" (None)
+            # RESETEEN el valor viejo -- clave para que un warehouse con branch
+            # antigua vuelva a ser visible al usuario actual.
+            for k, v in warehouse_in.model_dump().items():
+                setattr(existing, k, v)
+            existing.is_active = True
+            await db.commit()
+            await db.refresh(existing)
+            return existing
+        # Caso B: mismo tenant pero inactivo -> REACTIVAR con datos del form
+        if existing.company_id == cid and not existing.is_active:
+            # Actualizar con los datos del form. Uso model_dump completo para
+            # que campos como branch_id que el user marco "Sin asignar" (None)
+            # RESETEEN el valor viejo -- clave para que un warehouse con branch
+            # antigua vuelva a ser visible al usuario actual.
+            for k, v in warehouse_in.model_dump().items():
+                setattr(existing, k, v)
+            existing.is_active = True
+            await db.commit()
+            await db.refresh(existing)
+            return existing
+        # Caso C: mismo tenant, activo -> es un duplicado real
+        if existing.company_id == cid:
+            raise HTTPException(400,
+                f"Ya existe un almacen con el nombre '{warehouse_in.name}' en esta empresa.")
+        # Caso D: pertenece a otra empresa -> nombre bloqueado, usar otro
+        raise HTTPException(400,
+            f"El nombre '{warehouse_in.name}' ya lo usa otra empresa en el sistema. "
+            "Usa un nombre distinto (ej. agrega la ciudad al final).")
 
 async def get_warehouses(db: AsyncSession, warehouse_ids: Optional[List[int]] = None) -> List[Warehouse]:
     query = select(Warehouse)
