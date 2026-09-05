@@ -219,20 +219,41 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
     c.rect(0, H - 5, W, 5, stroke=0, fill=1)
 
     header_top = H - 15 * mm
-    # Bloque logo (izquierda) — hasta 42mm de ancho, alturas de 28mm
+    # Logo (izquierda) — reducido -10%: 38mm x 25mm
+    LOGO_MAX_W, LOGO_MAX_H = 38 * mm, 25 * mm
     logo_h = 0
+    logo_w = 0
     if logo_bytes:
         try:
             img = ImageReader(io.BytesIO(logo_bytes))
             iw, ih = img.getSize()
-            max_w, max_h = 42 * mm, 28 * mm
-            rr = min(max_w / iw, max_h / ih)
-            lw, lh = iw * rr, ih * rr
-            c.drawImage(img, LEFT, header_top - lh, width=lw, height=lh,
+            rr = min(LOGO_MAX_W / iw, LOGO_MAX_H / ih)
+            logo_w, logo_h = iw * rr, ih * rr
+            c.drawImage(img, LEFT, header_top - logo_h, width=logo_w, height=logo_h,
                         mask="auto", preserveAspectRatio=True)
-            logo_h = lh
         except Exception:
             pass
+
+    # Emisor: A LA DERECHA DEL LOGO en la misma fila (fuentes -10%)
+    emi_x = LEFT + (logo_w if logo_w else 0) + 6 * mm   # gap 6mm despues del logo
+    emi_x_right = RIGHT - 65 * mm                        # deja espacio para FACTURA
+    ey = header_top - 2 * mm
+    c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 11)   # 12 -> 11
+    c.drawString(emi_x, ey, (emisor.get("nombre_comercial") or emisor.get("nombre") or "EMISOR")[:40])
+    ey -= 4.2 * mm
+    c.setFont("Helvetica", 7.5); c.setFillColorRGB(*ink_mid)   # 8.5 -> 7.5
+    if emisor.get("nombre") and emisor.get("nombre_comercial") and emisor["nombre"] != emisor["nombre_comercial"]:
+        c.drawString(emi_x, ey, emisor["nombre"][:55])
+        ey -= 3.4 * mm
+    if emisor.get("rfc"):
+        c.drawString(emi_x, ey, f"RFC {emisor['rfc']}   ·   Régimen {emisor.get('regimen_fiscal','')}")
+        ey -= 3.4 * mm
+    if emisor.get("domicilio"):
+        c.drawString(emi_x, ey, emisor["domicilio"][:70])
+        ey -= 3.4 * mm
+    contact = "   ·   ".join([x for x in [emisor.get("telefono"), emisor.get("email")] if x])
+    if contact:
+        c.drawString(emi_x, ey, contact[:70])
 
     # Titulo derecha (compacto y bien espaciado)
     serie = payload.get("serie", "F"); serie_folio = f"Serie {serie}   ·   Folio {payload.get('folio', '')}"
@@ -242,7 +263,6 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
     c.drawRightString(RIGHT, header_top - 11 * mm, tipo_sub)
 
     # Chip serie/folio: ancho justo al texto, con MARGEN VERTICAL claro
-    # respecto al subtitulo (subtitulo top ~ header_top-8mm; chip top = header_top-15mm).
     from reportlab.pdfbase.pdfmetrics import stringWidth as _sw2
     sf_w = _sw2(serie_folio, "Helvetica-Bold", 9.5) + 10 * mm
     chip_bottom = header_top - 22 * mm
@@ -255,24 +275,8 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
     c.drawRightString(RIGHT, chip_bottom - 3.5 * mm,
                        datetime.utcnow().strftime("%d %b %Y · %H:%M UTC").upper())
 
-    # Emisor bajo el logo
-    y = header_top - max(logo_h, 28 * mm) - 4 * mm
-    c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 12)
-    c.drawString(LEFT, y, emisor.get("nombre_comercial") or emisor.get("nombre") or "EMISOR")
-    y -= 4.6 * mm
-    c.setFont("Helvetica", 8.5); c.setFillColorRGB(*ink_mid)
-    if emisor.get("nombre") and emisor.get("nombre_comercial") and emisor["nombre"] != emisor["nombre_comercial"]:
-        c.drawString(LEFT, y, emisor["nombre"])
-        y -= 3.8 * mm
-    if emisor.get("rfc"):
-        c.drawString(LEFT, y, f"RFC {emisor['rfc']}   ·   Régimen {emisor.get('regimen_fiscal','')}")
-        y -= 3.8 * mm
-    if emisor.get("domicilio"):
-        c.drawString(LEFT, y, emisor["domicilio"][:110])
-        y -= 3.8 * mm
-    line = "   ·   ".join([x for x in [emisor.get("telefono"), emisor.get("email")] if x])
-    if line:
-        c.drawString(LEFT, y, line)
+    # Cursor y para lo que sigue: bajo el bloque logo/emisor
+    y = header_top - max(logo_h, LOGO_MAX_H) - 6 * mm
 
     # ── BANDA FISCAL: UUID + metadatos ──────────────────────────────
     band_y = y - 8 * mm - 20 * mm
@@ -298,13 +302,13 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
         c.setFillColorRGB(*ink); c.setFont("Helvetica-Bold", 10)
         c.drawRightString(x_right, top - 5 * mm, v)
 
-    # 4 columnas espaciadas 22mm entre bordes derechos: USO CFDI a la derecha,
-    # y METODO, FORMA PAGO, MONEDA a la izquierda. Todas right-aligned para
-    # que las etiquetas y valores queden ordenados aunque tengan distinto ancho.
-    _kv_right(RIGHT,               band_y + 15 * mm, "USO CFDI",  (receptor.get("uso_cfdi") or "G03"))
-    _kv_right(RIGHT - 22 * mm,     band_y + 15 * mm, "MÉTODO",    payload.get("metodo_pago", "PUE"))
-    _kv_right(RIGHT - 44 * mm,     band_y + 15 * mm, "FORMA PAGO", payload.get("forma_pago", "01"))
-    _kv_right(RIGHT - 68 * mm,     band_y + 15 * mm, "MONEDA",    payload.get("moneda", "MXN"))
+    # 4 columnas espaciadas 22mm entre bordes derechos, con padding 5mm
+    # del borde derecho para que USO CFDI no quede pegado al margen.
+    _r = RIGHT - 5 * mm
+    _kv_right(_r,               band_y + 15 * mm, "USO CFDI",   (receptor.get("uso_cfdi") or "G03"))
+    _kv_right(_r - 22 * mm,     band_y + 15 * mm, "MÉTODO",     payload.get("metodo_pago", "PUE"))
+    _kv_right(_r - 44 * mm,     band_y + 15 * mm, "FORMA PAGO", payload.get("forma_pago", "01"))
+    _kv_right(_r - 68 * mm,     band_y + 15 * mm, "MONEDA",     payload.get("moneda", "MXN"))
 
     # ── RECEPTOR: card sobria ───────────────────────────────────────
     rec_y = band_y - 4 * mm
@@ -461,9 +465,11 @@ def _mock_pdf(payload: Dict[str, Any], folio_fiscal: str) -> bytes:
     imp = (payload.get("impuestos") or {}).get("total_traslados_impuestos", 0)
     if imp:
         _tot("IVA 16%", imp)
+    # Linea separadora ANTES del total, con aire arriba y abajo.
     y -= 2 * mm
     c.setFillColorRGB(*brand); c.setLineWidth(0.8)
-    c.line(LEFT + 100 * mm, y + 3, RIGHT, y + 3)
+    c.line(LEFT + 100 * mm, y, RIGHT, y)
+    y -= 6 * mm  # aire entre la linea y el baseline de TOTAL (13pt bold ~ 4.6mm alto)
     _tot("TOTAL " + (payload.get("moneda") or "MXN"), payload.get("total", 0), big=True)
 
     # Importe con letra (requisito SAT)
