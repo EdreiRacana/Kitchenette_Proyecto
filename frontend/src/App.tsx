@@ -2567,7 +2567,7 @@ const MODULE_MANUALS: ModuleManual[] = [
       { name: "Logo e identidad visual", desc: "Logo que aparece en tickets POS, PDFs de cartera, contratos, recibos de nómina y cotizaciones." },
       { name: "Usuarios y roles", desc: "Alta de personas con rol (admin, manager, user) y permisos por módulo (sales.view, hr.view, finance.write…). Cero acceso lateral entre empresas." },
       { name: "Multi-tenancy", desc: "Cada empresa cliente vive aislada: datos, usuarios, PAC, correo. Blindado en 9 módulos (Sales, POS, Customers, Inventory, Retail, Finance, HR, Accounting, CFDI)." },
-      { name: "PAC (Sufactura)", desc: "Credenciales de tu Proveedor Autorizado de Certificación. Modo: mock (pruebas locales), sandbox (Sufactura pruebas), production (real con XML timbrado)." },
+      { name: "Integraciones → Sufactura (PAC)", desc: "Captura username, password, RFC y environment del Proveedor Autorizado de Certificación. Environment 'sandbox' para pruebas contra Sufactura, 'production' para timbrar CFDI 4.0 real ante SAT." },
       { name: "Correo transaccional (Resend)", desc: "Configuración del dominio verificado con DKIM. MAIL_FROM debe ser una dirección de tu dominio verificado (no gmail)." },
       { name: "Almacenes y sucursales", desc: "Define almacenes propios (own), consignaciones (consignment), retornos, merma. El de retornos se auto-crea al primer uso." },
       { name: "Políticas comerciales", desc: "Condiciones de pago (contado, 30/60/90 días), reglas de retenciones para marketplaces (IVA 8% + ISR 2.5%), esquemas de comisiones." },
@@ -2577,7 +2577,7 @@ const MODULE_MANUALS: ModuleManual[] = [
     start: [
       "Entra a Configuración → Empresa. Captura RFC, régimen fiscal, código postal, Registro Patronal IMSS. Sube tu logo.",
       "Ve a Usuarios → 'Nuevo usuario'. Crea a tu equipo con el rol adecuado y permisos por módulo.",
-      "Configura el PAC (Sufactura): captura credenciales y elige modo. Empieza en 'mock' o 'sandbox' antes de pasar a 'production'.",
+      "En Integraciones → Sufactura, captura username, password, RFC y environment. Empieza en 'sandbox' antes de pasar a 'production'.",
       "Configura correo (Resend): valida tu dominio con DKIM y usa MAIL_FROM = 'Tu Empresa <no-reply@tudominio.com>'.",
       "Da de alta almacenes/sucursales según tu operación (central, consignación, tienda).",
     ],
@@ -2592,14 +2592,14 @@ const MODULE_MANUALS: ModuleManual[] = [
       { title: "Configuración", body: "El cuarto de máquinas del sistema. Se ajusta al inicio y de vez en cuando. Te muestro lo esencial." },
       { title: "Perfil fiscal", body: "RFC, régimen fiscal SAT, código postal y Registro Patronal IMSS. Aparecen en CFDI, cédulas IMSS y avisos AFIL — dejarlo mal invalida todo." },
       { title: "Usuarios y permisos", body: "Cada persona con su rol (admin/manager/user) y permisos por módulo. La multi-tenancy garantiza que solo vean su empresa." },
-      { title: "PAC (Sufactura)", body: "Credenciales de tu Proveedor Autorizado de Certificación. Empieza en modo mock/sandbox; cuando estés listo cambia a production." },
+      { title: "Sufactura (PAC)", body: "En Integraciones → Sufactura capturas username, password, RFC y environment. Empieza en 'sandbox'; cuando estés listo cambia a 'production'." },
       { title: "Correo Resend", body: "Dominio verificado con DKIM para que tus recibos, alertas y cotizaciones lleguen sin caer en spam." },
       { title: "Health audit", body: "El endpoint /health/audit?token=<X> te dice si hay fugas multi-tenant, timbrado indebido, stock roto. Córrelo semanalmente." },
     ],
   },
   {
-    id: "cfdi", page: "cfdi", title: "CFDI / Facturación electrónica", icon: FileText, color: "#EF4444",
-    tagline: "Timbrado SAT 4.0 vía PAC — sin caerte en pruebas ni en producción",
+    id: "cfdi", page: "ventas", title: "CFDI / Facturación electrónica", icon: FileText, color: "#EF4444",
+    tagline: "Timbrado SAT 4.0 vía PAC — se opera desde cada orden en Ventas",
     summary: "El módulo de CFDI conecta STHENOVA ERP con el SAT vía un Proveedor Autorizado de Certificación (PAC = Sufactura). Timbra facturas de ingreso (I), egreso (E, para notas de crédito), traslado (T), nómina (N) y pagos (P) en CFDI 4.0. Maneja los tres modos: mock (local sin costo), sandbox (Sufactura pruebas), production (real con XML SAT). Bloquea doble timbrado con UNIQUE (cfdi_uuid) + guard atómico. Cancelación con acuse, complementos y descarga de XML/PDF listos para entregar al cliente.",
     tools: [
       { name: "Timbrado de ingreso (I)", desc: "Genera CFDI 4.0 desde una orden de venta o cobro POS. Toma RFC receptor, régimen fiscal, uso CFDI, forma de pago, método (PUE/PPD)." },
@@ -2612,11 +2612,11 @@ const MODULE_MANUALS: ModuleManual[] = [
       { name: "Anti-doble timbrado", desc: "UNIQUE (cfdi_uuid) en base + guard atómico. Si intentas timbrar dos veces la misma orden, la segunda es rechazada silenciosamente." },
     ],
     start: [
-      "Requisitos: en Configuración → PAC, captura tus credenciales de Sufactura y arranca en modo 'mock' para probar.",
-      "Cuando quieras probar contra SAT sin costos reales: cambia a 'sandbox'.",
-      "Cuando estés listo para timbrar de verdad: 'production'. El banner rojo 'MODO PRUEBA' desaparecerá.",
-      "Para timbrar: abre una orden pagada → 'Timbrar CFDI'. El sistema toma los datos del cliente (RFC, régimen, uso), llama al PAC y guarda XML + PDF.",
-      "Para cancelar: abre el CFDI y presiona 'Cancelar'. Elige motivo SAT (01-04). El acuse se guarda automáticamente.",
+      "Requisitos: en Configuración → Integraciones → Sufactura, captura username, password y RFC. Elige environment ('sandbox' para pruebas, 'production' para timbrado real).",
+      "Prueba primero en 'sandbox' con datos reales para validar RFC y régimen antes de pasar a 'production'.",
+      "Cuando cambies a 'production', el banner rojo 'MODO PRUEBA' desaparecerá.",
+      "Para timbrar: abre una orden pagada en Ventas → 'Timbrar CFDI'. El sistema toma RFC del cliente, régimen fiscal, uso CFDI, llama a Sufactura y guarda XML + PDF.",
+      "Para cancelar: abre la orden con CFDI y presiona 'Cancelar CFDI'. Elige motivo SAT (01-04). El acuse se guarda automáticamente.",
     ],
     tips: [
       "Un cliente sin régimen fiscal o con RFC inválido rompe el timbrado. Valida siempre RFC (formato) y régimen antes de facturar.",
@@ -2745,12 +2745,12 @@ const HELP_GUIDES = [
   {
     id: "timbrar", title: "Timbrar un CFDI 4.0", icon: FileText, color: "#EF4444",
     steps: [
-      "Requisito: en Configuración → PAC (Sufactura) tus credenciales están activas y el modo es 'sandbox' o 'production'.",
+      "Requisito: en Configuración → Integraciones → Sufactura tus credenciales están activas y el environment es 'sandbox' o 'production'.",
       "Ve a Ventas → abre la orden pagada.",
       "Presiona 'Timbrar CFDI'. El sistema toma RFC receptor, régimen fiscal, uso CFDI, forma de pago y método.",
-      "El PAC responde con XML + UUID + sello SAT. Se guarda en la orden.",
+      "Sufactura responde con XML + UUID + sello SAT. Se guarda en la orden.",
       "Desde la orden ahora puedes descargar XML (para el cliente) o PDF (con QR SAT).",
-      "Si estás en 'mock' o 'sandbox' verás el banner rojo 'MODO PRUEBA' — es normal, no se timbra ante SAT."
+      "Si estás en 'sandbox' verás el banner rojo 'MODO PRUEBA' — es normal, no se timbra ante SAT."
     ],
   },
   {
@@ -2887,12 +2887,12 @@ const HELP_GUIDES = [
   {
     id: "banner-modo-prueba", title: "Quitar el banner rojo 'MODO PRUEBA'", icon: AlertTriangle, color: "#EF4444",
     steps: [
-      "El banner rojo aparece cuando el PAC (Sufactura) NO está en modo 'production'. Es la protección contra timbrar por error en pruebas.",
-      "Ve a Configuración → PAC (Sufactura).",
+      "El banner rojo aparece cuando Sufactura NO está en environment 'production'. Es la protección contra timbrar por error en pruebas.",
+      "Ve a Configuración → Integraciones → Sufactura.",
       "Captura credenciales de PRODUCCIÓN reales de Sufactura (no las de sandbox).",
-      "Cambia el modo a 'production'.",
-      "Al guardar, el banner desaparece.",
-      "Recomendación: primero timbra 1-2 CFDI de prueba en sandbox con tus datos reales para validar RFC, régimen y códigos postales antes de cambiar a producción."
+      "Cambia environment a 'production' y guarda.",
+      "El banner desaparece.",
+      "Recomendación: primero timbra 1-2 CFDI de prueba en 'sandbox' con tus datos reales para validar RFC, régimen y códigos postales antes de cambiar a producción."
     ],
   },
 ];
