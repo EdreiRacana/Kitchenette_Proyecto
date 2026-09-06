@@ -272,6 +272,18 @@ _SOURCE_MAP = {
     "ventas_pos_dia": "POS", "ventas_pos_hora": "POS",
     "utilidad_bruta": "Contabilidad",
     "concentracion_clientes": "Ventas",
+    # Fase 17
+    "meta_ventas_mes": "Forecast", "cumplimiento_por_sku": "Forecast",
+    "ventas_por_categoria": "Ventas",
+    "arqueos_con_diferencia": "POS", "turnos_por_conciliar": "POS",
+    "traslados_pendientes": "Inventario",
+    "sell_in_vs_sell_out": "Retail", "devoluciones_por_recibir": "Retail",
+    "ajustes_inventario_mes": "Inventario", "stock_por_almacen": "Inventario",
+    "compras_periodo": "Compras", "oc_por_recibir_semana": "Compras",
+    "movimientos_bancarios_dia": "Finanzas",
+    "mes_cerrado": "Contabilidad", "polizas_dia": "Contabilidad",
+    "infonavit_mes": "Nómina", "fonacot_mes": "Nómina",
+    "empleados_por_departamento": "Nómina", "avisos_afil_pendientes": "Nómina",
 }
 
 def _source_label(tool_name: str) -> str:

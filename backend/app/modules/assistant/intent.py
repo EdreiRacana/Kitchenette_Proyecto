@@ -313,6 +313,73 @@ _PATTERNS: list = [
     (r"(producto|art[ií]cul).{0,20}(m[aá]s\s+vendid|top).{0,15}(pos|hoy|d[ií]a|caja)",
         "top_producto_pos_dia", None),
 
+    # ── Fase 17 · Tools extras (patrones específicos) ─────────────────
+    # Meta / forecast — deben ir ANTES de los generales de ventas
+    (r"(meta|forecast|pron[oó]stico).{0,15}(mes|ventas?|actual|septiembre|del)",
+        "meta_ventas_mes", None),
+    (r"(voy|c[oó]mo\s+voy|estoy).{0,10}(vs|contra|hacia).{0,15}(meta|forecast|pron[oó]stico)",
+        "meta_ventas_mes", None),
+    (r"(cumplimiento|% ?cumpl).{0,15}(meta|forecast)",
+        "meta_ventas_mes", None),
+    (r"(cumplimiento|desviaci[oó]n).{0,15}(por\s+)?(sku|producto)",
+        "cumplimiento_por_sku", None),
+
+    # Ventas por categoría
+    (r"(ventas?|top|mejor(es)?|distribuci[oó]n).{0,10}(por\s+)?categor[ií]a",
+        "ventas_por_categoria", lambda m, q: {"periodo": _detect_period(q)}),
+
+    # POS extra
+    (r"(arqueo|cuadre).{0,20}(diferencia|faltant|sobr|no\s+cuadr|variance)",
+        "arqueos_con_diferencia", None),
+    (r"(turno|sesi[oó]n|caja).{0,20}(por\s+conciliar|sin\s+conciliar|pendiente\s+de\s+conciliar)",
+        "turnos_por_conciliar", None),
+
+    # Retail extras
+    (r"(traslad|transferenci).{0,20}(pendiente|en\s+tr[aá]nsito|por\s+completar)",
+        "traslados_pendientes", None),
+    (r"sell.?in.{0,10}(vs|contra|frente\s+a).{0,10}sell.?out",
+        "sell_in_vs_sell_out", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(devoluci[oó]n|retorn).{0,20}(por\s+recibir|pendient|en\s+tr[aá]nsito|f[ií]sica)",
+        "devoluciones_por_recibir", None),
+
+    # Inventario extras
+    (r"(ajuste|correcci[oó]n).{0,15}inventario",
+        "ajustes_inventario_mes", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(stock|inventario|valor).{0,15}por\s+(almac[eé]n|sucursal|bodega)",
+        "stock_por_almacen", None),
+
+    # Compras extras
+    (r"compras?\s+(del|de\s+este|este)\s*(mes|a[ñn]o|semana|hoy|ayer|periodo)",
+        "compras_periodo", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"cu[aá]nto\s+(compr[eé]|gast[eé]).{0,15}(mes|proveedor)",
+        "compras_periodo", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(oc|orden(es)?\s+de\s+compra).{0,20}(por\s+recibir|que\s+llegan?|semana)",
+        "oc_por_recibir_semana", None),
+
+    # Finanzas
+    (r"(movimiento|entrada|salida).{0,20}banc.{0,15}(hoy|d[ií]a)",
+        "movimientos_bancarios_dia", None),
+    (r"movimientos\s+del\s+banco\s+hoy",
+        "movimientos_bancarios_dia", None),
+
+    # Contabilidad
+    (r"(mes|periodo|ejercicio).{0,15}(cerrado|cierre|hasta\s+cu[aá]ndo)",
+        "mes_cerrado", None),
+    (r"(p[oó]liza|asiento).{0,15}(hoy|d[ií]a|de\s+hoy|del\s+d[ií]a)",
+        "polizas_dia", None),
+
+    # RH / Nómina extras
+    (r"\b(infonavit)\b",
+        "infonavit_mes", None),
+    (r"\b(fonacot)\b",
+        "fonacot_mes", None),
+    (r"(empleado|personal|plantilla).{0,15}(por\s+)?(departamento|[aá]rea)",
+        "empleados_por_departamento", None),
+    (r"(aviso(s)?\s+afil|movimiento(s)?\s+imss|idse).{0,15}(pendient|sin\s+presentar)",
+        "avisos_afil_pendientes", None),
+    (r"(avisos?\s+afil\s+pendient)",
+        "avisos_afil_pendientes", None),
+
     # ── Fase 8 · Vendedores + cliente por nombre ──────────────────────
     (r"(top|mejor(es)?|los?\s+mejores)\s*\d*\s+vendedor(es)?",
         "top_vendedores", lambda m, q: {"periodo": _detect_period(q), "limite": _detect_limit(q)}),
