@@ -115,10 +115,14 @@ async def _send_http(provider: str, api_key: str, mail_from: str, *, to: str, su
             if atts:
                 # Resend soporta inline images via content_id (referenciables
                 # desde el HTML como <img src="cid:xxx"/>). Sin cid es adjunto normal.
+                # OJO: Resend REST API espera content_id SIN los angulares '<>'
+                # (esos son solo del header MIME crudo). Si mandas '<erp-logo>'
+                # con angulares, no matchea con 'cid:erp-logo' del HTML y el
+                # logo se manda como attachment normal → imagen rota en el body.
                 payload["attachments"] = [
                     {
                         "filename": fn, "content": c,
-                        **({"content_id": f"<{cid}>", "content_type": f"image/{st}"} if cid else {}),
+                        **({"content_id": cid, "content_type": f"image/{st}"} if cid else {}),
                     }
                     for fn, c, st, cid in atts
                 ]
