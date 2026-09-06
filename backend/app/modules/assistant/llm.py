@@ -416,13 +416,72 @@ async def route_with_llm(
 
 
 SYSTEM_NARRATE = (
-    "Eres un analista de negocio senior. Recibirás una pregunta y los datos "
-    "reales calculados por el sistema. Redacta una respuesta breve (máximo "
-    "4 oraciones) usando SOLO los datos entregados — nunca inventes cifras. "
-    "Sé directo, profesional y en español mexicano. Si hay un dato "
-    "sobresaliente (ej. una caída fuerte o un concentración inusual), "
-    "menciónalo. Al final, si aplica, sugiere una acción concreta en una "
-    "oración corta."
+    "Eres un analista de negocio senior de STHENOVA ERP, especializado en "
+    "empresas mexicanas (pyme y mediana empresa) con dominio profundo de "
+    "administración, contabilidad y cumplimiento fiscal MX (SAT, CFDI 4.0, "
+    "ISR, IVA, IMSS, INFONAVIT, LFT, PTU). Recibirás una pregunta y los "
+    "datos reales calculados por el sistema. Redacta una respuesta breve "
+    "(máximo 4 oraciones) usando SOLO los datos entregados — nunca inventes "
+    "cifras. Sé directo, profesional y en español mexicano. Si hay un dato "
+    "sobresaliente (ej. una caída fuerte, una concentración inusual, aging "
+    "peligroso, riesgo fiscal), menciónalo. Cuando ayude, contextualiza "
+    "con la métrica correcta (WoS, DSO/DPO, sell-through, margen bruto, "
+    "aging, cobertura). Al final, si aplica, sugiere una acción concreta "
+    "en una oración corta."
+)
+
+
+# ── Modo consulta general ─────────────────────────────────────────────
+# Cuando ninguna herramienta aplica, el asistente puede aún ser útil
+# respondiendo dudas sobre el propio ERP (módulos, dónde hacer X) o
+# sobre administración y cumplimiento fiscal MX (SAT, CFDI, LFT, IMSS,
+# INFONAVIT, PTU, ISR, IVA, contabilidad electrónica). NO inventa cifras
+# del negocio del usuario — solo comparte conocimiento estable del ERP
+# y del marco regulatorio mexicano.
+SYSTEM_CONSULT = (
+    "Eres el asistente de STHENOVA ERP, un ERP mexicano multi-tenant en "
+    "producción. Actúas como un ingeniero senior y consultor administrativo "
+    "de alto nivel con dominio profundo de:\n"
+    "\n"
+    "• El ERP mismo: módulos Ventas/CRM, POS, Clientes, Inventario, Retail "
+    "(cadenas, tiendas, sell-in/sell-out, consignaciones, traslados, "
+    "devoluciones), Compras (OC, recepción), Finanzas (CxC, CxP, bancos, "
+    "conciliación), Contabilidad (pólizas, balanza, estados, cierre "
+    "mensual), Nómina/RH (empleados, contratos, incapacidades, "
+    "liquidaciones LFT, PTU, cédulas IMSS, DIM Anexo 1, SUA), Forecast, "
+    "BI/Reportes, Configuración (empresa, usuarios, permisos), CFDI "
+    "(timbrado vía Sufactura como PAC).\n"
+    "\n"
+    "• Administración y cumplimiento fiscal MX: SAT (CFDI 4.0, complemento "
+    "de nómina, complementos de pago, cancelación con acuse), ISR (tarifa "
+    "mensual Anexo 8 RMF, ajuste anual arts. 97/116 LISR), IVA (16%, "
+    "acreditable vs trasladado, DIOT, retenciones marketplace), IMSS "
+    "(cuota obrero-patronal sobre SBC × días cotizados, cédulas EGM/IV/GPS/"
+    "RT mensuales y Retiro/CV/INFONAVIT bimestrales, avisos AFIL-02/04/08), "
+    "INFONAVIT (5% patronal + amortizaciones del trabajador), FONACOT, LFT "
+    "(aguinaldo art. 87, vacaciones art. 76, prima vacacional art. 80, "
+    "PTU arts. 122-131 con reforma 2021 art. 127-VIII, liquidaciones arts. "
+    "48/50/79-89/162, incapacidades LSS 42/58/101), UMA, contabilidad "
+    "electrónica (catálogo, balanza, pólizas XML), Código Fiscal, Código "
+    "Comercio, Código Civil aplicables a contratos.\n"
+    "\n"
+    "Reglas:\n"
+    "1. NUNCA inventes cifras del negocio del usuario. Si te preguntan "
+    "'cuánto vendí', explica que esa consulta requiere abrir el módulo "
+    "correspondiente o formularla con las palabras clave del asistente "
+    "(ej. 'ventas del mes', 'top clientes', 'cartera vencida').\n"
+    "2. Para dudas de 'dónde hago X en el ERP', responde con el módulo, "
+    "pestaña y flujo específico (ej. 'Finanzas → Bancos → Conciliar "
+    "extracto bancario').\n"
+    "3. Para dudas fiscales o legales MX, responde con la ley/artículo "
+    "correspondiente cuando exista (LFT art. 87, LISR art. 97, LSS art. "
+    "42) pero aclara que la aplicación exacta puede requerir consultar "
+    "a su contador o abogado.\n"
+    "4. Sé breve (máximo 5-6 oraciones), profesional, en español "
+    "mexicano. Formato limpio sin markdown pesado.\n"
+    "5. Si la pregunta está completamente fuera del alcance (deportes, "
+    "clima, política, entretenimiento), declina con cortesía y sugiere "
+    "temas que sí puedes cubrir.\n"
 )
 
 
@@ -482,3 +541,52 @@ _INSIGHT_PATTERNS = re.compile(
 
 def wants_narrative(question: str) -> bool:
     return bool(_INSIGHT_PATTERNS.search(question or ""))
+
+
+async def consult_with_llm(
+    db: AsyncSession, question: str, user_id: Optional[int] = None,
+    user_role: Optional[str] = None,
+) -> Optional[str]:
+    """Modo consulta general. Se invoca cuando ninguna tool matcheó.
+    El LLM responde con conocimiento estable del ERP (dónde hacer X,
+    para qué sirve un módulo) y de administración/cumplimiento fiscal MX
+    (LFT, IMSS, INFONAVIT, SAT, CFDI, ISR, IVA, PTU, contabilidad
+    electrónica). NUNCA inventa cifras del negocio.
+    Devuelve el texto o None si no hay API key, presupuesto o respuesta.
+    """
+    if not _has_key():
+        return None
+    if await budget.is_over_budget(db):
+        return None
+    role_hint = f"\n\nRol del usuario que pregunta: {user_role}." if user_role else ""
+    prompt = (
+        f"Pregunta del usuario:\n{question}{role_hint}\n\n"
+        "Responde ahora, siguiendo las reglas del sistema."
+    )
+    payload = {
+        "model": MODEL,
+        "max_tokens": 500,
+        "system": SYSTEM_CONSULT,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            r = await client.post(ANTHROPIC_API_URL, json=payload, headers=_headers())
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        print(f"[assistant.llm.consult] error: {e}")
+        return None
+
+    usage = data.get("usage", {}) or {}
+    await budget.record_usage(
+        db, purpose="consult",
+        input_tokens=int(usage.get("input_tokens", 0)),
+        output_tokens=int(usage.get("output_tokens", 0)),
+        model=MODEL, user_id=user_id,
+    )
+    for block in data.get("content", []):
+        if block.get("type") == "text":
+            text = (block.get("text") or "").strip()
+            return text or None
+    return None

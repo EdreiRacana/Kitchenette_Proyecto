@@ -160,11 +160,35 @@ async def ask(payload: AskRequest, db: DB, current_user: CurrentUser) -> AskResp
         await suggestions.log_unmatched(db, q, user_id, matched_by, tool_hit)
 
     if not routed:
-        # No entendimos, o LLM tampoco encontró tool aplicable, o presupuesto agotado
+        # No hay tool aplicable. Antes de rendirnos, intentamos modo consulta
+        # general: el LLM responde con conocimiento estable del ERP y del
+        # marco fiscal/laboral MX. NO inventa cifras del negocio — solo
+        # dónde hacer X, para qué sirve un módulo, cómo se aplica una regla.
         over = await budget.is_over_budget(db)
+        user_role = getattr(current_user, "role", None) or (
+            "superuser" if getattr(current_user, "is_superuser", False) else None
+        )
+        consult_text = None
+        if not over:
+            consult_text = await llm.consult_with_llm(
+                db, q, user_id=user_id, user_role=user_role,
+            )
+            if consult_text:
+                used_llm = True
+                llm_purpose = "consult"
+
+        if consult_text:
+            return AskResponse(
+                text=consult_text, source="Consulta",
+                matched=True, used_llm=used_llm, llm_purpose=llm_purpose,
+                ms=int((time.perf_counter() - t0) * 1000),
+            )
+
         base = ("Aún no puedo entender esa pregunta con precisión. "
                 "Prueba con: ventas del mes, top productos, cartera vencida, "
-                "stock crítico, caducidades, cadena Walmart, POS del día.")
+                "stock crítico, caducidades, cadena Walmart, POS del día. "
+                "También puedes preguntarme dónde hacer algo en el ERP o "
+                "dudas de administración fiscal MX (CFDI, IMSS, ISR, PTU, LFT).")
         if over:
             base = ("Se agotó el presupuesto mensual del asistente. "
                     "Aún puedo responder preguntas frecuentes (ventas del mes, "
