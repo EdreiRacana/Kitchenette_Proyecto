@@ -122,9 +122,11 @@ PROMPT_HINTS: dict[str, list[str]] = {
     "cxc_resumen": [
         "cartera vencida", "cuentas por cobrar",
         "cuánto me deben", "aging de cxc",
+        "saldo de cuentas por cobrar",
     ],
     "cxp_resumen": [
         "cuentas por pagar", "cuánto le debo a proveedores",
+        "saldo de cuentas por pagar",
     ],
     "top_deudores": [
         "top deudores", "quién me debe más",
@@ -159,7 +161,8 @@ PROMPT_HINTS: dict[str, list[str]] = {
     # ── Inventario ───────────────────────────────────────────────────
     "stock_critico": [
         "stock crítico", "qué productos están agotados",
-        "productos por reordenar",
+        "productos por reordenar", "productos por agotarse",
+        "qué se me está acabando",
     ],
     "caducidades_proximas": [
         "caducidades próximas", "qué productos van a caducar",
@@ -167,6 +170,7 @@ PROMPT_HINTS: dict[str, list[str]] = {
     ],
     "sin_movimiento": [
         "productos sin movimiento", "qué no se está vendiendo",
+        "productos con poca rotación", "productos parados",
     ],
     "rotacion_producto": [
         "rotación de productos", "weeks of supply",
