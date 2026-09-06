@@ -279,7 +279,8 @@ _PATTERNS: list = [
         "aguinaldo_devengado", None),
     (r"vacaciones?",
         "vacaciones_pendientes", None),
-    (r"\bimss\b",
+    # Acepta typos comunes: imss / imms / ims / cuota obrero patronal
+    (r"\b(imss|imms|ims)\b|cuota\s+obrero(\s+patronal)?",
         "imss_a_pagar", lambda m, q: {"periodo": _detect_period(q)}),
     (r"\bptu\b|(reparto\s+de\s+utilidad)",
         "ptu_estimado", None),
@@ -396,7 +397,7 @@ _RESERVED_AFTER_DE = {
     "producto", "productos", "articulo", "articulos", "artículo",
     "cliente", "clientes", "vendedor", "vendedores", "cadena",
     "walmart", "soriana", "chedraui", "costco", "heb", "sam's", "sams",
-    "pos", "post", "caja", "nomina", "nómina", "imss", "iva", "isr",
+    "pos", "post", "caja", "nomina", "nómina", "imss", "imms", "ims", "iva", "isr",
     "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
     "agosto", "septiembre", "setiembre", "octubre", "noviembre", "diciembre",
 }
