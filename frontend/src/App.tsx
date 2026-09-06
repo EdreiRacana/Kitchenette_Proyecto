@@ -2598,44 +2598,6 @@ const MODULE_MANUALS: ModuleManual[] = [
     ],
   },
   {
-    id: "cfdi", page: "ventas", title: "CFDI / Facturación electrónica", icon: FileText, color: "#EF4444",
-    tagline: "Timbrado SAT 4.0 vía PAC — se opera desde cada orden en Ventas",
-    summary: "El módulo de CFDI conecta STHENOVA ERP con el SAT vía un Proveedor Autorizado de Certificación (PAC = Sufactura). Timbra facturas de ingreso (I), egreso (E, para notas de crédito), traslado (T), nómina (N) y pagos (P) en CFDI 4.0. Maneja los tres modos: mock (local sin costo), sandbox (Sufactura pruebas), production (real con XML SAT). Bloquea doble timbrado con UNIQUE (cfdi_uuid) + guard atómico. Cancelación con acuse, complementos y descarga de XML/PDF listos para entregar al cliente.",
-    tools: [
-      { name: "Timbrado de ingreso (I)", desc: "Genera CFDI 4.0 desde una orden de venta o cobro POS. Toma RFC receptor, régimen fiscal, uso CFDI, forma de pago, método (PUE/PPD)." },
-      { name: "Nota de crédito / egreso (E)", desc: "Emite un CFDI de egreso relacionado al ingreso original (tipo relación 01) — descuentos, devoluciones, bonificaciones." },
-      { name: "Complemento de nómina", desc: "Timbrado obligatorio para nóminas — usa datos del recibo de RH (subsidio, ISR, IMSS, INFONAVIT, percepciones, deducciones)." },
-      { name: "Complemento de pagos (P)", desc: "Para facturación PPD (parcialidades diferidas): cada abono emite un CFDI de pago relacionado a la factura original." },
-      { name: "Cancelación con acuse", desc: "Cancela un CFDI ya timbrado siguiendo el motivo SAT (01 relacionado, 02 no operación, 03 no se llevó a cabo, 04 relacionada). Guarda el acuse XML." },
-      { name: "Modo del PAC", desc: "mock = simulado local (sin costo). sandbox = Sufactura pruebas. production = real con timbrado válido ante SAT. El banner rojo 'MODO PRUEBA' avisa si no estás en production." },
-      { name: "Descarga XML/PDF", desc: "El XML timbrado (para tu cliente) y la representación PDF con QR SAT, folio, sello, cadena original." },
-      { name: "Anti-doble timbrado", desc: "UNIQUE (cfdi_uuid) en base + guard atómico. Si intentas timbrar dos veces la misma orden, la segunda es rechazada silenciosamente." },
-    ],
-    start: [
-      "Requisitos: en Configuración → Integraciones → Sufactura, captura username, password y RFC. Elige environment ('sandbox' para pruebas, 'production' para timbrado real).",
-      "Prueba primero en 'sandbox' con datos reales para validar RFC y régimen antes de pasar a 'production'.",
-      "Cuando cambies a 'production', el banner rojo 'MODO PRUEBA' desaparecerá.",
-      "Para timbrar: abre una orden pagada en Ventas → 'Timbrar CFDI'. El sistema toma RFC del cliente, régimen fiscal, uso CFDI, llama a Sufactura y guarda XML + PDF.",
-      "Para cancelar: abre la orden con CFDI y presiona 'Cancelar CFDI'. Elige motivo SAT (01-04). El acuse se guarda automáticamente.",
-    ],
-    tips: [
-      "Un cliente sin régimen fiscal o con RFC inválido rompe el timbrado. Valida siempre RFC (formato) y régimen antes de facturar.",
-      "En CFDI 4.0 es obligatorio el código postal del emisor y del receptor (lugar de expedición y domicilio fiscal del receptor).",
-      "PUE (Pago en una exhibición) = se paga completa al momento. PPD (Pago diferido) = se genera factura + complementos de pago por cada abono.",
-      "Uso de CFDI más común: G01 (Adquisición de mercancías), G03 (Gastos en general), P01 (Por definir — el cliente lo asignará).",
-      "Cancelaciones de meses cerrados requieren autorización adicional del receptor en el portal del SAT — no todo se cancela con solo apretar botón.",
-      "El complemento de nómina se timbra por recibo, no por nómina completa: si son 40 empleados, son 40 CFDI.",
-    ],
-    tour: [
-      { title: "CFDI / Facturación electrónica", body: "STHENOVA se conecta al SAT vía Sufactura como PAC. Te muestro los tres modos y el flujo de timbrado." },
-      { title: "Los tres modos", body: "mock = simulado local sin costo (para desarrollo). sandbox = Sufactura pruebas. production = real ante SAT. Un banner rojo te avisa si no estás en production." },
-      { title: "Timbrar", body: "Abre una orden pagada → 'Timbrar CFDI'. El sistema toma los datos del cliente y llama al PAC. Guarda XML + PDF con QR SAT." },
-      { title: "Nota de crédito", body: "Para devoluciones o descuentos, emite un CFDI de egreso relacionado (tipo relación 01) al ingreso original. Nunca canceles y vuelvas a timbrar." },
-      { title: "Cancelar", body: "Elige motivo SAT: 01 con relación, 02 no operación, 03 no se realizó, 04 con relación a nueva factura. El acuse XML se guarda automático." },
-      { title: "Anti-doble timbrado", body: "UNIQUE(cfdi_uuid) + guard atómico. Aunque tu equipo apachurre 'Timbrar' 3 veces, solo se timbra una — cero riesgo de doble factura." },
-    ],
-  },
-  {
     id: "compras", page: "inventario", title: "Compras (OC)", icon: Truck, color: "#0EA5E9",
     tagline: "Órdenes de compra a proveedores y recepción de mercancía",
     summary: "El módulo de Compras vive dentro de Inventario y controla el ciclo de aprovisionamiento: crear órdenes de compra (OC) a proveedores, dar seguimiento a fechas de entrega, recibir mercancía por línea con cantidades reales (parciales o completas), incrementar stock en el almacén de recepción y generar la cuenta por pagar en Finanzas. Todo con auditoría de quién ordenó, quién recibió y qué diferencia hubo entre lo pedido y lo recibido.",
@@ -2775,42 +2737,32 @@ const HELP_GUIDES = [
     ],
   },
   {
-    id: "aguinaldo", title: "Calcular aguinaldo (art. 87 LFT)", icon: Wallet, color: "#F59E0B",
+    id: "aguinaldo", title: "Ver aguinaldo devengado y pagarlo", icon: Wallet, color: "#F59E0B",
     steps: [
-      "Ve a RH → pestaña 'Aguinaldo devengado' (o pregunta al Asistente 'aguinaldo devengado').",
-      "El sistema calcula 15 días × sueldo diario para empleados con año completo.",
-      "Para altas parciales del año: proporcional (días trabajados / 365 × 15 × salario diario).",
-      "Debes pagarlo antes del 20 de diciembre.",
-      "Retención ISR: los primeros 30 UMA anuales están exentos (art. 93-XIV LISR); el excedente se acumula al sueldo del mes.",
-      "Se timbra con complemento de nómina tipo 'aguinaldo' (clave 002 SAT)."
+      "Al Asistente: 'aguinaldo devengado' o ve a RH → pestaña 'Aguinaldo devengado'.",
+      "Verás por empleado la cifra ya calculada (proporcional para altas parciales del año).",
+      "Cuando lo vayas a pagar, genera una nómina especial tipo 'aguinaldo' — el sistema aplica la exención de ISR y calcula el excedente gravado.",
+      "Al aprobar la nómina, el CFDI de nómina con complemento de aguinaldo se timbra automáticamente."
     ],
   },
   {
-    id: "ptu", title: "Calcular y pagar PTU (arts. 122-131 LFT)", icon: Users, color: "#EC4899",
+    id: "ptu", title: "Repartir PTU del ejercicio", icon: Users, color: "#EC4899",
     steps: [
-      "Se paga entre el 1 de abril y el 30 de mayo del año siguiente al ejercicio.",
-      "Ve a RH → pestaña 'PTU' → año fiscal previo.",
-      "El sistema calcula 10% de la utilidad fiscal (renglón 26 del ISR anual).",
-      "Reparto: 50% por días trabajados, 50% por salarios devengados (art. 123 LFT).",
-      "Reforma 2021 art. 127-VIII: el tope por trabajador es el MAYOR entre 3 meses de salario o el promedio de PTU de los últimos 3 años.",
-      "Exclusiones: directores/administradores (127-I), servicio doméstico (127-VI), trabajadores <60 días (127-VII).",
-      "Confidenciales de cierta jerarquía tienen cap del sindicato × 1.20 (127-II) — marca is_confidential en la ficha.",
-      "Genera cédula PDF firmable y una nómina tipo 'ptu' que se timbra con complemento SAT (clave 003)."
+      "Ve a RH → pestaña 'PTU' → elige el año fiscal previo.",
+      "Captura la utilidad fiscal del ejercicio (la que declaraste al SAT).",
+      "El sistema calcula el reparto por empleado (aplica exclusiones y topes de art. 127 LFT automático).",
+      "Descarga la cédula PDF firmable para el equipo.",
+      "'Generar nómina PTU' crea la nómina tipo 'ptu' y timbra los CFDI correspondientes."
     ],
   },
   {
-    id: "liquidacion", title: "Calcular liquidación / finiquito LFT", icon: FileText, color: "#EF4444",
+    id: "liquidacion", title: "Generar finiquito / liquidación de un empleado", icon: FileText, color: "#EF4444",
     steps: [
       "Ve a RH → abre la ficha del empleado → 'Liquidación / finiquito'.",
-      "Captura fecha de terminación, tipo de baja (renuncia, despido justificado, despido injustificado, término de contrato, muerte).",
-      "El sistema calcula automáticamente:",
-      "• Sueldo pendiente hasta fecha de baja.",
-      "• Aguinaldo proporcional (art. 87 LFT).",
-      "• Vacaciones no gozadas + prima vacacional 25% (arts. 79 y 80 LFT).",
-      "• Prima de antigüedad: 12 días × año trabajado si ≥15 años o baja involuntaria (art. 162 LFT), tope 2 UMA diarias.",
-      "• Solo si es despido injustificado: indemnización constitucional 3 meses + 20 días × año (arts. 48 y 50 LFT).",
+      "Captura fecha de terminación y tipo de baja (renuncia, despido justificado, despido injustificado, término de contrato, muerte).",
+      "El sistema calcula automáticamente sueldos pendientes, aguinaldo proporcional, vacaciones + prima vacacional, prima de antigüedad y —si aplica— indemnización constitucional.",
       "Descarga la cédula PDF firmable — el trabajador firma su recepción.",
-      "Timbrar con CFDI complemento de nómina tipo 'separación' (clave 004)."
+      "Al aprobar, el CFDI de nómina con complemento de separación se timbra automáticamente."
     ],
   },
   {
@@ -2898,135 +2850,209 @@ const HELP_GUIDES = [
 ];
 
 // ── Preguntas frecuentes ──────────────────────────────────────────────
-// FAQs de administración y cumplimiento fiscal MX, más cómo se refleja
-// eso en el ERP. Cubren dudas típicas del director/contador/dueño.
+// FAQs OPERATIVAS por PUESTO. Responden "cómo hago esto en el ERP" y
+// "qué le pregunto al Asistente" — no lecciones fiscales ni contables.
+// Un contador ya sabe qué es la DIOT, un vendedor no lo pregunta.
 type HelpFaq = {
   id: string; category: string; icon: any; color: string;
   question: string; answer: string;
 };
 
 const HELP_FAQS: HelpFaq[] = [
-  // ─── Fiscal ───────────────────────────────────────────────────────
+  // ─── Dueño / Director ────────────────────────────────────────────
   {
-    id: "cfdi-pue-vs-ppd", category: "Fiscal · CFDI", icon: FileText, color: "#EF4444",
-    question: "¿Cuándo uso PUE y cuándo PPD al facturar?",
-    answer: "PUE (Pago en una Exhibición) se usa cuando el cliente paga el 100% al momento de emitir la factura (efectivo, tarjeta, transferencia inmediata). PPD (Pago en Parcialidades o Diferido) se usa cuando se cobra a crédito o en abonos posteriores; obliga a emitir un CFDI de complemento de pago por cada abono recibido. Regla práctica: si el pago cae en el mismo mes de emisión, es PUE; si cruza mes o va por parcialidades, es PPD (Regla 2.7.1.32 RMF). En STHENOVA se elige al timbrar; si el cliente es crédito por default, sale PPD automáticamente."
+    id: "duenio-ventas-mes", category: "Dueño / Director", icon: LayoutDashboard, color: "#33B2F5",
+    question: "¿Cómo veo cuánto vendí este mes?",
+    answer: "Abre el Tablero — arriba tienes el KPI 'Ventas del mes' con la comparación vs. el mes anterior. Para el detalle, pregúntale al Asistente: 'ventas del mes' (te da facturado, número de pedidos y ticket promedio) o 'ingresos vs egresos' (P&L express)."
   },
   {
-    id: "regimen-fiscal", category: "Fiscal · CFDI", icon: FileText, color: "#EF4444",
-    question: "¿Qué régimen fiscal capturo del cliente al facturar CFDI 4.0?",
-    answer: "El régimen fiscal del RECEPTOR es obligatorio en CFDI 4.0 y debe coincidir con el que el cliente tenga registrado en su constancia de situación fiscal. Los más comunes: 601 (General de Ley Personas Morales), 603 (Personas Morales con Fines no Lucrativos), 605 (Sueldos y Salarios), 606 (Arrendamiento), 612 (Actividades Empresariales y Profesionales), 616 (Sin Obligaciones Fiscales), 621 (RIF — desde 2022 solo transitorios), 626 (RESICO). Pide la constancia SAT actualizada del cliente; si captura mal el régimen, el PAC rechaza el timbrado."
+    id: "duenio-flujo", category: "Dueño / Director", icon: Wallet, color: "#22C55E",
+    question: "¿Cómo sé si voy a tener liquidez el mes que entra?",
+    answer: "Pregúntale al Asistente 'flujo de efectivo proyectado' — te suma el saldo actual del banco + cobranza esperada (CxC) − pagos esperados (CxP) a 30 días. Complementa con 'cobros de esta semana' y 'pagos de esta semana' para el corto plazo."
   },
   {
-    id: "uso-cfdi", category: "Fiscal · CFDI", icon: FileText, color: "#EF4444",
-    question: "¿Qué uso de CFDI capturo?",
-    answer: "El uso de CFDI es lo que el receptor le dará al comprobante. Comunes: G01 (Adquisición de mercancías), G02 (Devoluciones, descuentos, bonificaciones), G03 (Gastos en general), I01-I08 (Inversiones/deducciones), D01-D10 (deducciones personales de PF), P01 (Por definir — cuando el receptor asignará después) y S01 (Sin efectos fiscales, no deducible). Cuando dudes, pregúntale al cliente qué uso quiere; su contador es quien sabe."
+    id: "duenio-margen", category: "Dueño / Director", icon: TrendingUp, color: "#10B981",
+    question: "¿Cuál es mi margen del mes?",
+    answer: "Al Asistente: 'utilidad bruta del mes' (revenue − costo FIFO). Para saber qué productos jalan más margen: 'top margen' o 'productos con más ganancia'. Para el % nómina/ventas: 'nómina vs ventas'."
   },
   {
-    id: "cancelar-cfdi-mes-cerrado", category: "Fiscal · CFDI", icon: XCircle, color: "#EF4444",
-    question: "¿Puedo cancelar un CFDI del mes pasado o de un año anterior?",
-    answer: "Sí, pero con requisitos crecientes. El mismo mes: se cancela con sólo apretar el botón (el receptor recibe notificación en Buzón Tributario y tiene 72 horas para objetar, sino queda cancelada). Meses anteriores del mismo ejercicio: igual, con aceptación tácita del receptor. Ejercicios ya cerrados o CFDI relacionados a devoluciones fiscales: el receptor debe autorizar expresamente la cancelación desde su portal SAT. Si el receptor no responde en 72 horas, se cancela por presunción tácita (art. 29-A CFF y regla 2.7.1.34 RMF)."
-  },
-  {
-    id: "iva-marketplace", category: "Fiscal · IVA", icon: DollarSign, color: "#F97316",
-    question: "¿Por qué me retienen IVA cuando vendo en marketplace?",
-    answer: "Desde 2020 las plataformas digitales (Amazon, Mercado Libre, Liverpool, Walmart, etc.) están obligadas a retener el 8% de IVA (50% del 16%) y el 2.5% de ISR sobre lo que te depositen (arts. 113-B LISR y 1-A-BIS LIVA). Ellos te lo declaran al SAT en tu RFC. En STHENOVA se marca al cliente como 'Marketplace' en su ficha, y al conciliar el depósito el sistema resta comisión + IVA retenido + ISR retenido + devoluciones para calcular lo esperado."
-  },
-  {
-    id: "diot", category: "Fiscal · IVA", icon: FileText, color: "#F97316",
-    question: "¿Qué es la DIOT y cuándo la debo presentar?",
-    answer: "La DIOT (Declaración Informativa de Operaciones con Terceros) reporta al SAT los proveedores y clientes con operaciones ≥ $50,000 en el mes, con desglose de IVA acreditable/trasladado/retenido. Se presenta mensualmente a más tardar el último día del mes siguiente al que corresponda. Es obligatoria para contribuyentes con actividades gravadas de IVA. STHENOVA la arma automáticamente desde tus CFDI de gastos y compras (Contabilidad → DIOT); descargas el .txt y lo importas al programa DIOT del SAT."
+    id: "duenio-clientes", category: "Dueño / Director", icon: Users, color: "#06B6D4",
+    question: "¿Un solo cliente me representa demasiado?",
+    answer: "Pregúntale al Asistente: 'concentración de clientes' o 'pareto 80/20'. Si un cliente concentra >25% de tus ingresos tienes riesgo de dependencia — el sistema lo alerta y puedes ver el detalle en Reportes/BI."
   },
 
-  // ─── Nómina LFT/IMSS ─────────────────────────────────────────────
+  // ─── Vendedor ────────────────────────────────────────────────────
   {
-    id: "sbc-diario", category: "Nómina · IMSS", icon: IdCard, color: "#8B5CF6",
-    question: "¿Qué es el SBC y por qué debe ser diario, no mensual?",
-    answer: "El SBC (Salario Base de Cotización) es el ingreso diario del trabajador con el que se calculan las cuotas IMSS (arts. 27-33 LSS). Se compone del sueldo diario + parte proporcional de aguinaldo, vacaciones, prima vacacional y demás prestaciones fijas. En STHENOVA el campo Employee.sbc es SIEMPRE DIARIO; si capturas mensual por error, la cédula IMSS sale ~30× inflada. Existe POST /hr/employees/fix-sbc para autoreparar capturas viejas. Tope superior: 25 UMA diarias ($2,828.50 en 2026)."
+    id: "vendedor-pendientes", category: "Vendedor", icon: ShoppingCart, color: "#10B981",
+    question: "¿Qué pedidos tengo pendientes por entregar o cobrar?",
+    answer: "Al Asistente: 'pedidos pendientes' te lista los abiertos y parcialmente pagados. También 'pedidos con abono parcial' te da la cobranza fácil. En Ventas / CRM, la lista central muestra el estatus de cada orden."
   },
   {
-    id: "uma-vs-smg", category: "Nómina · LFT", icon: IdCard, color: "#8B5CF6",
-    question: "¿UMA o Salario Mínimo? ¿Cuál uso?",
-    answer: "Desde 2016 (reforma constitucional al art. 123-A-VI) la UMA (Unidad de Medida y Actualización) reemplazó al Salario Mínimo como referencia para pagos y multas de índole administrativa, fiscal y de seguridad social. El Salario Mínimo General se sigue usando SOLO para pagar a trabajadores. Reglas prácticas: multas SAT/IMSS → UMA. Créditos INFONAVIT en VSM viejo → conversión a UMA. Aportaciones IMSS → SBC en UMA (topes). Salario del trabajador → nunca por debajo del SMG vigente. UMA 2026 = $113.14 diaria, se lee en hr/service.py."
+    id: "vendedor-cliente", category: "Vendedor", icon: Users, color: "#06B6D4",
+    question: "¿Cómo va un cliente específico?",
+    answer: "Al Asistente: 'ventas de [nombre]' o 'cómo va [nombre]' — busca al cliente y te da total comprado, pedidos, saldo pendiente y última compra. También puedes abrir su ficha desde Clientes."
   },
   {
-    id: "vacaciones-reforma-2023", category: "Nómina · LFT", icon: IdCard, color: "#8B5CF6",
-    question: "¿Cómo funciona la reforma de vacaciones 2023?",
-    answer: "Desde el 1 enero 2023 (reforma al art. 76 LFT): 1er año 12 días (antes 6), 2do 14, 3ro 16, 4to 18, 5to 20; a partir del 6to año se agregan 2 días por cada 5 años trabajados. La prima vacacional se mantiene en 25% mínimo (art. 80). STHENOVA aplica esta escala automáticamente cuando calcula vacaciones devengadas — no necesitas actualizar contratos viejos manualmente."
+    id: "vendedor-cotizaciones", category: "Vendedor", icon: FileText, color: "#8B5CF6",
+    question: "¿Qué cotizaciones tengo abiertas y cuáles ya se vencieron?",
+    answer: "'cotizaciones abiertas' te da el pipeline vigente con su valor total. 'cotizaciones vencidas' te lista las que ya pasaron su fecha de vigencia y no se convirtieron — llámalas o dales seguimiento."
   },
   {
-    id: "aguinaldo-exento", category: "Nómina · ISR", icon: Wallet, color: "#F59E0B",
-    question: "¿Qué parte del aguinaldo está exenta de ISR?",
-    answer: "Están exentos los primeros 30 UMA anuales (art. 93-XIV LISR), equivalente a $3,394.20 en 2026 (30 × $113.14). El excedente se acumula al ingreso mensual del trabajador y se retiene ISR conforme a la tarifa mensual del Anexo 8 RMF (aunque el pago sea semanal o quincenal, para efectos de acumulación se ve como parte del mes). STHENOVA aplica esto automáticamente al generar el CFDI de nómina con clave 002 (aguinaldo)."
-  },
-  {
-    id: "riesgo-trabajo", category: "Nómina · IMSS", icon: AlertTriangle, color: "#EF4444",
-    question: "Un empleado tuvo accidente laboral. ¿Le pago o no?",
-    answer: "No. Los subsidios por incapacidad temporal derivada de riesgo de trabajo los paga el IMSS al 100% del SBC desde el primer día (arts. 58 y 91 LSS), NO el patrón. Tú solo debes: (1) presentar aviso ST-7 al IMSS dentro de 24 horas del accidente, (2) enviarlo a Medicina del Trabajo del IMSS para valoración, (3) capturar la incapacidad en STHENOVA con subtipo 'riesgo_trabajo' — el sistema NO descuenta salario ni genera pago patronal por esos días. Si tú se lo pagas 'como favor', pierdes el derecho a que IMSS lo cubra y probablemente le subes la prima RT del año siguiente."
-  },
-  {
-    id: "incapacidad-general", category: "Nómina · IMSS", icon: AlertTriangle, color: "#F59E0B",
-    question: "¿Y en incapacidad por enfermedad general?",
-    answer: "Los primeros 3 días son a cargo del PATRÓN sin salario (art. 42-II LSS: es una prohibición implícita de descontar, pero no obliga a pagarlos). Del día 4 en adelante el IMSS paga el 60% del SBC. En la práctica muchas empresas absorben esos 3 primeros días para no afectar al trabajador, pero es potestativo. STHENOVA captura los días con subtipo 'enfermedad_general' y aplica la regla; si tú decides pagar los 3 días de gracia, agrégalo como percepción libre."
-  },
-  {
-    id: "prima-antiguedad", category: "Nómina · LFT", icon: Award, color: "#EC4899",
-    question: "¿Cuándo pago prima de antigüedad?",
-    answer: "Art. 162 LFT: en cualquier separación del trabajador con ≥15 años de antigüedad, o en cualquier separación involuntaria (despido justificado o injustificado, muerte, incapacidad total). Monto: 12 días de salario por cada año trabajado, con tope de 2 UMA diarias por día para el cálculo ($226.28 en 2026). Si renuncia voluntariamente con menos de 15 años, no aplica. STHENOVA lo calcula automáticamente al armar la liquidación."
-  },
-  {
-    id: "indemnizacion-despido", category: "Nómina · LFT", icon: XCircle, color: "#EF4444",
-    question: "¿Cuánto pago si despido a alguien sin causa justificada?",
-    answer: "Arts. 48 y 50 LFT: indemnización constitucional de 3 meses de salario integrado + 20 días de salario por cada año trabajado + prima de antigüedad + partes proporcionales (aguinaldo, vacaciones, prima vacacional). Adicionalmente, si el juicio se pierde, salarios caídos por hasta 12 meses desde la separación (después de la reforma 2012 el tope quedó en 12 meses; si el juicio dura más, se paga interés). STHENOVA calcula el finiquito completo al elegir tipo 'despido injustificado' — el resultado sale firmable en PDF."
-  },
-  {
-    id: "ptu-tope-2021", category: "Nómina · PTU", icon: Users, color: "#EC4899",
-    question: "¿Cómo funciona el tope de PTU tras la reforma 2021?",
-    answer: "Art. 127-VIII LFT (reforma 2021 anti-outsourcing): el monto individual de PTU tiene como límite el MAYOR entre (a) 3 meses de salario del trabajador o (b) el promedio de PTU recibido por él mismo en los últimos 3 años. Antes de 2021 no había tope; ahora se aplica a todos, incluidos gerentes y confidenciales. Adicionalmente, el art. 127-II mantiene el cap sindicato × 1.20 para confidenciales sin sindicato de referencia. STHENOVA calcula ambos topes y aplica el mayor por trabajador."
+    id: "vendedor-conversion", category: "Vendedor", icon: TrendingUp, color: "#10B981",
+    question: "¿Qué % de mis cotizaciones se convierten en venta?",
+    answer: "Al Asistente: 'tasa de conversión' te da el % de cotizaciones que se convirtieron en pedido en el periodo. Complementa con 'ticket promedio' para saber el valor promedio por cierre."
   },
 
-  // ─── Contabilidad ─────────────────────────────────────────────────
+  // ─── Comprador / Almacén ─────────────────────────────────────────
   {
-    id: "contabilidad-electronica", category: "Contabilidad", icon: BookText, color: "#A855F7",
-    question: "¿Estoy obligado a llevar contabilidad electrónica?",
-    answer: "Sí, si eres persona moral o física con actividad empresarial con ingresos anuales >$4M (Regla 2.8.1.5 RMF). Consiste en: (1) catálogo de cuentas con código agrupador SAT, (2) balanza de comprobación XML mensual, (3) pólizas XML con UUID de CFDI relacionadas cuando el SAT las requiera en revisión. STHENOVA lleva las pólizas automáticamente desde ventas, compras y pagos; en Contabilidad puedes exportarlas al formato XML del SAT cuando te lo pidan."
+    id: "comprador-resurtir", category: "Comprador / Almacén", icon: Package, color: "#3B82F6",
+    question: "¿Cuándo tengo que resurtir un producto?",
+    answer: "Al Asistente: 'stock crítico' te lista los SKUs bajo el punto de reorden o agotados. 'productos por reordenar sin OC' te enfoca en los que aún no tienen orden de compra abierta — esa es tu lista de compra inmediata."
   },
   {
-    id: "cierre-mensual", category: "Contabilidad", icon: Lock, color: "#A855F7",
-    question: "¿Para qué sirve cerrar el mes contable?",
-    answer: "Cerrar el mes guarda un snapshot inmutable (balanza, estado de resultados, balance) y BLOQUEA las pólizas de ese mes para que nadie las edite por accidente (o a propósito). Es el sello de que 'estas cifras son las oficiales que reportamos'. Si necesitas corregir algo cerrado, la reapertura pide una razón que queda auditada — no es libre. Buena práctica: cierra el mes cuando termine tu conciliación bancaria y confirmes que los estados financieros son correctos."
+    id: "comprador-oc", category: "Comprador / Almacén", icon: Truck, color: "#0EA5E9",
+    question: "¿Qué órdenes de compra están abiertas o atrasadas?",
+    answer: "'OC abiertas' te da todas las que están draft u ordered. 'OC atrasadas' te lista las que ya pasaron la fecha esperada — hay que llamar al proveedor. Para recibir mercancía: abre la OC → 'Recibir' → captura cantidades reales por línea."
   },
   {
-    id: "kardex-fifo", category: "Inventario · Costo", icon: Box, color: "#3B82F6",
-    question: "¿Por qué usar FIFO y no promedio?",
-    answer: "FIFO (First In, First Out) valúa las salidas al costo del lote más antiguo en existencia. Ventajas: (1) refleja el flujo físico real en productos perecederos, (2) el valor del inventario en balance queda al costo más reciente (más cercano al mercado), (3) el margen se calcula con el costo real de compra de cada unidad — no un promedio que oculta variaciones. Desventaja: en inflación alta, el costo de venta se subestima y la utilidad se infla. FIFO es lo aceptado por SAT para efectos fiscales; promedio ponderado y UEPS también son válidos, pero UEPS ya no se acepta desde 2014."
+    id: "comprador-costos", category: "Comprador / Almacén", icon: TrendingUp, color: "#F59E0B",
+    question: "¿Qué productos me subieron el costo?",
+    answer: "Al Asistente: 'variación de costos' te lista los SKUs con >5% de diferencia entre los últimos dos lotes recibidos. Útil para renegociar con el proveedor o subir el precio de venta."
   },
   {
-    id: "punto-reorden", category: "Inventario", icon: Package, color: "#3B82F6",
-    question: "¿Cómo se calcula el punto de reorden?",
-    answer: "Fórmula estándar: (Demanda diaria promedio × Lead time del proveedor) + Stock de seguridad. Ejemplo: si vendes 10/día, el proveedor tarda 7 días en surtirte y quieres 5 días de colchón: punto de reorden = 10×7 + 10×5 = 120 unidades. Cuando el stock baja de 120, debes emitir OC. STHENOVA muestra los SKUs bajo punto de reorden en el módulo de Inventario y el asistente contesta 'stock crítico' con esa lista. El campo de punto de reorden se configura por SKU."
+    id: "comprador-caducidades", category: "Comprador / Almacén", icon: Clock, color: "#EF4444",
+    question: "¿Qué se va a caducar pronto?",
+    answer: "'caducidades próximas' te da los lotes que vencen en los próximos 30 días (o los días que le indiques). Prioriza rotarlos con promociones o traslados antes de que se conviertan en merma."
+  },
+  {
+    id: "comprador-sin-mov", category: "Comprador / Almacén", icon: PackageX, color: "#F97316",
+    question: "¿Qué productos no se están vendiendo?",
+    answer: "'productos sin movimiento' te lista SKUs con stock pero cero ventas en los últimos días (default 30). Son candidatos a promoción, traslado a otra tienda o baja de catálogo."
   },
 
-  // ─── Operativo del ERP ────────────────────────────────────────────
+  // ─── Gerente de Tienda / Retail ──────────────────────────────────
   {
-    id: "multi-tenant", category: "ERP · Seguridad", icon: Lock, color: "#64748B",
-    question: "Si atiendo a varias empresas, ¿pueden verse los datos entre ellas?",
-    answer: "No. STHENOVA es multi-tenant blindado en 9 módulos: Sales, POS, Customers, Inventory, Retail, Finance, HR, Accounting, CFDI. Cada empresa tiene su tenant_id y todas las consultas van filtradas por él a nivel de servicio + base de datos. Los usuarios ven solo su empresa activa (se cambia con el CompanySwitcher del header). El endpoint /health/audit?token=<X> hace una auditoría en vivo y reporta cualquier fuga de tenant. Adicionalmente el sistema tiene stock validation robusto (rechaza venta con stock 0), anti-doble timbrado (UNIQUE cfdi_uuid + guard atómico) y banner rojo 'MODO PRUEBA' cuando el PAC no está en Producción."
+    id: "retail-cadena", category: "Gerente de Tienda", icon: Building2, color: "#EC4899",
+    question: "¿Cómo va una cadena específica (Walmart, Liverpool, etc.)?",
+    answer: "Al Asistente: 'cómo va Walmart' (o el nombre de la cadena) — te da revenue, pedidos y desempeño. Para tiendas: 'mejor tienda de Walmart' o 'top tiendas'."
   },
   {
-    id: "backup", category: "ERP · Operación", icon: Download, color: "#64748B",
-    question: "¿Cómo respaldo mi información?",
-    answer: "STHENOVA corre sobre Supabase (Postgres administrado). Supabase toma backup automático diario (retención 7-30 días según plan) y permite Point-in-Time Recovery. Puedes descargar backup manual desde el panel: Database → Backups. Adicionalmente cada módulo permite exportar sus datos a XLSX (Inventario, Ventas, Clientes, Nómina) para respaldo local. El código está en GitHub y el deploy es reproducible con render.yaml — si el servidor se cae, se levanta idéntico en minutos."
+    id: "retail-wos", category: "Gerente de Tienda", icon: AlertTriangle, color: "#EF4444",
+    question: "¿Qué tiendas necesitan reabasto urgente?",
+    answer: "'tiendas con WoS crítico' te lista las que están por debajo del umbral crítico de su cadena — esas necesitan traslado o resurtido inmediato. Complementa con 'tiendas con sobre-stock' para ver de dónde puedes tomar producto."
   },
   {
-    id: "asistente-como-uso", category: "ERP · Asistente", icon: Sparkles, color: "#33B2F5",
-    question: "¿Cómo le pregunto al Asistente lo que quiero saber?",
-    answer: "El Asistente entiende preguntas naturales en español. Ejemplos que funcionan: 'ventas del mes', 'top clientes', 'cartera vencida', 'stock crítico', 'caducidades a 30 días', 'cómo va Walmart', 'ventas POS del día', 'cuántas facturas me faltan timbrar', 'aguinaldo devengado', 'ptu estimado', 'cédula IMSS del mes'. También responde preguntas de consulta general del ERP ('¿dónde configuro el PAC?') y del marco fiscal MX ('¿qué es la DIOT?'). Si la pregunta es interpretativa ('por qué…', 'qué recomiendas…', 'analiza…'), da un análisis con IA además de la cifra."
+    id: "retail-sell-through", category: "Gerente de Tienda", icon: TrendingUp, color: "#10B981",
+    question: "¿Cómo mido si una tienda está vendiendo lo que le mandé?",
+    answer: "Sell-through % = sell-out ÷ sell-in. Al Asistente: 'sell-through por tienda'. Un sell-through bajo (<30%) significa que le mandaste mucho y no lo está rotando: candidato a traslado a otra tienda."
   },
   {
-    id: "asistente-presupuesto", category: "ERP · Asistente", icon: Sparkles, color: "#33B2F5",
-    question: "¿La barra del Asistente qué significa? ¿Cuánto cuesta usarlo?",
-    answer: "La barra representa el consumo del presupuesto mensual del LLM (Claude Haiku 4.5). Verde <60% usado, amarillo 60-85%, rojo >85%. Tope duro $5 USD/mes por empresa. Cuando se agota, el asistente aún responde preguntas frecuentes con el motor determinista (regex + tools) sin costo — solo pierde el modo interpretativo con IA. En operación normal una empresa mediana consume $1-2 USD/mes."
+    id: "retail-devoluciones", category: "Gerente de Tienda", icon: PackageX, color: "#F97316",
+    question: "¿Qué cadena me devuelve más producto?",
+    answer: "'tasa de devoluciones por cadena' o 'return rate' — te compara la tasa real vs. el umbral configurado en cada cadena. Si una cadena está roja, revisa causa (mala calidad, entrega tarde, catálogo equivocado)."
+  },
+
+  // ─── Cajero / POS ────────────────────────────────────────────────
+  {
+    id: "cajero-corte", category: "Cajero / POS", icon: Store, color: "#F59E0B",
+    question: "¿Cómo va mi corte de caja del día?",
+    answer: "Al Asistente: 'ventas del POS hoy' o 'corte de caja actual'. Al cerrar turno en POS, haces el arqueo por denominación y el sistema te dice si cuadra (verde) o falta dinero (rojo)."
+  },
+  {
+    id: "cajero-formas-pago", category: "Cajero / POS", icon: DollarSign, color: "#22C55E",
+    question: "¿Cuánto llevo en efectivo vs tarjeta hoy?",
+    answer: "'formas de pago del día' te desglosa efectivo / tarjeta / transferencia. Útil para preparar el depósito bancario del día."
+  },
+  {
+    id: "cajero-reprint", category: "Cajero / POS", icon: FileText, color: "#3B82F6",
+    question: "¿Cómo reimprimo un ticket que el cliente perdió?",
+    answer: "En POS, botón 'Ventas del turno' arriba a la derecha → busca por folio/cliente/monto → 'Imprimir 80mm' o 'Descargar PDF'. También puedes reimprimir desde Ventas → orden con badge POS."
+  },
+  {
+    id: "cajero-devoluciones", category: "Cajero / POS", icon: PackageX, color: "#EF4444",
+    question: "¿Cómo veo devoluciones y cancelaciones del día?",
+    answer: "Al Asistente: 'devoluciones POS del día' y 'cancelaciones del día'. Los descuentos aplicados: 'descuentos aplicados hoy en POS'."
+  },
+
+  // ─── Contador / Finanzas ─────────────────────────────────────────
+  {
+    id: "contador-cartera", category: "Contador / Finanzas", icon: Wallet, color: "#22C55E",
+    question: "¿Qué debo cobrar esta semana?",
+    answer: "Al Asistente: 'cobros de esta semana' te lista las CxC que vencen en los próximos 7 días. Para lo ya vencido: 'cartera vencida' o 'top deudores'. Descarga el PDF de cartera desde Finanzas → Por cobrar."
+  },
+  {
+    id: "contador-pagar", category: "Contador / Finanzas", icon: DollarSign, color: "#A78BFA",
+    question: "¿Qué debo pagar esta semana?",
+    answer: "'pagos de esta semana' te lista las CxP con vencimiento en los próximos 7 días. Para lo pendiente: 'cuentas por pagar' o 'top acreedores'. Los 'pagos programados' te dan el calendario ordenado."
+  },
+  {
+    id: "contador-bancos", category: "Contador / Finanzas", icon: DollarSign, color: "#06B6D4",
+    question: "¿Cómo concilío mi extracto bancario?",
+    answer: "Ve a Finanzas → Bancos → 'Conciliar extracto bancario'. Sube el CSV/XLSX del banco y el sistema empareja por fecha ±3 días + monto exacto. Lo que no cuadre queda en 'Ver movimientos' para conciliar a mano."
+  },
+  {
+    id: "contador-iva", category: "Contador / Finanzas", icon: FileText, color: "#F97316",
+    question: "¿Cómo saco el IVA del mes?",
+    answer: "Al Asistente: 'IVA del mes' te da trasladado vs acreditable aproximado. Para la DIOT: Contabilidad → DIOT → elige mes → descarga el .txt para importar al programa DIOT del SAT."
+  },
+  {
+    id: "contador-cierre", category: "Contador / Finanzas", icon: Lock, color: "#A855F7",
+    question: "¿Cómo cierro el mes contable?",
+    answer: "Contabilidad → 'Cierre mensual' → elige año/mes → 'Cerrar mes'. Se guarda snapshot inmutable y bloquea las pólizas de ese mes. Antes de cerrar, verifica que la conciliación bancaria esté completa."
+  },
+  {
+    id: "contador-marketplace", category: "Contador / Finanzas", icon: DollarSign, color: "#F97316",
+    question: "¿Cómo concilío un depósito de marketplace con retenciones?",
+    answer: "Marca al cliente como Marketplace en su ficha (activa comisión + retenciones IVA 8% + ISR 2.5%). Luego 'Conciliar liquidación' en el pie del panel del cliente → captura fechas y depósito → el sistema calcula bruto − comisión − IVA retenido − ISR retenido − devoluciones vs lo depositado."
+  },
+
+  // ─── Gerente RH / Nómina ─────────────────────────────────────────
+  {
+    id: "rh-nomina", category: "Gerente RH / Nómina", icon: IdCard, color: "#F97316",
+    question: "¿Cuánto pagué de nómina este mes?",
+    answer: "Al Asistente: 'nómina del mes'. También puedes filtrar por empleado: 'nómina de [nombre]'. Los totales por concepto (sueldos, ISR, IMSS, INFONAVIT) los ves en RH → Nómina → periodo."
+  },
+  {
+    id: "rh-imss", category: "Gerente RH / Nómina", icon: Users, color: "#8B5CF6",
+    question: "¿Cuánto pago de IMSS este mes?",
+    answer: "'IMSS del mes' o 'cuota IMSS a pagar'. Para generar la cédula: RH → Cédulas IMSS → mes → 'Generar cédula mensual' → descarga PDF/XLSX para pagar en el portal IMSS antes del 17."
+  },
+  {
+    id: "rh-aguinaldo", category: "Gerente RH / Nómina", icon: Wallet, color: "#F59E0B",
+    question: "¿Cuánto llevo devengado de aguinaldo por empleado?",
+    answer: "Al Asistente: 'aguinaldo devengado' te da la cifra por empleado activo al día. Deber pagarse antes del 20 de diciembre."
+  },
+  {
+    id: "rh-ptu", category: "Gerente RH / Nómina", icon: Users, color: "#EC4899",
+    question: "¿Cuánto llevo estimado de PTU?",
+    answer: "'PTU estimado' te da el cálculo más reciente registrado. Para armar el reparto: RH → PTU → año fiscal → el sistema calcula por trabajador con reglas art. 127-VIII (tope) y exclusiones, y genera cédula PDF firmable."
+  },
+  {
+    id: "rh-contratos", category: "Gerente RH / Nómina", icon: FileText, color: "#0EA5E9",
+    question: "¿Qué contratos están por vencer?",
+    answer: "'contratos por vencer' te lista los que expiran en los próximos 30 días. Ve a la ficha del empleado para renovar o dar de baja."
+  },
+  {
+    id: "rh-incapacidades", category: "Gerente RH / Nómina", icon: AlertTriangle, color: "#EF4444",
+    question: "¿Qué incapacidades hubo este mes?",
+    answer: "'incapacidades del mes' te da el desglose por subtipo (enfermedad general, maternidad, riesgo de trabajo, paternidad). Cada una aplica su regla LSS automáticamente al calcular la nómina."
+  },
+  {
+    id: "rh-cumples", category: "Gerente RH / Nómina", icon: Star, color: "#EC4899",
+    question: "¿Quién cumple años este mes?",
+    answer: "'cumpleaños del mes' te da la lista. Desde la ficha del empleado puedes enviar felicitación con el módulo de Comunicación."
+  },
+
+  // ─── Del Asistente mismo ─────────────────────────────────────────
+  {
+    id: "asistente-como", category: "Asistente", icon: Sparkles, color: "#33B2F5",
+    question: "¿Cómo le pregunto al Asistente?",
+    answer: "Escríbele en lenguaje natural. Ejemplos: 'ventas del mes', 'top clientes', 'cartera vencida', 'stock crítico', 'cómo va Walmart', 'ventas POS del día', 'nómina de Juan'. Si empiezas la pregunta con 'por qué…', 'analiza…' o 'qué recomiendas…' te da además una interpretación con IA."
+  },
+  {
+    id: "asistente-barra", category: "Asistente", icon: Sparkles, color: "#33B2F5",
+    question: "¿La barra de colores del Asistente qué significa?",
+    answer: "Es el consumo del presupuesto mensual del Asistente. Verde <60%, amarillo 60-85%, rojo >85%. Cuando se agota, sigue respondiendo las preguntas frecuentes sin costo — solo pierde la interpretación con IA."
   },
 ];
 
