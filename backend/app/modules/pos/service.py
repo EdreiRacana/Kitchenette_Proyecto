@@ -488,6 +488,24 @@ async def register_sale(db: AsyncSession, session_id: int,
     terminal = res_t.scalars().first()
     warehouse_id = terminal.warehouse_id if terminal else None
 
+    # Guarda dura: si el terminal no tiene almacen asignado, la validacion
+    # de stock (mas abajo) se salta silenciosamente y la venta se procesa
+    # sin descontar inventario. Un POS de la vida real nunca debe hacer eso.
+    # Rechazamos la venta cuando el carrito contiene productos de catalogo
+    # (variant_id != None y no son servicios) y el terminal no esta configurado.
+    tiene_producto_catalogo = any(
+        it.get("variant_id") and not it.get("is_service")
+        for it in order_items
+    )
+    if tiene_producto_catalogo and not warehouse_id:
+        raise HTTPException(
+            status_code=400,
+            detail=("Este terminal del POS no tiene almacén asignado. "
+                    "Ve a POS → Terminales, edita este terminal y asígnale "
+                    "un almacén antes de vender. Sin almacén el sistema no "
+                    "puede descontar inventario ni validar existencia."),
+        )
+
     order = sales_models.Order(
         folio=folio, kind="order", customer_id=customer_id, user_id=user_id or s.cashier_id,
         warehouse_id=warehouse_id, status="paid", channel="pos",
