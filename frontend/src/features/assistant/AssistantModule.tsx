@@ -185,14 +185,16 @@ type Msg = {
   question?: string;
 };
 
-// Chips sugeridos según el módulo actual — se calculan al abrir el panel.
-// Como en fase A no consumimos el path del router, van 4 preguntas de las
-// más frecuentes en cualquier ERP.
+// Chips iniciales — se muestran cuando el chat está vacío.
+// Solo son un FALLBACK si el backend no responde a tiempo. En condiciones
+// normales, se cargan dinámicamente de /assistant/suggest?q="" que ya
+// filtra por permisos del usuario y por las tools reales que aplican a
+// la empresa activa (no hardcodea nombres de cadenas o clientes).
 const DEFAULT_CHIPS = [
   "¿Cuánto vendí este mes?",
   "Top 5 productos",
   "Cartera vencida",
-  "¿Cómo va Walmart?",
+  "Stock crítico",
 ];
 
 // Llama al endpoint real /assistant/ask. Sprint 1: cero LLM, todo Python.
@@ -308,6 +310,29 @@ export default function Assistant({ lang = "es" }: { lang?: "es" | "en" } = {}) 
     } catch { /* silencio — la barra queda como esté */ }
   };
   useEffect(() => { if (open) refreshBudget(); }, [open]);
+
+  // Chips iniciales dinámicos — se cargan de /assistant/suggest?q=""
+  // cuando se abre el panel sin conversación previa. El backend ya
+  // filtra por permisos RBAC del usuario y solo devuelve tools que
+  // aplican a la empresa activa (multi-tenant). Fallback a DEFAULT_CHIPS
+  // si el endpoint falla o devuelve vacío.
+  const [initialChips, setInitialChips] = useState<string[]>(DEFAULT_CHIPS);
+  useEffect(() => {
+    if (!open || msgs.length > 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get("/assistant/suggest", { params: { q: "" } });
+        const items = (data?.items || []) as Array<{ prompt?: string }>;
+        const prompts = items
+          .map(i => (i?.prompt || "").trim())
+          .filter(Boolean)
+          .slice(0, 4);
+        if (!cancelled && prompts.length > 0) setInitialChips(prompts);
+      } catch { /* silencio — mantiene DEFAULT_CHIPS */ }
+    })();
+    return () => { cancelled = true; };
+  }, [open, msgs.length]);
   // Bienvenida de primera vez — se muestra una sola vez y se recuerda en
   // localStorage. Se cierra sola a los 8 s o al primer click en el FAB.
   const [showWelcome, setShowWelcome] = useState<boolean>(() => {
@@ -793,7 +818,7 @@ export default function Assistant({ lang = "es" }: { lang?: "es" | "en" } = {}) 
                   Hola. ¿Sobre qué te ayudo hoy?
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
-                  {DEFAULT_CHIPS.map(c => (
+                  {initialChips.map(c => (
                     <button key={c} className="assistant-chip"
                       onClick={() => send(c)}
                       style={{
