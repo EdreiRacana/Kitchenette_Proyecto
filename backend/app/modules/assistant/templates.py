@@ -129,6 +129,26 @@ def _empty_msg(tool: str, reason: str | None) -> str:
         "margen_por_producto": "No hay ventas en el periodo — no se puede calcular margen.",
         "pedidos_con_saldo_parcial": "No hay pedidos con abono parcial. Cobranza al día.",
         "pipeline_valor": "No hay cotizaciones vigentes en el pipeline.",
+        # Fase 17
+        "meta_ventas_mes": "No hay meta cargada en Forecast para el año en curso.",
+        "cumplimiento_por_sku": "No hay líneas de forecast para el año en curso — carga un plan en el módulo Forecast.",
+        "ventas_por_categoria": "Sin ventas en el periodo — no se puede desglosar por categoría.",
+        "arqueos_con_diferencia": "Todos los arqueos cierran en cero. Cajas cuadradas.",
+        "turnos_por_conciliar": "No hay turnos cerrados pendientes de conciliar. Al día.",
+        "traslados_pendientes": "No hay traslados en tránsito ni por completar.",
+        "sell_in_vs_sell_out": "Sin sell-in ni sell-out registrados en el periodo.",
+        "devoluciones_por_recibir": "No hay devoluciones físicas pendientes de recibir.",
+        "ajustes_inventario_mes": "No hubo ajustes de inventario en el periodo.",
+        "stock_por_almacen": "No hay almacenes con stock valorizado.",
+        "compras_periodo": "No hay órdenes de compra creadas en el periodo.",
+        "oc_por_recibir_semana": "Ninguna OC 'ordered' llega en los próximos 7 días.",
+        "movimientos_bancarios_dia": "No hubo movimientos bancarios registrados hoy.",
+        "mes_cerrado": "Aún no hay ningún mes contable cerrado.",
+        "polizas_dia": "Hoy no se han generado pólizas contables.",
+        "infonavit_mes": "No hay descuentos INFONAVIT en las nóminas del mes.",
+        "fonacot_mes": "No hay descuentos FONACOT en las nóminas del mes.",
+        "empleados_por_departamento": "No hay empleados activos registrados.",
+        "avisos_afil_pendientes": "No hay avisos AFIL pendientes de presentar al IMSS.",
     }
     base = friendly.get(tool, "No hay datos que mostrar para esta consulta.")
     if reason and "construcción" in reason:
@@ -978,4 +998,170 @@ _FORMATTERS = {
     "margen_por_producto": _t_margen_producto,
     "pedidos_con_saldo_parcial": _t_saldo_parcial,
     "pipeline_valor": _t_pipeline_valor,
+    # Fase 17 · Tools extras
+    "meta_ventas_mes": _t_meta_ventas_mes,
+    "cumplimiento_por_sku": _t_cumplimiento_sku,
+    "ventas_por_categoria": _t_ventas_categoria,
+    "arqueos_con_diferencia": _t_arqueos_diferencia,
+    "turnos_por_conciliar": _t_turnos_conciliar,
+    "traslados_pendientes": _t_traslados_pendientes,
+    "sell_in_vs_sell_out": _t_sell_in_out,
+    "devoluciones_por_recibir": _t_dev_por_recibir,
+    "ajustes_inventario_mes": _t_ajustes_inv,
+    "stock_por_almacen": _t_stock_almacen,
+    "compras_periodo": _t_compras_periodo,
+    "oc_por_recibir_semana": _t_oc_por_recibir,
+    "movimientos_bancarios_dia": _t_mov_bancarios_dia,
+    "mes_cerrado": _t_mes_cerrado,
+    "polizas_dia": _t_polizas_dia,
+    "infonavit_mes": _t_infonavit_mes,
+    "fonacot_mes": _t_fonacot_mes,
+    "empleados_por_departamento": _t_empleados_depto,
+    "avisos_afil_pendientes": _t_avisos_afil,
 }
+
+
+# ─────────── formatters Fase 17 ───────────
+
+def _t_meta_ventas_mes(r):
+    txt = (f"Meta {r['periodo']}: **{_mxn(r['meta'])}** · Real: **{_mxn(r['real'])}** "
+           f"({r['pct_cumplimiento']:.1f}% cumplido).")
+    txt += f"\nDías: {r['dias_transcurridos']} transcurridos, {r['dias_restantes']} restantes."
+    txt += f"\nProyección de cierre al ritmo actual: **{_mxn(r['proyeccion_fin_mes'])}**."
+    return txt
+
+
+def _t_cumplimiento_sku(r):
+    lines = [f"Cumplimiento por SKU ({r['periodo']}) — menor % primero:"]
+    for it in r["items"]:
+        lines.append(f"• **{it['product_name']}** — {it['real_units']}/{it['forecast_units']} uds ({it['pct_cumplimiento']:.0f}%)")
+    return "\n".join(lines)
+
+
+def _t_ventas_categoria(r):
+    lines = [f"Ventas por categoría ({r['periodo']}):"]
+    for it in r["items"]:
+        lines.append(f"• **{it['categoria']}** — {_mxn(it['revenue'])} ({it['unidades']} uds)")
+    return "\n".join(lines)
+
+
+def _t_arqueos_diferencia(r):
+    txt = (f"**{r['count']}** arqueo{'s' if r['count'] != 1 else ''} con diferencia · "
+           f"total: **{_mxn(r['diferencia_total'])}**.")
+    if r["items"][:5]:
+        txt += "\n\nÚltimos:"
+        for it in r["items"][:5]:
+            fecha = (it['closed_at'] or "")[:10]
+            txt += f"\n• Sesión {it['session_id']} ({fecha}) — {_mxn(it['variance'])} ({it['signo']})"
+    return txt
+
+
+def _t_turnos_conciliar(r):
+    txt = f"**{r['count']}** turno{'s' if r['count'] != 1 else ''} cerrado{'s' if r['count'] != 1 else ''} sin conciliar."
+    if r["items"][:5]:
+        txt += "\n\nÚltimos:"
+        for it in r["items"][:5]:
+            fecha = (it['closed_at'] or "")[:10]
+            txt += f"\n• Sesión {it['session_id']} ({fecha}) · variance {_mxn(it['variance'])}"
+    return txt
+
+
+def _t_traslados_pendientes(r):
+    txt = f"**{r['count']}** traslado{'s' if r['count'] != 1 else ''} pendiente{'s' if r['count'] != 1 else ''}."
+    if r["items"][:5]:
+        txt += "\n\nÚltimos:"
+        for it in r["items"][:5]:
+            fecha = (it['created_at'] or "")[:10]
+            txt += f"\n• #{it['id']} — {it['status']} ({fecha})"
+    return txt
+
+
+def _t_sell_in_out(r):
+    return (f"Sell-in {r['periodo']}: **{_mxn(r['sell_in'])}** · "
+            f"Sell-out: **{_mxn(r['sell_out'])}** · "
+            f"Sell-through **{r['sell_through_pct']:.1f}%**.")
+
+
+def _t_dev_por_recibir(r):
+    txt = (f"**{r['count']}** devolución{'es' if r['count'] != 1 else ''} física{'s' if r['count'] != 1 else ''} "
+           f"por recibir · **{r['total_unidades']}** unidades en total.")
+    if r["items"][:5]:
+        txt += "\n\nDetalle:"
+        for it in r["items"][:5]:
+            txt += f"\n• {it['product_name']} — {it['units']} uds ({it['status']})"
+    return txt
+
+
+def _t_ajustes_inv(r):
+    return (f"Ajustes de inventario {r['periodo']}: **{r['count']}** movimientos, "
+            f"delta {r['delta_unidades']} uds ({_mxn(r['delta_valor'])} en valor).")
+
+
+def _t_stock_almacen(r):
+    lines = [f"Stock por almacén · valor total: **{_mxn(r['valor_total'])}**"]
+    for it in r["items"]:
+        lines.append(f"• **{it['name']}** ({it['type']}) — {it['unidades']} uds · {_mxn(it['valor'])}")
+    return "\n".join(lines)
+
+
+def _t_compras_periodo(r):
+    return (f"Compras {r['periodo']}: **{r['count']}** OC · total **{_mxn(r['total'])}** "
+            f"(ticket promedio {_mxn(r['ticket_promedio'])}).")
+
+
+def _t_oc_por_recibir(r):
+    txt = (f"**{r['count']}** OC llegan en 7 días · total **{_mxn(r['total'])}**.")
+    if r["items"][:5]:
+        txt += "\n\nPróximas:"
+        for it in r["items"][:5]:
+            fecha = (it['due_date'] or "")[:10]
+            ident = it['folio'] or f"#{it['id']}"
+            txt += f"\n• {ident} — {it['supplier']} · {fecha} · {_mxn(it['total'])}"
+    return txt
+
+
+def _t_mov_bancarios_dia(r):
+    txt = f"Neto bancario hoy: **{_mxn(r['neto_total'])}** en {r['count_cuentas']} cuenta(s)."
+    for it in r["items"]:
+        txt += (f"\n• **{it['account_name']}** — entradas {_mxn(it['entradas'])} · "
+                f"salidas {_mxn(it['salidas'])} · neto {_mxn(it['neto'])}")
+    return txt
+
+
+def _t_mes_cerrado(r):
+    return f"Último mes contable cerrado: **{r['month_label']} {r['year']}** (status: {r['status']})."
+
+
+def _t_polizas_dia(r):
+    return (f"Hoy se generaron **{r['count']}** póliza{'s' if r['count'] != 1 else ''} · "
+            f"débito {_mxn(r['total_debito'])} · crédito {_mxn(r['total_credito'])}.")
+
+
+def _t_infonavit_mes(r):
+    return (f"INFONAVIT {r['periodo']}: descontado al trabajador **{_mxn(r['descontado_trabajador'])}** + "
+            f"aportación patronal 5% {_mxn(r['aportacion_patronal_5pct'])} = **{_mxn(r['total'])}** total. "
+            f"{r['empleados_con_credito']} empleado(s) con crédito.")
+
+
+def _t_fonacot_mes(r):
+    return (f"FONACOT {r['periodo']}: **{_mxn(r['total'])}** descontado en "
+            f"{r['empleados_con_credito']} empleado(s).")
+
+
+def _t_empleados_depto(r):
+    lines = [f"Plantilla activa: **{r['total_empleados']}** en {r['count_departamentos']} departamento(s)."]
+    for it in r["items"]:
+        lines.append(f"• **{it['departamento']}** — {it['empleados']} empleados · "
+                     f"nómina base {_mxn(it['nomina_base_total'])}")
+    return "\n".join(lines)
+
+
+def _t_avisos_afil(r):
+    txt = (f"**{r['count']}** aviso{'s' if r['count'] != 1 else ''} AFIL sin presentar "
+           f"(**{r['overdue_count']}** con más de 5 días).")
+    if r["items"][:5]:
+        txt += "\n\nMás antiguos:"
+        for it in r["items"][:5]:
+            flag = " ⚠ vencido" if it["overdue"] else ""
+            txt += f"\n• {it['movement_type']} · empleado #{it['employee_id']} · {it['movement_date']}{flag}"
+    return txt

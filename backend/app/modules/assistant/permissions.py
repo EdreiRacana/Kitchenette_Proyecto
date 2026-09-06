@@ -144,6 +144,26 @@ TOOL_MODULE: dict[str, str] = {
     "margen_por_producto": "sales",
     "pedidos_con_saldo_parcial": "finance",  # cobranza
     "pipeline_valor": "sales",
+    # Fase 17 · Tools extras
+    "meta_ventas_mes": "sales",
+    "cumplimiento_por_sku": "sales",
+    "ventas_por_categoria": "sales",
+    "arqueos_con_diferencia": "sales",
+    "turnos_por_conciliar": "sales",
+    "traslados_pendientes": "inventory",
+    "sell_in_vs_sell_out": "retail",
+    "devoluciones_por_recibir": "retail",
+    "ajustes_inventario_mes": "inventory",
+    "stock_por_almacen": "inventory",
+    "compras_periodo": "inventory",
+    "oc_por_recibir_semana": "inventory",
+    "movimientos_bancarios_dia": "finance",
+    "mes_cerrado": "accounting",
+    "polizas_dia": "accounting",
+    "infonavit_mes": "hr",
+    "fonacot_mes": "hr",
+    "empleados_por_departamento": "hr",
+    "avisos_afil_pendientes": "hr",
 }
 
 

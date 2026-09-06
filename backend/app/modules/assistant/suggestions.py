@@ -467,6 +467,86 @@ PROMPT_HINTS: dict[str, list[str]] = {
         "cuánto pesa la nómina sobre ventas", "% de nómina sobre ventas",
         "costo laboral %",
     ],
+    # ── Fase 17 · Tools extras (por rol) ────────────────────────────
+    "meta_ventas_mes": [
+        "meta del mes", "forecast del mes", "voy contra la meta",
+        "cómo voy vs meta", "cumplimiento de la meta",
+        "meta vs real", "meta de ventas",
+    ],
+    "cumplimiento_por_sku": [
+        "cumplimiento por producto", "SKUs bajo forecast",
+        "productos por debajo del forecast", "desviación forecast vs real",
+        "productos que van atrasados de meta",
+    ],
+    "ventas_por_categoria": [
+        "ventas por categoría", "qué categoría vende más",
+        "distribución por categoría", "top categorías del mes",
+    ],
+    "arqueos_con_diferencia": [
+        "arqueos con diferencia", "cajas fuera de cuadre",
+        "arqueos con faltante", "diferencias de caja",
+        "sesiones POS con variance",
+    ],
+    "turnos_por_conciliar": [
+        "turnos por conciliar", "cajas cerradas sin conciliar",
+        "sesiones POS pendientes de conciliación",
+    ],
+    "traslados_pendientes": [
+        "traslados pendientes", "transferencias en tránsito",
+        "traslados por completar", "movimientos entre almacenes pendientes",
+    ],
+    "sell_in_vs_sell_out": [
+        "sell-in vs sell-out del mes", "cuánto vendí a cadena vs cuánto vendieron",
+        "sell through del mes", "% de rotación en cadenas",
+    ],
+    "devoluciones_por_recibir": [
+        "devoluciones por recibir", "devoluciones físicas pendientes",
+        "retornos en tránsito", "devoluciones que no han llegado",
+    ],
+    "ajustes_inventario_mes": [
+        "ajustes de inventario del mes", "cuántos ajustes tuve",
+        "movimientos de ajuste", "correcciones de inventario",
+    ],
+    "stock_por_almacen": [
+        "stock por almacén", "inventario por sucursal",
+        "cuánto tengo en cada almacén", "valor por almacén",
+    ],
+    "compras_periodo": [
+        "compras del mes", "cuánto compré este mes",
+        "total de compras", "compras del periodo",
+    ],
+    "oc_por_recibir_semana": [
+        "OC por recibir esta semana", "compras que llegan esta semana",
+        "órdenes por llegar", "recepciones programadas",
+    ],
+    "movimientos_bancarios_dia": [
+        "movimientos bancarios de hoy", "movimientos del banco hoy",
+        "entradas y salidas del banco del día",
+    ],
+    "mes_cerrado": [
+        "último mes cerrado", "hasta cuándo tengo cerrado contablemente",
+        "cuál es el último mes contable cerrado", "estado del cierre",
+    ],
+    "polizas_dia": [
+        "pólizas de hoy", "pólizas del día",
+        "cuántas pólizas se generaron hoy", "asientos de hoy",
+    ],
+    "infonavit_mes": [
+        "INFONAVIT del mes", "cuánto pago de INFONAVIT",
+        "INFONAVIT a enterar", "cuota INFONAVIT",
+    ],
+    "fonacot_mes": [
+        "FONACOT del mes", "cuánto descuento de FONACOT",
+        "FONACOT a enterar",
+    ],
+    "empleados_por_departamento": [
+        "empleados por departamento", "cuántos empleados por área",
+        "plantilla por departamento", "distribución de personal",
+    ],
+    "avisos_afil_pendientes": [
+        "avisos AFIL pendientes", "movimientos IMSS sin presentar",
+        "altas y bajas IMSS pendientes", "IDSE pendiente",
+    ],
 }
 
 

@@ -3094,3 +3094,9 @@ TOOLS_REGISTRY = {
     "pedidos_con_saldo_parcial": pedidos_con_saldo_parcial,
     "pipeline_valor": pipeline_valor,
 }
+
+# Fase 17 · Tools extras (meta, sell-in/out, arqueos, cierres, INFONAVIT,
+# FONACOT, avisos AFIL, etc.) — viven en tools_extra.py y se agregan aquí
+# para que el registro central los conozca sin tocar la logica de router.
+from app.modules.assistant.tools_extra import TOOLS_EXTRA_REGISTRY as _EXTRA
+TOOLS_REGISTRY.update(_EXTRA)
