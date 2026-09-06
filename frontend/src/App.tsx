@@ -2323,27 +2323,38 @@ const MODULE_MANUALS: ModuleManual[] = [
   },
   {
     id: "retail", page: "retail", title: "Retail", icon: Building2, color: "#EC4899",
-    tagline: "Controla tus tiendas y sucursales",
-    summary: "El módulo de Retail administra la operación por tienda o sucursal: existencias, ventas y desempeño de cada punto físico. Ideal si manejas más de una ubicación y necesitas comparar cómo va cada una.",
+    tagline: "Cadenas, tiendas físicas y control de consignaciones",
+    summary: "El módulo de Retail administra la operación con cadenas comerciales (Walmart, Liverpool, Chedraui, etc.) y tiendas físicas propias o de consignación. Registra sell-in (lo que facturas a la cadena) y sell-out (lo que la tienda vende al consumidor), calcula métricas como WoS (Weeks of Supply), sell-through y return rate, sugiere traslados entre tiendas y gestiona devoluciones físicas con separación de buen estado vs. dañado.",
     tools: [
-      { name: "Vista por tienda", desc: "Selecciona una sucursal para ver sus ventas, inventario y métricas propias." },
-      { name: "Comparativo entre tiendas", desc: "Contrasta desempeño para detectar cuál rinde mejor y cuál necesita apoyo." },
-      { name: "Existencias por ubicación", desc: "Sabes cuánto stock hay en cada tienda, no solo el total de la empresa." },
+      { name: "Cadenas comerciales", desc: "Configura umbrales por cadena: target/critical WoS, sobre-stock, días sin movimiento, tasa máxima de devoluciones. La política se aplica a todas sus tiendas." },
+      { name: "Tiendas / sucursales", desc: "Cada tienda tiene un almacén de consignación asociado (se auto-crea al primer uso). Consultas ventas, sell-out reportado y stock por tienda." },
+      { name: "Sell-in", desc: "Mercancía que le vendes/facturas al customer de la cadena. Se registra vía Órdenes en Ventas; sale de tu almacén central y entra al consignment de la tienda." },
+      { name: "Sell-out (reporte)", desc: "La cadena te reporta lo que vendió por tienda × SKU × periodo. Si la tienda tiene consignación, descuenta stock físico automáticamente." },
+      { name: "Traslados tienda↔tienda", desc: "Mueve stock entre consignaciones. El motor de sugerencias detecta desbalances por WoS diferencial (ventana 4 semanas) y propone traslados." },
+      { name: "Reabasto y resurtido manual", desc: "Envía producto desde un almacén central a una tienda sin esperar a la sugerencia automática. Modal 'Manual resurtido'." },
+      { name: "Devoluciones físicas", desc: "Ciclo pending → in_transit → received → cancelled. Al recibir separas units_good (vendible) vs units_damaged (merma). Cada recepción genera un StockMovement auditable." },
+      { name: "KPIs por cadena/tienda", desc: "WoS, sell-through %, return rate %, fill rate %. Los semáforos usan los umbrales configurados en la cadena." },
     ],
     start: [
       "Entra a Retail desde el menú.",
-      "Elige la tienda o sucursal que quieres revisar.",
-      "Consulta sus ventas e inventario específicos.",
-      "Usa el comparativo para ver cuál sucursal va mejor.",
+      "Empieza por 'Cadenas' — da de alta la cadena (Walmart, Liverpool, etc.) con sus umbrales.",
+      "En cada cadena, agrega sus tiendas físicas. Marca si son consignación.",
+      "Registra sell-in creando Órdenes de venta con el customer vinculado a la cadena.",
+      "Cada semana, sube o captura el sell-out por tienda × SKU. El sistema calculará WoS, sell-through y sugerencias.",
+      "Revisa el módulo Reabasto para ver sugerencias de traslado y ejecutar resurtidos.",
     ],
     tips: [
-      "El inventario por ubicación evita 'vender' algo que en realidad está en otra tienda.",
+      "El umbral de sobre-stock recomendado para sugerencias es 8 semanas (default 12) — si lo dejas alto no dispara movimientos.",
+      "Las devoluciones dañadas van a un warehouse 'Merma · Devoluciones dañadas' que se auto-crea; no las revuelvas con el stock vendible.",
+      "Si una tienda no tiene almacén de consignación, cualquier traslado lo crea al vuelo — nunca falla el flujo por eso.",
+      "El sell-out sin sell-in previo se acepta pero queda flag; suele indicar captura desordenada.",
     ],
     tour: [
-      { title: "Retail", body: "Si tienes varias tiendas, aquí las controlas por separado. Te muestro cómo." },
-      { title: "Elige la tienda", body: "Selecciona una sucursal para ver solo sus números: ventas, inventario y métricas de ese punto." },
-      { title: "Compara", body: "El comparativo entre tiendas te dice cuál rinde mejor, para replicar lo que funciona y apoyar a las rezagadas." },
-      { title: "Stock por ubicación", body: "El inventario se ve por tienda, así no prometes producto que en realidad está en otra sucursal." },
+      { title: "Retail", body: "Aquí controlas todo el negocio con cadenas comerciales y tiendas físicas. Te muestro los cuatro flujos principales." },
+      { title: "Sell-in", body: "Cuando le facturas a Walmart, esa venta es sell-in. Sale de tu almacén central y entra al consignment de la tienda. Se registra como Orden normal en Ventas." },
+      { title: "Sell-out", body: "La cadena te reporta cuánto vendió al consumidor. Ese sell-out descuenta stock físico del consignment y alimenta las métricas de rotación." },
+      { title: "WoS y sell-through", body: "Weeks of Supply = stock ÷ velocidad semanal (ventana 4 sem). Sell-through % = sell-out ÷ sell-in. El semáforo usa los umbrales de la cadena." },
+      { title: "Traslados y devoluciones", body: "Si una tienda va sobrada y otra crítica, el motor sugiere traslado. Las devoluciones físicas separan buen estado vs. dañado y quedan auditadas con StockMovement." },
     ],
   },
   {
@@ -2460,81 +2471,205 @@ const MODULE_MANUALS: ModuleManual[] = [
   },
   {
     id: "rh", page: "rh", title: "RH / Nómina", icon: IdCard, color: "#F97316",
-    tagline: "Empleados, asistencia y pago de nómina",
-    summary: "El módulo de RH / Nómina administra a tu personal: expedientes de empleados, puestos, sueldos y el cálculo de la nómina. Centraliza la información de tu equipo y prepara los pagos de cada periodo.",
+    tagline: "Nómina LFT, IMSS, ISR, PTU y todo el ciclo laboral MX",
+    summary: "El módulo de RH / Nómina es tu área de recursos humanos completa: expedientes de empleados, contratos LFT (8 plantillas), cálculo de nómina con ISR (Anexo 8 RMF), IMSS obrero-patronal, INFONAVIT/FONACOT, PTU (arts. 122-131 LFT con reforma 2021), liquidaciones (arts. 48/50/79-89/162), aguinaldo (art. 87), vacaciones (art. 76), incapacidades LSS 42/58/101, ajuste anual de ISR (arts. 97/116 LISR), cédulas IMSS mensuales y bimestrales, avisos AFIL-02/04/08, exportación DIM Anexo 1 y SUA. Todo el cumplimiento fiscal-laboral MX en una sola pantalla.",
     tools: [
-      { name: "Expediente de empleado", desc: "Datos personales, puesto, sueldo y estatus de cada colaborador." },
-      { name: "Nómina", desc: "Calcula percepciones y deducciones del periodo para generar el pago." },
-      { name: "Puestos y sueldos", desc: "Define roles y su remuneración para estandarizar el pago." },
+      { name: "Expediente de empleado", desc: "Datos personales, CURP, RFC, NSS, INFONAVIT, banco, puesto, SBC diario, tipo de contrato, ptu_excluded (art. 127-I/VI), is_confidential, declares_own_annual (art. 97-B)." },
+      { name: "Puestos, departamentos y organigrama", desc: "Estandariza roles y remuneración; la nómina se calcula a partir de ellos." },
+      { name: "Contratos LFT", desc: "8 plantillas PDF (indefinido, determinado, por obra, capacitación, prestación de servicios, comisión mercantil, etc.) según LFT + Cód. Comercio + Cód. Civil." },
+      { name: "Nómina semanal/quincenal/mensual", desc: "Calcula percepciones (sueldo, horas extra, séptimo día, prima dominical) y deducciones (ISR prorrateado por frecuencia, IMSS obrero, INFONAVIT, FONACOT, pensión alimenticia art. 110-V)." },
+      { name: "Incapacidades", desc: "Subtipos enfermedad_general | maternidad | riesgo_trabajo | paternidad con reglas LSS 42/58/101 aplicadas automáticamente." },
+      { name: "Aguinaldo (art. 87 LFT)", desc: "Devengado al día por empleado activo. 15 días mínimo por año trabajado, proporcional para altas parciales." },
+      { name: "Vacaciones (art. 76 LFT)", desc: "Días acumulados y pendientes. Prima vacacional 25% (art. 80). Reforma 2023: 12 días al primer año, escalonado." },
+      { name: "PTU (arts. 122-131 LFT)", desc: "Reparto de utilidades con reforma 2021 art. 127-VIII: mayor entre 3 meses de salario o promedio de últimos 3 años. Exclusiones 127-I/II/VI/VII. Genera nómina tipo 'ptu' y cédula PDF." },
+      { name: "Liquidación / finiquito", desc: "POST /hr/settlements/calculate con arts. 48, 50 (indemnización 3 meses + 20 días × año), 79-89 (vacaciones, prima), 162 (prima de antigüedad). Genera cédula firmable." },
+      { name: "Ajuste anual de ISR", desc: "Arts. 97 y 116 LISR. Tarifa anual = mensual × 12. Genera constancia art. 99 para el trabajador." },
+      { name: "Cédulas IMSS", desc: "Mensual (EGM/IV/GPS/RT) y bimestral (Retiro/CV/INFONAVIT 5% + amortizaciones) en PDF y XLSX, listos para pago en portal IMSS." },
+      { name: "Avisos AFIL (IMSS)", desc: "Modelos AFIL-02 (alta), AFIL-04 (baja), AFIL-08 (modificación salarial). Detección automática de pendientes con 'overdue' (5 días hábiles LSS)." },
+      { name: "DIM Anexo 1", desc: "Exportación .txt CP-850 con RFC/CURP/nombre/ingresos/ISR para importar directo al programa DIM del SAT (declaración informativa anual)." },
+      { name: "SUA export", desc: "Genera MOVTOS.txt de ancho fijo con tipos SUA (08 alta, 02 baja, 07 modif salario) importable en el SUA de escritorio." },
+      { name: "Recibos CFDI de nómina", desc: "Recibo con ReportLab listo para timbrar con el complemento de nómina SAT (vía Sufactura si está configurado)." },
+      { name: "Kardex del empleado", desc: "Historial anual JSON + PDF firmado con todos los movimientos, incidencias y percepciones del ejercicio." },
+      { name: "Presupuesto de nómina", desc: "Matriz 12 meses × empleado con variance real vs. budget para planeación anual." },
+      { name: "Comunicación al equipo", desc: "Envía mensajes/notificaciones a empleados desde su ficha (recibos, avisos, felicitaciones de cumpleaños)." },
     ],
     start: [
-      "Entra a RH / Nómina desde el menú.",
-      "Revisa o da de alta al empleado con sus datos y sueldo.",
-      "Genera la nómina del periodo correspondiente.",
-      "Verifica percepciones y deducciones antes de pagar.",
+      "Antes de todo: en Configuración → Empresa, captura tu Registro Patronal IMSS (aparece en cédulas y avisos AFIL).",
+      "Alta al empleado: RH → Empleados → 'Nuevo empleado'. Captura CURP, RFC, NSS, SBC DIARIO (no mensual — es el bug clásico), fecha de alta.",
+      "Genera y descarga su contrato LFT desde la ficha (elige plantilla).",
+      "Al final del periodo: Nómina → 'Nueva nómina' → elige frecuencia → el sistema pre-calcula. Revisa y aprueba.",
+      "Cada mes: genera la cédula IMSS mensual, cada bimestre la bimestral. Descarga PDF/XLSX para pagar en el portal IMSS.",
+      "En abril-mayo del año siguiente: usa PTU para calcular el reparto y el ajuste anual de ISR para emitir constancias.",
     ],
     tips: [
-      "Mantén los sueldos y puestos actualizados: la nómina se calcula a partir de ellos.",
+      "SBC es diario, no mensual — si ves ISR/IMSS raro es la causa #1. Existe POST /hr/employees/fix-sbc para auto-corregir capturas viejas.",
+      "UMA 2026 = $113.14 diaria, se lee desde hr/service.py — actualízala cada febrero cuando publique INEGI.",
+      "'ptu_excluded' marca directores/gerentes/servicio doméstico (art. 127-I/VI). 'is_confidential' aplica cap de sindicato × 1.20 (art. 127-II).",
+      "Si el trabajador presenta su propia declaración anual, marca 'declares_own_annual' (art. 97-B): no le calcularás ajuste anual.",
+      "Avisos AFIL con overdue > 5 días hábiles generan alerta automática — no dejes pendientes o el IMSS multa.",
+      "Las incapacidades por riesgo de trabajo las paga el IMSS al 100% desde el primer día — no descuentes salario.",
+      "Aguinaldo debe pagarse antes del 20 de diciembre (art. 87). El sistema calcula proporcional para altas del año.",
     ],
     tour: [
-      { title: "RH / Nómina", body: "Aquí administras a tu equipo y su pago. Te muestro las partes principales." },
-      { title: "Expedientes", body: "Cada empleado tiene su ficha: datos, puesto, sueldo y estatus. Es la fuente para calcular su pago." },
-      { title: "Nómina", body: "Al generar la nómina del periodo, el sistema calcula percepciones y deducciones. Revísalas antes de pagar." },
-      { title: "Puestos y sueldos", body: "Definir puestos con su sueldo estandariza el pago y evita errores al dar de alta gente nueva." },
+      { title: "RH / Nómina", body: "Aquí administras a tu equipo y todo el cumplimiento laboral y fiscal MX. Te muestro las piezas críticas." },
+      { title: "Expediente completo", body: "Cada empleado tiene CURP, RFC, NSS, SBC diario, banco, INFONAVIT/FONACOT. Es la fuente para todos los cálculos: ISR, IMSS, PTU, liquidación." },
+      { title: "Nómina de cada periodo", body: "El sistema calcula percepciones LFT y deducciones (ISR Anexo 8 prorrateado, IMSS obrero, INFONAVIT, FONACOT, pensión alimenticia). Revisas y apruebas." },
+      { title: "Cédulas IMSS", body: "Cada mes genera la mensual (EGM/IV/GPS/RT) y cada bimestre la bimestral (Retiro/CV + INFONAVIT). Se descargan en PDF/XLSX para pagar en el portal IMSS." },
+      { title: "Avisos AFIL", body: "AFIL-02 alta, AFIL-04 baja, AFIL-08 modificación salarial. Si tardas >5 días hábiles, el sistema te avisa con 'overdue' — no te dejes multar." },
+      { title: "PTU y ajuste anual", body: "En abril calcula el PTU (art. 127-VIII: mayor de 3 meses o promedio 3 años). En mayo, el ajuste anual de ISR emite las constancias art. 99 del trabajador." },
+      { title: "DIM y SUA", body: "DIM Anexo 1 exporta .txt CP-850 para el programa DIM SAT. SUA export genera MOVTOS.txt para el SUA escritorio del IMSS." },
+      { title: "Liquidaciones", body: "El módulo de liquidación aplica arts. 48, 50 (indemnización 3 meses + 20 días × año), 79-89 (vacaciones/prima), 162 (antigüedad). Genera cédula firmable." },
     ],
   },
   {
     id: "reportes", page: "reportes", title: "Reportes / BI", icon: BarChart3, color: "#14B8A6",
-    tagline: "Análisis visual para decidir con datos",
-    summary: "El módulo de Reportes / BI convierte tus datos en gráficas y tableros de análisis: ventas por producto, por cliente, márgenes, tendencias e indicadores. Es donde exploras el 'por qué' detrás de los números del Tablero.",
+    tagline: "Dashboards ejecutivos y análisis multidimensional",
+    summary: "El módulo de Reportes / BI convierte tus datos operativos en tableros ejecutivos y análisis multidimensional: ventas por producto/cliente/canal/vendedor, márgenes por SKU, aging de cartera, cohortes de clientes, ranking Pareto (80/20), pronóstico vs. real, KPIs por sucursal y tendencias. Es donde el director del negocio ve el 'por qué' detrás de los números del Tablero — y donde el contador prepara los reportes para el consejo o el fondo.",
     tools: [
-      { name: "Tableros de análisis", desc: "Gráficas de ventas, margen y tendencias con estilo claro y legible." },
-      { name: "Indicadores (gauges)", desc: "Medidores tipo esfera que muestran el avance frente a metas." },
-      { name: "Filtros y periodos", desc: "Segmenta por fecha, producto o cliente para responder preguntas específicas." },
-      { name: "Exportación", desc: "Descarga lo que ves para compartirlo o presentarlo." },
+      { name: "Dashboards ejecutivos", desc: "Ventas vs. meta, margen bruto, EBITDA aproximado, punto de equilibrio, flujo de efectivo proyectado (30 días)." },
+      { name: "Análisis Pareto de clientes", desc: "Qué % de tus clientes concentran el 80% del ingreso — herramienta clave para el riesgo comercial." },
+      { name: "Rentabilidad por SKU/producto", desc: "Revenue, costo FIFO, margen absoluto y % por producto. Encuentra los estrella y los que solo generan trabajo." },
+      { name: "Aging de cartera", desc: "0-30 / 31-60 / 61-90 / +90 días con DSO (días promedio de cobro). Semaforo por antigüedad." },
+      { name: "Comparativos por sucursal", desc: "Contrasta ventas, tickets, ticket promedio y margen entre sucursales / tiendas físicas." },
+      { name: "Nómina vs. ventas", desc: "% del costo laboral sobre ventas — el KPI de eficiencia operativa. Alerta si sube >30%." },
+      { name: "Cohortes de clientes", desc: "Retención de compradores del mes N que siguen comprando M meses después." },
+      { name: "Exportación XLSX/PDF", desc: "Descarga cualquier tablero en Excel para tu contador o en PDF ejecutivo para el consejo." },
+      { name: "Filtros multidimensionales", desc: "Cruza periodo × producto × cliente × canal × sucursal para pasar de agregado a granular." },
     ],
     start: [
       "Entra a Reportes / BI desde el menú.",
-      "Elige el tablero o gráfica que quieres analizar.",
-      "Ajusta el periodo y los filtros a tu pregunta.",
-      "Exporta o descarga si necesitas compartirlo.",
+      "Elige el dashboard que responda tu pregunta (ventas, margen, cartera, sucursales…).",
+      "Ajusta el periodo (mes/trimestre/año) y los filtros.",
+      "Si necesitas granularidad, cruza dos dimensiones (ej. producto × cliente).",
+      "Exporta a XLSX para tu contador o PDF para presentación ejecutiva.",
     ],
     tips: [
-      "El Tablero te dice 'qué' pasa; Reportes / BI te ayuda a entender el 'por qué'.",
+      "El Tablero te dice 'qué' pasa; Reportes/BI te ayuda a entender el 'por qué'.",
+      "Si un cliente concentra >25% de tu ingreso, tienes riesgo de concentración — el análisis Pareto lo dispara automático.",
+      "El KPI 'nómina vs. ventas' saludable en retail MX está entre 15-25%; arriba de 30% es alerta.",
+      "DSO típico en B2B MX: 45-60 días. Arriba de 90 días revisa política de crédito.",
     ],
     tour: [
-      { title: "Reportes / BI", body: "Aquí exploras tus datos a fondo con gráficas y tableros. Te muestro cómo sacarles provecho." },
-      { title: "Tableros", body: "Las gráficas de ventas, margen y tendencias están diseñadas para leerse fácil. Elige la que responda tu pregunta." },
-      { title: "Indicadores", body: "Los medidores tipo esfera muestran el avance frente a metas de un vistazo, sin tener que leer tablas." },
-      { title: "Filtros", body: "Segmenta por periodo, producto o cliente para pasar de 'las ventas bajaron' a 'bajaron en este producto con este cliente'." },
-      { title: "Exporta", body: "Cuando encuentres el insight, descárgalo para compartirlo o presentarlo a tu equipo." },
+      { title: "Reportes / BI", body: "Aquí exploras tus datos a fondo con gráficas y tableros ejecutivos. Te muestro cómo sacarles provecho." },
+      { title: "Dashboards ejecutivos", body: "Ventas vs. meta, margen bruto, flujo de efectivo proyectado. Son los indicadores para el consejo o el dueño." },
+      { title: "Pareto de clientes", body: "El análisis 80/20 te dice qué % de clientes concentra el 80% del ingreso. Si son 3 y uno se te va, tienes crisis de flujo." },
+      { title: "Rentabilidad por SKU", body: "Cruza revenue con costo FIFO real. Los productos con margen negativo o marginal salen a la vista para depurar catálogo." },
+      { title: "Aging de cartera", body: "0-30/31-60/+60 días con DSO. Los clientes en +60 son prioridad de cobranza — usa el PDF de cartera desde Finanzas." },
+      { title: "Exporta", body: "XLSX para tu contador (todo el detalle), PDF ejecutivo para presentar al fondo o al consejo." },
     ],
   },
   {
     id: "config", page: "config", title: "Configuración", icon: Settings, color: "#64748B",
-    tagline: "Ajusta el sistema a tu empresa",
-    summary: "El módulo de Configuración define cómo funciona el sistema para tu empresa: datos del negocio, usuarios y permisos, integraciones (correo, facturación) y preferencias generales. Es el 'cuarto de máquinas' — lo tocas de vez en cuando, no todos los días.",
+    tagline: "Empresa, usuarios, PAC (CFDI) y multi-tenancy",
+    summary: "El módulo de Configuración es el 'cuarto de máquinas' de STHENOVA ERP: perfil fiscal de la empresa (RFC, régimen fiscal, código postal, Registro Patronal IMSS), usuarios con roles y permisos por módulo, credenciales PAC para timbrar CFDI (Sufactura en modo mock/sandbox/producción), correo transaccional (Resend con dominio verificado), políticas comerciales, multi-tenancy y preferencias visuales.",
     tools: [
-      { name: "Datos de la empresa", desc: "Nombre, logo y datos fiscales que aparecen en tickets y reportes." },
-      { name: "Usuarios y permisos", desc: "Da de alta personas y define qué módulos puede ver y usar cada rol." },
-      { name: "Integraciones", desc: "Conecta correo (para enviar resúmenes) y otros servicios." },
-      { name: "Preferencias", desc: "Idioma, tema y ajustes generales del sistema." },
+      { name: "Perfil fiscal de la empresa", desc: "Razón social, RFC, régimen fiscal SAT, código postal (para lugar de expedición CFDI), Registro Patronal IMSS (aparece en cédulas y avisos AFIL)." },
+      { name: "Logo e identidad visual", desc: "Logo que aparece en tickets POS, PDFs de cartera, contratos, recibos de nómina y cotizaciones." },
+      { name: "Usuarios y roles", desc: "Alta de personas con rol (admin, manager, user) y permisos por módulo (sales.view, hr.view, finance.write…). Cero acceso lateral entre empresas." },
+      { name: "Multi-tenancy", desc: "Cada empresa cliente vive aislada: datos, usuarios, PAC, correo. Blindado en 9 módulos (Sales, POS, Customers, Inventory, Retail, Finance, HR, Accounting, CFDI)." },
+      { name: "PAC (Sufactura)", desc: "Credenciales de tu Proveedor Autorizado de Certificación. Modo: mock (pruebas locales), sandbox (Sufactura pruebas), production (real con XML timbrado)." },
+      { name: "Correo transaccional (Resend)", desc: "Configuración del dominio verificado con DKIM. MAIL_FROM debe ser una dirección de tu dominio verificado (no gmail)." },
+      { name: "Almacenes y sucursales", desc: "Define almacenes propios (own), consignaciones (consignment), retornos, merma. El de retornos se auto-crea al primer uso." },
+      { name: "Políticas comerciales", desc: "Condiciones de pago (contado, 30/60/90 días), reglas de retenciones para marketplaces (IVA 8% + ISR 2.5%), esquemas de comisiones." },
+      { name: "Auditoría / health audit", desc: "Endpoint /health/audit?token=<X> para self-diagnóstico. Revisa multi-tenancy, PAC, stock, banner de modo prueba." },
+      { name: "Preferencias visuales", desc: "Idioma (es/en), tema (claro/oscuro), colores de acento, tamaño de fuente." },
     ],
     start: [
-      "Entra a Configuración desde el menú.",
-      "Completa los datos de tu empresa (para que salgan en tickets y PDFs).",
-      "Crea usuarios y asígnales permisos según su rol.",
-      "Configura el correo en Integraciones si quieres enviar resúmenes.",
+      "Entra a Configuración → Empresa. Captura RFC, régimen fiscal, código postal, Registro Patronal IMSS. Sube tu logo.",
+      "Ve a Usuarios → 'Nuevo usuario'. Crea a tu equipo con el rol adecuado y permisos por módulo.",
+      "Configura el PAC (Sufactura): captura credenciales y elige modo. Empieza en 'mock' o 'sandbox' antes de pasar a 'production'.",
+      "Configura correo (Resend): valida tu dominio con DKIM y usa MAIL_FROM = 'Tu Empresa <no-reply@tudominio.com>'.",
+      "Da de alta almacenes/sucursales según tu operación (central, consignación, tienda).",
     ],
     tips: [
-      "Configura el correo aquí para poder usar 'Enviar resumen por correo' desde el Tablero.",
-      "Da a cada persona solo los permisos que necesita: es más seguro.",
+      "Cuando el PAC no está en Producción, aparece un banner rojo 'MODO PRUEBA' en la parte alta del ERP — es esperado, no un bug.",
+      "MAIL_FROM debe ser de un dominio verificado en Resend. Enviar desde gmail hace que se caigan silenciosamente los correos.",
+      "El Registro Patronal IMSS debe ir completo (formato letra-guion-números-guion-verificador) o las cédulas y avisos AFIL salen inválidos.",
+      "Otorga solo los permisos que cada persona necesita — es más seguro y más simple auditar.",
+      "Guarda el token del /health/audit en Render como HEALTH_AUDIT_TOKEN y córrelo semanalmente (curl a la URL) para validar 0 alertas.",
     ],
     tour: [
-      { title: "Configuración", body: "El cuarto de máquinas del sistema. Se ajusta de vez en cuando. Te muestro lo importante." },
-      { title: "Datos de la empresa", body: "Nombre, logo y datos fiscales. Esto es lo que aparece en tus tickets y reportes, así que déjalo correcto." },
-      { title: "Usuarios y permisos", body: "Da de alta a tu equipo y define qué puede ver cada rol. Otorga solo lo necesario: es más seguro." },
-      { title: "Integraciones", body: "Conecta el correo aquí para poder enviar los resúmenes del Tablero. También otros servicios como facturación." },
+      { title: "Configuración", body: "El cuarto de máquinas del sistema. Se ajusta al inicio y de vez en cuando. Te muestro lo esencial." },
+      { title: "Perfil fiscal", body: "RFC, régimen fiscal SAT, código postal y Registro Patronal IMSS. Aparecen en CFDI, cédulas IMSS y avisos AFIL — dejarlo mal invalida todo." },
+      { title: "Usuarios y permisos", body: "Cada persona con su rol (admin/manager/user) y permisos por módulo. La multi-tenancy garantiza que solo vean su empresa." },
+      { title: "PAC (Sufactura)", body: "Credenciales de tu Proveedor Autorizado de Certificación. Empieza en modo mock/sandbox; cuando estés listo cambia a production." },
+      { title: "Correo Resend", body: "Dominio verificado con DKIM para que tus recibos, alertas y cotizaciones lleguen sin caer en spam." },
+      { title: "Health audit", body: "El endpoint /health/audit?token=<X> te dice si hay fugas multi-tenant, timbrado indebido, stock roto. Córrelo semanalmente." },
+    ],
+  },
+  {
+    id: "cfdi", page: "cfdi", title: "CFDI / Facturación electrónica", icon: FileText, color: "#EF4444",
+    tagline: "Timbrado SAT 4.0 vía PAC — sin caerte en pruebas ni en producción",
+    summary: "El módulo de CFDI conecta STHENOVA ERP con el SAT vía un Proveedor Autorizado de Certificación (PAC = Sufactura). Timbra facturas de ingreso (I), egreso (E, para notas de crédito), traslado (T), nómina (N) y pagos (P) en CFDI 4.0. Maneja los tres modos: mock (local sin costo), sandbox (Sufactura pruebas), production (real con XML SAT). Bloquea doble timbrado con UNIQUE (cfdi_uuid) + guard atómico. Cancelación con acuse, complementos y descarga de XML/PDF listos para entregar al cliente.",
+    tools: [
+      { name: "Timbrado de ingreso (I)", desc: "Genera CFDI 4.0 desde una orden de venta o cobro POS. Toma RFC receptor, régimen fiscal, uso CFDI, forma de pago, método (PUE/PPD)." },
+      { name: "Nota de crédito / egreso (E)", desc: "Emite un CFDI de egreso relacionado al ingreso original (tipo relación 01) — descuentos, devoluciones, bonificaciones." },
+      { name: "Complemento de nómina", desc: "Timbrado obligatorio para nóminas — usa datos del recibo de RH (subsidio, ISR, IMSS, INFONAVIT, percepciones, deducciones)." },
+      { name: "Complemento de pagos (P)", desc: "Para facturación PPD (parcialidades diferidas): cada abono emite un CFDI de pago relacionado a la factura original." },
+      { name: "Cancelación con acuse", desc: "Cancela un CFDI ya timbrado siguiendo el motivo SAT (01 relacionado, 02 no operación, 03 no se llevó a cabo, 04 relacionada). Guarda el acuse XML." },
+      { name: "Modo del PAC", desc: "mock = simulado local (sin costo). sandbox = Sufactura pruebas. production = real con timbrado válido ante SAT. El banner rojo 'MODO PRUEBA' avisa si no estás en production." },
+      { name: "Descarga XML/PDF", desc: "El XML timbrado (para tu cliente) y la representación PDF con QR SAT, folio, sello, cadena original." },
+      { name: "Anti-doble timbrado", desc: "UNIQUE (cfdi_uuid) en base + guard atómico. Si intentas timbrar dos veces la misma orden, la segunda es rechazada silenciosamente." },
+    ],
+    start: [
+      "Requisitos: en Configuración → PAC, captura tus credenciales de Sufactura y arranca en modo 'mock' para probar.",
+      "Cuando quieras probar contra SAT sin costos reales: cambia a 'sandbox'.",
+      "Cuando estés listo para timbrar de verdad: 'production'. El banner rojo 'MODO PRUEBA' desaparecerá.",
+      "Para timbrar: abre una orden pagada → 'Timbrar CFDI'. El sistema toma los datos del cliente (RFC, régimen, uso), llama al PAC y guarda XML + PDF.",
+      "Para cancelar: abre el CFDI y presiona 'Cancelar'. Elige motivo SAT (01-04). El acuse se guarda automáticamente.",
+    ],
+    tips: [
+      "Un cliente sin régimen fiscal o con RFC inválido rompe el timbrado. Valida siempre RFC (formato) y régimen antes de facturar.",
+      "En CFDI 4.0 es obligatorio el código postal del emisor y del receptor (lugar de expedición y domicilio fiscal del receptor).",
+      "PUE (Pago en una exhibición) = se paga completa al momento. PPD (Pago diferido) = se genera factura + complementos de pago por cada abono.",
+      "Uso de CFDI más común: G01 (Adquisición de mercancías), G03 (Gastos en general), P01 (Por definir — el cliente lo asignará).",
+      "Cancelaciones de meses cerrados requieren autorización adicional del receptor en el portal del SAT — no todo se cancela con solo apretar botón.",
+      "El complemento de nómina se timbra por recibo, no por nómina completa: si son 40 empleados, son 40 CFDI.",
+    ],
+    tour: [
+      { title: "CFDI / Facturación electrónica", body: "STHENOVA se conecta al SAT vía Sufactura como PAC. Te muestro los tres modos y el flujo de timbrado." },
+      { title: "Los tres modos", body: "mock = simulado local sin costo (para desarrollo). sandbox = Sufactura pruebas. production = real ante SAT. Un banner rojo te avisa si no estás en production." },
+      { title: "Timbrar", body: "Abre una orden pagada → 'Timbrar CFDI'. El sistema toma los datos del cliente y llama al PAC. Guarda XML + PDF con QR SAT." },
+      { title: "Nota de crédito", body: "Para devoluciones o descuentos, emite un CFDI de egreso relacionado (tipo relación 01) al ingreso original. Nunca canceles y vuelvas a timbrar." },
+      { title: "Cancelar", body: "Elige motivo SAT: 01 con relación, 02 no operación, 03 no se realizó, 04 con relación a nueva factura. El acuse XML se guarda automático." },
+      { title: "Anti-doble timbrado", body: "UNIQUE(cfdi_uuid) + guard atómico. Aunque tu equipo apachurre 'Timbrar' 3 veces, solo se timbra una — cero riesgo de doble factura." },
+    ],
+  },
+  {
+    id: "compras", page: "inventario", title: "Compras (OC)", icon: Truck, color: "#0EA5E9",
+    tagline: "Órdenes de compra a proveedores y recepción de mercancía",
+    summary: "El módulo de Compras vive dentro de Inventario y controla el ciclo de aprovisionamiento: crear órdenes de compra (OC) a proveedores, dar seguimiento a fechas de entrega, recibir mercancía por línea con cantidades reales (parciales o completas), incrementar stock en el almacén de recepción y generar la cuenta por pagar en Finanzas. Todo con auditoría de quién ordenó, quién recibió y qué diferencia hubo entre lo pedido y lo recibido.",
+    tools: [
+      { name: "Orden de compra (OC)", desc: "Documento con proveedor, fechas (emisión, entrega esperada), condiciones de pago, líneas de producto (SKU, cantidad, costo unitario). Estados: draft, ordered, received, cancelled." },
+      { name: "Recepción parcial o total", desc: "Al recibir mercancía capturas cantidades reales por línea (pueden ser menores a la ordenada). Se genera un StockMovement de entrada y actualiza el on_hand del almacén." },
+      { name: "OC atrasadas", desc: "El sistema lista todas las OC en estado 'ordered' cuya fecha esperada ya pasó — herramienta para presionar al proveedor." },
+      { name: "Lead time promedio", desc: "Calcula días promedio entre emisión y recepción por proveedor. Útil para planeación de reorden." },
+      { name: "Variación de costo", desc: "SKUs con diferencia >5% entre los últimos dos lotes recibidos — señala aumentos de precio o errores de captura." },
+      { name: "Punto de reorden sin OC", desc: "SKUs bajo el punto de reorden que aún NO tienen OC abierta — la lista de 'hay que comprar ya'." },
+      { name: "CxP automática", desc: "Al recibir mercancía se genera la cuenta por pagar en Finanzas con la fecha de vencimiento según condiciones del proveedor." },
+    ],
+    start: [
+      "Entra a Inventario → Compras (o al widget de 'Reabasto' desde el dashboard).",
+      "Crea una OC nueva: elige proveedor, condiciones de pago y fechas.",
+      "Agrega líneas: SKU, cantidad ordenada, costo unitario (sugerido del último costo del sistema).",
+      "Cambia el estado a 'ordered' y envía el PDF al proveedor.",
+      "Cuando llegue la mercancía: abre la OC → 'Recibir' → captura las cantidades REALMENTE recibidas por línea → confirma.",
+      "El stock del almacén de recepción se incrementa y se crea la CxP automáticamente.",
+    ],
+    tips: [
+      "La recepción NO usa la plantilla masiva de inventario — esa plantilla es solo para crear/actualizar catálogo. La recepción es siempre sobre la OC ya creada.",
+      "Recibir parcial es normal: el proveedor te trajo 40 de 50 unidades → capturas 40, el sistema deja las 10 restantes 'pendientes de recibir' en la misma OC.",
+      "Si el proveedor te trajo más caro de lo pactado, captura el costo real recibido — el sistema recalcula el costo promedio del SKU con FIFO.",
+      "Cancelar una OC solo funciona si nada se ha recibido; si ya recibiste parcial, cancela solo las líneas pendientes.",
+      "Usa 'OC atrasadas' cada lunes para presionar proveedores retrasados — no te esperes a que te falte producto.",
+    ],
+    tour: [
+      { title: "Compras (OC)", body: "El ciclo completo de aprovisionamiento: crear OC, recibir mercancía, subir stock, generar CxP. Te muestro cómo." },
+      { title: "Crear la OC", body: "Elige proveedor, fechas y condiciones de pago. Agrega SKUs con cantidad y costo. Estado inicial: 'draft' (borrador editable)." },
+      { title: "Enviar al proveedor", body: "Cambia a 'ordered' y descarga el PDF para enviárselo al proveedor. A partir de aquí el sistema cuenta días hacia la fecha esperada." },
+      { title: "Recibir mercancía", body: "Cuando llegue el envío, abre la OC y captura cantidades REALES recibidas por línea (pueden ser menores). El stock se incrementa al confirmar." },
+      { title: "CxP automática", body: "Al recibir se crea la cuenta por pagar en Finanzas con el vencimiento según condiciones del proveedor. No la capturas dos veces." },
+      { title: "OC atrasadas", body: "El listado de OC 'ordered' cuya fecha esperada ya pasó. Herramienta para llamar al proveedor antes de quedarte sin producto." },
     ],
   },
 ];
@@ -2607,6 +2742,292 @@ const HELP_GUIDES = [
       "Cada salida muestra el costo FIFO aplicado en ese momento."
     ],
   },
+  {
+    id: "timbrar", title: "Timbrar un CFDI 4.0", icon: FileText, color: "#EF4444",
+    steps: [
+      "Requisito: en Configuración → PAC (Sufactura) tus credenciales están activas y el modo es 'sandbox' o 'production'.",
+      "Ve a Ventas → abre la orden pagada.",
+      "Presiona 'Timbrar CFDI'. El sistema toma RFC receptor, régimen fiscal, uso CFDI, forma de pago y método.",
+      "El PAC responde con XML + UUID + sello SAT. Se guarda en la orden.",
+      "Desde la orden ahora puedes descargar XML (para el cliente) o PDF (con QR SAT).",
+      "Si estás en 'mock' o 'sandbox' verás el banner rojo 'MODO PRUEBA' — es normal, no se timbra ante SAT."
+    ],
+  },
+  {
+    id: "cancelar-cfdi", title: "Cancelar un CFDI con acuse SAT", icon: XCircle, color: "#EF4444",
+    steps: [
+      "Ve a Ventas → abre la orden que tiene CFDI timbrado.",
+      "Presiona 'Cancelar CFDI'.",
+      "Elige motivo SAT: 01 con relación (emitirás CFDI nuevo), 02 no fue operación, 03 no se llevó a cabo, 04 relacionada a factura nueva.",
+      "Si es motivo 01 o 04, captura el UUID del CFDI que sustituye.",
+      "El PAC responde con acuse XML que se guarda automáticamente.",
+      "OJO: cancelaciones de meses cerrados (art. 29-A CFF) requieren autorización del receptor en el portal SAT — no queda todo con solo apretar botón."
+    ],
+  },
+  {
+    id: "nota-credito", title: "Emitir nota de crédito (CFDI egreso)", icon: FileText, color: "#F97316",
+    steps: [
+      "Nunca canceles y vuelvas a timbrar para 'corregir' — usa nota de crédito.",
+      "Ve a Ventas → abre la orden original con CFDI de ingreso.",
+      "Presiona 'Nota de crédito' → captura monto/concepto (bonificación, devolución, descuento).",
+      "El sistema emite CFDI tipo E (egreso) con tipo relación 01 apuntando al UUID original.",
+      "El PDF de la nota lo entregas al cliente; contablemente reduce el ingreso."
+    ],
+  },
+  {
+    id: "aguinaldo", title: "Calcular aguinaldo (art. 87 LFT)", icon: Wallet, color: "#F59E0B",
+    steps: [
+      "Ve a RH → pestaña 'Aguinaldo devengado' (o pregunta al Asistente 'aguinaldo devengado').",
+      "El sistema calcula 15 días × sueldo diario para empleados con año completo.",
+      "Para altas parciales del año: proporcional (días trabajados / 365 × 15 × salario diario).",
+      "Debes pagarlo antes del 20 de diciembre.",
+      "Retención ISR: los primeros 30 UMA anuales están exentos (art. 93-XIV LISR); el excedente se acumula al sueldo del mes.",
+      "Se timbra con complemento de nómina tipo 'aguinaldo' (clave 002 SAT)."
+    ],
+  },
+  {
+    id: "ptu", title: "Calcular y pagar PTU (arts. 122-131 LFT)", icon: Users, color: "#EC4899",
+    steps: [
+      "Se paga entre el 1 de abril y el 30 de mayo del año siguiente al ejercicio.",
+      "Ve a RH → pestaña 'PTU' → año fiscal previo.",
+      "El sistema calcula 10% de la utilidad fiscal (renglón 26 del ISR anual).",
+      "Reparto: 50% por días trabajados, 50% por salarios devengados (art. 123 LFT).",
+      "Reforma 2021 art. 127-VIII: el tope por trabajador es el MAYOR entre 3 meses de salario o el promedio de PTU de los últimos 3 años.",
+      "Exclusiones: directores/administradores (127-I), servicio doméstico (127-VI), trabajadores <60 días (127-VII).",
+      "Confidenciales de cierta jerarquía tienen cap del sindicato × 1.20 (127-II) — marca is_confidential en la ficha.",
+      "Genera cédula PDF firmable y una nómina tipo 'ptu' que se timbra con complemento SAT (clave 003)."
+    ],
+  },
+  {
+    id: "liquidacion", title: "Calcular liquidación / finiquito LFT", icon: FileText, color: "#EF4444",
+    steps: [
+      "Ve a RH → abre la ficha del empleado → 'Liquidación / finiquito'.",
+      "Captura fecha de terminación, tipo de baja (renuncia, despido justificado, despido injustificado, término de contrato, muerte).",
+      "El sistema calcula automáticamente:",
+      "• Sueldo pendiente hasta fecha de baja.",
+      "• Aguinaldo proporcional (art. 87 LFT).",
+      "• Vacaciones no gozadas + prima vacacional 25% (arts. 79 y 80 LFT).",
+      "• Prima de antigüedad: 12 días × año trabajado si ≥15 años o baja involuntaria (art. 162 LFT), tope 2 UMA diarias.",
+      "• Solo si es despido injustificado: indemnización constitucional 3 meses + 20 días × año (arts. 48 y 50 LFT).",
+      "Descarga la cédula PDF firmable — el trabajador firma su recepción.",
+      "Timbrar con CFDI complemento de nómina tipo 'separación' (clave 004)."
+    ],
+  },
+  {
+    id: "cedula-imss", title: "Generar y pagar cédula IMSS mensual", icon: Users, color: "#8B5CF6",
+    steps: [
+      "Ve a RH → pestaña 'Cédulas IMSS'.",
+      "Elige mes/año y presiona 'Generar cédula mensual'.",
+      "El sistema calcula cuotas obrero-patronales por empleado con base en SBC × días cotizados:",
+      "• EGM (Enfermedad y Maternidad): patronal + obrero.",
+      "• IV (Invalidez y Vida): patronal + obrero.",
+      "• RT (Riesgo de Trabajo): 100% patronal, prima definida en tu SIROC.",
+      "• GPS (Guarderías y Prestaciones Sociales): 100% patronal.",
+      "Descarga el PDF y el XLSX. Sube el archivo SUA al portal IMSS para pagar antes del día 17 del mes siguiente.",
+      "Bimestralmente (enero, marzo, mayo, julio, septiembre, noviembre) genera también la cédula bimestral: Retiro, CV (Cesantía y Vejez) e INFONAVIT 5% + amortizaciones del trabajador."
+    ],
+  },
+  {
+    id: "aviso-imss", title: "Presentar aviso AFIL al IMSS", icon: IdCard, color: "#F97316",
+    steps: [
+      "Ve a RH → pestaña 'Avisos IMSS'.",
+      "Elige tipo: AFIL-02 (alta), AFIL-04 (baja), AFIL-08 (modificación salarial).",
+      "Selecciona empleado y fecha del movimiento.",
+      "El sistema imprime el modelo listo para presentar en línea (IDSE) o físicamente en la subdelegación.",
+      "Tienes 5 días hábiles desde el movimiento (art. 15 LSS). Si te tardas más, el sistema marca 'overdue' en rojo.",
+      "El aviso queda guardado en IMSSMovement con estado (pendiente / presentado / rechazado)."
+    ],
+  },
+  {
+    id: "dim-anexo1", title: "Exportar DIM Anexo 1 (declaración anual de sueldos)", icon: Download, color: "#0EA5E9",
+    steps: [
+      "En febrero del año siguiente al ejercicio.",
+      "Ve a RH → pestaña 'DIM Anexo 1' → elige el ejercicio.",
+      "Descarga el .txt CP-850 (ASCII extendido, formato ancho fijo del programa DIM SAT).",
+      "Abre el programa DIM del SAT (descarga en sat.gob.mx) → Nuevo → Importar → selecciona el .txt.",
+      "El DIM validará estructura y montos. Genera el archivo .DEC y preséntalo en el portal SAT.",
+      "Debe presentarse a más tardar el 15 de febrero (art. 118-V LISR)."
+    ],
+  },
+  {
+    id: "sua-export", title: "Exportar movimientos al SUA (IMSS)", icon: Download, color: "#8B5CF6",
+    steps: [
+      "Ve a RH → pestaña 'SUA export'.",
+      "Elige el periodo (mes/bimestre).",
+      "Descarga el MOVTOS.txt (ancho fijo con tipos SUA 08 alta, 02 baja, 07 modif salario).",
+      "Abre el SUA de escritorio del IMSS → Utilerías → Importar movimientos → selecciona el MOVTOS.txt.",
+      "El SUA validará y aplicará los movimientos a tu registro patronal.",
+      "Genera la cédula desde el SUA para pagar en el portal IMSS."
+    ],
+  },
+  {
+    id: "diot", title: "Preparar DIOT (declaración informativa de operaciones con terceros)", icon: FileText, color: "#14B8A6",
+    steps: [
+      "Ve a Contabilidad → pestaña 'DIOT'.",
+      "Elige el periodo (mes o el mes específico).",
+      "El sistema arma el reporte con proveedores nacionales/extranjeros y desglose de IVA acreditable, IVA retenido, IVA exento.",
+      "Descarga el .txt (formato ancho fijo del programa DIOT del SAT).",
+      "Impórtalo en el programa DIOT (descarga en sat.gob.mx) → valida → genera el .dec.",
+      "Preséntalo en el portal SAT el mes siguiente al de la operación.",
+      "OJO: solo se declaran proveedores con operaciones ≥ $50,000 en el mes (Regla 2.8.1.1 RMF) — el sistema filtra automáticamente."
+    ],
+  },
+  {
+    id: "recibir-oc", title: "Recibir mercancía de una orden de compra", icon: Truck, color: "#0EA5E9",
+    steps: [
+      "Ve a Inventario → Compras → abre la OC en estado 'ordered'.",
+      "Presiona 'Recibir mercancía'.",
+      "Captura por cada línea la CANTIDAD REAL recibida (puede ser menor a la ordenada — el proveedor a veces manda incompleto).",
+      "Si el costo unitario cambió, actualízalo; el costo FIFO se recalcula.",
+      "Confirma → el stock del almacén de recepción se incrementa y se crea un StockMovement de entrada.",
+      "La cuenta por pagar se crea automáticamente en Finanzas con vencimiento según condiciones del proveedor.",
+      "Si recibiste parcial, la OC queda 'received' con líneas pendientes — puedes recibir el resto después."
+    ],
+  },
+  {
+    id: "banner-modo-prueba", title: "Quitar el banner rojo 'MODO PRUEBA'", icon: AlertTriangle, color: "#EF4444",
+    steps: [
+      "El banner rojo aparece cuando el PAC (Sufactura) NO está en modo 'production'. Es la protección contra timbrar por error en pruebas.",
+      "Ve a Configuración → PAC (Sufactura).",
+      "Captura credenciales de PRODUCCIÓN reales de Sufactura (no las de sandbox).",
+      "Cambia el modo a 'production'.",
+      "Al guardar, el banner desaparece.",
+      "Recomendación: primero timbra 1-2 CFDI de prueba en sandbox con tus datos reales para validar RFC, régimen y códigos postales antes de cambiar a producción."
+    ],
+  },
+];
+
+// ── Preguntas frecuentes ──────────────────────────────────────────────
+// FAQs de administración y cumplimiento fiscal MX, más cómo se refleja
+// eso en el ERP. Cubren dudas típicas del director/contador/dueño.
+type HelpFaq = {
+  id: string; category: string; icon: any; color: string;
+  question: string; answer: string;
+};
+
+const HELP_FAQS: HelpFaq[] = [
+  // ─── Fiscal ───────────────────────────────────────────────────────
+  {
+    id: "cfdi-pue-vs-ppd", category: "Fiscal · CFDI", icon: FileText, color: "#EF4444",
+    question: "¿Cuándo uso PUE y cuándo PPD al facturar?",
+    answer: "PUE (Pago en una Exhibición) se usa cuando el cliente paga el 100% al momento de emitir la factura (efectivo, tarjeta, transferencia inmediata). PPD (Pago en Parcialidades o Diferido) se usa cuando se cobra a crédito o en abonos posteriores; obliga a emitir un CFDI de complemento de pago por cada abono recibido. Regla práctica: si el pago cae en el mismo mes de emisión, es PUE; si cruza mes o va por parcialidades, es PPD (Regla 2.7.1.32 RMF). En STHENOVA se elige al timbrar; si el cliente es crédito por default, sale PPD automáticamente."
+  },
+  {
+    id: "regimen-fiscal", category: "Fiscal · CFDI", icon: FileText, color: "#EF4444",
+    question: "¿Qué régimen fiscal capturo del cliente al facturar CFDI 4.0?",
+    answer: "El régimen fiscal del RECEPTOR es obligatorio en CFDI 4.0 y debe coincidir con el que el cliente tenga registrado en su constancia de situación fiscal. Los más comunes: 601 (General de Ley Personas Morales), 603 (Personas Morales con Fines no Lucrativos), 605 (Sueldos y Salarios), 606 (Arrendamiento), 612 (Actividades Empresariales y Profesionales), 616 (Sin Obligaciones Fiscales), 621 (RIF — desde 2022 solo transitorios), 626 (RESICO). Pide la constancia SAT actualizada del cliente; si captura mal el régimen, el PAC rechaza el timbrado."
+  },
+  {
+    id: "uso-cfdi", category: "Fiscal · CFDI", icon: FileText, color: "#EF4444",
+    question: "¿Qué uso de CFDI capturo?",
+    answer: "El uso de CFDI es lo que el receptor le dará al comprobante. Comunes: G01 (Adquisición de mercancías), G02 (Devoluciones, descuentos, bonificaciones), G03 (Gastos en general), I01-I08 (Inversiones/deducciones), D01-D10 (deducciones personales de PF), P01 (Por definir — cuando el receptor asignará después) y S01 (Sin efectos fiscales, no deducible). Cuando dudes, pregúntale al cliente qué uso quiere; su contador es quien sabe."
+  },
+  {
+    id: "cancelar-cfdi-mes-cerrado", category: "Fiscal · CFDI", icon: XCircle, color: "#EF4444",
+    question: "¿Puedo cancelar un CFDI del mes pasado o de un año anterior?",
+    answer: "Sí, pero con requisitos crecientes. El mismo mes: se cancela con sólo apretar el botón (el receptor recibe notificación en Buzón Tributario y tiene 72 horas para objetar, sino queda cancelada). Meses anteriores del mismo ejercicio: igual, con aceptación tácita del receptor. Ejercicios ya cerrados o CFDI relacionados a devoluciones fiscales: el receptor debe autorizar expresamente la cancelación desde su portal SAT. Si el receptor no responde en 72 horas, se cancela por presunción tácita (art. 29-A CFF y regla 2.7.1.34 RMF)."
+  },
+  {
+    id: "iva-marketplace", category: "Fiscal · IVA", icon: DollarSign, color: "#F97316",
+    question: "¿Por qué me retienen IVA cuando vendo en marketplace?",
+    answer: "Desde 2020 las plataformas digitales (Amazon, Mercado Libre, Liverpool, Walmart, etc.) están obligadas a retener el 8% de IVA (50% del 16%) y el 2.5% de ISR sobre lo que te depositen (arts. 113-B LISR y 1-A-BIS LIVA). Ellos te lo declaran al SAT en tu RFC. En STHENOVA se marca al cliente como 'Marketplace' en su ficha, y al conciliar el depósito el sistema resta comisión + IVA retenido + ISR retenido + devoluciones para calcular lo esperado."
+  },
+  {
+    id: "diot", category: "Fiscal · IVA", icon: FileText, color: "#F97316",
+    question: "¿Qué es la DIOT y cuándo la debo presentar?",
+    answer: "La DIOT (Declaración Informativa de Operaciones con Terceros) reporta al SAT los proveedores y clientes con operaciones ≥ $50,000 en el mes, con desglose de IVA acreditable/trasladado/retenido. Se presenta mensualmente a más tardar el último día del mes siguiente al que corresponda. Es obligatoria para contribuyentes con actividades gravadas de IVA. STHENOVA la arma automáticamente desde tus CFDI de gastos y compras (Contabilidad → DIOT); descargas el .txt y lo importas al programa DIOT del SAT."
+  },
+
+  // ─── Nómina LFT/IMSS ─────────────────────────────────────────────
+  {
+    id: "sbc-diario", category: "Nómina · IMSS", icon: IdCard, color: "#8B5CF6",
+    question: "¿Qué es el SBC y por qué debe ser diario, no mensual?",
+    answer: "El SBC (Salario Base de Cotización) es el ingreso diario del trabajador con el que se calculan las cuotas IMSS (arts. 27-33 LSS). Se compone del sueldo diario + parte proporcional de aguinaldo, vacaciones, prima vacacional y demás prestaciones fijas. En STHENOVA el campo Employee.sbc es SIEMPRE DIARIO; si capturas mensual por error, la cédula IMSS sale ~30× inflada. Existe POST /hr/employees/fix-sbc para autoreparar capturas viejas. Tope superior: 25 UMA diarias ($2,828.50 en 2026)."
+  },
+  {
+    id: "uma-vs-smg", category: "Nómina · LFT", icon: IdCard, color: "#8B5CF6",
+    question: "¿UMA o Salario Mínimo? ¿Cuál uso?",
+    answer: "Desde 2016 (reforma constitucional al art. 123-A-VI) la UMA (Unidad de Medida y Actualización) reemplazó al Salario Mínimo como referencia para pagos y multas de índole administrativa, fiscal y de seguridad social. El Salario Mínimo General se sigue usando SOLO para pagar a trabajadores. Reglas prácticas: multas SAT/IMSS → UMA. Créditos INFONAVIT en VSM viejo → conversión a UMA. Aportaciones IMSS → SBC en UMA (topes). Salario del trabajador → nunca por debajo del SMG vigente. UMA 2026 = $113.14 diaria, se lee en hr/service.py."
+  },
+  {
+    id: "vacaciones-reforma-2023", category: "Nómina · LFT", icon: IdCard, color: "#8B5CF6",
+    question: "¿Cómo funciona la reforma de vacaciones 2023?",
+    answer: "Desde el 1 enero 2023 (reforma al art. 76 LFT): 1er año 12 días (antes 6), 2do 14, 3ro 16, 4to 18, 5to 20; a partir del 6to año se agregan 2 días por cada 5 años trabajados. La prima vacacional se mantiene en 25% mínimo (art. 80). STHENOVA aplica esta escala automáticamente cuando calcula vacaciones devengadas — no necesitas actualizar contratos viejos manualmente."
+  },
+  {
+    id: "aguinaldo-exento", category: "Nómina · ISR", icon: Wallet, color: "#F59E0B",
+    question: "¿Qué parte del aguinaldo está exenta de ISR?",
+    answer: "Están exentos los primeros 30 UMA anuales (art. 93-XIV LISR), equivalente a $3,394.20 en 2026 (30 × $113.14). El excedente se acumula al ingreso mensual del trabajador y se retiene ISR conforme a la tarifa mensual del Anexo 8 RMF (aunque el pago sea semanal o quincenal, para efectos de acumulación se ve como parte del mes). STHENOVA aplica esto automáticamente al generar el CFDI de nómina con clave 002 (aguinaldo)."
+  },
+  {
+    id: "riesgo-trabajo", category: "Nómina · IMSS", icon: AlertTriangle, color: "#EF4444",
+    question: "Un empleado tuvo accidente laboral. ¿Le pago o no?",
+    answer: "No. Los subsidios por incapacidad temporal derivada de riesgo de trabajo los paga el IMSS al 100% del SBC desde el primer día (arts. 58 y 91 LSS), NO el patrón. Tú solo debes: (1) presentar aviso ST-7 al IMSS dentro de 24 horas del accidente, (2) enviarlo a Medicina del Trabajo del IMSS para valoración, (3) capturar la incapacidad en STHENOVA con subtipo 'riesgo_trabajo' — el sistema NO descuenta salario ni genera pago patronal por esos días. Si tú se lo pagas 'como favor', pierdes el derecho a que IMSS lo cubra y probablemente le subes la prima RT del año siguiente."
+  },
+  {
+    id: "incapacidad-general", category: "Nómina · IMSS", icon: AlertTriangle, color: "#F59E0B",
+    question: "¿Y en incapacidad por enfermedad general?",
+    answer: "Los primeros 3 días son a cargo del PATRÓN sin salario (art. 42-II LSS: es una prohibición implícita de descontar, pero no obliga a pagarlos). Del día 4 en adelante el IMSS paga el 60% del SBC. En la práctica muchas empresas absorben esos 3 primeros días para no afectar al trabajador, pero es potestativo. STHENOVA captura los días con subtipo 'enfermedad_general' y aplica la regla; si tú decides pagar los 3 días de gracia, agrégalo como percepción libre."
+  },
+  {
+    id: "prima-antiguedad", category: "Nómina · LFT", icon: Award, color: "#EC4899",
+    question: "¿Cuándo pago prima de antigüedad?",
+    answer: "Art. 162 LFT: en cualquier separación del trabajador con ≥15 años de antigüedad, o en cualquier separación involuntaria (despido justificado o injustificado, muerte, incapacidad total). Monto: 12 días de salario por cada año trabajado, con tope de 2 UMA diarias por día para el cálculo ($226.28 en 2026). Si renuncia voluntariamente con menos de 15 años, no aplica. STHENOVA lo calcula automáticamente al armar la liquidación."
+  },
+  {
+    id: "indemnizacion-despido", category: "Nómina · LFT", icon: XCircle, color: "#EF4444",
+    question: "¿Cuánto pago si despido a alguien sin causa justificada?",
+    answer: "Arts. 48 y 50 LFT: indemnización constitucional de 3 meses de salario integrado + 20 días de salario por cada año trabajado + prima de antigüedad + partes proporcionales (aguinaldo, vacaciones, prima vacacional). Adicionalmente, si el juicio se pierde, salarios caídos por hasta 12 meses desde la separación (después de la reforma 2012 el tope quedó en 12 meses; si el juicio dura más, se paga interés). STHENOVA calcula el finiquito completo al elegir tipo 'despido injustificado' — el resultado sale firmable en PDF."
+  },
+  {
+    id: "ptu-tope-2021", category: "Nómina · PTU", icon: Users, color: "#EC4899",
+    question: "¿Cómo funciona el tope de PTU tras la reforma 2021?",
+    answer: "Art. 127-VIII LFT (reforma 2021 anti-outsourcing): el monto individual de PTU tiene como límite el MAYOR entre (a) 3 meses de salario del trabajador o (b) el promedio de PTU recibido por él mismo en los últimos 3 años. Antes de 2021 no había tope; ahora se aplica a todos, incluidos gerentes y confidenciales. Adicionalmente, el art. 127-II mantiene el cap sindicato × 1.20 para confidenciales sin sindicato de referencia. STHENOVA calcula ambos topes y aplica el mayor por trabajador."
+  },
+
+  // ─── Contabilidad ─────────────────────────────────────────────────
+  {
+    id: "contabilidad-electronica", category: "Contabilidad", icon: BookText, color: "#A855F7",
+    question: "¿Estoy obligado a llevar contabilidad electrónica?",
+    answer: "Sí, si eres persona moral o física con actividad empresarial con ingresos anuales >$4M (Regla 2.8.1.5 RMF). Consiste en: (1) catálogo de cuentas con código agrupador SAT, (2) balanza de comprobación XML mensual, (3) pólizas XML con UUID de CFDI relacionadas cuando el SAT las requiera en revisión. STHENOVA lleva las pólizas automáticamente desde ventas, compras y pagos; en Contabilidad puedes exportarlas al formato XML del SAT cuando te lo pidan."
+  },
+  {
+    id: "cierre-mensual", category: "Contabilidad", icon: Lock, color: "#A855F7",
+    question: "¿Para qué sirve cerrar el mes contable?",
+    answer: "Cerrar el mes guarda un snapshot inmutable (balanza, estado de resultados, balance) y BLOQUEA las pólizas de ese mes para que nadie las edite por accidente (o a propósito). Es el sello de que 'estas cifras son las oficiales que reportamos'. Si necesitas corregir algo cerrado, la reapertura pide una razón que queda auditada — no es libre. Buena práctica: cierra el mes cuando termine tu conciliación bancaria y confirmes que los estados financieros son correctos."
+  },
+  {
+    id: "kardex-fifo", category: "Inventario · Costo", icon: Box, color: "#3B82F6",
+    question: "¿Por qué usar FIFO y no promedio?",
+    answer: "FIFO (First In, First Out) valúa las salidas al costo del lote más antiguo en existencia. Ventajas: (1) refleja el flujo físico real en productos perecederos, (2) el valor del inventario en balance queda al costo más reciente (más cercano al mercado), (3) el margen se calcula con el costo real de compra de cada unidad — no un promedio que oculta variaciones. Desventaja: en inflación alta, el costo de venta se subestima y la utilidad se infla. FIFO es lo aceptado por SAT para efectos fiscales; promedio ponderado y UEPS también son válidos, pero UEPS ya no se acepta desde 2014."
+  },
+  {
+    id: "punto-reorden", category: "Inventario", icon: Package, color: "#3B82F6",
+    question: "¿Cómo se calcula el punto de reorden?",
+    answer: "Fórmula estándar: (Demanda diaria promedio × Lead time del proveedor) + Stock de seguridad. Ejemplo: si vendes 10/día, el proveedor tarda 7 días en surtirte y quieres 5 días de colchón: punto de reorden = 10×7 + 10×5 = 120 unidades. Cuando el stock baja de 120, debes emitir OC. STHENOVA muestra los SKUs bajo punto de reorden en el módulo de Inventario y el asistente contesta 'stock crítico' con esa lista. El campo de punto de reorden se configura por SKU."
+  },
+
+  // ─── Operativo del ERP ────────────────────────────────────────────
+  {
+    id: "multi-tenant", category: "ERP · Seguridad", icon: Lock, color: "#64748B",
+    question: "Si atiendo a varias empresas, ¿pueden verse los datos entre ellas?",
+    answer: "No. STHENOVA es multi-tenant blindado en 9 módulos: Sales, POS, Customers, Inventory, Retail, Finance, HR, Accounting, CFDI. Cada empresa tiene su tenant_id y todas las consultas van filtradas por él a nivel de servicio + base de datos. Los usuarios ven solo su empresa activa (se cambia con el CompanySwitcher del header). El endpoint /health/audit?token=<X> hace una auditoría en vivo y reporta cualquier fuga de tenant. Adicionalmente el sistema tiene stock validation robusto (rechaza venta con stock 0), anti-doble timbrado (UNIQUE cfdi_uuid + guard atómico) y banner rojo 'MODO PRUEBA' cuando el PAC no está en Producción."
+  },
+  {
+    id: "backup", category: "ERP · Operación", icon: Download, color: "#64748B",
+    question: "¿Cómo respaldo mi información?",
+    answer: "STHENOVA corre sobre Supabase (Postgres administrado). Supabase toma backup automático diario (retención 7-30 días según plan) y permite Point-in-Time Recovery. Puedes descargar backup manual desde el panel: Database → Backups. Adicionalmente cada módulo permite exportar sus datos a XLSX (Inventario, Ventas, Clientes, Nómina) para respaldo local. El código está en GitHub y el deploy es reproducible con render.yaml — si el servidor se cae, se levanta idéntico en minutos."
+  },
+  {
+    id: "asistente-como-uso", category: "ERP · Asistente", icon: Sparkles, color: "#33B2F5",
+    question: "¿Cómo le pregunto al Asistente lo que quiero saber?",
+    answer: "El Asistente entiende preguntas naturales en español. Ejemplos que funcionan: 'ventas del mes', 'top clientes', 'cartera vencida', 'stock crítico', 'caducidades a 30 días', 'cómo va Walmart', 'ventas POS del día', 'cuántas facturas me faltan timbrar', 'aguinaldo devengado', 'ptu estimado', 'cédula IMSS del mes'. También responde preguntas de consulta general del ERP ('¿dónde configuro el PAC?') y del marco fiscal MX ('¿qué es la DIOT?'). Si la pregunta es interpretativa ('por qué…', 'qué recomiendas…', 'analiza…'), da un análisis con IA además de la cifra."
+  },
+  {
+    id: "asistente-presupuesto", category: "ERP · Asistente", icon: Sparkles, color: "#33B2F5",
+    question: "¿La barra del Asistente qué significa? ¿Cuánto cuesta usarlo?",
+    answer: "La barra representa el consumo del presupuesto mensual del LLM (Claude Haiku 4.5). Verde <60% usado, amarillo 60-85%, rojo >85%. Tope duro $5 USD/mes por empresa. Cuando se agota, el asistente aún responde preguntas frecuentes con el motor determinista (regex + tools) sin costo — solo pierde el modo interpretativo con IA. En operación normal una empresa mediana consume $1-2 USD/mes."
+  },
 ];
 
 // Sección con encabezado dentro del manual
@@ -2677,18 +3098,40 @@ function HelpTour({ t, manual, onClose }: { t: any; manual: ModuleManual; onClos
   );
 }
 
+// Fila de FAQ en el listado del centro de ayuda.
+function FaqRow({ t, f, onClick }: { t: any; f: HelpFaq; onClick: () => void }) {
+  return (
+    <button onClick={onClick}
+      style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 10px", borderRadius: 9, border: "none", background: "transparent", cursor: "pointer", textAlign: "left" }}
+      onMouseEnter={e => (e.currentTarget.style.background = t.panel2)}
+      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+      <div style={{ background: f.color + "22", color: f.color, borderRadius: 9, padding: 8, display: "flex", flexShrink: 0, marginTop: 1 }}>
+        <f.icon size={14} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textHi, lineHeight: 1.4 }}>{f.question}</div>
+      </div>
+      <ChevronRight size={14} color={t.textLo} style={{ flexShrink: 0, marginTop: 4 }} />
+    </button>
+  );
+}
+
 function HelpMenu({ t, lang, onNavigate }: any) {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"manuales" | "guias">("manuales");
+  const [tab, setTab] = useState<"manuales" | "guias" | "faqs">("manuales");
   const [selManual, setSelManual] = useState<string | null>(null);
   const [selGuide, setSelGuide] = useState<string | null>(null);
+  const [selFaq, setSelFaq] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [tour, setTour] = useState<ModuleManual | null>(null);
 
   const manual = MODULE_MANUALS.find(m => m.id === selManual);
   const guide = HELP_GUIDES.find(g => g.id === selGuide);
+  const faq = HELP_FAQS.find(f => f.id === selFaq);
 
-  const close = () => { setOpen(false); setSelManual(null); setSelGuide(null); setQuery(""); };
+  const close = () => {
+    setOpen(false); setSelManual(null); setSelGuide(null); setSelFaq(null); setQuery("");
+  };
 
   const q = query.trim().toLowerCase();
   const filteredManuals = q
@@ -2698,6 +3141,9 @@ function HelpMenu({ t, lang, onNavigate }: any) {
   const filteredGuides = q
     ? HELP_GUIDES.filter(g => (g.title + " " + g.steps.join(" ")).toLowerCase().includes(q))
     : HELP_GUIDES;
+  const filteredFaqs = q
+    ? HELP_FAQS.filter(f => (f.question + " " + f.answer + " " + f.category).toLowerCase().includes(q))
+    : HELP_FAQS;
 
   const startTour = (m: ModuleManual) => {
     if (onNavigate) onNavigate(m.page);
@@ -2705,8 +3151,11 @@ function HelpMenu({ t, lang, onNavigate }: any) {
     setTour(m);
   };
 
-  const inDetail = !!(manual || guide);
-  const headerTitle = manual ? manual.title : guide ? guide.title : (lang === "es" ? "Centro de ayuda" : "Help center");
+  const inDetail = !!(manual || guide || faq);
+  const headerTitle = manual ? manual.title
+    : guide ? guide.title
+    : faq ? faq.category
+    : (lang === "es" ? "Centro de ayuda" : "Help center");
 
   return (
     <div style={{ position: "relative" }}>
@@ -2722,7 +3171,7 @@ function HelpMenu({ t, lang, onNavigate }: any) {
             <div style={{ padding: "13px 16px", borderBottom: `1px solid ${t.border}`, background: t.panel2, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 2 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                 {inDetail ? (
-                  <button onClick={() => { setSelManual(null); setSelGuide(null); }} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 2, display: "flex" }}>
+                  <button onClick={() => { setSelManual(null); setSelGuide(null); setSelFaq(null); }} style={{ background: "transparent", border: "none", color: t.textLo, cursor: "pointer", padding: 2, display: "flex" }}>
                     <ChevronLeft size={16} />
                   </button>
                 ) : <Sparkles size={15} color={t.nova} />}
@@ -2804,6 +3253,18 @@ function HelpMenu({ t, lang, onNavigate }: any) {
                   ))}
                 </ol>
               </div>
+            ) : faq ? (
+              /* ---------- FAQ detail ---------- */
+              <div style={{ padding: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                  <div style={{ background: faq.color + "22", color: faq.color, borderRadius: 10, padding: 10, display: "flex" }}>
+                    <faq.icon size={20} />
+                  </div>
+                  <div style={{ fontSize: 11, color: faq.color, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase" }}>{faq.category}</div>
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: t.textHi, marginBottom: 10, lineHeight: 1.35 }}>{faq.question}</div>
+                <div style={{ fontSize: 13, color: t.textMid, lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{faq.answer}</div>
+              </div>
             ) : (
               /* ---------- List view ---------- */
               <div>
@@ -2819,7 +3280,11 @@ function HelpMenu({ t, lang, onNavigate }: any) {
                 {/* Tabs */}
                 {!q && (
                   <div style={{ display: "flex", gap: 4, padding: "2px 14px 8px" }}>
-                    {([["manuales", lang === "es" ? "Manuales por módulo" : "Module manuals"], ["guias", lang === "es" ? "Guías rápidas" : "Quick guides"]] as const).map(([id, label]) => (
+                    {([
+                      ["manuales", lang === "es" ? "Módulos" : "Modules"],
+                      ["guias", lang === "es" ? "Guías" : "Guides"],
+                      ["faqs", lang === "es" ? "Preguntas" : "FAQ"],
+                    ] as const).map(([id, label]) => (
                       <button key={id} onClick={() => setTab(id)}
                         style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: `1px solid ${tab === id ? t.nova : t.border}`, background: tab === id ? t.nova + "1a" : "transparent", color: tab === id ? t.nova : t.textMid, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                         {label}
@@ -2870,7 +3335,32 @@ function HelpMenu({ t, lang, onNavigate }: any) {
                       ))}
                     </>
                   )}
-                  {q && filteredManuals.length === 0 && filteredGuides.length === 0 && (
+                  {(q || tab === "faqs") && filteredFaqs.length > 0 && (
+                    <>
+                      {q && <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: t.textLo, padding: "10px 8px 4px" }}>Preguntas frecuentes</div>}
+                      {(() => {
+                        // Agrupa por categoría cuando NO hay búsqueda; con búsqueda muestra plano.
+                        if (q) {
+                          return filteredFaqs.map(f => (
+                            <FaqRow key={f.id} t={t} f={f} onClick={() => setSelFaq(f.id)} />
+                          ));
+                        }
+                        const byCat: Record<string, typeof HELP_FAQS> = {};
+                        for (const f of filteredFaqs) {
+                          (byCat[f.category] ||= []).push(f);
+                        }
+                        return Object.entries(byCat).map(([cat, items]) => (
+                          <div key={cat}>
+                            <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: t.textLo, padding: "10px 10px 4px" }}>{cat}</div>
+                            {items.map(f => (
+                              <FaqRow key={f.id} t={t} f={f} onClick={() => setSelFaq(f.id)} />
+                            ))}
+                          </div>
+                        ));
+                      })()}
+                    </>
+                  )}
+                  {q && filteredManuals.length === 0 && filteredGuides.length === 0 && filteredFaqs.length === 0 && (
                     <div style={{ padding: "24px 12px", textAlign: "center", color: t.textLo, fontSize: 12.5 }}>
                       {lang === "es" ? `Sin resultados para "${query}"` : `No results for "${query}"`}
                     </div>
