@@ -546,7 +546,12 @@ async def _alerts_top5(db: AsyncSession) -> List[schemas.AlertRow]:
     + stock bajo de inventory. Solo trae 5 en total."""
     out: List[schemas.AlertRow] = []
 
-    # 1) Cartera pendiente por cobrar (finance): órdenes con saldo > 0 y vencidas
+    # 1) Cartera pendiente por cobrar: prioriza las MAS VIEJAS con saldo > 0.
+    # Antes se traian las 20 mas recientes y se filtraban en Python, asi
+    # que si las recientes estaban al dia, la cartera vieja vencida NUNCA
+    # se mostraba en alertas — justo al reves de lo que un director quiere
+    # ver. Ahora se filtra por saldo > 0 en SQL y se ordena por antiguedad
+    # ASC (mas viejo primero).
     try:
         now = datetime.now(timezone.utc)
         q = (
@@ -556,9 +561,11 @@ async def _alerts_top5(db: AsyncSession) -> List[schemas.AlertRow]:
             .where(
                 sales_models.Order.kind == "order",
                 sales_models.Order.status.in_(("pending", "partial", "delivered")),
+                (sales_models.Order.total_amount
+                 - func.coalesce(sales_models.Order.paid_amount, 0.0)) > 0,
             )
-            .order_by(sales_models.Order.created_at.desc())
-            .limit(20)
+            .order_by(sales_models.Order.created_at.asc())
+            .limit(10)
         )
         for o, cust_name in (await db.execute(q)).all():
             paid = getattr(o, "paid_amount", None) or 0.0
@@ -566,10 +573,18 @@ async def _alerts_top5(db: AsyncSession) -> List[schemas.AlertRow]:
             balance = total - float(paid)
             if balance <= 0:
                 continue
+            # Severidad segun antiguedad: >60d urgent, 31-60d high, <30d medium
+            created = o.created_at
+            if created and created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            aging_days = (now - created).days if created else 0
+            severity = ("high" if aging_days > 60
+                        else "high" if aging_days > 30
+                        else "medium")
             out.append(schemas.AlertRow(
-                severity="high", label="CARTERA",
+                severity=severity, label="CARTERA",
                 module="finance",
-                title=f"Saldo pendiente {_format_money(balance)}",
+                title=f"Saldo {_format_money(balance)} — {aging_days}d",
                 subtitle=f"{cust_name or 'Sin cliente'} · {o.folio or f'#{o.id}'}",
                 reference=str(o.id),
                 created_at=o.created_at,
@@ -739,6 +754,11 @@ async def _financial_kpis(
         ))
 
     # DSO — Days Sales Outstanding = (AR / Ventas del periodo) × días
+    # OJO: AR y ventas TIENEN que ir en la MISMA unidad. AR viene con IVA
+    # (total_amount - paid) porque el cliente debe el total facturado; por
+    # eso aqui usamos ventas GROSS (total_amount) para el denominador. Si
+    # se usara el revenue NETO que expone _sales_totals, el DSO saldria
+    # inflado ~13.8% cuando el mix es 100% IVA 16%.
     try:
         ar_q = (
             select(func.coalesce(func.sum(
@@ -750,10 +770,19 @@ async def _financial_kpis(
             )
         )
         ar_total = float((await db.execute(ar_q)).scalar() or 0.0)
-        rev, _, _ = await _sales_totals(db, start, end)
+        rev_gross_q = (
+            select(func.coalesce(func.sum(sales_models.Order.total_amount), 0.0))
+            .where(
+                sales_models.Order.kind == "order",
+                sales_models.Order.status != "cancelled",
+                func.date(sales_models.Order.created_at) >= start,
+                func.date(sales_models.Order.created_at) <= end,
+            )
+        )
+        rev_gross = float((await db.execute(rev_gross_q)).scalar() or 0.0)
         days = (end - start).days or 1
-        if rev > 0:
-            dso = round(ar_total / rev * days, 1)
+        if rev_gross > 0:
+            dso = round(ar_total / rev_gross * days, 1)
             status = "good" if dso <= 30 else "warn" if dso <= 60 else "bad"
             kpis.append(schemas.FinancialKPIRow(
                 key="dso", label="Días de Cobranza",
@@ -962,19 +991,29 @@ async def executive_dashboard(
             hint="Objetivo 25% margen",
         ),
     ]
-    # Cobranza = ventas cobradas / ventas totales del periodo
+    # Cobranza = ventas cobradas / ventas totales del periodo.
+    # OJO: paid_amount va con IVA (el cliente pago el total facturado);
+    # por eso el denominador aqui es total_amount (gross), NO rev_cur
+    # que es neto. Con el neto, cobranza pasaria del 100% incluso con
+    # el cap min(paid, rev) — y con el cap, no distinguiriamos cartera
+    # cobrada del 100% vs pagos por adelantado.
     try:
-        paid_q = select(func.coalesce(
-            func.sum(sales_models.Order.paid_amount), 0.0
-        )).where(
+        both_q = select(
+            func.coalesce(func.sum(sales_models.Order.total_amount), 0.0).label("gross"),
+            func.coalesce(func.sum(sales_models.Order.paid_amount), 0.0).label("paid"),
+        ).where(
             sales_models.Order.kind == "order",
             sales_models.Order.status != "cancelled",
             func.date(sales_models.Order.created_at) >= start,
             func.date(sales_models.Order.created_at) <= end,
         )
-        paid_total = float((await db.execute(paid_q)).scalar() or 0.0)
-        # Cap: si por alguna razón hay overpayment, no rebasar 100%
-        cobranza_pct = round(min(paid_total, rev_cur) / rev_cur * 100.0, 1) if rev_cur > 0 else 0.0
+        both = (await db.execute(both_q)).one()
+        rev_gross_c = float(both.gross or 0.0)
+        paid_total = float(both.paid or 0.0)
+        cobranza_pct = (
+            round(min(paid_total, rev_gross_c) / rev_gross_c * 100.0, 1)
+            if rev_gross_c > 0 else 0.0
+        )
     except Exception:
         cobranza_pct = 0.0
     operational_kpis.append(schemas.OperationalKPIRow(
