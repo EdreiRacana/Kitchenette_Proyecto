@@ -999,27 +999,9 @@ _FORMATTERS = {
     "margen_por_producto": _t_margen_producto,
     "pedidos_con_saldo_parcial": _t_saldo_parcial,
     "pipeline_valor": _t_pipeline_valor,
-    # Fase 17 · Tools extras
-    "meta_ventas_mes": _t_meta_ventas_mes,
-    "cumplimiento_por_sku": _t_cumplimiento_sku,
-    "ventas_por_categoria": _t_ventas_categoria,
-    "arqueos_con_diferencia": _t_arqueos_diferencia,
-    "turnos_por_conciliar": _t_turnos_conciliar,
-    "traslados_pendientes": _t_traslados_pendientes,
-    "sell_in_vs_sell_out": _t_sell_in_out,
-    "devoluciones_por_recibir": _t_dev_por_recibir,
-    "ajustes_inventario_mes": _t_ajustes_inv,
-    "stock_por_almacen": _t_stock_almacen,
-    "compras_periodo": _t_compras_periodo,
-    "oc_por_recibir_semana": _t_oc_por_recibir,
-    "movimientos_bancarios_dia": _t_mov_bancarios_dia,
-    "mes_cerrado": _t_mes_cerrado,
-    "polizas_dia": _t_polizas_dia,
-    "infonavit_mes": _t_infonavit_mes,
-    "fonacot_mes": _t_fonacot_mes,
-    "empleados_por_departamento": _t_empleados_depto,
-    "avisos_afil_pendientes": _t_avisos_afil,
-    "mermas_por_motivo": _t_mermas_motivo,
+    # Los formatters de Fase 17/18 se registran al final del archivo con
+    # _FORMATTERS.update(...) porque estan definidos mas abajo. Ver bloque
+    # al final del modulo.
 }
 
 
@@ -1176,3 +1158,32 @@ def _t_avisos_afil(r):
             flag = " ⚠ vencido" if it["overdue"] else ""
             txt += f"\n• {it['movement_type']} · empleado #{it['employee_id']} · {it['movement_date']}{flag}"
     return txt
+
+
+# ─────────── Registro tardio Fase 17/18 ───────────
+# Los formatters de arriba estan definidos DESPUES del diccionario
+# _FORMATTERS. Los agregamos aqui al final del modulo, cuando ya
+# existen todos los nombres. Antes se resolvian dentro del dict a la
+# hora del import y tiraban NameError.
+_FORMATTERS.update({
+    "meta_ventas_mes": _t_meta_ventas_mes,
+    "cumplimiento_por_sku": _t_cumplimiento_sku,
+    "ventas_por_categoria": _t_ventas_categoria,
+    "arqueos_con_diferencia": _t_arqueos_diferencia,
+    "turnos_por_conciliar": _t_turnos_conciliar,
+    "traslados_pendientes": _t_traslados_pendientes,
+    "sell_in_vs_sell_out": _t_sell_in_out,
+    "devoluciones_por_recibir": _t_dev_por_recibir,
+    "ajustes_inventario_mes": _t_ajustes_inv,
+    "stock_por_almacen": _t_stock_almacen,
+    "compras_periodo": _t_compras_periodo,
+    "oc_por_recibir_semana": _t_oc_por_recibir,
+    "movimientos_bancarios_dia": _t_mov_bancarios_dia,
+    "mes_cerrado": _t_mes_cerrado,
+    "polizas_dia": _t_polizas_dia,
+    "infonavit_mes": _t_infonavit_mes,
+    "fonacot_mes": _t_fonacot_mes,
+    "empleados_por_departamento": _t_empleados_depto,
+    "avisos_afil_pendientes": _t_avisos_afil,
+    "mermas_por_motivo": _t_mermas_motivo,
+})
