@@ -52,7 +52,8 @@ STOCK_ADJUSTMENT_REASON_LABELS: dict[str, str] = {
 }
 
 class WarehouseType(str, enum.Enum):
-    OWN = "own"                   # bodega / tienda física propia
+    OWN = "own"                   # bodega principal / CEDIS (matriz)
+    POS = "pos"                   # punto de venta / tienda física con caja
     MARKETPLACE = "marketplace"   # fulfillment de un marketplace (ML Full, FBA, etc.)
     CONSIGNMENT = "consignment"   # stock en poder de un tercero
     TRANSIT = "transit"           # en tránsito entre almacenes

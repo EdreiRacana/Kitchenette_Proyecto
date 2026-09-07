@@ -36,7 +36,7 @@ import KardexTab from "./KardexTab";
 
 type Warehouse_ = WarehouseT;
 
-const WAREHOUSE_TYPES = { own: { label: "Propio", color: "#33B2F5" }, marketplace: { label: "Marketplace", color: "#FBBF24" }, consignment: { label: "Consignación", color: "#A78BFA" }, transit: { label: "Tránsito", color: "#34D399" } };
+const WAREHOUSE_TYPES = { own: { label: "Bodega / CEDIS", color: "#33B2F5" }, pos: { label: "Punto de venta", color: "#10B981" }, marketplace: { label: "Marketplace", color: "#FBBF24" }, consignment: { label: "Consignación", color: "#A78BFA" }, transit: { label: "Tránsito", color: "#34D399" } };
 const MOVEMENT_TYPES = { in: { label: "Entrada", color: "#34D399", icon: ArrowDownToLine }, out: { label: "Salida", color: "#F87171", icon: ArrowUpFromLine }, adjustment: { label: "Ajuste", color: "#FBBF24", icon: SlidersHorizontal } };
 const PO_STATUS = { draft: { label: "Borrador", color: "#94A3B8" }, ordered: { label: "Enviada", color: "#33B2F5" }, received: { label: "Recibida", color: "#34D399" }, cancelled: { label: "Cancelada", color: "#F87171" } };
 const PROD_STATUS = { draft: { label: "Borrador", color: "#94A3B8" }, completed: { label: "Completada", color: "#34D399" }, cancelled: { label: "Cancelada", color: "#F87171" } };
@@ -2245,7 +2245,8 @@ function WarehouseFormModal({ t, lang, editing, branches, onClose, onSave }: any
             </div>
           )}
           <div style={{ background: t.panel2, borderRadius: 8, padding: 12, fontSize: 12.5, color: t.textLo, lineHeight: 1.5 }}>
-            {form.type === "own" && (lang === "es" ? "Almacén propio: control total de entradas, salidas y transferencias." : "Own warehouse: full control of entries, exits and transfers.")}
+            {form.type === "own" && (lang === "es" ? "Bodega / CEDIS: almacén principal desde donde surtes a los puntos de venta. Control total de entradas, salidas y traspasos." : "Warehouse / CEDIS: main stock hub. Full control of entries, exits and transfers.")}
+            {form.type === "pos" && (lang === "es" ? "Punto de venta: la tienda física con caja. Vinculado a un terminal POS descuenta stock en cada venta. Recibe reabasto por traspaso desde la bodega/CEDIS." : "Point of sale: physical store with a cashier. Linked to a POS terminal it deducts stock on each sale. Restocked by transfer from the warehouse/CEDIS.")}
             {form.type === "marketplace" && (lang === "es" ? "Marketplace: stock enviado a plataforma (MercadoLibre, Amazon, etc.). Las ventas descuentan automáticamente." : "Marketplace: stock sent to platform (MercadoLibre, Amazon, etc.). Sales auto-discount.")}
             {form.type === "consignment" && (lang === "es" ? "Consignación: stock en poder de un tercero. Se descuenta solo al confirmarse la venta." : "Consignment: stock held by a third party. Only deducted when sale is confirmed.")}
             {form.type === "transit" && (lang === "es" ? "Tránsito: stock en movimiento entre almacenes. No disponible para venta." : "Transit: stock moving between warehouses. Not available for sale.")}
@@ -3071,6 +3072,14 @@ function TransferFormModal({ t, warehouses, products, onClose, onSaved }: {
           <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: t.textLo }}><X size={20} /></button>
         </div>
         <div style={{ padding: 24, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14 }}>
+          {warehouses.length < 2 && (
+            <div style={{ padding: "10px 14px", background: t.warn + "18", border: `1px solid ${t.warn}55`, color: t.textHi, borderRadius: 10, fontSize: 12.5, lineHeight: 1.55 }}>
+              <b>Necesitas al menos 2 almacenes</b> para hacer un traspaso.
+              Ve a <b>Almacenes → Nuevo almacén</b> y crea el punto de venta
+              (tipo <b>“Punto de venta”</b>). Después regresa aquí y podrás
+              traspasar mercancía desde la bodega hacia esa tienda.
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "end" }}>
             <div>
               <label style={label}>Almacén origen *</label>
