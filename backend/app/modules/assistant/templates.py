@@ -149,6 +149,7 @@ def _empty_msg(tool: str, reason: str | None) -> str:
         "fonacot_mes": "No hay descuentos FONACOT en las nóminas del mes.",
         "empleados_por_departamento": "No hay empleados activos registrados.",
         "avisos_afil_pendientes": "No hay avisos AFIL pendientes de presentar al IMSS.",
+        "mermas_por_motivo": "No hubo mermas registradas en el periodo. Inventario cuidado.",
     }
     base = friendly.get(tool, "No hay datos que mostrar para esta consulta.")
     if reason and "construcción" in reason:
@@ -1018,7 +1019,17 @@ _FORMATTERS = {
     "fonacot_mes": _t_fonacot_mes,
     "empleados_por_departamento": _t_empleados_depto,
     "avisos_afil_pendientes": _t_avisos_afil,
+    "mermas_por_motivo": _t_mermas_motivo,
 }
+
+
+def _t_mermas_motivo(r):
+    txt = (f"Mermas {r['periodo']} · **{_mxn(r['total_valor'])}** "
+           f"({r['total_unidades']} unidades) desglosadas por motivo:")
+    for it in r["items"]:
+        txt += (f"\n• **{it['motivo']}** — {_mxn(it['valor'])} "
+                f"({it['unidades']} uds · {it['count']} ajustes)")
+    return txt
 
 
 # ─────────── formatters Fase 17 ───────────

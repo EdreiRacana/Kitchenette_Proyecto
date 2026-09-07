@@ -547,6 +547,12 @@ PROMPT_HINTS: dict[str, list[str]] = {
         "avisos AFIL pendientes", "movimientos IMSS sin presentar",
         "altas y bajas IMSS pendientes", "IDSE pendiente",
     ],
+    "mermas_por_motivo": [
+        "mermas por motivo", "cuánto perdí por robo",
+        "merma por daño del mes", "desglose de mermas",
+        "pérdidas por caducidad", "mermas del mes",
+        "cuánto perdí este mes de inventario",
+    ],
 }
 
 

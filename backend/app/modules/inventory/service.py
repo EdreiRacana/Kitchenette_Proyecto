@@ -383,6 +383,30 @@ async def _recalc_weighted_avg_cost(db: AsyncSession, variant_id: int) -> None:
 
 # --- Stock Services ---
 async def adjust_stock(db: AsyncSession, movement_in: schemas.StockMovementCreate, user_id: Optional[int] = None) -> StockMovement:
+    # Guardarail: los ajustes SIEMPRE necesitan motivo tipificado. Un ERP
+    # de nivel mundial no tolera ajustes ciegos. Se permite 'other' pero
+    # entonces las notas son obligatorias para dejar rastro.
+    from fastapi import HTTPException
+    from app.modules.inventory.models import (
+        StockAdjustmentReason as _Reason,
+        STOCK_ADJUSTMENT_REASON_LABELS as _REASON_LABELS,
+    )
+    if movement_in.movement_type == StockMovementType.ADJUSTMENT:
+        reason = (movement_in.adjustment_reason or "").strip()
+        valid_reasons = {r.value for r in _Reason}
+        if reason not in valid_reasons:
+            raise HTTPException(
+                status_code=400,
+                detail=("Los ajustes de inventario requieren un motivo válido. "
+                        f"Motivos aceptados: {', '.join(sorted(_REASON_LABELS.values()))}."),
+            )
+        if reason == _Reason.OTHER.value and not (movement_in.notes or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail=("Cuando el motivo es 'Otro', el campo de notas es "
+                        "obligatorio para dejar rastro del ajuste."),
+            )
+
     result = await db.execute(
         select(StockLevel).where(
             StockLevel.variant_id == movement_in.variant_id,
@@ -422,6 +446,7 @@ async def adjust_stock(db: AsyncSession, movement_in: schemas.StockMovementCreat
         unit_cost=unit_cost,
         reference=movement_in.reference,
         notes=movement_in.notes,
+        adjustment_reason=movement_in.adjustment_reason,
         user_id=user_id
     )
     db.add(db_movement)

@@ -284,6 +284,7 @@ _SOURCE_MAP = {
     "mes_cerrado": "Contabilidad", "polizas_dia": "Contabilidad",
     "infonavit_mes": "Nómina", "fonacot_mes": "Nómina",
     "empleados_por_departamento": "Nómina", "avisos_afil_pendientes": "Nómina",
+    "mermas_por_motivo": "Inventario",
 }
 
 def _source_label(tool_name: str) -> str:

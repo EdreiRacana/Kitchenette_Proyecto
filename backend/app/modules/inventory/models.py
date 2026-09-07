@@ -9,6 +9,48 @@ class StockMovementType(str, enum.Enum):
     OUT = "out"
     ADJUSTMENT = "adjustment"
 
+
+class StockAdjustmentReason(str, enum.Enum):
+    """Motivos tipificados para ajustes de inventario.
+
+    Un ERP serio nunca deja el motivo del ajuste como texto libre porque
+    perderias la capacidad de cruzar reportes ('% de merma por robo por
+    tienda', 'merma por caducidad por SKU', etc). Este enum es el
+    catalogo canonico. El campo 'notes' de StockMovement queda para
+    detalle adicional (ej. folio del acta de siniestro).
+    """
+    # Conteo fisico (cuando el conteo real difiere del sistema)
+    COUNT_OVERAGE = "count_overage"     # sobrante de conteo
+    COUNT_SHORTAGE = "count_shortage"    # faltante de conteo
+    # Perdida operativa
+    SHRINKAGE = "shrinkage"              # merma general (sin causa clara)
+    EXPIRY = "expiry"                    # caducidad
+    DAMAGE = "damage"                    # daño / maltrato
+    THEFT = "theft"                      # robo / hurto
+    # Movimientos operativos internos
+    INTERNAL_USE = "internal_use"        # consumo interno / muestra
+    PRODUCTION_CONSUMPTION = "production_consumption"  # consumo en produccion
+    RETURN_TO_SUPPLIER = "return_to_supplier"          # devolucion a proveedor
+    RETURN_FROM_CUSTOMER = "return_from_customer"       # devolucion de cliente al almacen (fuera del flujo POS)
+    # Otro
+    OTHER = "other"                      # obliga a llenar notes
+
+
+# Etiquetas humanas para UI y reportes — en español MX.
+STOCK_ADJUSTMENT_REASON_LABELS: dict[str, str] = {
+    StockAdjustmentReason.COUNT_OVERAGE.value: "Sobrante de conteo",
+    StockAdjustmentReason.COUNT_SHORTAGE.value: "Faltante de conteo",
+    StockAdjustmentReason.SHRINKAGE.value: "Merma",
+    StockAdjustmentReason.EXPIRY.value: "Caducidad",
+    StockAdjustmentReason.DAMAGE.value: "Daño / maltrato",
+    StockAdjustmentReason.THEFT.value: "Robo / hurto",
+    StockAdjustmentReason.INTERNAL_USE.value: "Consumo interno",
+    StockAdjustmentReason.PRODUCTION_CONSUMPTION.value: "Consumo en producción",
+    StockAdjustmentReason.RETURN_TO_SUPPLIER.value: "Devolución a proveedor",
+    StockAdjustmentReason.RETURN_FROM_CUSTOMER.value: "Devolución de cliente",
+    StockAdjustmentReason.OTHER.value: "Otro (ver notas)",
+}
+
 class WarehouseType(str, enum.Enum):
     OWN = "own"                   # bodega / tienda física propia
     MARKETPLACE = "marketplace"   # fulfillment de un marketplace (ML Full, FBA, etc.)
@@ -237,6 +279,11 @@ class StockMovement(Base):
     movement_type = Column(String, nullable=False) # IN, OUT, ADJUSTMENT
     unit_cost = Column(Float, nullable=True)   # costo aplicado (FIFO) en salidas, costo de entrada en IN
     reference = Column(String, nullable=True) # Order ID, Transfer ID, OC, Producción
+    # Motivo tipificado (solo aplica cuando movement_type == 'adjustment').
+    # Ver StockAdjustmentReason. Se guarda como string para no acoplar el
+    # esquema al enum en Postgres (migracion mas simple). Es opcional para
+    # movimientos IN/OUT y para ajustes historicos anteriores a Fase 18.
+    adjustment_reason = Column(String, nullable=True, index=True)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True) # Linked to Auth module if user is logged in

@@ -179,6 +179,19 @@ async def update_warehouse(warehouse_id: int, warehouse_in: schemas.WarehouseUpd
     return warehouse
 
 # --- Stock ---
+@router.get("/stock/adjustment-reasons")
+async def list_adjustment_reasons(current_user: CurrentUser):
+    """Catálogo de motivos tipificados para ajustes de inventario.
+    Se consume desde el frontend para llenar el dropdown del modal de ajuste."""
+    from app.modules.inventory.models import (
+        StockAdjustmentReason, STOCK_ADJUSTMENT_REASON_LABELS,
+    )
+    return [
+        {"value": r.value, "label": STOCK_ADJUSTMENT_REASON_LABELS[r.value]}
+        for r in StockAdjustmentReason
+    ]
+
+
 @router.post("/stock/adjust", response_model=schemas.StockMovementInDB)
 async def adjust_stock(movement_in: schemas.StockMovementCreate, db: DB, current_user: CurrentUser):
     return await service.adjust_stock(db, movement_in, user_id=current_user.id)

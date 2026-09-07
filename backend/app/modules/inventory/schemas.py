@@ -161,6 +161,10 @@ class StockMovementCreate(BaseModel):
     unit_cost: Optional[float] = None
     reference: Optional[str] = None
     notes: Optional[str] = None
+    # Motivo tipificado — obligatorio para ajustes desde Fase 18; opcional
+    # para IN/OUT y para compatibilidad con ajustes historicos.
+    # Valores: ver StockAdjustmentReason en inventory/models.py.
+    adjustment_reason: Optional[str] = None
 
 class StockMovementInDB(BaseModel):
     id: int
@@ -171,6 +175,7 @@ class StockMovementInDB(BaseModel):
     unit_cost: Optional[float] = None
     reference: Optional[str] = None
     notes: Optional[str] = None
+    adjustment_reason: Optional[str] = None
     created_at: datetime
 
     class Config:
