@@ -345,6 +345,7 @@ export const inventoryService = {
 
     // Stock / movements
     adjustStock: async (data: any) => (await api.post('/inventory/stock/adjust', data)).data,
+    getAdjustmentReasons: async (): Promise<{ value: string; label: string }[]> => (await api.get('/inventory/stock/adjustment-reasons')).data,
     getStockLevels: async (variantId: number) => (await api.get<StockLevel[]>(`/inventory/stock/${variantId}`)).data,
     getMovements: async () => (await api.get<Movement[]>('/inventory/movements')).data,
 

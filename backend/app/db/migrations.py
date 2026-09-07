@@ -342,6 +342,10 @@ _INVENTORY_STATEMENTS = [
     # Movimiento: referencia al lote consumido/generado (para recall + kardex)
     "ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS stock_lot_id INTEGER REFERENCES stock_lots(id)",
     "CREATE INDEX IF NOT EXISTS ix_stock_movements_lot ON stock_movements (stock_lot_id) WHERE stock_lot_id IS NOT NULL",
+    # Fase 18 - Motivo tipificado para ajustes de inventario.
+    # Necesario para KPIs cruzados (merma vs robo vs caducidad por tienda).
+    "ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS adjustment_reason VARCHAR",
+    "CREATE INDEX IF NOT EXISTS ix_stock_movements_adj_reason ON stock_movements (adjustment_reason) WHERE adjustment_reason IS NOT NULL",
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS total_amount DOUBLE PRECISION DEFAULT 0",
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS paid_amount  DOUBLE PRECISION DEFAULT 0",
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS due_date     TIMESTAMPTZ",

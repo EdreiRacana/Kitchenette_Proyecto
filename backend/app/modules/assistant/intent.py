@@ -345,6 +345,10 @@ _PATTERNS: list = [
     # Inventario extras
     (r"(ajuste|correcci[oó]n).{0,15}inventario",
         "ajustes_inventario_mes", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"(merma|perdid|robo|hurto|da[ñn]o|caducid|maltrato).{0,20}(motivo|desglos|por|del\s+mes|mes)",
+        "mermas_por_motivo", lambda m, q: {"periodo": _detect_period(q)}),
+    (r"cu[aá]nto\s+perd[ií].{0,20}(inventario|merma|robo|da[ñn]o)",
+        "mermas_por_motivo", lambda m, q: {"periodo": _detect_period(q)}),
     (r"(stock|inventario|valor).{0,15}por\s+(almac[eé]n|sucursal|bodega)",
         "stock_por_almacen", None),
 

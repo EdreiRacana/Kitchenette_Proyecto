@@ -408,6 +408,9 @@ TOOLS_SCHEMA: List[Dict[str, Any]] = [
     {"name": "avisos_afil_pendientes",
      "description": "Avisos AFIL (IMSSMovement) sin presentar. Marca 'overdue' si pasaron más de 5 días desde el movimiento.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "mermas_por_motivo",
+     "description": "Mermas del periodo desglosadas por motivo tipificado (robo, daño, caducidad, conteo, consumo interno…) con valor en pesos.",
+     "input_schema": {"type": "object", "properties": {"periodo": {"type": "string"}}}},
 ]
 
 

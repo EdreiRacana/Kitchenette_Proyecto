@@ -924,7 +924,9 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
                   try {
                     await inventoryService.adjustStock({
                       variant_id: m.variant_id, warehouse_id: m.warehouse_id, quantity: -m.quantity,
-                      movement_type: "adjustment", notes: `${lang === "es" ? "Reversión del ajuste" : "Reversal of adjustment"} #${m.id}`,
+                      movement_type: "adjustment",
+                      adjustment_reason: "other",
+                      notes: `${lang === "es" ? "Reversión del ajuste" : "Reversal of adjustment"} #${m.id}`,
                     });
                     await load();
                   } catch (err) { console.error(err); alert(lang === "es" ? "Error al revertir el ajuste" : "Error reverting adjustment"); }
@@ -1484,7 +1486,9 @@ export default function InventoryModule({ t, s, initialQuery }: { t: any; s: any
             if (demo) { alert(lang === "es" ? "Modo demo: ajuste simulado ✓" : "Demo mode: simulated adjustment ✓"); setAdjustForm(false); return; }
             await inventoryService.adjustStock({
               variant_id: Number(form.variant_id), warehouse_id: Number(form.warehouse_id), quantity: Number(form.quantity),
-              movement_type: "adjustment", notes: form.notes || undefined,
+              movement_type: "adjustment",
+              adjustment_reason: form.reason || "other",
+              notes: form.notes || undefined,
             });
             setAdjustForm(false);
             await load();
@@ -2095,17 +2099,33 @@ function EntryFormModal({ t, lang, products, warehouses, suppliers, onClose, onS
 function AdjustmentFormModal({ t, lang, products, warehouses, onClose, onSave }: any) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ variant_id: "", warehouse_id: "", quantity: "", reference: "", notes: "", reason: "count" });
+  // Fallback local con los 11 motivos tipificados del backend (Fase 18)
+  // en caso de que el catálogo remoto no cargue. Los `value` deben coincidir
+  // con StockAdjustmentReason en backend/app/modules/inventory/models.py.
+  const REASONS_FALLBACK = useMemo(() => ([
+    { value: "count_overage",           label: lang === "es" ? "Sobrante de conteo" : "Count overage" },
+    { value: "count_shortage",          label: lang === "es" ? "Faltante de conteo" : "Count shortage" },
+    { value: "shrinkage",               label: lang === "es" ? "Merma" : "Shrinkage" },
+    { value: "expiry",                  label: lang === "es" ? "Caducidad" : "Expiry" },
+    { value: "damage",                  label: lang === "es" ? "Daño / maltrato" : "Damage" },
+    { value: "theft",                   label: lang === "es" ? "Robo / hurto" : "Theft" },
+    { value: "internal_use",            label: lang === "es" ? "Consumo interno" : "Internal use" },
+    { value: "production_consumption",  label: lang === "es" ? "Consumo en producción" : "Production consumption" },
+    { value: "return_to_supplier",      label: lang === "es" ? "Devolución a proveedor" : "Return to supplier" },
+    { value: "return_from_customer",    label: lang === "es" ? "Devolución de cliente" : "Return from customer" },
+    { value: "other",                   label: lang === "es" ? "Otro (ver notas)" : "Other (see notes)" },
+  ]), [lang]);
+  const [REASONS, setREASONS] = useState<{ value: string; label: string }[]>(REASONS_FALLBACK);
+  useEffect(() => {
+    inventoryService.getAdjustmentReasons?.()
+      .then((rows: any[]) => { if (rows && rows.length) setREASONS(rows); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [form, setForm] = useState({ variant_id: "", warehouse_id: "", quantity: "", reference: "", notes: "", reason: "count_shortage" });
   const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13.5, outline: "none", width: "100%" };
   const label: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: t.textMid, marginBottom: 5, display: "block" };
   const allVariants = products.flatMap((p: Product) => p.variants.map((v: Variant) => ({ ...v, product_name: p.name })));
-  const REASONS = [
-    { value: "count", label: lang === "es" ? "Conteo físico" : "Physical count" },
-    { value: "damage", label: lang === "es" ? "Merma / Daño" : "Loss / Damage" },
-    { value: "theft", label: lang === "es" ? "Robo / Extravío" : "Theft / Loss" },
-    { value: "expiry", label: lang === "es" ? "Caducidad" : "Expiry" },
-    { value: "other", label: lang === "es" ? "Otro" : "Other" },
-  ];
   const qty = Number(form.quantity);
   const handleSave = async () => {
     setSaving(true); setError("");
@@ -2147,15 +2167,24 @@ function AdjustmentFormModal({ t, lang, products, warehouses, onClose, onSave }:
               {qty < 0 ? `↓ ${lang === "es" ? "Reducirá" : "Will reduce"} ${Math.abs(qty)} ${lang === "es" ? "unidades" : "units"}` : qty > 0 ? `↑ ${lang === "es" ? "Aumentará" : "Will increase"} ${qty} ${lang === "es" ? "unidades" : "units"}` : ""}
             </div>}
           </div>
-          <div><label style={label}>{lang === "es" ? "Notas / Justificación *" : "Notes / Justification *"}</label><textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder={lang === "es" ? "Describe el motivo del ajuste…" : "Describe the reason for this adjustment…"} style={{ ...inp, resize: "vertical" }} /></div>
+          <div><label style={label}>{lang === "es"
+                ? (form.reason === "other" ? "Notas / Justificación * (obligatorio para motivo 'Otro')" : "Notas / Justificación")
+                : (form.reason === "other" ? "Notes / Justification * (required for 'Other')" : "Notes / Justification")}</label>
+            <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder={lang === "es" ? "Detalle adicional del ajuste (folio, evidencia, responsable…)" : "Additional detail (folio, evidence, responsible…)"} style={{ ...inp, resize: "vertical" }} /></div>
         </div>
         <div style={{ padding: "16px 24px", borderTop: `1px solid ${t.border}`, display: "flex", flexDirection: "column", gap: 8 }}>
           {error && <div style={{ fontSize: 12.5, color: t.bad }}>{error}</div>}
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer", fontSize: 13 }}>{lang === "es" ? "Cancelar" : "Cancel"}</button>
-            <button onClick={handleSave} disabled={saving || !form.variant_id || !form.warehouse_id || !form.quantity || !form.notes} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: (!form.variant_id || !form.warehouse_id || !form.quantity || !form.notes) ? 0.5 : 1 }}>
+            {(() => {
+              const notesMissing = form.reason === "other" && !form.notes;
+              const isDisabled = saving || !form.variant_id || !form.warehouse_id || !form.quantity || !form.reason || notesMissing;
+              return (
+            <button onClick={handleSave} disabled={isDisabled} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${t.warn}, #D97706)`, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, opacity: isDisabled ? 0.5 : 1 }}>
               {saving ? "…" : (lang === "es" ? "Aplicar ajuste" : "Apply adjustment")}
             </button>
+              );
+            })()}
           </div>
         </div>
       </div>

@@ -164,6 +164,7 @@ TOOL_MODULE: dict[str, str] = {
     "fonacot_mes": "hr",
     "empleados_por_departamento": "hr",
     "avisos_afil_pendientes": "hr",
+    "mermas_por_motivo": "inventory",
 }
 
 

@@ -743,6 +743,56 @@ async def empleados_por_departamento(db: AsyncSession, **k) -> Dict[str, Any]:
     }
 
 
+async def mermas_por_motivo(db: AsyncSession, periodo: str = "mes", **k) -> Dict[str, Any]:
+    """Mermas del periodo desglosadas por motivo tipificado (robo, daño,
+    caducidad, conteo…). Solo suma ajustes NEGATIVOS — los ajustes
+    positivos son sobrantes, no merma. Ordenado por valor de mayor a menor."""
+    from app.modules.inventory import models as im
+    from app.modules.inventory.models import STOCK_ADJUSTMENT_REASON_LABELS
+
+    start, end, label = _period_bounds(periodo)
+    stmt = (
+        select(
+            im.StockMovement.adjustment_reason,
+            func.count(im.StockMovement.id).label("count"),
+            func.coalesce(func.sum(im.StockMovement.quantity), 0).label("units"),
+            func.coalesce(
+                func.sum(im.StockMovement.quantity * im.StockMovement.unit_cost), 0.0
+            ).label("valor"),
+        )
+        .where(
+            im.StockMovement.movement_type == "adjustment",
+            im.StockMovement.quantity < 0,
+            im.StockMovement.created_at >= start,
+            im.StockMovement.created_at < end,
+        )
+        .group_by(im.StockMovement.adjustment_reason)
+        .order_by(func.coalesce(func.sum(im.StockMovement.quantity * im.StockMovement.unit_cost), 0.0).asc())
+    )
+    rows = (await db.execute(stmt)).all()
+    items = []
+    for r in rows:
+        motivo_key = r.adjustment_reason or ""
+        motivo_label = STOCK_ADJUSTMENT_REASON_LABELS.get(motivo_key, "Sin motivo")
+        items.append({
+            "motivo": motivo_label,
+            "motivo_key": motivo_key,
+            "count": int(r.count or 0),
+            "unidades": abs(int(r.units or 0)),
+            "valor": _money(abs(r.valor or 0)),
+        })
+    total_valor = sum(it["valor"] for it in items)
+    total_unidades = sum(it["unidades"] for it in items)
+    return {
+        "tool": "mermas_por_motivo",
+        "periodo": label,
+        "total_valor": _money(total_valor),
+        "total_unidades": total_unidades,
+        "items": items,
+        "empty": len(items) == 0,
+    }
+
+
 async def avisos_afil_pendientes(db: AsyncSession, **k) -> Dict[str, Any]:
     """Avisos AFIL (IMSS) que aún no se presentaron (presented_date NULL).
     Se marca 'overdue' si pasaron más de 5 días naturales desde el movimiento."""
@@ -821,4 +871,6 @@ TOOLS_EXTRA_REGISTRY = {
     "fonacot_mes": fonacot_mes,
     "empleados_por_departamento": empleados_por_departamento,
     "avisos_afil_pendientes": avisos_afil_pendientes,
+    # Inventario - Fase 18
+    "mermas_por_motivo": mermas_por_motivo,
 }
