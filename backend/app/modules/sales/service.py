@@ -1059,9 +1059,15 @@ async def agent_commissions(db: AsyncSession, start: Optional[datetime] = None,
                             branch_warehouse_ids: Optional[List[int]] = None) -> schemas.AgentCommissionReport:
     """Comisiones a pagar por agente en el periodo.
 
-    Base de comisión = subtotal (venta, sin IVA) de las órdenes activas
-    atribuidas a cada agente. Se muestra además cuánto de esa base ya está
-    cobrado, para quien paga comisión solo sobre lo pagado.
+    Base de comisión = revenue NETO de la venta, es decir el ingreso
+    operativo que realmente entra al negocio: total_amount menos IVA
+    menos shipping. Esto es equivalente a 'subtotal - header_discount'
+    porque asi se construye total_amount en _compute_totals.
+
+    Antes se usaba Order.subtotal como base, pero Order.subtotal esta
+    ANTES del descuento del header. Un vendedor que daba 20% de
+    descuento cobraba comision sobre el precio con el que ni siquiera
+    le vendio al cliente — se pagaba a si mismo la parte descontada.
     """
     O = models.Order
     conds = [O.kind == "order", O.status != "cancelled", O.sales_agent_id.isnot(None)]
@@ -1079,12 +1085,22 @@ async def agent_commissions(db: AsyncSession, start: Optional[datetime] = None,
         (O.paid_amount >= O.total_amount, 1.0),
         else_=O.paid_amount / O.total_amount,
     )
+    # Revenue neto por orden: total_amount - IVA - shipping. Equivalente a
+    # la venta neta antes de impuestos (base gravable). Se acota a >= 0
+    # por si alguna orden tuviera datos inconsistentes. CASE portable
+    # (Postgres y SQLite) — greatest() no existe en SQLite.
+    _net_raw = (
+        O.total_amount
+        - func.coalesce(O.tax_amount, 0.0)
+        - func.coalesce(O.shipping_amount, 0.0)
+    )
+    net_expr = case((_net_raw < 0, 0.0), else_=_net_raw)
     stmt = (
         select(
             O.sales_agent_id.label("agent_id"),
             func.count(O.id).label("orders_count"),
-            func.coalesce(func.sum(O.subtotal), 0.0).label("sales_base"),
-            func.coalesce(func.sum(O.subtotal * paid_frac), 0.0).label("paid_base"),
+            func.coalesce(func.sum(net_expr), 0.0).label("sales_base"),
+            func.coalesce(func.sum(net_expr * paid_frac), 0.0).label("paid_base"),
         )
         .where(*conds)
         .group_by(O.sales_agent_id)
