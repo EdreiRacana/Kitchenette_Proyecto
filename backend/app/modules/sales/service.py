@@ -48,21 +48,36 @@ def _compute_line(item) -> Tuple[float, float]:
 
 
 def _compute_totals(order: models.Order, items: List[models.OrderItem]) -> None:
-    """Recompute money breakdown on `order` from its items + header config."""
+    """Recompute money breakdown on `order` from its items + header config.
+
+    Nota importante sobre descuentos:
+    - Cada OrderItem puede tener su propio discount_amount (descuento por
+      linea, aplicado ANTES de calcular su subtotal en _compute_line).
+    - La orden puede tener ADEMAS un discount_type/discount_value a nivel
+      header, que se aplica al subtotal neto de descuentos por linea.
+    - `Order.discount_amount` guarda el TOTAL de descuentos: la suma de
+      los descuentos por linea MAS el descuento del header. Reportes tipo
+      'cuanto descuento otorgue este mes' leen ese campo y necesitan el
+      total real, no solo la parte de header.
+    """
     subtotal = sum((it.subtotal or 0.0) for it in items)
+    line_discounts_total = sum((it.discount_amount or 0.0) for it in items)
 
     if order.discount_type == "percent":
-        discount_amount = subtotal * (order.discount_value or 0.0) / 100.0
+        header_discount = subtotal * (order.discount_value or 0.0) / 100.0
     else:
-        discount_amount = order.discount_value or 0.0
-    discount_amount = min(discount_amount, subtotal)
+        header_discount = order.discount_value or 0.0
+    header_discount = min(header_discount, subtotal)
 
-    taxable = max(subtotal - discount_amount, 0.0)
+    taxable = max(subtotal - header_discount, 0.0)
     tax_amount = taxable * (order.tax_rate or 0.0) / 100.0
     total = taxable + tax_amount + (order.shipping_amount or 0.0)
 
     order.subtotal = _r(subtotal)
-    order.discount_amount = _r(discount_amount)
+    # discount_amount = todos los descuentos otorgados en la venta,
+    # incluyendo por linea + header. Antes solo guardaba el de header,
+    # subestimando los reportes de descuento total.
+    order.discount_amount = _r(line_discounts_total + header_discount)
     order.tax_amount = _r(tax_amount)
     order.total_amount = _r(total)
 
