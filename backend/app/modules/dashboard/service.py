@@ -167,11 +167,28 @@ def _pct_change(cur: float, prev: float) -> Optional[float]:
 async def _sales_totals(
     db: AsyncSession, start: date, end: date,
 ) -> Tuple[float, int, float]:
-    """Regresa (revenue, orders_count, cogs) del rango. Solo órdenes
-    reales (kind=order) no canceladas."""
+    """Regresa (revenue_neto, orders_count, cogs_real) del rango.
+
+    Revenue neto = total_amount - tax_amount - shipping_amount. Es decir,
+    los ingresos operativos SIN IVA (que se le debe al SAT y no es
+    ingreso propio) y SIN el envío cobrado (que suele ser reembolso al
+    costo, no ingreso operativo). Descuento ya viene restado del subtotal.
+
+    COGS real = suma de (OrderItem.quantity * OrderItem.unit_cost) — el
+    costo FIFO snapshoteado al momento de la venta. Fallback a
+    ProductVariant.cost_price solo para lineas historicas con unit_cost=0
+    (antes de la fase FIFO). Asi el margen historico no se distorsiona
+    cuando cambia el costo del catalogo.
+
+    Solo ordenes reales (kind=order) no canceladas.
+    """
     q = (
         select(
-            func.coalesce(func.sum(sales_models.Order.total_amount), 0.0).label("rev"),
+            func.coalesce(func.sum(
+                sales_models.Order.total_amount
+                - func.coalesce(sales_models.Order.tax_amount, 0.0)
+                - func.coalesce(sales_models.Order.shipping_amount, 0.0)
+            ), 0.0).label("rev"),
             func.count(sales_models.Order.id).label("cnt"),
         )
         .where(
@@ -185,12 +202,17 @@ async def _sales_totals(
     rev = float(row.rev or 0.0)
     cnt = int(row.cnt or 0)
 
-    # COGS = suma de (qty × cost_price) del ProductVariant
+    # COGS real: prefiere unit_cost snapshoteado en el OrderItem al momento
+    # de la venta (FIFO). Si es 0 (linea historica), usa cost_price actual
+    # del catalogo como aproximacion.
     cogs_q = (
         select(
             func.coalesce(func.sum(
                 sales_models.OrderItem.quantity
-                * func.coalesce(inv_models.ProductVariant.cost_price, 0.0)
+                * func.coalesce(
+                    func.nullif(sales_models.OrderItem.unit_cost, 0.0),
+                    func.coalesce(inv_models.ProductVariant.cost_price, 0.0),
+                )
             ), 0.0)
         )
         .join(sales_models.Order, sales_models.OrderItem.order_id == sales_models.Order.id)
@@ -261,11 +283,16 @@ async def _forecast_period_target(
 async def _daily_sales_series(
     db: AsyncSession, start: date, end: date,
 ) -> Dict[date, Tuple[float, int]]:
-    """Serie diaria de ventas del rango. Retorna {fecha: (revenue, count)}."""
+    """Serie diaria de ventas del rango. Retorna {fecha: (revenue_neto, count)}.
+    Revenue neto = total - IVA - envio (consistente con _sales_totals)."""
     q = (
         select(
             func.date(sales_models.Order.created_at).label("d"),
-            func.coalesce(func.sum(sales_models.Order.total_amount), 0.0).label("rev"),
+            func.coalesce(func.sum(
+                sales_models.Order.total_amount
+                - func.coalesce(sales_models.Order.tax_amount, 0.0)
+                - func.coalesce(sales_models.Order.shipping_amount, 0.0)
+            ), 0.0).label("rev"),
             func.count(sales_models.Order.id).label("cnt"),
         )
         .where(
@@ -796,16 +823,18 @@ async def executive_dashboard(
 
     kpis = [
         schemas.ExecKPI(
-            key="income_total", label="Ingresos Totales",
+            key="income_total", label="Ingresos Netos",
             value=round(rev_cur, 2), display=_format_money(rev_cur),
-            sub="vs. periodo anterior",
+            sub="Sin IVA ni envío · vs. periodo anterior",
             delta_pct=_pct_change(rev_cur, rev_prev),
             color_hint=_color(_pct_change(rev_cur, rev_prev)),
         ),
         schemas.ExecKPI(
-            key="net_profit", label="Utilidad Neta",
+            # Es utilidad BRUTA (revenue - COGS), no neta. La neta requiere
+            # restar tambien gastos operativos, nomina, comisiones e ISR.
+            key="net_profit", label="Utilidad Bruta",
             value=round(profit_cur, 2), display=_format_money(profit_cur),
-            sub="vs. periodo anterior",
+            sub="Ingresos − Costo FIFO · vs. periodo anterior",
             delta_pct=_pct_change(profit_cur, profit_prev),
             color_hint=_color(_pct_change(profit_cur, profit_prev)),
         ),
@@ -914,12 +943,17 @@ async def executive_dashboard(
 
     # 8) KPIs operativos
     goal_pct = achieved_pct if goal_period > 0 else 0.0
+    _goal_hint = (
+        "Real vs forecast del periodo" if meta_basis == "forecast"
+        else "Real vs periodo anterior (sin forecast cargado)" if meta_basis == "previous_period"
+        else "Sin forecast — captura uno para ver meta"
+    )
     operational_kpis = [
         schemas.OperationalKPIRow(
             key="goal_completion", label="Cumplimiento de meta",
             value_pct=round(min(goal_pct, 100.0), 1),
             color_hint="good" if goal_pct >= 90 else "warn" if goal_pct >= 60 else "bad",
-            hint="Real vs forecast del mes",
+            hint=_goal_hint,
         ),
         schemas.OperationalKPIRow(
             key="margin_vs_target", label="Margen neto vs objetivo",
