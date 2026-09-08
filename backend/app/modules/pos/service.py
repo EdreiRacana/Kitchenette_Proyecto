@@ -128,6 +128,14 @@ async def open_session(db: AsyncSession, terminal_id: int, cashier_id: int,
     ))
     await db.commit()
     await db.refresh(s)
+    # Barre reservas huerfanas de sesiones cerradas o carritos abandonados
+    # (>60 min) — que otro cajero pudiera ver stock "reservado" que en
+    # realidad nadie va a comprar. No debe romper la apertura si falla.
+    try:
+        await cleanup_stale_reservations(db)
+    except Exception as e:
+        log.warning("cleanup_stale_reservations fallo en open_session",
+                     extra={"session_id": s.id, "error": str(e)})
     await _log(db, cashier_id, "OPEN_POS_SESSION", f"Turno abierto en terminal {terminal_id}",
                 {"session_id": s.id, "opening_balance": opening_balance})
     return await get_session(db, s.id)
@@ -185,6 +193,14 @@ async def close_session(db: AsyncSession, session_id: int,
               f"var ${actual-expected:+,.2f}",
     ))
     await db.commit()
+    # Defensivo: si quedo carrito abierto con reservas, liberalas al cerrar
+    # sesion para no dejar stock congelado a otros cajeros. El UI ya deberia
+    # llamar release-cart pero por si el navegador se cerro sin avisar.
+    try:
+        await release_session_reservations(db, s.id)
+    except Exception as e:
+        log.warning("release_session_reservations fallo en close_session",
+                     extra={"session_id": s.id, "error": str(e)})
     await _log(db, user_id or s.cashier_id, "CLOSE_POS_SESSION",
                 f"Turno cerrado, variance ${s.variance:+,.2f}",
                 {"session_id": s.id, "expected": s.expected_cash, "actual": s.actual_cash})
@@ -597,6 +613,16 @@ async def register_sale(db: AsyncSession, session_id: int,
             notes=f"Venta {folio}",
         ))
     await db.commit()
+    # Liberar reservas de esta sesion: consume_stock ya descontó de
+    # StockLevel.quantity, ahora bajamos el reserved_quantity que quedo
+    # incrementado desde que se armaba el carrito. Sin esto el available
+    # se veria doble descontado (una vez por venta, otra por reserva viva).
+    # No debe romper la venta si falla — la venta ya se registro.
+    try:
+        await release_session_reservations(db, s.id)
+    except Exception as e:
+        log.warning("release_session_reservations fallo tras venta",
+                     extra={"session_id": s.id, "order_id": order.id, "error": str(e)})
     await _log(db, user_id or s.cashier_id, "POS_SALE",
                 f"Venta POS {folio} ${total:,.2f}",
                 {"session_id": s.id, "order_id": order.id, "folio": folio})
@@ -1266,3 +1292,245 @@ async def list_active_bank_accounts(db: AsyncSession) -> List[dict]:
         }
         for a in res.scalars().all()
     ]
+
+
+# ── Reservas de carrito (race condition dos cajeros) ─────────────────────
+# Cuando un cajero agrega producto al carrito, incrementamos
+# StockLevel.reserved_quantity y creamos/actualizamos una POSCartReservation
+# — otro cajero ve stock_available = quantity - reserved reducido y no puede
+# armar carrito con la misma pieza. Al completar venta o cerrar carrito,
+# se libera la reserva. cleanup_stale_reservations barre reservas huerfanas
+# (carrito abandonado, browser cerrado) de sesiones cerradas o mas viejas
+# que STALE_RESERVATION_MINUTES.
+
+STALE_RESERVATION_MINUTES = 60
+
+
+async def _get_terminal_warehouse_for_session(
+    db: AsyncSession, session_id: int,
+) -> tuple[int, int]:
+    """Devuelve (warehouse_id, terminal_id) del terminal donde vive la sesion.
+    Levanta ValueError si la sesion no esta abierta o el terminal no tiene
+    almacen (una venta sin almacen ya se rechaza en register_sale)."""
+    res = await db.execute(
+        select(pos_models.POSSession)
+        .where(pos_models.POSSession.id == session_id)
+        .execution_options(skip_tenant_filter=True)
+    )
+    s = res.scalars().first()
+    if not s:
+        raise ValueError("Sesion no encontrada")
+    if s.status != "open":
+        raise ValueError(f"La sesion esta {s.status}, no abierta.")
+    res_t = await db.execute(
+        select(pos_models.POSTerminal)
+        .where(pos_models.POSTerminal.id == s.terminal_id)
+        .execution_options(skip_tenant_filter=True)
+    )
+    t = res_t.scalars().first()
+    if not t or not t.warehouse_id:
+        raise ValueError(
+            "El terminal de esta sesion no tiene almacen asignado. "
+            "No se puede reservar existencia."
+        )
+    return t.warehouse_id, t.id
+
+
+async def reserve_cart_item(
+    db: AsyncSession, session_id: int, variant_id: int, delta: int,
+    user_id: Optional[int] = None,
+) -> dict:
+    """Incrementa la reserva de `delta` unidades del producto para esta sesion.
+
+    delta positivo = agregar al carrito. Valida que quede stock disponible
+    despues de la reserva. Bloquea la fila de StockLevel con SELECT FOR UPDATE
+    para que dos cajeros no puedan reservar la misma unidad simultaneamente.
+    """
+    if delta <= 0:
+        raise ValueError("delta debe ser positivo. Para liberar usa release_cart_item.")
+
+    warehouse_id, _ = await _get_terminal_warehouse_for_session(db, session_id)
+
+    from app.modules.inventory.models import StockLevel, ProductVariant, Product
+    # Servicios no consumen stock — la "reserva" es no-op para no bloquear.
+    res_v = await db.execute(
+        select(Product.item_type).join(ProductVariant, ProductVariant.product_id == Product.id)
+        .where(ProductVariant.id == variant_id)
+    )
+    itype_row = res_v.first()
+    if itype_row and (itype_row[0] or "") == "service":
+        return {"reserved": 0, "available": None, "is_service": True}
+
+    # Lock de la fila StockLevel — postgres usa SELECT FOR UPDATE; en sqlite
+    # (tests) no hay locking real pero la transaccion aisla igual.
+    res_sl = await db.execute(
+        select(pos_models.POSSession.__table__)  # placeholder unused
+        .where(pos_models.POSSession.id == session_id)
+    )
+    _ = res_sl.first()  # asegura la sesion sigue existiendo
+
+    res_stock = await db.execute(
+        select(StockLevel).where(
+            StockLevel.variant_id == variant_id,
+            StockLevel.warehouse_id == warehouse_id,
+        ).with_for_update()
+    )
+    stock = res_stock.scalars().first()
+    if not stock:
+        raise ValueError(
+            "Este producto no tiene existencia registrada en el almacen "
+            "del POS. Recibe una compra antes de intentar venderlo."
+        )
+    available = int(stock.quantity or 0) - int(stock.reserved_quantity or 0)
+    if delta > available:
+        raise ValueError(
+            f"No hay existencia suficiente. Disponible en este POS: {available}."
+        )
+
+    # Upsert de la reserva (session, variant): existe → suma; no → crear.
+    res_r = await db.execute(
+        select(pos_models.POSCartReservation).where(
+            pos_models.POSCartReservation.session_id == session_id,
+            pos_models.POSCartReservation.variant_id == variant_id,
+        )
+    )
+    reservation = res_r.scalars().first()
+    if reservation:
+        reservation.quantity = int(reservation.quantity or 0) + delta
+    else:
+        reservation = pos_models.POSCartReservation(
+            session_id=session_id, variant_id=variant_id,
+            warehouse_id=warehouse_id, quantity=delta,
+        )
+        db.add(reservation)
+
+    stock.reserved_quantity = int(stock.reserved_quantity or 0) + delta
+    await db.commit()
+    return {
+        "reserved": int(reservation.quantity or 0),
+        "available": int(stock.quantity or 0) - int(stock.reserved_quantity or 0),
+        "is_service": False,
+    }
+
+
+async def release_cart_item(
+    db: AsyncSession, session_id: int, variant_id: int, delta: int,
+    user_id: Optional[int] = None,
+) -> dict:
+    """Decrementa la reserva en `delta` unidades. Si llega a 0, borra la fila.
+
+    Silencioso si no hay reserva o si delta > reservado — libera lo que haya
+    y no rompe el UI (util cuando el frontend perdio track). Nunca deja
+    reserved_quantity negativo.
+    """
+    if delta <= 0:
+        raise ValueError("delta debe ser positivo.")
+
+    from app.modules.inventory.models import StockLevel
+    res_r = await db.execute(
+        select(pos_models.POSCartReservation).where(
+            pos_models.POSCartReservation.session_id == session_id,
+            pos_models.POSCartReservation.variant_id == variant_id,
+        )
+    )
+    reservation = res_r.scalars().first()
+    if not reservation:
+        return {"reserved": 0, "available": None}
+    actual_delta = min(delta, int(reservation.quantity or 0))
+
+    res_stock = await db.execute(
+        select(StockLevel).where(
+            StockLevel.variant_id == variant_id,
+            StockLevel.warehouse_id == reservation.warehouse_id,
+        ).with_for_update()
+    )
+    stock = res_stock.scalars().first()
+    if stock:
+        new_reserved = max(0, int(stock.reserved_quantity or 0) - actual_delta)
+        stock.reserved_quantity = new_reserved
+
+    reservation.quantity = int(reservation.quantity or 0) - actual_delta
+    if reservation.quantity <= 0:
+        await db.delete(reservation)
+    await db.commit()
+    return {
+        "reserved": max(0, int(reservation.quantity or 0)),
+        "available": (int(stock.quantity or 0) - int(stock.reserved_quantity or 0)) if stock else None,
+    }
+
+
+async def release_session_reservations(
+    db: AsyncSession, session_id: int,
+) -> int:
+    """Libera TODAS las reservas de una sesion. Devuelve cuantas filas borro.
+
+    Se llama:
+      - Despues de completar una venta (register_sale) — consume_stock ya
+        descontó StockLevel.quantity, aqui liberamos el reserved acumulado.
+      - Al 'limpiar carrito' desde el UI.
+      - Al cerrar la sesion (close_session), por si quedaron reservas.
+    """
+    from app.modules.inventory.models import StockLevel
+    res = await db.execute(
+        select(pos_models.POSCartReservation)
+        .where(pos_models.POSCartReservation.session_id == session_id)
+    )
+    reservations = res.scalars().all()
+    if not reservations:
+        return 0
+
+    for r in reservations:
+        res_stock = await db.execute(
+            select(StockLevel).where(
+                StockLevel.variant_id == r.variant_id,
+                StockLevel.warehouse_id == r.warehouse_id,
+            ).with_for_update()
+        )
+        stock = res_stock.scalars().first()
+        if stock:
+            stock.reserved_quantity = max(
+                0, int(stock.reserved_quantity or 0) - int(r.quantity or 0)
+            )
+        await db.delete(r)
+    await db.commit()
+    return len(reservations)
+
+
+async def cleanup_stale_reservations(
+    db: AsyncSession, older_than_minutes: int = STALE_RESERVATION_MINUTES,
+) -> int:
+    """Barre reservas huerfanas: de sesiones cerradas + de sesiones abiertas
+    con updated_at mas viejo que `older_than_minutes` (carrito abandonado,
+    browser cerrado, cliente que se fue). Se llama al abrir sesion nueva.
+    """
+    from datetime import timedelta
+    from app.modules.inventory.models import StockLevel
+
+    cutoff = datetime.now() - timedelta(minutes=older_than_minutes)
+    # Sesiones no abiertas: reservas invalidas siempre.
+    res_bad = await db.execute(
+        select(pos_models.POSCartReservation)
+        .join(pos_models.POSSession, pos_models.POSSession.id == pos_models.POSCartReservation.session_id)
+        .where(
+            (pos_models.POSSession.status != "open")
+            | (pos_models.POSCartReservation.updated_at < cutoff)
+        )
+    )
+    stale = res_bad.scalars().all()
+    if not stale:
+        return 0
+    for r in stale:
+        res_stock = await db.execute(
+            select(StockLevel).where(
+                StockLevel.variant_id == r.variant_id,
+                StockLevel.warehouse_id == r.warehouse_id,
+            ).with_for_update()
+        )
+        stock = res_stock.scalars().first()
+        if stock:
+            stock.reserved_quantity = max(
+                0, int(stock.reserved_quantity or 0) - int(r.quantity or 0)
+            )
+        await db.delete(r)
+    await db.commit()
+    return len(stale)

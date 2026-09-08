@@ -318,6 +318,50 @@ async def register_pos_refund(session_id: int, data: schemas.POSRefundRequest,
         raise HTTPException(400, str(e))
 
 
+# ── Reserva de carrito (evita race condition dos cajeros) ────────────────
+@router.post("/cart/reserve")
+async def cart_reserve(
+    data: schemas.CartReserveRequest, db: DB, current_user: CurrentUser,
+):
+    """Reserva `delta` unidades del producto en el almacen del terminal de la
+    sesion. Otro cajero vera stock_available reducido en ese monto.
+
+    Se llama al agregar un producto al carrito o al incrementar cantidad.
+    Devuelve la existencia disponible resultante tras la reserva.
+    """
+    try:
+        return await service.reserve_cart_item(
+            db, session_id=data.session_id, variant_id=data.variant_id,
+            delta=data.delta, user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/cart/release")
+async def cart_release(
+    data: schemas.CartReserveRequest, db: DB, current_user: CurrentUser,
+):
+    """Libera `delta` unidades reservadas. Se llama al quitar del carrito."""
+    try:
+        return await service.release_cart_item(
+            db, session_id=data.session_id, variant_id=data.variant_id,
+            delta=data.delta, user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/session/{session_id}/release-cart")
+async def release_cart(session_id: int, db: DB, _: CurrentUser):
+    """Libera TODAS las reservas de una sesion — 'limpiar carrito' o al
+    reabrir el POS por si quedaron reservas del navegador cerrado. La venta
+    completada tambien la llama internamente; el UI solo la necesita para
+    limpiar manualmente."""
+    n = await service.release_session_reservations(db, session_id)
+    return {"released_items": n}
+
+
 # ── Venta POS ─────────────────────────────────────────────────────────────
 @router.post("/sale")
 async def register_sale(data: schemas.POSSaleRequest, db: DB, current_user: CurrentUser):

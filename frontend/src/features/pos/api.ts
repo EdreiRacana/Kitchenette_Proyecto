@@ -156,6 +156,22 @@ export const posApi = {
   emailSessionToAccounting: (sessionId: number, data: { to?: string; kind?: "Z" | "X"; notes?: string } = {}) =>
     api.post<SessionEmailResult>(`/pos/session/${sessionId}/email-accounting`, data).then(r => r.data),
 
+  // Reserva de existencia mientras el carrito esta abierto — evita que
+  // dos cajeros armen carrito con el mismo producto simultaneamente.
+  reserveCartItem: (sessionId: number, variantId: number, delta: number) =>
+    api.post<{ reserved: number; available: number | null; is_service?: boolean }>(
+      "/pos/cart/reserve",
+      { session_id: sessionId, variant_id: variantId, delta },
+    ).then(r => r.data),
+  releaseCartItem: (sessionId: number, variantId: number, delta: number) =>
+    api.post<{ reserved: number; available: number | null }>(
+      "/pos/cart/release",
+      { session_id: sessionId, variant_id: variantId, delta },
+    ).then(r => r.data),
+  releaseSessionCart: (sessionId: number) =>
+    api.post<{ released_items: number }>(`/pos/session/${sessionId}/release-cart`)
+       .then(r => r.data),
+
   // Devolucion desde el POS (vinculada a la sesion activa).
   returnablePosOrder: (orderId: number) =>
     api.get<ReturnablePOSOrder>(`/pos/order/${orderId}/returnable`).then(r => r.data),

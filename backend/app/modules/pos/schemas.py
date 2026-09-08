@@ -185,3 +185,13 @@ class POSRefundResult(BaseModel):
     refund_method: str
     order_id: int
     pos_transaction_id: Optional[int] = None
+
+
+# ── Reserva de carrito (race condition dos cajeros) ─────────────────────
+class CartReserveRequest(BaseModel):
+    """Reserva/libera existencia mientras el cajero arma el carrito.
+    delta siempre positivo — el endpoint (/cart/reserve vs /cart/release)
+    determina el signo interno."""
+    session_id: int
+    variant_id: int
+    delta: int
