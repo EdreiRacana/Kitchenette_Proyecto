@@ -156,6 +156,12 @@ export const posApi = {
   emailSessionToAccounting: (sessionId: number, data: { to?: string; kind?: "Z" | "X"; notes?: string } = {}) =>
     api.post<SessionEmailResult>(`/pos/session/${sessionId}/email-accounting`, data).then(r => r.data),
 
+  // Devolucion desde el POS (vinculada a la sesion activa).
+  returnablePosOrder: (orderId: number) =>
+    api.get<ReturnablePOSOrder>(`/pos/order/${orderId}/returnable`).then(r => r.data),
+  registerPosRefund: (sessionId: number, data: POSRefundRequest) =>
+    api.post<POSRefundResult>(`/pos/session/${sessionId}/refund`, data).then(r => r.data),
+
   // Correo de contabilidad configurado en el perfil de la empresa (para
   // pre-llenar el prompt de envío del cierre).
   companyAccountingEmail: () =>
@@ -196,6 +202,53 @@ export interface SessionSale {
   customer_phone?: string | null;
   payment_methods: string[];
   payments: { method: string; amount: number }[];
+}
+
+// ── Devolucion POS ─────────────────────────────────────────────────────────
+export interface ReturnableItem {
+  variant_id: number | null;
+  product_name: string | null;
+  sku: string | null;
+  unit_price: number;
+  sold_quantity: number;
+  returned_quantity: number;
+  returnable_quantity: number;
+}
+
+export interface ReturnablePOSOrder {
+  order_id: number;
+  folio: string | null;
+  customer_id: number | null;
+  customer_name: string | null;
+  warehouse_id: number | null;
+  items: ReturnableItem[];
+}
+
+export interface POSRefundItem {
+  variant_id?: number | null;
+  product_name?: string | null;
+  sku?: string | null;
+  quantity: number;
+  unit_price?: number;
+  /** sellable: regresa a stock del almacen del terminal. damaged: merma. */
+  condition?: "sellable" | "damaged";
+}
+
+export interface POSRefundRequest {
+  order_id: number;
+  items: POSRefundItem[];
+  refund_method: "cash" | "card" | "transfer" | "store_credit";
+  reason?: string;
+  notes?: string;
+}
+
+export interface POSRefundResult {
+  return_id: number;
+  return_folio: string | null;
+  refund_amount: number;
+  refund_method: string;
+  order_id: number;
+  pos_transaction_id: number | null;
 }
 
 export type POSTransactionType =
