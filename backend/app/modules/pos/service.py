@@ -1100,6 +1100,156 @@ async def recount_session_cash(
     return await get_session_report(db, session_id)
 
 
+# ── Devolucion desde el POS ──────────────────────────────────────────────
+_VALID_REFUND_METHODS = ("cash", "card", "transfer", "store_credit")
+
+
+async def register_pos_refund(
+    db: AsyncSession,
+    session_id: int,
+    order_id: int,
+    items: list,
+    refund_method: str,
+    reason: Optional[str] = None,
+    notes: Optional[str] = None,
+    user_id: Optional[int] = None,
+) -> dict:
+    """Devuelve una venta hecha desde el POS: reingresa stock al almacen del
+    terminal, registra la CustomerReturn con settlement=refund (o
+    store_credit) y crea la POSTransaction correspondiente para que el
+    arqueo del turno reste el reembolso del efectivo esperado.
+
+    A diferencia de /sales/returns generico, este endpoint:
+      - Exige sesion abierta (el cajero devuelve durante su turno).
+      - Verifica que el pedido original sea de canal POS (channel='pos').
+      - Fuerza warehouse_id al del terminal del turno — el cajero no lo
+        elige, evita reingresar mercancia a otro almacen por error.
+      - Registra POSTransaction para que close_session pueda calcular
+        expected_cash = ... - refunds_cash (ya lo hace en el codigo actual)
+        y total_refunds refleje la realidad del turno.
+    """
+    if refund_method not in _VALID_REFUND_METHODS:
+        raise ValueError(
+            f"Metodo de reembolso invalido. Debe ser uno de: {', '.join(_VALID_REFUND_METHODS)}"
+        )
+
+    # 1) Validar sesion abierta.
+    res_s = await db.execute(select(pos_models.POSSession)
+                              .where(pos_models.POSSession.id == session_id))
+    session = res_s.scalars().first()
+    if not session:
+        raise ValueError("Sesion no encontrada")
+    if session.status != "open":
+        raise ValueError(f"La sesion esta {session.status}, no abierta. No se puede devolver.")
+
+    # 2) Traer el pedido original y confirmar que sea POS.
+    res_o = await db.execute(
+        select(sales_models.Order).where(sales_models.Order.id == order_id)
+        .execution_options(skip_tenant_filter=True)
+    )
+    order = res_o.scalars().first()
+    if not order:
+        raise ValueError("Pedido no encontrado")
+    if (order.channel or "") != "pos":
+        raise ValueError(
+            "Este pedido no fue vendido por el POS. Usa el modulo de "
+            "Ventas → Devoluciones para procesar la devolucion."
+        )
+
+    # 3) Resolver almacen: SIEMPRE el del terminal, no el del pedido (por si
+    #    el terminal cambio de almacen; la mercancia devuelta debe regresar
+    #    al almacen donde el cajero esta operando ahora).
+    res_t = await db.execute(
+        select(pos_models.POSTerminal).where(pos_models.POSTerminal.id == session.terminal_id)
+        .execution_options(skip_tenant_filter=True)
+    )
+    terminal = res_t.scalars().first()
+    warehouse_id = terminal.warehouse_id if terminal else order.warehouse_id
+
+    # 4) Delegar la devolucion a sales.service.create_return (regresa stock,
+    #    marca merma, genera folio, registra egreso financiero).
+    from app.modules.sales import service as sales_service
+    from app.modules.sales import schemas as sales_schemas
+
+    # store_credit no genera salida de efectivo — el POSTransaction refund
+    # se registra igual pero con payment_method='store_credit' para dejar
+    # trazabilidad; close_session ya suma solo refunds cash al esperado.
+    settlement = "refund" if refund_method != "store_credit" else "store_credit"
+    return_data = sales_schemas.ReturnCreate(
+        order_id=order_id,
+        customer_id=order.customer_id,
+        warehouse_id=warehouse_id,
+        reason=reason,
+        settlement_type=settlement,
+        notes=notes,
+        items=[
+            sales_schemas.ReturnItemCreate(
+                variant_id=it.get("variant_id"),
+                product_name=it.get("product_name"),
+                sku=it.get("sku"),
+                quantity=int(it.get("quantity") or 0),
+                unit_price=float(it.get("unit_price") or 0.0),
+                condition=(it.get("condition") or "sellable"),
+            )
+            for it in items
+        ],
+    )
+    ret = await sales_service.create_return(db, return_data, user_id=user_id)
+
+    # 5) POSTransaction para el arqueo. El monto reembolsado sale del cajon
+    #    (o de la tarjeta/transferencia); con payment_method='cash' el cierre
+    #    ya resta esto del efectivo esperado — antes este renglon nunca se
+    #    registraba y el arqueo mostraba mas efectivo del que habia.
+    tx = pos_models.POSTransaction(
+        session_id=session_id,
+        type="refund",
+        amount=float(ret.refund_amount or 0.0),
+        payment_method=refund_method,
+        order_id=order_id,
+        notes=(f"Devolucion {ret.folio}" + (f" — {reason}" if reason else "")),
+    )
+    db.add(tx)
+    await db.commit()
+    await db.refresh(tx)
+
+    await _log(
+        db, user_id, "POS_REFUND",
+        f"Devolucion {ret.folio} en turno {session_id} por ${ret.refund_amount:,.2f} ({refund_method})",
+        {
+            "session_id": session_id, "order_id": order_id,
+            "return_id": ret.id, "return_folio": ret.folio,
+            "amount": float(ret.refund_amount or 0.0),
+            "refund_method": refund_method,
+        },
+    )
+    return {
+        "return_id": ret.id,
+        "return_folio": ret.folio,
+        "refund_amount": float(ret.refund_amount or 0.0),
+        "refund_method": refund_method,
+        "order_id": order_id,
+        "pos_transaction_id": tx.id,
+    }
+
+
+async def get_returnable_pos_order(db: AsyncSession, order_id: int) -> Optional[dict]:
+    """Wrapper delgado sobre sales.get_returnable_order que ademas exige
+    que el pedido sea del canal POS. El modal de devolucion en el POS lo
+    usa para poblar el listado con cantidades ya devueltas."""
+    res = await db.execute(
+        select(sales_models.Order).where(sales_models.Order.id == order_id)
+        .execution_options(skip_tenant_filter=True)
+    )
+    order = res.scalars().first()
+    if not order or (order.channel or "") != "pos":
+        return None
+    from app.modules.sales import service as sales_service
+    ro = await sales_service.get_returnable_order(db, order_id)
+    if not ro:
+        return None
+    return ro.model_dump() if hasattr(ro, "model_dump") else ro.dict()
+
+
 async def list_active_bank_accounts(db: AsyncSession) -> List[dict]:
     """Selects list para el select de depósito en el UI."""
     from app.modules.finance import models as fin_models

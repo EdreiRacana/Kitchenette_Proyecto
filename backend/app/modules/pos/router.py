@@ -278,6 +278,46 @@ async def cash_movement(data: schemas.CashMovementRequest, db: DB, current_user:
         raise HTTPException(400, str(e))
 
 
+# ── Devolucion desde el POS ───────────────────────────────────────────────
+@router.get("/order/{order_id}/returnable")
+async def returnable_pos_order(order_id: int, db: DB, _: CurrentUser):
+    """Renglones devolvibles de una venta POS (para poblar el modal de devolucion).
+
+    Se rechaza si el pedido no es del canal POS: las ventas normales tienen que
+    devolverse desde el modulo de Ventas para no contaminar el arqueo del turno.
+    """
+    ro = await service.get_returnable_pos_order(db, order_id)
+    if not ro:
+        raise HTTPException(
+            404,
+            "Venta no encontrada o no es una venta POS. Para devoluciones de "
+            "ventas normales usa Ventas → Devoluciones.",
+        )
+    return ro
+
+
+@router.post("/session/{session_id}/refund", response_model=schemas.POSRefundResult)
+async def register_pos_refund(session_id: int, data: schemas.POSRefundRequest,
+                                db: DB, current_user: CurrentUser):
+    """Registra una devolucion de venta POS con vinculacion a la sesion activa.
+
+    - Reingresa stock al almacen del terminal (sellable) o marca merma (damaged).
+    - Crea CustomerReturn con settlement_type=refund (o store_credit).
+    - Crea POSTransaction(type='refund', payment_method=...) para que el
+      arqueo del turno reste el reembolso del efectivo esperado.
+    """
+    try:
+        return await service.register_pos_refund(
+            db, session_id=session_id, order_id=data.order_id,
+            items=[it.model_dump() for it in data.items],
+            refund_method=data.refund_method,
+            reason=data.reason, notes=data.notes,
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 # ── Venta POS ─────────────────────────────────────────────────────────────
 @router.post("/sale")
 async def register_sale(data: schemas.POSSaleRequest, db: DB, current_user: CurrentUser):

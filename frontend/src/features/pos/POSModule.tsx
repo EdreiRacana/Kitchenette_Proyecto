@@ -2404,7 +2404,7 @@ function SalesHistoryDrawer({ t, session, refreshKey, onClose }: {
         </div>
       </div>
       {returnFor && (
-        <POSReturnModal t={t} sale={returnFor}
+        <POSReturnModal t={t} sale={returnFor} session={session}
           onClose={() => setReturnFor(null)}
           onDone={() => { setReturnFor(null); load(); }} />
       )}
@@ -2557,13 +2557,22 @@ function ReturnFinderModal({ t, onClose, onDone }: {
 // Modal que abre el cajero desde el historial de ventas o desde el buscador
 // de folio de la toolbar. Trae las partidas devolvibles reales (respetando
 // lo ya devuelto), permite marcar cantidades, elegir liquidación (reembolso
-// efectivo, nota de crédito, sin liquidación para cambio) y crea la devolución
-// en /sales/returns. El backend ya se encarga de reintegrar stock, actualizar
-// el saldo y registrar el evento en el pedido — lo cual hace que aparezca en
-// el historial del cliente y en Analytics/Devoluciones del CRM sin código extra.
-function POSReturnModal({ t, sale, onClose, onDone }: {
+// efectivo, nota de crédito, sin liquidación para cambio) y crea la devolución.
+//
+// Dos rutas segun el contexto:
+//   - Si viene `session` (cajero devolviendo durante su turno POS activo):
+//     usa /pos/session/{id}/refund que ademas registra POSTransaction para que
+//     el arqueo del turno reste el reembolso del efectivo esperado y
+//     total_refunds refleje la realidad. Sin esto, hasta ahora las devoluciones
+//     hechas por el cajero durante el turno NO tocaban el arqueo y el cajon
+//     quedaba con menos efectivo del esperado.
+//   - Sin session (buscador de tickets viejos de otros turnos/dias): sigue por
+//     /sales/returns que reintegra stock y liquidacion financiera igual, pero
+//     no toca ningun arqueo (correcto — es un turno cerrado, ya reconciliado).
+function POSReturnModal({ t, sale, session, onClose, onDone }: {
   t: any;
   sale: { order_id: number; folio?: string | null };
+  session?: POSSession | null;
   onClose: () => void; onDone: () => void;
 }) {
   type Row = {
@@ -2577,6 +2586,11 @@ function POSReturnModal({ t, sale, onClose, onDone }: {
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [settlement, setSettlement] = useState<"refund" | "store_credit" | "none">("refund");
+  // Cuando la devolucion pasa por el POS con settlement=refund, el cajero
+  // elige por que medio se devuelve el dinero (efectivo del cajon, tarjeta,
+  // transferencia). Solo importa para el flujo POS — para /sales/returns
+  // legacy este campo se ignora.
+  const [refundMethod, setRefundMethod] = useState<"cash" | "card" | "transfer">("cash");
   const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
   const [customerName, setCustomerName] = useState<string | null>(null);
@@ -2600,7 +2614,11 @@ function POSReturnModal({ t, sale, onClose, onDone }: {
 
   const anySelected = rows.some(r => r.qty > 0);
   const totalRefund = rows.reduce((a, r) => a + r.qty * r.unit_price, 0);
-  const settlementLabel = settlement === "refund" ? "Reembolso en efectivo"
+  const refundMethodLabel = refundMethod === "cash" ? "efectivo del cajón"
+    : refundMethod === "card" ? "reverso a tarjeta"
+    : "transferencia";
+  const settlementLabel = settlement === "refund"
+      ? (session ? `Reembolso (${refundMethodLabel})` : "Reembolso en efectivo")
     : settlement === "store_credit" ? "Nota de crédito"
     : "Cambio (sin liquidación)";
 
@@ -2608,21 +2626,36 @@ function POSReturnModal({ t, sale, onClose, onDone }: {
     if (!anySelected) { setError("Marca al menos un artículo para devolver"); return; }
     setSaving(true); setError(null);
     try {
-      await salesApi.createReturn({
-        order_id: sale.order_id,
-        warehouse_id: warehouseId ?? undefined,
-        reason: reason.trim() || undefined,
-        settlement_type: settlement,
-        notes: notes.trim() || undefined,
-        items: rows.filter(r => r.qty > 0).map(r => ({
-          variant_id: r.variant_id ?? undefined,
-          product_name: r.product_name ?? undefined,
-          sku: r.sku ?? undefined,
-          quantity: r.qty,
-          unit_price: r.unit_price,
-          condition: r.condition,
-        })),
-      });
+      const itemsPayload = rows.filter(r => r.qty > 0).map(r => ({
+        variant_id: r.variant_id ?? undefined,
+        product_name: r.product_name ?? undefined,
+        sku: r.sku ?? undefined,
+        quantity: r.qty,
+        unit_price: r.unit_price,
+        condition: r.condition,
+      }));
+      // Flujo POS: cajero devolviendo durante su turno + hay dinero moviendose.
+      // Registra POSTransaction para cuadrar el arqueo. settlement=none es
+      // "cambio sin liquidacion" — no hay refund monetario, cae al legacy.
+      if (session && settlement !== "none") {
+        const method = settlement === "store_credit" ? "store_credit" : refundMethod;
+        await posApi.registerPosRefund(session.id, {
+          order_id: sale.order_id,
+          items: itemsPayload,
+          refund_method: method,
+          reason: reason.trim() || undefined,
+          notes: notes.trim() || undefined,
+        });
+      } else {
+        await salesApi.createReturn({
+          order_id: sale.order_id,
+          warehouse_id: warehouseId ?? undefined,
+          reason: reason.trim() || undefined,
+          settlement_type: settlement,
+          notes: notes.trim() || undefined,
+          items: itemsPayload,
+        });
+      }
       onDone();
     } catch (e: any) {
       setError(e?.response?.data?.detail || "No se pudo registrar la devolución");
@@ -2714,11 +2747,22 @@ function POSReturnModal({ t, sale, onClose, onDone }: {
                   <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>Liquidación</label>
                   <select value={settlement} onChange={e => setSettlement(e.target.value as any)}
                     style={{ width: "100%", padding: "10px 12px", marginTop: 4, borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, cursor: "pointer" }}>
-                    <option value="refund">Reembolso en efectivo</option>
+                    <option value="refund">{session ? "Reembolso" : "Reembolso en efectivo"}</option>
                     <option value="store_credit">Nota de crédito (saldo a favor)</option>
                     <option value="none">Cambio — sin liquidación</option>
                   </select>
                 </div>
+                {session && settlement === "refund" && (
+                  <div>
+                    <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>Método del reembolso</label>
+                    <select value={refundMethod} onChange={e => setRefundMethod(e.target.value as any)}
+                      style={{ width: "100%", padding: "10px 12px", marginTop: 4, borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, cursor: "pointer" }}>
+                      <option value="cash">Efectivo del cajón</option>
+                      <option value="card">Reverso a tarjeta</option>
+                      <option value="transfer">Transferencia</option>
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>Motivo (opcional)</label>
                   <input value={reason} onChange={e => setReason(e.target.value)}

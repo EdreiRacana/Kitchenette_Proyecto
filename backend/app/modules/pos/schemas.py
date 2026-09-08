@@ -146,3 +146,42 @@ class SessionEmailAccountingResult(BaseModel):
     sent: bool
     to: Optional[str] = None
     reason: Optional[str] = None
+
+
+# ── Devolución desde el POS ──────────────────────────────────────────────
+class POSRefundItem(BaseModel):
+    """Renglón a devolver. condition=sellable regresa stock al almacen del
+    terminal; damaged lo marca como merma (no entra a inventario)."""
+    variant_id: Optional[int] = None
+    product_name: Optional[str] = None
+    sku: Optional[str] = None
+    quantity: int
+    unit_price: float = 0.0
+    condition: str = "sellable"  # sellable | damaged
+
+
+class POSRefundRequest(BaseModel):
+    """Devolucion iniciada desde el POS.
+
+    session_id se toma de la URL. El endpoint valida que:
+      - La sesion este abierta.
+      - El pedido original sea del canal POS (protege contra devoluciones de
+        ventas normales que deben pasar por sales/returns/).
+      - La devolucion se registre como POSTransaction(type=refund) con el
+        payment_method elegido — para que close_session reste el reembolso
+        del efectivo esperado y el arqueo cuadre.
+    """
+    order_id: int
+    items: List[POSRefundItem]
+    refund_method: str  # cash | card | transfer | store_credit
+    reason: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class POSRefundResult(BaseModel):
+    return_id: int
+    return_folio: Optional[str] = None
+    refund_amount: float
+    refund_method: str
+    order_id: int
+    pos_transaction_id: Optional[int] = None
