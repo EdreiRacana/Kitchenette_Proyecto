@@ -103,8 +103,66 @@ async def update_terminal(db: AsyncSession, terminal_id: int, data: schemas.POST
 
 
 # ── Sesión (turno) ────────────────────────────────────────────────────────
+async def _validate_terminal_access(db: AsyncSession, terminal_id: int, user) -> "pos_models.POSTerminal":
+    """Valida que el usuario tenga permiso para operar en este terminal.
+
+    Reglas — como NetSuite OneWorld / SAP company codes:
+      - Superusuario: sin restriccion.
+      - Terminal debe existir y estar activo.
+      - Tenant: si el terminal pertenece a una empresa (company_id no nulo),
+        debe coincidir con el contexto tenant activo del usuario. Sin esta
+        validacion un cajero que conociera el id de un terminal de otra
+        empresa podia abrir sesion ahi y vender contra su almacen.
+      - Sucursal (branch scope): si el usuario tiene branch_id asignado y el
+        terminal tiene un almacen, ese almacen debe ser visible para el
+        usuario segun `visible_warehouse_ids`. Sin esto, un cajero de
+        sucursal A podia abrir caja en un terminal cuyo almacen es de
+        sucursal B (mercancia vendida en piso equivocado).
+    """
+    res_t = await db.execute(
+        select(pos_models.POSTerminal).where(pos_models.POSTerminal.id == terminal_id)
+        .execution_options(skip_tenant_filter=True)
+    )
+    terminal = res_t.scalars().first()
+    if not terminal:
+        raise ValueError("Terminal no encontrado")
+    if not terminal.is_active:
+        raise ValueError("Este terminal esta inactivo. Contacta a tu administrador.")
+
+    if user is None or getattr(user, "is_superuser", False):
+        return terminal
+
+    # Tenant guard: el terminal debe ser de la empresa activa (o global).
+    from app.core.tenancy import get_company_context
+    tenant_cid = get_company_context()
+    if terminal.company_id and tenant_cid and terminal.company_id != tenant_cid:
+        raise ValueError(
+            "Este terminal pertenece a otra empresa. Cambia de empresa desde "
+            "el selector antes de abrir caja aqui."
+        )
+
+    # Branch scope: solo aplica cuando el usuario esta anclado a una sucursal
+    # y el terminal tiene almacen asignado (sin almacen la venta falla mas
+    # adelante con guard propio en register_sale).
+    if terminal.warehouse_id and getattr(user, "branch_id", None):
+        from app.modules.inventory.branch_scope import visible_warehouse_ids
+        allowed = await visible_warehouse_ids(db, user)
+        if allowed is not None and terminal.warehouse_id not in allowed:
+            raise ValueError(
+                "El almacen de este terminal no corresponde a tu sucursal. "
+                "No puedes abrir caja aqui."
+            )
+    return terminal
+
+
 async def open_session(db: AsyncSession, terminal_id: int, cashier_id: int,
-                       opening_balance: float, opening_notes: Optional[str] = None) -> dict:
+                       opening_balance: float, opening_notes: Optional[str] = None,
+                       user=None) -> dict:
+    # Guards de acceso (tenant + sucursal). user viene del router; sin user
+    # los guards se saltan para no romper llamadas internas/tests.
+    if user is not None:
+        await _validate_terminal_access(db, terminal_id, user)
+
     # Validar que el terminal no tenga sesión abierta
     res = await db.execute(select(pos_models.POSSession).where(
         pos_models.POSSession.terminal_id == terminal_id,
@@ -112,6 +170,19 @@ async def open_session(db: AsyncSession, terminal_id: int, cashier_id: int,
     ))
     if res.scalars().first():
         raise ValueError("Este terminal ya tiene una sesión abierta. Cierra la sesión anterior primero.")
+
+    # Un cajero no puede tener dos turnos abiertos en terminales distintos —
+    # perderia el rastro del efectivo. Antes solo se validaba por terminal.
+    res_c = await db.execute(select(pos_models.POSSession).where(
+        pos_models.POSSession.cashier_id == cashier_id,
+        pos_models.POSSession.status == "open",
+    ))
+    other = res_c.scalars().first()
+    if other:
+        raise ValueError(
+            f"Ya tienes un turno abierto en el terminal {other.terminal_id}. "
+            "Cierralo antes de abrir uno nuevo."
+        )
 
     s = pos_models.POSSession(
         terminal_id=terminal_id, cashier_id=cashier_id,

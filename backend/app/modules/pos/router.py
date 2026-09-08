@@ -105,6 +105,7 @@ async def open_session(data: schemas.OpenSessionRequest, db: DB, current_user: C
         result = await service.open_session(
             db, terminal_id=data.terminal_id, cashier_id=current_user.id,
             opening_balance=data.opening_balance, opening_notes=data.opening_notes,
+            user=current_user,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
