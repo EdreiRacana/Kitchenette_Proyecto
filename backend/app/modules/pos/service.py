@@ -772,15 +772,68 @@ async def list_session_sales(db: AsyncSession, session_id: int) -> List[dict]:
     return out
 
 
-async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List[dict]:
-    """Búsqueda unificada por SKU exacto, código de barras o nombre parcial.
-    Prioriza matches exactos por SKU/barcode para lector."""
+async def _get_active_warehouse_id(db: AsyncSession, user_id: Optional[int]) -> Optional[int]:
+    """Resuelve el almacen del terminal donde el cajero tiene sesion abierta.
+
+    Regresa None si no hay sesion abierta o si el terminal no tiene almacen —
+    en ambos casos la consulta se comporta como antes (sin filtro de stock)
+    para no romper otros usos (admin viendo catalogo desde el POS)."""
+    if not user_id:
+        return None
+    res = await db.execute(select(pos_models.POSSession).where(
+        pos_models.POSSession.cashier_id == user_id,
+        pos_models.POSSession.status == "open",
+    ))
+    s = res.scalars().first()
+    if not s:
+        return None
+    res_t = await db.execute(select(pos_models.POSTerminal)
+                              .where(pos_models.POSTerminal.id == s.terminal_id))
+    t = res_t.scalars().first()
+    return t.warehouse_id if t else None
+
+
+async def _stock_available_by_variant(
+    db: AsyncSession, variant_ids: List[int], warehouse_id: Optional[int],
+) -> dict:
+    """Existencia disponible (quantity - reserved) por variant en un almacen.
+    Si warehouse_id es None regresa dict vacio: el caller sabe que no hay
+    contexto y no puede filtrar. Los variants sin registro en StockLevel
+    se resuelven como 0 al momento de leer el dict con .get(id, 0)."""
+    if not warehouse_id or not variant_ids:
+        return {}
+    from app.modules.inventory.models import StockLevel
+    res = await db.execute(
+        select(StockLevel.variant_id,
+               StockLevel.quantity, StockLevel.reserved_quantity)
+        .where(StockLevel.warehouse_id == warehouse_id,
+               StockLevel.variant_id.in_(variant_ids))
+    )
+    out: dict = {}
+    for vid, qty, reserved in res.all():
+        out[vid] = max(0, int(qty or 0) - int(reserved or 0))
+    return out
+
+
+async def search_products(db: AsyncSession, query: str, limit: int = 20,
+                          user_id: Optional[int] = None,
+                          available_only: bool = False) -> List[dict]:
+    """Busqueda unificada por SKU exacto, codigo de barras o nombre parcial.
+    Prioriza matches exactos por SKU/barcode para lector.
+
+    Enriquece cada resultado con `stock_available` (existencia en el almacen
+    del terminal donde el cajero tiene sesion abierta). Cuando no hay sesion
+    o el terminal no tiene almacen, `stock_available` viaja como None y el
+    frontend no muestra badge — mismo comportamiento historico."""
     from app.modules.inventory.models import ProductVariant, Product
     q = (query or "").strip()
     if not q:
         return []
 
-    def _serialize(v, p):
+    warehouse_id = await _get_active_warehouse_id(db, user_id)
+
+    def _serialize(v, p, stock_map):
+        stock = stock_map.get(v.id, 0) if warehouse_id else None
         return {
             "variant_id": v.id, "product_id": p.id,
             "sku": v.sku, "barcode": getattr(v, "barcode", None),
@@ -791,9 +844,15 @@ async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List
             # La miniatura del POS. El JOIN con Product ya existe, asi que no
             # cuesta una consulta extra. Puede ser None: la UI cae a un icono.
             "image_url": getattr(p, "image_url", None),
+            # Existencia en el almacen del terminal activo del cajero. None
+            # cuando no hay sesion abierta o terminal sin almacen — el UI lo
+            # oculta y el flujo antiguo (admin explorando catalogo) sigue
+            # funcionando. 0 = producto agotado en este punto de venta.
+            "stock_available": stock,
+            "is_service": (p.item_type or "") == "service",
         }
 
-    # 1) Match EXACTO por SKU o barcode (lector de código de barras)
+    # 1) Match EXACTO por SKU o barcode (lector de codigo de barras)
     exact = await db.execute(
         select(ProductVariant, Product)
         .join(Product, ProductVariant.product_id == Product.id)
@@ -804,7 +863,8 @@ async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List
     if len(exact_rows) == 1:
         # Un solo match exacto → escaneo bulletproof, regresar solo eso
         v, p = exact_rows[0]
-        return [_serialize(v, p)]
+        stock_map = await _stock_available_by_variant(db, [v.id], warehouse_id)
+        return [_serialize(v, p, stock_map)]
 
     # 2) Match parcial por SKU, barcode o nombre
     stmt = (
@@ -817,15 +877,38 @@ async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List
         .limit(limit)
     )
     res = await db.execute(stmt)
-    return [_serialize(v, p) for v, p in res.all()]
+    rows = res.all()
+    stock_map = await _stock_available_by_variant(
+        db, [v.id for v, _ in rows], warehouse_id,
+    )
+    serialized = [_serialize(v, p, stock_map) for v, p in rows]
+    # available_only oculta agotados. Servicios y variantes sin registro de
+    # stock (nunca se cargo inventario) se preservan — un catalogo mixto no
+    # debe perder los servicios porque no tienen almacen.
+    if available_only and warehouse_id:
+        serialized = [
+            r for r in serialized
+            if r["is_service"] or (r["stock_available"] or 0) > 0
+        ]
+    return serialized
 
 
-async def get_popular_products(db: AsyncSession, limit: int = 12) -> List[dict]:
-    """Top productos vendidos en los últimos 30 días — se muestran en el POS
-    cuando el buscador está vacío para que el cajero solo tenga que tocar.
-    Es lo que hacen Square y Toast en su "quick access grid"."""
+async def get_popular_products(db: AsyncSession, limit: int = 12,
+                                user_id: Optional[int] = None,
+                                available_only: bool = False) -> List[dict]:
+    """Top productos vendidos en los ultimos 30 dias — se muestran en el POS
+    cuando el buscador esta vacio para que el cajero solo tenga que tocar.
+    Es lo que hacen Square y Toast en su "quick access grid".
+
+    El ranking se calcula SOLO con ventas del mismo almacen del terminal
+    activo del cajero: un almacen nuevo no debe mostrar el top del vecino
+    (produce sugerencias que quizas ni maneja en piso). Si no hay sesion
+    abierta o terminal sin almacen, cae al top global — comportamiento
+    historico para admins explorando desde el POS."""
     from app.modules.inventory.models import ProductVariant, Product
     from datetime import timedelta
+
+    warehouse_id = await _get_active_warehouse_id(db, user_id)
 
     cutoff = datetime.now() - timedelta(days=30)
     stmt = (
@@ -843,6 +926,8 @@ async def get_popular_products(db: AsyncSession, limit: int = 12) -> List[dict]:
         .order_by(func.sum(sales_models.OrderItem.quantity).desc())
         .limit(max(1, min(limit, 40)))
     )
+    if warehouse_id:
+        stmt = stmt.where(sales_models.Order.warehouse_id == warehouse_id)
     rows = (await db.execute(stmt)).all()
     variant_ids = [r.variant_id for r in rows if r.variant_id]
     if not variant_ids:
@@ -852,8 +937,10 @@ async def get_popular_products(db: AsyncSession, limit: int = 12) -> List[dict]:
         .join(Product, ProductVariant.product_id == Product.id)
         .where(ProductVariant.id.in_(variant_ids))
     )
+    stock_map = await _stock_available_by_variant(db, variant_ids, warehouse_id)
     by_id: dict = {}
     for v, p in res.all():
+        stock = stock_map.get(v.id, 0) if warehouse_id else None
         by_id[v.id] = {
             "variant_id": v.id, "product_id": p.id,
             "sku": v.sku, "barcode": getattr(v, "barcode", None),
@@ -862,9 +949,17 @@ async def get_popular_products(db: AsyncSession, limit: int = 12) -> List[dict]:
             "unit_price": getattr(v, "price", 0.0) or 0.0,
             "unit_cost": getattr(v, "cost_price", 0.0) or 0.0,
             "image_url": getattr(p, "image_url", None),
+            "stock_available": stock,
+            "is_service": (p.item_type or "") == "service",
         }
-    # Respetar el orden de más vendido a menos
-    return [by_id[vid] for vid in variant_ids if vid in by_id]
+    # Respetar el orden de mas vendido a menos
+    ordered = [by_id[vid] for vid in variant_ids if vid in by_id]
+    if available_only and warehouse_id:
+        ordered = [
+            r for r in ordered
+            if r["is_service"] or (r["stock_available"] or 0) > 0
+        ]
+    return ordered
 
 
 # ── Reconciliación post-cierre ────────────────────────────────────────────

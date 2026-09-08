@@ -79,6 +79,14 @@ export interface POSProduct {
   /** Miniatura del producto. Sirve el storage configurado (Supabase en
    *  produccion). Puede ser null: la UI cae a un icono. */
   image_url?: string | null;
+  /** Existencia en el almacen del terminal donde el cajero tiene sesion
+   *  abierta. null cuando no hay sesion (admin explorando catalogo) o el
+   *  terminal no tiene almacen — el UI oculta el badge. 0 = agotado en
+   *  este punto de venta y NO se puede agregar al carrito. */
+  stock_available?: number | null;
+  /** Servicios y productos digitales no consumen stock. Cuando true el UI
+   *  siempre permite agregarlo aunque stock_available sea 0. */
+  is_service?: boolean;
 }
 
 export interface POSSaleItem {
@@ -123,10 +131,12 @@ export const posApi = {
     notes?: string;
   }) => api.post<any>("/pos/sale", data).then(r => r.data),
 
-  searchProducts: (q: string, limit = 20) =>
-    api.get<POSProduct[]>("/pos/products/search", { params: { q, limit } }).then(r => r.data),
-  popularProducts: (limit = 12) =>
-    api.get<POSProduct[]>("/pos/products/popular", { params: { limit } }).then(r => r.data),
+  searchProducts: (q: string, limit = 20, availableOnly = false) =>
+    api.get<POSProduct[]>("/pos/products/search",
+      { params: { q, limit, available_only: availableOnly } }).then(r => r.data),
+  popularProducts: (limit = 12, availableOnly = false) =>
+    api.get<POSProduct[]>("/pos/products/popular",
+      { params: { limit, available_only: availableOnly } }).then(r => r.data),
 
   downloadTicket: (orderId: number, width: 58 | 80 = 80) =>
     api.get<Blob>(`/pos/sale/${orderId}/ticket.pdf`, { params: { width }, responseType: "blob" }).then(r => r.data),
