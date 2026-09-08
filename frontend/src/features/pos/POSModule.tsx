@@ -29,6 +29,45 @@ import {
 
 const mxn = (n: number) => "$" + (n || 0).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+/** Badge de existencia en el almacen del POS.
+ *  Verde >5, naranja <=5, rojo 0 (card deshabilitado). Nulo cuando no hay
+ *  contexto (admin explorando, terminal sin almacen) o el producto es servicio. */
+function stockDisplay(p: POSProduct, t: any): {
+  disabled: boolean;
+  label: string | null;
+  borderColor: string;
+  bgColor: string;
+  badgeColor: string;
+  badgeBg: string;
+} {
+  const s = p.stock_available;
+  if (p.is_service || s == null) {
+    return { disabled: false, label: null, borderColor: t.border, bgColor: t.panel2, badgeColor: t.textMid, badgeBg: "transparent" };
+  }
+  if (s <= 0) {
+    return { disabled: true, label: "Sin stock", borderColor: t.bad, bgColor: t.bad + "0e", badgeColor: t.bad, badgeBg: t.bad + "22" };
+  }
+  if (s <= 5) {
+    return { disabled: false, label: `Solo ${s}`, borderColor: t.border, bgColor: t.panel2, badgeColor: t.warn, badgeBg: t.warn + "22" };
+  }
+  return { disabled: false, label: `${s} disp.`, borderColor: t.border, bgColor: t.panel2, badgeColor: t.good, badgeBg: t.good + "1a" };
+}
+
+/** Badge de caducidad para productos perecederos con lote activo declarado.
+ *  Rojo si ya vencio, amarillo si esta dentro del umbral de alerta del
+ *  producto, null si esta lejos de vencer o si el producto no rastrea lotes. */
+function expiryDisplay(p: POSProduct, t: any): {
+  label: string; color: string; bg: string; expired: boolean;
+} | null {
+  if (!p.tracks_batches || p.days_to_expiry == null) return null;
+  const d = p.days_to_expiry;
+  const alert = p.expiry_alert_days ?? 30;
+  if (d < 0) return { label: `Vencido hace ${-d}d`, color: t.bad, bg: t.bad + "22", expired: true };
+  if (d === 0) return { label: "Vence hoy", color: t.bad, bg: t.bad + "22", expired: true };
+  if (d <= alert) return { label: `Vence en ${d}d`, color: t.warn, bg: t.warn + "22", expired: false };
+  return null;
+}
+
 type CartItem = POSSaleItem & { line_total: number };
 
 // Holder module-level del `s` (strings) para que los subcomponentes
@@ -412,10 +451,32 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
   }, [anyModalOpen]);
 
   const addToCart = async (p: POSProduct, viaScanner = false) => {
-    // Reserva backend PRIMERO: bloquea la unidad para que otro cajero no
-    // pueda armar carrito con el mismo producto (race condition dos cajas).
-    // Si el backend rechaza (sin stock, no coincide con lo que la UI creia),
-    // no agregamos al carrito local — el mensaje del backend es autoritativo.
+    // Guard stock cliente: feedback inmediato sin roundtrip. El backend
+    // igual valida al reservar, esto es solo para evitar la latencia.
+    const stock = p.stock_available;
+    const alreadyInCart = cart.find(it => it.variant_id === p.variant_id);
+    const currentQty = alreadyInCart?.quantity || 0;
+    if (!p.is_service && stock != null && stock <= currentQty) {
+      const msg = stock === 0
+        ? `Sin existencia de "${p.product_name}" en este punto de venta.`
+        : `Solo quedan ${stock} de "${p.product_name}" y ya tienes ${currentQty} en el carrito.`;
+      alert(msg);
+      return;
+    }
+    // Guard caducidad: si el lote esta vencido, pedir confirmacion explicita.
+    // Perecederos vencidos NO deben vender por default — el cajero decide.
+    const exp = expiryDisplay(p, t);
+    if (exp?.expired) {
+      const proceed = window.confirm(
+        `⚠ "${p.product_name}" tiene lote ${exp.label.toLowerCase()}.\n\n` +
+        `Vender producto caducado puede ser un riesgo sanitario y comercial. ` +
+        `¿Confirmas que revisaste el lote fisico y quieres continuar?`
+      );
+      if (!proceed) return;
+    }
+    // Reserva backend: bloquea la unidad para que otro cajero no pueda armar
+    // carrito con el mismo producto (race condition dos cajas). Si el backend
+    // rechaza (stock cambio bajo los pies), el mensaje del backend manda.
     if (p.variant_id && !p.is_service) {
       try {
         await posApi.reserveCartItem(session.id, p.variant_id, 1);
@@ -822,26 +883,34 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                   </div>
                   {isMobile ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {popular.map(p => (
-                        <button key={p.variant_id} onClick={() => addToCart(p)}
-                          style={{ textAlign: "left", padding: "8px 10px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", display: "flex", alignItems: "center", gap: 9, minHeight: 56 }}>
+                      {popular.map(p => {
+                        const st = stockDisplay(p, t); const exp = expiryDisplay(p, t);
+                        return (
+                        <button key={p.variant_id} onClick={() => addToCart(p)} disabled={st.disabled}
+                          style={{ textAlign: "left", padding: "8px 10px", borderRadius: 10, border: `1px solid ${st.borderColor}`, background: st.bgColor, cursor: st.disabled ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 9, minHeight: 56, opacity: st.disabled ? 0.55 : 1 }}>
                           <ProductThumb url={p.image_url} size={38} t={t} radius={7} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.product_name}</div>
-                            {p.sku && <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace", marginTop: 2 }}>{p.sku}</div>}
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2, flexWrap: "wrap" }}>
+                              {p.sku && <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace" }}>{p.sku}</div>}
+                              {st.label && <div style={{ fontSize: 10.5, fontWeight: 700, color: st.badgeColor, background: st.badgeBg, padding: "1px 6px", borderRadius: 6 }}>{st.label}</div>}
+                              {exp && <div style={{ fontSize: 10.5, fontWeight: 700, color: exp.color, background: exp.bg, padding: "1px 6px", borderRadius: 6 }}>{exp.label}</div>}
+                            </div>
                           </div>
                           <div style={{ fontSize: 15, fontWeight: 800, color: t.good, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{mxn(p.unit_price)}</div>
-                          <div style={{ width: 36, height: 36, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          <div style={{ width: 36, height: 36, borderRadius: 8, background: st.disabled ? t.textLo : t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                             <Plus size={18} strokeWidth={3} />
                           </div>
                         </button>
-                      ))}
+                      );})}
                     </div>
                   ) : (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10 }}>
-                      {popular.map(p => (
-                        <button key={p.variant_id} onClick={() => addToCart(p)}
-                          style={{ textAlign: "left", padding: 10, borderRadius: 12, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", display: "flex", flexDirection: "column", gap: 6, minHeight: 84 }}>
+                      {popular.map(p => {
+                        const st = stockDisplay(p, t); const exp = expiryDisplay(p, t);
+                        return (
+                        <button key={p.variant_id} onClick={() => addToCart(p)} disabled={st.disabled}
+                          style={{ textAlign: "left", padding: 10, borderRadius: 12, border: `1px solid ${st.borderColor}`, background: st.bgColor, cursor: st.disabled ? "not-allowed" : "pointer", display: "flex", flexDirection: "column", gap: 6, minHeight: 84, opacity: st.disabled ? 0.55 : 1 }}>
                           <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
                             <ProductThumb url={p.image_url} size={40} t={t} />
                             <div title={p.product_name}
@@ -849,12 +918,18 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                           </div>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
                             <div style={{ fontSize: 15, fontWeight: 800, color: t.good }}>{mxn(p.unit_price)}</div>
-                            <div style={{ width: 26, height: 26, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <div style={{ width: 26, height: 26, borderRadius: 8, background: st.disabled ? t.textLo : t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
                               <Plus size={14} strokeWidth={3} />
                             </div>
                           </div>
+                          {(st.label || exp) && (
+                            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                              {st.label && <div style={{ fontSize: 10.5, fontWeight: 700, color: st.badgeColor, background: st.badgeBg, padding: "2px 6px", borderRadius: 6 }}>{st.label}</div>}
+                              {exp && <div style={{ fontSize: 10.5, fontWeight: 700, color: exp.color, background: exp.bg, padding: "2px 6px", borderRadius: 6 }}>{exp.label}</div>}
+                            </div>
+                          )}
                         </button>
-                      ))}
+                      );})}
                     </div>
                   )}
                 </div>
@@ -963,41 +1038,51 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                 // En móvil: lista compacta, un producto por fila (~56px), caben
                 // ~10 al mismo tiempo. Buscar "apple" ya no obliga a scrollear.
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {results.map(p => (
-                    <button key={p.variant_id} onClick={() => addToCart(p)}
+                  {results.map(p => {
+                    const st = stockDisplay(p, t); const exp = expiryDisplay(p, t);
+                    return (
+                    <button key={p.variant_id} onClick={() => addToCart(p)} disabled={st.disabled}
                       style={{
                         textAlign: "left", padding: "8px 10px", borderRadius: 10,
-                        border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer",
+                        border: `1px solid ${st.borderColor}`, background: st.bgColor,
+                        cursor: st.disabled ? "not-allowed" : "pointer",
                         display: "flex", alignItems: "center", gap: 9, minHeight: 56,
+                        opacity: st.disabled ? 0.55 : 1,
                       }}>
                       <ProductThumb url={p.image_url} size={38} t={t} radius={7} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 14, fontWeight: 700, color: t.textHi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {p.product_name}
                         </div>
-                        {p.sku && (
-                          <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace", letterSpacing: 0.3, marginTop: 2 }}>
-                            {p.sku}
-                          </div>
-                        )}
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2, flexWrap: "wrap" }}>
+                          {p.sku && (
+                            <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace", letterSpacing: 0.3 }}>
+                              {p.sku}
+                            </div>
+                          )}
+                          {st.label && <div style={{ fontSize: 10.5, fontWeight: 700, color: st.badgeColor, background: st.badgeBg, padding: "1px 6px", borderRadius: 6 }}>{st.label}</div>}
+                          {exp && <div style={{ fontSize: 10.5, fontWeight: 700, color: exp.color, background: exp.bg, padding: "1px 6px", borderRadius: 6 }}>{exp.label}</div>}
+                        </div>
                       </div>
                       <div style={{ fontSize: 15, fontWeight: 800, color: t.good, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
                         {mxn(p.unit_price)}
                       </div>
-                      <div style={{ width: 36, height: 36, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 8, background: st.disabled ? t.textLo : t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                         <Plus size={18} strokeWidth={3} />
                       </div>
                     </button>
-                  ))}
+                  );})}
                 </div>
               ) : (
                 // Desktop / tablet: grid de tarjetas grandes con hover.
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 10 }}>
-                  {results.map(p => (
-                    <button key={p.variant_id} onClick={() => addToCart(p)}
-                      style={{ textAlign: "left", padding: 10, borderRadius: 12, border: `1px solid ${t.border}`, background: t.panel2, cursor: "pointer", transition: "transform .1s, border-color .15s, box-shadow .15s", display: "flex", flexDirection: "column", gap: 6 }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = t.nova; (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 12px ${t.nova}22`; }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = t.border; (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; }}>
+                  {results.map(p => {
+                    const st = stockDisplay(p, t); const exp = expiryDisplay(p, t);
+                    return (
+                    <button key={p.variant_id} onClick={() => addToCart(p)} disabled={st.disabled}
+                      style={{ textAlign: "left", padding: 10, borderRadius: 12, border: `1px solid ${st.borderColor}`, background: st.bgColor, cursor: st.disabled ? "not-allowed" : "pointer", transition: "transform .1s, border-color .15s, box-shadow .15s", display: "flex", flexDirection: "column", gap: 6, opacity: st.disabled ? 0.55 : 1 }}
+                      onMouseEnter={e => { if (!st.disabled) { (e.currentTarget as HTMLElement).style.borderColor = t.nova; (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 12px ${t.nova}22`; } }}
+                      onMouseLeave={e => { if (!st.disabled) { (e.currentTarget as HTMLElement).style.borderColor = st.borderColor; (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "none"; } }}>
                       <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
                         <ProductThumb url={p.image_url} size={44} t={t} />
                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -1010,12 +1095,18 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                       </div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
                         <div style={{ fontSize: 17, fontWeight: 800, color: t.good, letterSpacing: -0.3 }}>{mxn(p.unit_price)}</div>
-                        <div style={{ width: 28, height: 28, borderRadius: 8, background: t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <div style={{ width: 28, height: 28, borderRadius: 8, background: st.disabled ? t.textLo : t.nova, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
                           <Plus size={16} strokeWidth={3} />
                         </div>
                       </div>
+                      {(st.label || exp) && (
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          {st.label && <div style={{ fontSize: 10.5, fontWeight: 700, color: st.badgeColor, background: st.badgeBg, padding: "2px 6px", borderRadius: 6 }}>{st.label}</div>}
+                          {exp && <div style={{ fontSize: 10.5, fontWeight: 700, color: exp.color, background: exp.bg, padding: "2px 6px", borderRadius: 6 }}>{exp.label}</div>}
+                        </div>
+                      )}
                     </button>
-                  ))}
+                  );})}
                 </div>
               )
             )}
