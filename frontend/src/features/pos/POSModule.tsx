@@ -411,7 +411,19 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
     return () => { clearInterval(iv); window.removeEventListener("click", refocus); };
   }, [anyModalOpen]);
 
-  const addToCart = (p: POSProduct, viaScanner = false) => {
+  const addToCart = async (p: POSProduct, viaScanner = false) => {
+    // Reserva backend PRIMERO: bloquea la unidad para que otro cajero no
+    // pueda armar carrito con el mismo producto (race condition dos cajas).
+    // Si el backend rechaza (sin stock, no coincide con lo que la UI creia),
+    // no agregamos al carrito local — el mensaje del backend es autoritativo.
+    if (p.variant_id && !p.is_service) {
+      try {
+        await posApi.reserveCartItem(session.id, p.variant_id, 1);
+      } catch (e: any) {
+        alert(e?.response?.data?.detail || "No se pudo reservar el producto.");
+        return;
+      }
+    }
     setCart(prev => {
       const existing = prev.find(it => it.variant_id === p.variant_id);
       if (existing) {
@@ -422,7 +434,7 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
       return [...prev, {
         variant_id: p.variant_id, product_name: p.product_name, sku: p.sku,
         quantity: 1, unit_price: p.unit_price, discount_amount: 0, tax_rate: 16,
-        is_service: false, line_total: p.unit_price,
+        is_service: !!p.is_service, line_total: p.unit_price,
       }];
     });
     if (viaScanner) {
@@ -491,14 +503,40 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
     posApi.popularProducts(12).then(setPopular).catch(() => setPopular([]));
   }, []);
 
-  const changeQty = (idx: number, delta: number) => {
-    setCart(prev => prev.map((it, i) => {
-      if (i !== idx) return it;
-      const q = Math.max(1, it.quantity + delta);
-      return { ...it, quantity: q, line_total: q * it.unit_price };
+  const changeQty = async (idx: number, delta: number) => {
+    const it = cart[idx];
+    if (!it) return;
+    // Sincronizar la reserva con el ajuste de cantidad. Al aumentar: reserva
+    // una unidad mas; al disminuir: libera. Si el aumento revienta por
+    // stock (otro cajero se llevo lo ultimo), no aplicamos el cambio.
+    if (it.variant_id && !it.is_service) {
+      const wanted = Math.max(1, it.quantity + delta);
+      const actualDelta = wanted - it.quantity;
+      if (actualDelta !== 0) {
+        try {
+          if (actualDelta > 0) await posApi.reserveCartItem(session.id, it.variant_id, actualDelta);
+          else                 await posApi.releaseCartItem(session.id, it.variant_id, -actualDelta);
+        } catch (e: any) {
+          alert(e?.response?.data?.detail || "No se pudo ajustar la cantidad.");
+          return;
+        }
+      }
+    }
+    setCart(prev => prev.map((x, i) => {
+      if (i !== idx) return x;
+      const q = Math.max(1, x.quantity + delta);
+      return { ...x, quantity: q, line_total: q * x.unit_price };
     }));
   };
-  const removeLine = (idx: number) => setCart(prev => prev.filter((_, i) => i !== idx));
+  const removeLine = async (idx: number) => {
+    const it = cart[idx];
+    if (it?.variant_id && !it.is_service && it.quantity > 0) {
+      try {
+        await posApi.releaseCartItem(session.id, it.variant_id, it.quantity);
+      } catch { /* ignorar: el UI limpia igual, el cleanup barre eventualmente */ }
+    }
+    setCart(prev => prev.filter((_, i) => i !== idx));
+  };
 
   // Poner el carrito actual "en espera" (parked sale). Guarda + vacía.
   const parkCurrent = (nameHint?: string) => {
@@ -1050,7 +1088,13 @@ function POSFloor({ t, session, onClosed }: { t: any; session: POSSession; onClo
                 </button>
               )}
               {cart.length > 0 && (
-                <button onClick={() => { if (confirm("¿Vaciar el ticket?")) setCart([]); }}
+                <button onClick={async () => {
+                    if (!confirm("¿Vaciar el ticket?")) return;
+                    // Libera las reservas backend de golpe — otro cajero
+                    // vuelve a ver ese stock disponible al instante.
+                    try { await posApi.releaseSessionCart(session.id); } catch {}
+                    setCart([]);
+                  }}
                   title="Vaciar ticket"
                   style={{ background: t.bad + "16", border: `1px solid ${t.bad}44`, color: t.bad, cursor: "pointer", fontSize: 11.5, display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, fontWeight: 600 }}>
                   <Trash2 size={12} /> Vaciar

@@ -13,6 +13,7 @@ Diseño:
 from __future__ import annotations
 from sqlalchemy import (
     Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Text, JSON,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -108,6 +109,36 @@ class POSTransaction(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("POSSession", back_populates="transactions")
+
+
+class POSCartReservation(Base):
+    """Reserva de existencia mientras un cajero arma el carrito.
+
+    Antes dos cajeros podian armar simultaneamente carritos con el mismo
+    producto (5 unidades en piso, cada uno agregaba 5); el segundo revientaba
+    al cobrar. Ahora cada 'agregar al carrito' incrementa
+    StockLevel.reserved_quantity y crea/actualiza esta fila. Al cerrar carrito
+    o completar venta se libera; un job periodico limpia reservas huerfanas.
+
+    UNIQUE(session_id, variant_id): una fila por producto por sesion — el
+    quantity se acumula ahi en lugar de crear multiples filas.
+    """
+    __tablename__ = "pos_cart_reservations"
+    __table_args__ = (
+        UniqueConstraint("session_id", "variant_id",
+                          name="uq_pos_cart_reservation_session_variant"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("pos_sessions.id", ondelete="CASCADE"),
+                          nullable=False, index=True)
+    variant_id = Column(Integer, ForeignKey("product_variants.id"),
+                          nullable=False, index=True)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False)
+    quantity = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(),
+                          onupdate=func.now())
 
 
 # Multi-tenancy: POSSession y POSTransaction scoped por marca.

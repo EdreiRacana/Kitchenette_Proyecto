@@ -1314,6 +1314,25 @@ _WAREHOUSE_UNIQUE_STATEMENTS: list[str] = [
 ]
 
 
+# Reservas de carrito POS (race condition dos cajeros). create_all las genera
+# en SQLite/desarrollo; aqui garantizamos que existan en produccion Postgres.
+_POS_CART_RESERVATION_STATEMENTS: list[str] = [
+    """CREATE TABLE IF NOT EXISTS pos_cart_reservations (
+        id            SERIAL PRIMARY KEY,
+        session_id    INTEGER NOT NULL REFERENCES pos_sessions(id) ON DELETE CASCADE,
+        variant_id    INTEGER NOT NULL REFERENCES product_variants(id),
+        warehouse_id  INTEGER NOT NULL REFERENCES warehouses(id),
+        quantity      INTEGER NOT NULL DEFAULT 0,
+        created_at    TIMESTAMP WITH TIME ZONE DEFAULT now(),
+        updated_at    TIMESTAMP WITH TIME ZONE DEFAULT now()
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_pos_cart_reservations_session_id ON pos_cart_reservations(session_id)",
+    "CREATE INDEX IF NOT EXISTS ix_pos_cart_reservations_variant_id ON pos_cart_reservations(variant_id)",
+    """CREATE UNIQUE INDEX IF NOT EXISTS uq_pos_cart_reservation_session_variant
+       ON pos_cart_reservations(session_id, variant_id)""",
+]
+
+
 def _apply(sync_conn: Connection) -> None:
     if sync_conn.dialect.name != "postgresql":
         return
@@ -1346,6 +1365,7 @@ def _apply(sync_conn: Connection) -> None:
         ("tenancy_children", _TENANCY_CHILDREN_STATEMENTS),
         ("accounting_tenancy", _ACCOUNTING_TENANCY_STATEMENTS),
         ("warehouse_unique_scope", _WAREHOUSE_UNIQUE_STATEMENTS),
+        ("pos_cart_reservations", _POS_CART_RESERVATION_STATEMENTS),
     ]
 
     for label, statements in all_statements:
