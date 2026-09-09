@@ -79,6 +79,22 @@ export interface POSProduct {
   /** Miniatura del producto. Sirve el storage configurado (Supabase en
    *  produccion). Puede ser null: la UI cae a un icono. */
   image_url?: string | null;
+  /** Existencia en el almacen del terminal donde el cajero tiene sesion
+   *  abierta. null = no hay sesion o terminal sin almacen (UI oculta badge).
+   *  0 = agotado en este POS y NO agregable. */
+  stock_available?: number | null;
+  /** Servicios/digitales no consumen stock; siempre agregables sin badge. */
+  is_service?: boolean;
+  /** Producto perecedero con lotes rastreados. */
+  tracks_batches?: boolean;
+  /** Dias al lote activo mas proximo a vencer en este almacen. Negativo si
+   *  ya vencio. null = no aplica o sin lote registrado. */
+  days_to_expiry?: number | null;
+  /** True si hay al menos un lote activo vencido en este almacen. */
+  has_expired?: boolean;
+  /** Umbral configurado (Product.expiry_alert_days) para decidir cuando
+   *  el badge pasa a amarillo. */
+  expiry_alert_days?: number | null;
 }
 
 export interface POSSaleItem {
@@ -124,10 +140,12 @@ export const posApi = {
     card_capture?: POSCardCapture;
   }) => api.post<any>("/pos/sale", data).then(r => r.data),
 
-  searchProducts: (q: string, limit = 20) =>
-    api.get<POSProduct[]>("/pos/products/search", { params: { q, limit } }).then(r => r.data),
-  popularProducts: (limit = 12) =>
-    api.get<POSProduct[]>("/pos/products/popular", { params: { limit } }).then(r => r.data),
+  searchProducts: (q: string, limit = 20, availableOnly = false) =>
+    api.get<POSProduct[]>("/pos/products/search",
+      { params: { q, limit, available_only: availableOnly } }).then(r => r.data),
+  popularProducts: (limit = 12, availableOnly = false) =>
+    api.get<POSProduct[]>("/pos/products/popular",
+      { params: { limit, available_only: availableOnly } }).then(r => r.data),
 
   downloadTicket: (orderId: number, width: 58 | 80 = 80) =>
     api.get<Blob>(`/pos/sale/${orderId}/ticket.pdf`, { params: { width }, responseType: "blob" }).then(r => r.data),

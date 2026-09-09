@@ -424,17 +424,23 @@ async def register_sale(data: schemas.POSSaleRequest, db: DB, current_user: Curr
 
 # ── Búsqueda rápida ───────────────────────────────────────────────────────
 @router.get("/products/search")
-async def search_products(db: DB, _: CurrentUser,
+async def search_products(db: DB, current_user: CurrentUser,
                           q: str = Query(..., min_length=1),
-                          limit: int = Query(20, ge=1, le=100)):
-    return await service.search_products(db, q, limit)
+                          limit: int = Query(20, ge=1, le=100),
+                          available_only: bool = Query(False)):
+    return await service.search_products(
+        db, q, limit, user_id=current_user.id, available_only=available_only,
+    )
 
 
 @router.get("/products/popular")
-async def popular_products(db: DB, _: CurrentUser,
-                            limit: int = Query(12, ge=1, le=40)):
-    """Top vendidos en los últimos 30 días — para el grid de acceso rápido."""
-    return await service.get_popular_products(db, limit)
+async def popular_products(db: DB, current_user: CurrentUser,
+                            limit: int = Query(12, ge=1, le=40),
+                            available_only: bool = Query(False)):
+    """Top vendidos en los últimos 30 días EN EL ALMACEN DEL POS."""
+    return await service.get_popular_products(
+        db, limit, user_id=current_user.id, available_only=available_only,
+    )
 
 
 # ── PDFs: ticket térmico y reporte Z ──────────────────────────────────────

@@ -898,15 +898,122 @@ async def list_session_sales(db: AsyncSession, session_id: int) -> List[dict]:
     return out
 
 
-async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List[dict]:
-    """Búsqueda unificada por SKU exacto, código de barras o nombre parcial.
-    Prioriza matches exactos por SKU/barcode para lector."""
+async def _get_active_warehouse_id(db: AsyncSession, user_id: Optional[int]) -> Optional[int]:
+    """Almacen del terminal donde el cajero tiene sesion abierta. None cuando
+    no hay sesion (admin explorando catalogo) o terminal sin almacen — en
+    ambos casos el enrich de stock/caducidad se salta y el comportamiento
+    historico se preserva."""
+    if not user_id:
+        return None
+    res = await db.execute(select(pos_models.POSSession).where(
+        pos_models.POSSession.cashier_id == user_id,
+        pos_models.POSSession.status == "open",
+    ))
+    s = res.scalars().first()
+    if not s:
+        return None
+    res_t = await db.execute(select(pos_models.POSTerminal)
+                              .where(pos_models.POSTerminal.id == s.terminal_id))
+    t = res_t.scalars().first()
+    return t.warehouse_id if t else None
+
+
+async def _stock_available_by_variant(
+    db: AsyncSession, variant_ids: List[int], warehouse_id: Optional[int],
+) -> dict:
+    """Existencia disponible (quantity - reserved) por variante en un almacen.
+    Sin registro en StockLevel se resuelve como 0 al leer con .get(id, 0)."""
+    if not warehouse_id or not variant_ids:
+        return {}
+    from app.modules.inventory.models import StockLevel
+    res = await db.execute(
+        select(StockLevel.variant_id,
+               StockLevel.quantity, StockLevel.reserved_quantity)
+        .where(StockLevel.warehouse_id == warehouse_id,
+               StockLevel.variant_id.in_(variant_ids))
+    )
+    out: dict = {}
+    for vid, qty, reserved in res.all():
+        out[vid] = max(0, int(qty or 0) - int(reserved or 0))
+    return out
+
+
+async def _lot_expiry_by_variant(
+    db: AsyncSession, variant_ids: List[int], warehouse_id: Optional[int],
+) -> dict:
+    """Estado de caducidad del lote ACTIVO mas proximo a vencer por variante.
+
+    Devuelve {variant_id: {days_to_expiry, has_expired, alert_days}} donde:
+      - days_to_expiry: entero positivo dias hasta el lote mas cercano; 0 si
+        vence hoy; negativo si ya vencio (dias transcurridos). None si el
+        producto no rastrea lotes o no hay lote con fecha en este almacen.
+      - has_expired: True si hay al menos un lote activo con expiration <= hoy.
+      - alert_days: umbral del producto (Product.expiry_alert_days) para que
+        el frontend decida a partir de cuando poner badge naranja/rojo.
+    """
+    if not warehouse_id or not variant_ids:
+        return {}
+    from datetime import date
+    from app.modules.inventory.models import StockLot, ProductVariant, Product
+    today = date.today()
+    # Solo lotes activos con existencia y fecha declarada — un lote consumido
+    # o en cuarentena/recall no debe generar alerta al cajero (no vende).
+    res = await db.execute(
+        select(
+            StockLot.variant_id,
+            StockLot.expiration_date,
+            Product.expiry_alert_days,
+        )
+        .join(ProductVariant, ProductVariant.id == StockLot.variant_id)
+        .join(Product, Product.id == ProductVariant.product_id)
+        .where(
+            StockLot.warehouse_id == warehouse_id,
+            StockLot.variant_id.in_(variant_ids),
+            StockLot.status == "active",
+            StockLot.quantity_remaining > 0,
+            StockLot.expiration_date.isnot(None),
+            Product.tracks_batches.is_(True),
+        )
+    )
+    out: dict = {}
+    for vid, exp, alert in res.all():
+        if not exp:
+            continue
+        days = (exp - today).days
+        cur = out.get(vid)
+        if cur is None or days < cur["days_to_expiry"]:
+            out[vid] = {
+                "days_to_expiry": days,
+                "has_expired": days <= 0,
+                "alert_days": int(alert or 30),
+            }
+        elif days <= 0 and not cur["has_expired"]:
+            # Ya habia uno futuro pero encontramos otro vencido — el UI
+            # necesita saber que existe expirado aunque el "nearest" sea otro.
+            out[vid]["has_expired"] = True
+    return out
+
+
+async def search_products(db: AsyncSession, query: str, limit: int = 20,
+                          user_id: Optional[int] = None,
+                          available_only: bool = False) -> List[dict]:
+    """Busqueda unificada por SKU exacto, codigo de barras o nombre parcial.
+    Prioriza matches exactos por SKU/barcode para lector.
+
+    Enriquece cada resultado con `stock_available` (existencia en almacen del
+    terminal activo) y datos de caducidad para productos perecederos. Sin
+    sesion abierta o terminal sin almacen, los campos viajan como None y el
+    UI se comporta como antes (sin badges)."""
     from app.modules.inventory.models import ProductVariant, Product
     q = (query or "").strip()
     if not q:
         return []
 
-    def _serialize(v, p):
+    warehouse_id = await _get_active_warehouse_id(db, user_id)
+
+    def _serialize(v, p, stock_map, exp_map):
+        stock = stock_map.get(v.id, 0) if warehouse_id else None
+        exp = exp_map.get(v.id) if warehouse_id else None
         return {
             "variant_id": v.id, "product_id": p.id,
             "sku": v.sku, "barcode": getattr(v, "barcode", None),
@@ -914,12 +1021,19 @@ async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List
             "variant_label": getattr(v, "label", None) or getattr(v, "attributes", None),
             "unit_price": getattr(v, "price", 0.0) or 0.0,
             "unit_cost": getattr(v, "cost_price", 0.0) or 0.0,
-            # La miniatura del POS. El JOIN con Product ya existe, asi que no
-            # cuesta una consulta extra. Puede ser None: la UI cae a un icono.
             "image_url": getattr(p, "image_url", None),
+            "stock_available": stock,
+            "is_service": (p.item_type or "") == "service",
+            "tracks_batches": bool(getattr(p, "tracks_batches", False)),
+            # Datos de caducidad (None cuando el producto no rastrea lotes o
+            # no hay lote activo con fecha). El frontend pinta badge amarillo
+            # si days_to_expiry <= alert_days, rojo si has_expired.
+            "days_to_expiry": exp["days_to_expiry"] if exp else None,
+            "has_expired": exp["has_expired"] if exp else False,
+            "expiry_alert_days": exp["alert_days"] if exp else None,
         }
 
-    # 1) Match EXACTO por SKU o barcode (lector de código de barras)
+    # 1) Match EXACTO por SKU o barcode (lector de codigo de barras)
     exact = await db.execute(
         select(ProductVariant, Product)
         .join(Product, ProductVariant.product_id == Product.id)
@@ -928,9 +1042,10 @@ async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List
     )
     exact_rows = exact.all()
     if len(exact_rows) == 1:
-        # Un solo match exacto → escaneo bulletproof, regresar solo eso
         v, p = exact_rows[0]
-        return [_serialize(v, p)]
+        stock_map = await _stock_available_by_variant(db, [v.id], warehouse_id)
+        exp_map = await _lot_expiry_by_variant(db, [v.id], warehouse_id)
+        return [_serialize(v, p, stock_map, exp_map)]
 
     # 2) Match parcial por SKU, barcode o nombre
     stmt = (
@@ -943,15 +1058,28 @@ async def search_products(db: AsyncSession, query: str, limit: int = 20) -> List
         .limit(limit)
     )
     res = await db.execute(stmt)
-    return [_serialize(v, p) for v, p in res.all()]
+    rows = res.all()
+    ids = [v.id for v, _ in rows]
+    stock_map = await _stock_available_by_variant(db, ids, warehouse_id)
+    exp_map = await _lot_expiry_by_variant(db, ids, warehouse_id)
+    serialized = [_serialize(v, p, stock_map, exp_map) for v, p in rows]
+    if available_only and warehouse_id:
+        serialized = [
+            r for r in serialized
+            if r["is_service"] or (r["stock_available"] or 0) > 0
+        ]
+    return serialized
 
 
-async def get_popular_products(db: AsyncSession, limit: int = 12) -> List[dict]:
-    """Top productos vendidos en los últimos 30 días — se muestran en el POS
-    cuando el buscador está vacío para que el cajero solo tenga que tocar.
-    Es lo que hacen Square y Toast en su "quick access grid"."""
+async def get_popular_products(db: AsyncSession, limit: int = 12,
+                                user_id: Optional[int] = None,
+                                available_only: bool = False) -> List[dict]:
+    """Top productos vendidos en los ultimos 30 dias EN EL ALMACEN DEL POS —
+    para el grid de acceso rapido. Si no hay sesion abierta cae al top global."""
     from app.modules.inventory.models import ProductVariant, Product
     from datetime import timedelta
+
+    warehouse_id = await _get_active_warehouse_id(db, user_id)
 
     cutoff = datetime.now() - timedelta(days=30)
     stmt = (
@@ -969,6 +1097,8 @@ async def get_popular_products(db: AsyncSession, limit: int = 12) -> List[dict]:
         .order_by(func.sum(sales_models.OrderItem.quantity).desc())
         .limit(max(1, min(limit, 40)))
     )
+    if warehouse_id:
+        stmt = stmt.where(sales_models.Order.warehouse_id == warehouse_id)
     rows = (await db.execute(stmt)).all()
     variant_ids = [r.variant_id for r in rows if r.variant_id]
     if not variant_ids:
@@ -978,8 +1108,12 @@ async def get_popular_products(db: AsyncSession, limit: int = 12) -> List[dict]:
         .join(Product, ProductVariant.product_id == Product.id)
         .where(ProductVariant.id.in_(variant_ids))
     )
+    stock_map = await _stock_available_by_variant(db, variant_ids, warehouse_id)
+    exp_map = await _lot_expiry_by_variant(db, variant_ids, warehouse_id)
     by_id: dict = {}
     for v, p in res.all():
+        stock = stock_map.get(v.id, 0) if warehouse_id else None
+        exp = exp_map.get(v.id) if warehouse_id else None
         by_id[v.id] = {
             "variant_id": v.id, "product_id": p.id,
             "sku": v.sku, "barcode": getattr(v, "barcode", None),
@@ -988,9 +1122,20 @@ async def get_popular_products(db: AsyncSession, limit: int = 12) -> List[dict]:
             "unit_price": getattr(v, "price", 0.0) or 0.0,
             "unit_cost": getattr(v, "cost_price", 0.0) or 0.0,
             "image_url": getattr(p, "image_url", None),
+            "stock_available": stock,
+            "is_service": (p.item_type or "") == "service",
+            "tracks_batches": bool(getattr(p, "tracks_batches", False)),
+            "days_to_expiry": exp["days_to_expiry"] if exp else None,
+            "has_expired": exp["has_expired"] if exp else False,
+            "expiry_alert_days": exp["alert_days"] if exp else None,
         }
-    # Respetar el orden de más vendido a menos
-    return [by_id[vid] for vid in variant_ids if vid in by_id]
+    ordered = [by_id[vid] for vid in variant_ids if vid in by_id]
+    if available_only and warehouse_id:
+        ordered = [
+            r for r in ordered
+            if r["is_service"] or (r["stock_available"] or 0) > 0
+        ]
+    return ordered
 
 
 # ── Reconciliación post-cierre ────────────────────────────────────────────
