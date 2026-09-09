@@ -3157,6 +3157,11 @@ function TransferDetailModal({ t, transfer, onClose, onChanged }: {
   const [scanCounts, setScanCounts] = useState<Record<number, number>>({});
   const [receiveDiscrepancy, setReceiveDiscrepancy] = useState<Record<number, string>>({});
   const scanRef = useRef<HTMLInputElement>(null);
+  // Autocomplete: sugerencias filtradas de los items del traspaso mientras
+  // el operador escribe. Cuando la caja es un almacen chico, escanear un
+  // producto por uno es imposible con 100 SKUs — el autocomplete es la via
+  // rapida de contar sin escaner.
+  const [suggestionOpen, setSuggestionOpen] = useState(false);
 
   const meta = TRANSFER_STATUS_META[tr.status];
   const StatusIcon = meta.icon;
@@ -3188,35 +3193,113 @@ function TransferDetailModal({ t, transfer, onClose, onChanged }: {
     setTimeout(() => setScanFlash(null), ms);
   };
 
+  // Incrementa el contador de un item (por escaneo o por click en la sugerencia).
+  // Devuelve true si aplico, false si ya estaba tope. Encapsula la logica que
+  // antes vivia solo dentro de doScan para poder reusarla en autocomplete.
+  const bumpItem = (item: StockTransferItem, delta: number = 1): boolean => {
+    const target = isShippingMode ? item.quantity_requested : item.quantity_shipped;
+    const current = scanCounts[item.id] || 0;
+    const next = Math.max(0, Math.min(target + 999, current + delta));
+    if (delta > 0 && current >= target) {
+      flash(`⚠ Ya llegaste a ${target}/${target} de ${item.product_name}`);
+      return false;
+    }
+    setScanCounts(prev => ({ ...prev, [item.id]: next }));
+    flash(`✓ ${item.product_name} (${next}/${target})`);
+    return true;
+  };
+
+  // Match local rapido: busca en los items del traspaso por SKU o barcode.
+  // Prioridad SKU/barcode exacto → luego contains sobre product_name/SKU/barcode.
+  // Sin roundtrip cuando el codigo ya esta en la lista del traspaso.
+  const matchLocalItem = (code: string): StockTransferItem | null => {
+    const q = (code || "").trim().toLowerCase();
+    if (!q) return null;
+    return tr.items.find(it =>
+      (it.sku || "").toLowerCase() === q || (it.barcode || "").toLowerCase() === q
+    ) || null;
+  };
+
   const doScan = async (code: string) => {
-    const q = code.trim();
+    const q = (code || "").trim();
     if (!q) return;
+    // Match local primero — el 90% de los casos evita el roundtrip.
+    const localItem = matchLocalItem(q);
+    if (localItem) {
+      bumpItem(localItem);
+      setScanCode("");
+      setSuggestionOpen(false);
+      return;
+    }
+    // Fallback: lookup global (puede ser un producto que existe pero no
+    // pertenece a este traspaso — el mensaje distingue ambos casos).
     try {
       const res: ScanResult = await inventoryService.scanLookup(q);
-      // Buscar el item del traspaso que corresponde a esta variante
       const item = tr.items.find(it => it.variant_id === res.variant_id);
       if (!item) {
-        flash("⚠ Producto escaneado NO está en este traspaso");
+        flash(`⚠ "${res.product_name}" no esta en este traspaso`);
         return;
       }
-      // Aumentar el contador de escaneo para ese item
-      const target = isShippingMode ? item.quantity_requested : item.quantity_shipped;
-      const current = scanCounts[item.id] || 0;
-      if (current >= target) {
-        flash(`⚠ Ya escaneaste ${target}/${target} de ${res.product_name}`);
-        return;
-      }
-      setScanCounts(prev => ({ ...prev, [item.id]: current + 1 }));
-      flash(`✓ ${res.product_name} (${current + 1}/${target})`);
+      bumpItem(item);
     } catch (e: any) {
       flash(`✗ ${e?.response?.data?.detail || "Producto no encontrado"}`);
     }
     setScanCode("");
+    setSuggestionOpen(false);
   };
 
   const onScanKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") { e.preventDefault(); doScan(scanCode); }
+    else if (e.key === "Escape") { setScanCode(""); setSuggestionOpen(false); }
   };
+
+  // Auto-submit al detectar un match exacto en un delay corto — asi el operador
+  // que escanea (input rapido) NO necesita apretar Enter, y el que teclea a
+  // mano ve las sugerencias sin auto-cargar hasta que confirma con click.
+  useEffect(() => {
+    const q = scanCode.trim();
+    if (!q) return;
+    const timeout = setTimeout(() => {
+      if (matchLocalItem(q)) doScan(q);
+    }, 350);
+    return () => clearTimeout(timeout);
+  }, [scanCode]);
+
+  // Filtro de sugerencias para el dropdown de autocomplete. Ordena por match
+  // exacto de SKU/barcode primero, luego por product_name que contiene el texto.
+  const suggestions = (() => {
+    const q = scanCode.trim().toLowerCase();
+    if (q.length < 2) return [];
+    return tr.items
+      .map(it => {
+        const sku = (it.sku || "").toLowerCase();
+        const bc = (it.barcode || "").toLowerCase();
+        const name = (it.product_name || "").toLowerCase();
+        const exact = sku === q || bc === q;
+        const startsWith = sku.startsWith(q) || bc.startsWith(q) || name.startsWith(q);
+        const contains = sku.includes(q) || bc.includes(q) || name.includes(q);
+        if (!exact && !startsWith && !contains) return null;
+        return { it, score: exact ? 0 : startsWith ? 1 : 2 };
+      })
+      .filter((x): x is { it: StockTransferItem; score: number } => x !== null)
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 6)
+      .map(x => x.it);
+  })();
+
+  // Bulk fill: usado por "Recibir todo lo enviado" (mode receiving) y por
+  // "Marcar todo con lo solicitado" (mode shipping). Un click y el operador
+  // solo ajusta los renglones que fisicamente no cuadraron.
+  const bulkFillAll = () => {
+    const next: Record<number, number> = {};
+    tr.items.forEach(it => {
+      next[it.id] = isShippingMode ? it.quantity_requested : it.quantity_shipped;
+    });
+    setScanCounts(next);
+    flash(`✓ Marcados ${tr.items.length} renglones al maximo`);
+  };
+
+  const bulkClear = () => setScanCounts({});
 
   const totalRequested = tr.items.reduce((a, it) => a + it.quantity_requested, 0);
   const totalScanned = Object.values(scanCounts).reduce((a, n) => a + n, 0);
@@ -3261,27 +3344,77 @@ function TransferDetailModal({ t, transfer, onClose, onChanged }: {
           </div>
         </div>
 
-        {/* Escáner (solo en estados relevantes) */}
+        {/* Escáner + autocomplete + bulk (solo en estados relevantes).
+            Tres vias para operar:
+              1) Escanear (o pegar) codigo — auto-submit al detectar match.
+              2) Teclear parte del nombre/SKU — dropdown de sugerencias.
+              3) "Marcar todo" para llenar en un click y ajustar solo excepciones. */}
         {scanActive && (
           <div style={{ padding: 16, background: t.panel2, borderBottom: `1px solid ${t.border}` }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
               <Zap size={14} color={t.nova} />
               <div style={{ fontSize: 13, fontWeight: 700, color: t.textHi }}>
-                {isShippingMode ? "Escanea cada producto para preparar el envío" : "Escanea cada producto al recibir"}
+                {isShippingMode ? "Prepara el envio" : "Recibe la mercancia"}
               </div>
               <div style={{ marginLeft: "auto", fontSize: 12, color: t.textMid, fontVariantNumeric: "tabular-nums" }}>
-                {totalScanned} / {isShippingMode ? totalRequested : totalShipped} escaneados
+                {totalScanned} / {isShippingMode ? totalRequested : totalShipped} contados
               </div>
+              <button onClick={bulkFillAll} type="button"
+                title={isShippingMode
+                  ? "Llena todos los renglones con lo solicitado — util para envios sin merma"
+                  : "Llena todos los renglones con lo enviado — util para recepciones completas"}
+                style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.good}`, background: t.good + "1a", color: t.good, cursor: "pointer", fontSize: 11.5, fontWeight: 700 }}>
+                <PackageCheck size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
+                {isShippingMode ? "Marcar todo como enviado" : "Recibir todo lo enviado"}
+              </button>
+              {totalScanned > 0 && (
+                <button onClick={bulkClear} type="button"
+                  title="Vaciar contadores"
+                  style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.textMid, cursor: "pointer", fontSize: 11.5, fontWeight: 600 }}>
+                  Limpiar
+                </button>
+              )}
             </div>
             <div style={{ position: "relative" }}>
               <Barcode size={18} color={t.nova} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
-              <input ref={scanRef} value={scanCode} onChange={e => setScanCode(e.target.value)} onKeyDown={onScanKeyDown}
-                placeholder="Escanea código o teclea SKU y Enter…"
+              <input ref={scanRef} value={scanCode}
+                onChange={e => { setScanCode(e.target.value); setSuggestionOpen(true); }}
+                onFocus={() => setSuggestionOpen(true)}
+                onBlur={() => setTimeout(() => setSuggestionOpen(false), 150)}
+                onKeyDown={onScanKeyDown}
+                placeholder="Escanea o busca por SKU / codigo / nombre…"
                 autoFocus autoComplete="off" spellCheck={false}
                 style={{ width: "100%", padding: "14px 14px 14px 44px", borderRadius: 10, border: `2px solid ${t.nova}44`, background: t.inputBg, color: t.textHi, fontSize: 15, outline: "none", boxSizing: "border-box" }} />
               {scanFlash && (
-                <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", padding: "5px 12px", borderRadius: 999, background: (scanFlash.startsWith("✓") ? t.good : t.warn) + "22", color: scanFlash.startsWith("✓") ? t.good : t.warn, fontSize: 12, fontWeight: 700 }}>
+                <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", padding: "5px 12px", borderRadius: 999, background: (scanFlash.startsWith("✓") ? t.good : t.warn) + "22", color: scanFlash.startsWith("✓") ? t.good : t.warn, fontSize: 12, fontWeight: 700, pointerEvents: "none" }}>
                   {scanFlash}
+                </div>
+              )}
+              {/* Dropdown de sugerencias — click en una la incrementa +1. */}
+              {suggestionOpen && suggestions.length > 0 && (
+                <div style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 4px)", zIndex: 5, background: t.panel, border: `1px solid ${t.border}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", maxHeight: 280, overflowY: "auto" }}>
+                  {suggestions.map(it => {
+                    const target = isShippingMode ? it.quantity_requested : it.quantity_shipped;
+                    const scanned = scanCounts[it.id] || 0;
+                    const done = scanned >= target;
+                    return (
+                      <button key={it.id} type="button"
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={() => { bumpItem(it); setScanCode(""); setSuggestionOpen(false); scanRef.current?.focus(); }}
+                        disabled={done}
+                        style={{ width: "100%", textAlign: "left", padding: "10px 14px", background: "transparent", border: "none", borderBottom: `1px solid ${t.border}`, color: t.textHi, cursor: done ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 10, opacity: done ? 0.5 : 1 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.product_name}</div>
+                          <div style={{ fontSize: 11, color: t.textLo, fontFamily: "monospace", marginTop: 2 }}>
+                            {it.sku}{it.barcode ? ` · ${it.barcode}` : ""}
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 12, fontVariantNumeric: "tabular-nums", fontWeight: 700, color: done ? t.good : t.nova }}>
+                          {scanned}/{target}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -3333,9 +3466,19 @@ function TransferDetailModal({ t, transfer, onClose, onChanged }: {
                     )}
                     {tr.status === "shipped" && (
                       <td style={{ padding: "10px 12px", textAlign: "center" }}>
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                          <div style={{ fontVariantNumeric: "tabular-nums", fontWeight: 700, color: scanned === it.quantity_shipped ? t.good : scanned > it.quantity_shipped ? t.warn : t.textHi }}>
-                            {scanned} / {it.quantity_shipped}
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <button type="button" onClick={() => bumpItem(it, -1)} disabled={scanned <= 0}
+                              style={{ width: 26, height: 26, borderRadius: 6, border: `1px solid ${t.border}`, background: t.panel3, color: t.textHi, cursor: scanned <= 0 ? "not-allowed" : "pointer", opacity: scanned <= 0 ? 0.5 : 1, fontWeight: 700 }}>−</button>
+                            <input type="number" min={0} value={scanned}
+                              onChange={e => {
+                                const n = Math.max(0, parseInt(e.target.value) || 0);
+                                setScanCounts(prev => ({ ...prev, [it.id]: n }));
+                              }}
+                              style={{ width: 56, textAlign: "center", padding: "4px 6px", borderRadius: 6, border: `1px solid ${t.border}`, background: t.inputBg, color: scanned === it.quantity_shipped ? t.good : scanned > it.quantity_shipped ? t.warn : t.textHi, fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", outline: "none" }} />
+                            <span style={{ fontSize: 11.5, color: t.textLo }}>/ {it.quantity_shipped}</span>
+                            <button type="button" onClick={() => bumpItem(it, 1)}
+                              style={{ width: 26, height: 26, borderRadius: 6, border: `1px solid ${t.border}`, background: t.panel3, color: t.textHi, cursor: "pointer", fontWeight: 700 }}>+</button>
                           </div>
                           {scanned !== it.quantity_shipped && scanned > 0 && (
                             <input placeholder="Razón discrepancia (opcional)"
@@ -3348,8 +3491,18 @@ function TransferDetailModal({ t, transfer, onClose, onChanged }: {
                     )}
                     {isShippingMode && (
                       <td style={{ padding: "10px 12px", textAlign: "center" }}>
-                        <div style={{ fontVariantNumeric: "tabular-nums", fontWeight: 700, color: scanned === it.quantity_requested ? t.good : scanned > 0 ? t.nova : t.textLo }}>
-                          {scanned} / {it.quantity_requested}
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
+                          <button type="button" onClick={() => bumpItem(it, -1)} disabled={scanned <= 0}
+                            style={{ width: 26, height: 26, borderRadius: 6, border: `1px solid ${t.border}`, background: t.panel3, color: t.textHi, cursor: scanned <= 0 ? "not-allowed" : "pointer", opacity: scanned <= 0 ? 0.5 : 1, fontWeight: 700 }}>−</button>
+                          <input type="number" min={0} value={scanned}
+                            onChange={e => {
+                              const n = Math.max(0, parseInt(e.target.value) || 0);
+                              setScanCounts(prev => ({ ...prev, [it.id]: n }));
+                            }}
+                            style={{ width: 56, textAlign: "center", padding: "4px 6px", borderRadius: 6, border: `1px solid ${t.border}`, background: t.inputBg, color: scanned === it.quantity_requested ? t.good : scanned > 0 ? t.nova : t.textLo, fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", outline: "none" }} />
+                          <span style={{ fontSize: 11.5, color: t.textLo }}>/ {it.quantity_requested}</span>
+                          <button type="button" onClick={() => bumpItem(it, 1)}
+                            style={{ width: 26, height: 26, borderRadius: 6, border: `1px solid ${t.border}`, background: t.panel3, color: t.textHi, cursor: "pointer", fontWeight: 700 }}>+</button>
                         </div>
                       </td>
                     )}
