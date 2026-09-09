@@ -314,9 +314,51 @@ async def register_pos_refund(session_id: int, data: schemas.POSRefundRequest,
             refund_method=data.refund_method,
             reason=data.reason, notes=data.notes,
             user_id=current_user.id,
+            idempotency_key=data.idempotency_key,
+            manual_auth_code=data.manual_auth_code,
+            manual_terminal_reference=data.manual_terminal_reference,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.post("/refund/{pos_transaction_id}/retry", response_model=dict)
+async def retry_pos_refund_endpoint(
+    pos_transaction_id: int,
+    data: schemas.POSRefundRetryRequest,
+    db: DB, current_user: CurrentUser,
+):
+    """Reintenta un refund con status=failed|unknown, o lo marca manual.
+
+    Casos de uso:
+      - action='retry': la pasarela dio timeout — el cajero pide reintentar.
+        Como enviamos el mismo idempotency_key, la pasarela deduplica; nunca
+        se genera doble refund.
+      - action='mark_manual': la pasarela no funciona / esta fuera de linea /
+        la ventana expiro. El cajero hace el reverso en la terminal fisica y
+        captura el auth_code del voucher para cerrar el ciclo auditable.
+    """
+    try:
+        return await service.retry_pos_refund(
+            db, pos_transaction_id=pos_transaction_id, action=data.action,
+            manual_auth_code=data.manual_auth_code,
+            manual_terminal_reference=data.manual_terminal_reference,
+            notes=data.notes, user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/refunds/pending", response_model=list)
+async def list_pending_refunds(db: DB, current_user: CurrentUser):
+    """Refunds con tarjeta que aun no llegan a estado terminal.
+
+    Alimenta el reporte de reconciliacion: pending, sent, unknown, failed.
+    El gerente ve aqui todo lo que no cuadra contra la afiliacion y puede
+    reintentar por API o marcar manual con el voucher.
+    """
+    company_id = getattr(current_user, "company_id", None)
+    return await service.list_pending_card_refunds(db, company_id=company_id)
 
 
 # ── Reserva de carrito (evita race condition dos cajeros) ────────────────
@@ -373,6 +415,8 @@ async def register_sale(data: schemas.POSSaleRequest, db: DB, current_user: Curr
             discount_amount=data.discount_amount, tax_rate=data.tax_rate,
             shipping_amount=data.shipping_amount, notes=data.notes,
             user_id=current_user.id,
+            card_capture=(data.card_capture.model_dump()
+                            if data.card_capture else None),
         )
     except ValueError as e:
         raise HTTPException(400, str(e))

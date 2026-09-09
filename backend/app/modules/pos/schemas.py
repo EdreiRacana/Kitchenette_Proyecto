@@ -57,6 +57,29 @@ class POSSaleItemInput(BaseModel):
     is_service: bool = False
 
 
+class POSCardCapture(BaseModel):
+    """Datos de una tarjeta capturados al cobrar. NUNCA incluye el PAN.
+
+    Se piden en la UI cuando el pago incluye 'card'. Con estos datos el
+    ERP puede revertir el cobro despues (por API si hay pasarela, o
+    referenciando el voucher si la terminal es externa).
+    """
+    # Proveedor del cobro: manual (terminal externa) | stripe | mercadopago.
+    # Si viene None se resuelve al que este configurado en SystemIntegration.
+    provider: Optional[str] = None
+    # id opaco devuelto por la pasarela cuando el cobro se hizo por API.
+    # En terminales externas no aplica.
+    charge_id: Optional[str] = None
+    # Codigo de autorizacion del voucher (5-6 digitos) — obligatorio en manual.
+    auth_code: Optional[str] = None
+    # Ultimos 4 digitos de la tarjeta (mostrados en el voucher). NUNCA el PAN.
+    card_last4: Optional[str] = None
+    # Marca de la tarjeta: visa|mastercard|amex|otra.
+    card_brand: Optional[str] = None
+    # Folio de la terminal fisica (opcional pero recomendado para conciliar).
+    terminal_reference: Optional[str] = None
+
+
 class POSSaleRequest(BaseModel):
     session_id: int
     customer_id: Optional[int] = None      # None = "público en general"
@@ -66,6 +89,10 @@ class POSSaleRequest(BaseModel):
     tax_rate: float = 16.0
     shipping_amount: float = 0.0
     notes: Optional[str] = None
+    # Captura de tarjeta — requerida cuando payments.card > 0 para permitir
+    # reverso profesional. Si viene None y hay cargo con tarjeta, el
+    # POSTransaction queda con gateway_provider='legacy' (compat).
+    card_capture: Optional[POSCardCapture] = None
 
 
 class CloseSessionRequest(BaseModel):
@@ -170,12 +197,28 @@ class POSRefundRequest(BaseModel):
       - La devolucion se registre como POSTransaction(type=refund) con el
         payment_method elegido — para que close_session reste el reembolso
         del efectivo esperado y el arqueo cuadre.
+
+    Cuando refund_method='card' se intenta reverso real:
+      - Si la venta original tiene gateway_charge_id, se llama a la pasarela
+        con idempotency_key para revertir el cargo.
+      - Si no hay charge_id o el proveedor es 'manual', el cajero debe
+        capturar el auth_code del voucher fisico (manual_auth_code).
+      - El resultado se guarda en la POSTransaction del refund con
+        refund_status: pending|sent|confirmed|failed|manual_ack|unknown.
     """
     order_id: int
     items: List[POSRefundItem]
     refund_method: str  # cash | card | transfer | store_credit
     reason: Optional[str] = None
     notes: Optional[str] = None
+    # Idempotencia — la UI genera un UUID por click de "Confirmar devolucion".
+    # Si el cajero doble-clickea o hay retry de red, el backend responde con
+    # el mismo resultado en lugar de crear un doble refund.
+    idempotency_key: Optional[str] = None
+    # Solo para refund_method='card' cuando la terminal es externa (Netpay,
+    # Prosa, etc.): auth_code del voucher de reverso emitido por la terminal.
+    manual_auth_code: Optional[str] = None
+    manual_terminal_reference: Optional[str] = None
 
 
 class POSRefundResult(BaseModel):
@@ -185,6 +228,25 @@ class POSRefundResult(BaseModel):
     refund_method: str
     order_id: int
     pos_transaction_id: Optional[int] = None
+    # Estado del reverso de tarjeta (None si el metodo no fue card).
+    refund_status: Optional[str] = None  # pending|sent|confirmed|failed|manual_ack|unknown
+    gateway_provider: Optional[str] = None
+    gateway_refund_id: Optional[str] = None
+    failed_reason: Optional[str] = None
+
+
+class POSRefundRetryRequest(BaseModel):
+    """Reintentar un refund con status=failed o unknown, o marcarlo manual.
+
+    action='retry'       -> llama de nuevo a la pasarela con el mismo
+                            idempotency_key (safe, la pasarela deduplica).
+    action='mark_manual' -> el cajero acepta cargo del reverso via manual y
+                            captura el auth_code del voucher fisico.
+    """
+    action: str  # retry | mark_manual
+    manual_auth_code: Optional[str] = None
+    manual_terminal_reference: Optional[str] = None
+    notes: Optional[str] = None
 
 
 # ── Reserva de carrito (race condition dos cajeros) ─────────────────────
