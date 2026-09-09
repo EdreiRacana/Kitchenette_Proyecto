@@ -10,7 +10,7 @@ import {
   Banknote, CreditCard, ArrowLeftRight, Check, X, AlertTriangle,
   Receipt, User, Clock, ChevronRight, History, Scale, Zap, Sparkles,
   Grid3x3, Barcode, Tablet, ShieldCheck, RotateCcw, Undo2, Mail,
-  MessageCircle, Camera, Star,
+  MessageCircle, Camera, Star, Settings,
 } from "lucide-react";
 import { openWhatsApp, shareFile } from "../../utils/whatsapp";
 import {
@@ -156,8 +156,12 @@ function SessionSetup({ t, terminals, onOpened, onTerminalsChanged }: {
   const [opening, setOpening] = useState<number>(0);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
-  const [creatingTerminal, setCreatingTerminal] = useState(false);
-  const [newTerm, setNewTerm] = useState({ name: "", code: "" });
+  // Editor de terminal: null = cerrado; objeto = crear (id null) o editar.
+  // Antes solo se podia crear con nombre+codigo, y no habia forma de asignar
+  // almacen a una terminal existente — sin warehouse_id el POS bloquea la
+  // reserva de carrito ("terminal sin almacen asignado"). Ahora el modal
+  // pide almacen y permite editar.
+  const [editingTerm, setEditingTerm] = useState<TerminalEditorState | null>(null);
   const [showPrev, setShowPrev] = useState<{ terminalId?: number; scope: "auto" | "me" | "terminal" } | null>(null);
   const [showArqueos, setShowArqueos] = useState(false);
 
@@ -197,30 +201,60 @@ function SessionSetup({ t, terminals, onOpened, onTerminalsChanged }: {
         {terminals.map(term => {
           const active = selected === term.id;
           const busy = !!term.open_session_id;
+          const needsWarehouse = !term.warehouse_id && !term.warehouse_name;
           return (
-            <button key={term.id}
-              disabled={busy}
-              onClick={() => !busy && setSelected(term.id)}
-              style={{
-                textAlign: "left", padding: 18, borderRadius: 12,
-                background: active ? t.nova + "22" : t.panel,
-                border: `2px solid ${active ? t.nova : busy ? t.border : t.borderSoft || t.border}`,
-                cursor: busy ? "not-allowed" : "pointer", opacity: busy ? 0.55 : 1,
-                position: "relative",
-              }}>
-              <Store size={22} color={active ? t.nova : t.textMid} />
-              <div style={{ marginTop: 10, fontSize: 15, fontWeight: 700, color: t.textHi }}>{term.name}</div>
-              {term.code && <div style={{ fontSize: 11, color: t.textLo }}>{term.code}</div>}
-              {term.warehouse_name && <div style={{ fontSize: 11, color: t.textLo, marginTop: 4 }}>📦 {term.warehouse_name}</div>}
-              {busy && (
-                <div style={{ marginTop: 8, fontSize: 11, color: t.warn, fontWeight: 700 }}>
-                  🔒 Turno abierto por {term.open_cashier_name || "otro cajero"}
-                </div>
-              )}
-            </button>
+            <div key={term.id} style={{ position: "relative" }}>
+              <button
+                disabled={busy}
+                onClick={() => !busy && setSelected(term.id)}
+                style={{
+                  width: "100%", textAlign: "left", padding: 18, borderRadius: 12,
+                  background: active ? t.nova + "22" : t.panel,
+                  border: `2px solid ${active ? t.nova : needsWarehouse ? t.warn + "77" : busy ? t.border : t.borderSoft || t.border}`,
+                  cursor: busy ? "not-allowed" : "pointer", opacity: busy ? 0.55 : 1,
+                }}>
+                <Store size={22} color={active ? t.nova : t.textMid} />
+                <div style={{ marginTop: 10, fontSize: 15, fontWeight: 700, color: t.textHi }}>{term.name}</div>
+                {term.code && <div style={{ fontSize: 11, color: t.textLo }}>{term.code}</div>}
+                {term.warehouse_name
+                  ? <div style={{ fontSize: 11, color: t.textLo, marginTop: 4 }}>📦 {term.warehouse_name}</div>
+                  : <div style={{ fontSize: 11, color: t.warn, marginTop: 4, fontWeight: 700 }}>
+                      ⚠ Sin almacen — no se podra vender
+                    </div>
+                }
+                {busy && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: t.warn, fontWeight: 700 }}>
+                    🔒 Turno abierto por {term.open_cashier_name || "otro cajero"}
+                  </div>
+                )}
+              </button>
+              {/* Boton editar — flotante en la esquina superior derecha del card.
+                  Se puede editar aunque haya turno abierto (para completar el
+                  almacen faltante sin cerrar el turno). */}
+              <button
+                onClick={e => { e.stopPropagation(); setEditingTerm({
+                  id: term.id, name: term.name, code: term.code || "",
+                  warehouse_id: term.warehouse_id ?? null,
+                  printer_ip: term.printer_ip || "",
+                  default_price_list: term.default_price_list || "",
+                  is_active: term.is_active, notes: term.notes || "",
+                }); }}
+                title="Editar terminal"
+                style={{
+                  position: "absolute", top: 8, right: 8,
+                  width: 30, height: 30, borderRadius: 8, cursor: "pointer",
+                  border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                <Settings size={14} />
+              </button>
+            </div>
           );
         })}
-        <button onClick={() => setCreatingTerminal(true)}
+        <button onClick={() => setEditingTerm({
+          id: null, name: "", code: "", warehouse_id: null,
+          printer_ip: "", default_price_list: "", is_active: true, notes: "",
+        })}
           style={{ padding: 18, borderRadius: 12, border: `2px dashed ${t.border}`, background: "transparent", color: t.textLo, cursor: "pointer", fontSize: 13 }}>
           <Plus size={20} style={{ display: "block", margin: "0 auto 8px" }} />
           Nueva caja
@@ -261,31 +295,162 @@ function SessionSetup({ t, terminals, onOpened, onTerminalsChanged }: {
 
       {showArqueos && <ReconciliationPanel t={t} onClose={() => setShowArqueos(false)} />}
 
-      {creatingTerminal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
-          onClick={() => setCreatingTerminal(false)}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 420, maxWidth: "100%", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 24 }}>
-            <h3 style={{ margin: 0, fontSize: 17, color: t.textHi }}>Nueva caja registradora</h3>
-            <div style={{ marginTop: 16 }}>
-              <label style={{ fontSize: 12, color: t.textLo }}>Nombre *</label>
-              <input value={newTerm.name} onChange={e => setNewTerm(f => ({ ...f, name: e.target.value }))} placeholder="Caja 1"
-                style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14, marginTop: 4 }} />
-            </div>
-            <div style={{ marginTop: 10 }}>
-              <label style={{ fontSize: 12, color: t.textLo }}>Código corto</label>
-              <input value={newTerm.code} onChange={e => setNewTerm(f => ({ ...f, code: e.target.value }))} placeholder="CJ-01"
-                style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14, marginTop: 4 }} />
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
-              <button onClick={() => setCreatingTerminal(false)} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer" }}>Cancelar</button>
-              <button disabled={!newTerm.name} onClick={async () => {
-                try { await posApi.createTerminal(newTerm); setCreatingTerminal(false); setNewTerm({ name: "", code: "" }); onTerminalsChanged(); }
-                catch (e: any) { alert(e?.response?.data?.detail || "Error"); }
-              }} style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: t.nova, color: "#fff", cursor: "pointer", fontWeight: 700 }}>Crear</button>
-            </div>
+      {editingTerm && (
+        <TerminalEditor t={t} initial={editingTerm}
+          onClose={() => setEditingTerm(null)}
+          onSaved={() => { setEditingTerm(null); onTerminalsChanged(); }} />
+      )}
+    </div>
+  );
+}
+
+
+// ── Editor de terminal (crear / editar) ────────────────────────────────
+// Un solo modal que sirve para las dos acciones. La distincion vive en
+// `initial.id`: null = crear, numero = editar. Este modal EXISTE porque
+// antes no habia manera de asignar warehouse_id a una terminal desde el
+// UI, y sin warehouse_id el POS bloqueaba la reserva de carrito.
+type TerminalEditorState = {
+  id: number | null;
+  name: string;
+  code: string;
+  warehouse_id: number | null;
+  printer_ip: string;
+  default_price_list: string;
+  is_active: boolean;
+  notes: string;
+};
+
+function TerminalEditor({ t, initial, onClose, onSaved }: {
+  t: any; initial: TerminalEditorState;
+  onClose: () => void; onSaved: () => void;
+}) {
+  const [form, setForm] = useState<TerminalEditorState>(initial);
+  const [warehouses, setWarehouses] = useState<{ id: number; name: string; type?: string; is_active?: boolean }[]>([]);
+  const [loadingWh, setLoadingWh] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Los almacenes se piden solo al abrir el editor — evita traerlos en la
+  // vista principal si nunca se abre el modal. Filtramos a los activos para
+  // no mostrar warehouses archivados.
+  useEffect(() => {
+    (async () => {
+      setLoadingWh(true);
+      try {
+        const mod = await import("../inventory/service");
+        const list = await mod.inventoryService.getWarehouses();
+        setWarehouses(list.filter(w => w.is_active !== false));
+      } catch (e: any) {
+        setErr(e?.response?.data?.detail || "No se pudieron cargar los almacenes");
+      } finally { setLoadingWh(false); }
+    })();
+  }, []);
+
+  const isEditing = form.id !== null;
+  const canSave = form.name.trim().length > 0 && !saving;
+
+  const save = async () => {
+    setSaving(true); setErr(null);
+    try {
+      const payload = {
+        name: form.name.trim(),
+        code: form.code.trim() || undefined,
+        warehouse_id: form.warehouse_id ?? undefined,
+        printer_ip: form.printer_ip.trim() || undefined,
+        default_price_list: form.default_price_list.trim() || undefined,
+        is_active: form.is_active,
+        notes: form.notes.trim() || undefined,
+      };
+      if (isEditing && form.id != null) {
+        await posApi.updateTerminal(form.id, payload);
+      } else {
+        await posApi.createTerminal(payload);
+      }
+      onSaved();
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Error al guardar");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+      onClick={onClose}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: 520, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto", background: t.panel, borderRadius: 12, border: `1px solid ${t.border}`, padding: 24 }}>
+        <h3 style={{ margin: 0, fontSize: 17, color: t.textHi }}>
+          {isEditing ? "Editar caja registradora" : "Nueva caja registradora"}
+        </h3>
+        {!isEditing && (
+          <div style={{ fontSize: 12, color: t.textLo, marginTop: 4 }}>
+            Asigna el almacen desde donde esta caja descontara stock. Sin almacen
+            no se podran cobrar ventas.
+          </div>
+        )}
+        {isEditing && !form.warehouse_id && (
+          <div style={{ marginTop: 12, padding: "10px 12px", background: t.warn + "22", border: `1px solid ${t.warn}66`, borderRadius: 8, fontSize: 12.5, color: t.warn, fontWeight: 600 }}>
+            ⚠ Esta caja no tiene almacen — asigna uno para poder vender.
+          </div>
+        )}
+        <div style={{ marginTop: 16 }}>
+          <label style={{ fontSize: 12, color: t.textLo }}>Nombre *</label>
+          <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Caja 1"
+            style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14, marginTop: 4, boxSizing: "border-box" }} />
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <label style={{ fontSize: 12, color: t.textLo }}>Codigo corto</label>
+          <input value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} placeholder="CJ-01"
+            style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14, marginTop: 4, boxSizing: "border-box" }} />
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <label style={{ fontSize: 12, color: t.textLo }}>Almacen (obligatorio para vender)</label>
+          <select value={form.warehouse_id ?? ""}
+            onChange={e => setForm(f => ({ ...f, warehouse_id: e.target.value ? Number(e.target.value) : null }))}
+            disabled={loadingWh}
+            style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${form.warehouse_id ? t.border : t.warn}`, background: t.inputBg, color: t.textHi, fontSize: 14, marginTop: 4, boxSizing: "border-box", cursor: "pointer" }}>
+            <option value="">— Sin almacen (no se podra vender) —</option>
+            {warehouses.map(w => (
+              <option key={w.id} value={w.id}>
+                {w.name}{w.type ? ` · ${w.type}` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+          <div>
+            <label style={{ fontSize: 12, color: t.textLo }}>IP impresora termica</label>
+            <input value={form.printer_ip} onChange={e => setForm(f => ({ ...f, printer_ip: e.target.value }))} placeholder="192.168.1.50"
+              style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14, marginTop: 4, boxSizing: "border-box" }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: t.textLo }}>Lista de precios</label>
+            <input value={form.default_price_list} onChange={e => setForm(f => ({ ...f, default_price_list: e.target.value }))} placeholder="General"
+              style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14, marginTop: 4, boxSizing: "border-box" }} />
           </div>
         </div>
-      )}
+        <div style={{ marginTop: 10 }}>
+          <label style={{ fontSize: 12, color: t.textLo }}>Notas</label>
+          <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2}
+            style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 14, marginTop: 4, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }} />
+        </div>
+        {isEditing && (
+          <label style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: t.textMid, cursor: "pointer" }}>
+            <input type="checkbox" checked={form.is_active}
+              onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} />
+            Caja activa (visible en la seleccion de terminales)
+          </label>
+        )}
+        {err && (
+          <div style={{ marginTop: 12, padding: "8px 12px", background: t.bad + "22", color: t.bad, borderRadius: 8, fontSize: 13 }}>{err}</div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+          <button onClick={onClose} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.panel2, color: t.textMid, cursor: "pointer" }}>Cancelar</button>
+          <button disabled={!canSave} onClick={save}
+            style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: canSave ? t.nova : t.border, color: "#fff", cursor: canSave ? "pointer" : "not-allowed", fontWeight: 700 }}>
+            {saving ? "Guardando…" : (isEditing ? "Guardar" : "Crear")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
