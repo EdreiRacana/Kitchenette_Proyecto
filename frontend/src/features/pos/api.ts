@@ -121,6 +121,7 @@ export const posApi = {
     tax_rate?: number;
     shipping_amount?: number;
     notes?: string;
+    card_capture?: POSCardCapture;
   }) => api.post<any>("/pos/sale", data).then(r => r.data),
 
   searchProducts: (q: string, limit = 20) =>
@@ -177,6 +178,16 @@ export const posApi = {
     api.get<ReturnablePOSOrder>(`/pos/order/${orderId}/returnable`).then(r => r.data),
   registerPosRefund: (sessionId: number, data: POSRefundRequest) =>
     api.post<POSRefundResult>(`/pos/session/${sessionId}/refund`, data).then(r => r.data),
+  retryPosRefund: (posTransactionId: number, data: {
+    action: "retry" | "mark_manual";
+    manual_auth_code?: string;
+    manual_terminal_reference?: string;
+    notes?: string;
+  }) => api.post<POSRefundStatusUpdate>(
+    `/pos/refund/${posTransactionId}/retry`, data,
+  ).then(r => r.data),
+  listPendingRefunds: () =>
+    api.get<POSPendingRefund[]>("/pos/refunds/pending").then(r => r.data),
 
   // Correo de contabilidad configurado en el perfil de la empresa (para
   // pre-llenar el prompt de envío del cierre).
@@ -250,12 +261,38 @@ export interface POSRefundItem {
   condition?: "sellable" | "damaged";
 }
 
+export interface POSCardCapture {
+  /** manual (terminal externa) | stripe | mercadopago. Si viene null, se
+   * resuelve por SystemIntegration de la empresa. */
+  provider?: string | null;
+  /** id opaco del cobro en la pasarela — nulo si terminal externa. */
+  charge_id?: string | null;
+  /** Codigo de autorizacion del voucher (5-6 digitos). Obligatorio para
+   *  provider=manual, la UI lo debe pedir. */
+  auth_code?: string | null;
+  /** Ultimos 4 digitos de la tarjeta. NUNCA el PAN completo. */
+  card_last4?: string | null;
+  card_brand?: string | null;
+  terminal_reference?: string | null;
+}
+
+/** Estados de la maquina de refund. terminal = terminal-state (no cambia). */
+export type POSRefundStatus =
+  | "pending" | "sent" | "confirmed" | "failed" | "manual_ack" | "unknown";
+
 export interface POSRefundRequest {
   order_id: number;
   items: POSRefundItem[];
   refund_method: "cash" | "card" | "transfer" | "store_credit";
   reason?: string;
   notes?: string;
+  /** UUID generado por click de "Confirmar devolucion". Evita doble refund
+   *  por doble-click o retry de red. */
+  idempotency_key?: string;
+  /** Solo cuando refund_method='card' y la terminal es externa (Netpay,
+   *  Prosa, etc): auth_code del voucher de reverso emitido por la terminal. */
+  manual_auth_code?: string;
+  manual_terminal_reference?: string;
 }
 
 export interface POSRefundResult {
@@ -265,6 +302,36 @@ export interface POSRefundResult {
   refund_method: string;
   order_id: number;
   pos_transaction_id: number | null;
+  /** Estado del reverso (solo aplica cuando refund_method='card'). */
+  refund_status?: POSRefundStatus | null;
+  gateway_provider?: string | null;
+  gateway_refund_id?: string | null;
+  failed_reason?: string | null;
+}
+
+export interface POSRefundStatusUpdate {
+  pos_transaction_id: number;
+  refund_status: POSRefundStatus;
+  gateway_provider?: string | null;
+  gateway_refund_id?: string | null;
+  failed_reason?: string | null;
+}
+
+export interface POSPendingRefund {
+  id: number;
+  session_id: number;
+  order_id: number | null;
+  amount: number;
+  created_at: string | null;
+  refund_status: POSRefundStatus;
+  refund_type: string | null;
+  gateway_provider: string | null;
+  gateway_charge_id: string | null;
+  gateway_refund_id: string | null;
+  card_last4: string | null;
+  card_brand: string | null;
+  failed_reason: string | null;
+  refund_reason: string | null;
 }
 
 export type POSTransactionType =

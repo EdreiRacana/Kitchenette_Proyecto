@@ -1801,6 +1801,13 @@ function PayModal({ t, session, total, cart, customer, tierDiscount, tierDiscoun
   const [cash, setCash] = useState<number>(total);
   const [card, setCard] = useState<number>(0);
   const [transfer, setTransfer] = useState<number>(0);
+  // Captura de tarjeta — se pide cuando el pago incluye tarjeta. NUNCA
+  // guardamos el PAN completo, solo ultimos 4 + marca + auth_code del
+  // voucher (indispensable para poder revertir el cobro despues).
+  const [cardAuthCode, setCardAuthCode] = useState<string>("");
+  const [cardLast4, setCardLast4] = useState<string>("");
+  const [cardBrand, setCardBrand] = useState<string>("");
+  const [cardTerminalRef, setCardTerminalRef] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const isMobile = useIsMobile(768);
 
@@ -1820,13 +1827,21 @@ function PayModal({ t, session, total, cart, customer, tierDiscount, tierDiscoun
 
   const paid = cash + card + transfer;
   const change = mode === "cash" || mode === "mixed" ? paid - total : 0;
-  const isValid = mode === "cash"
+  // Tarjeta: requerimos auth_code del voucher (5-6 digitos) y ultimos 4.
+  // Sin esto no hay reverso posible, y contabilidad no puede cuadrar contra
+  // el estado de cuenta de la afiliacion.
+  const cardDigitsOnly = (cardLast4 || "").replace(/\D/g, "");
+  const authDigitsOnly = (cardAuthCode || "").replace(/\D/g, "");
+  const cardCaptureValid = card <= 0
+    || (cardDigitsOnly.length === 4 && authDigitsOnly.length >= 4);
+  const isValid = (mode === "cash"
     ? cash + 0.005 >= total
     : mode === "card"
       ? Math.abs(card - total) < 0.005
       : mode === "transfer"
         ? Math.abs(transfer - total) < 0.005
-        : paid + 0.005 >= total && (card + transfer) <= total + 0.005;
+        : paid + 0.005 >= total && (card + transfer) <= total + 0.005
+  ) && cardCaptureValid;
 
   const submit = async () => {
     setSaving(true);
@@ -1848,6 +1863,16 @@ function PayModal({ t, session, total, cart, customer, tierDiscount, tierDiscoun
       }
       if (bits.length) notes = bits.join(" · ");
       const discountAmountArg = tierDiscount && tierDiscount > 0 ? Number(tierDiscount) : undefined;
+      // Payload de captura de tarjeta — solo si hay cobro con tarjeta.
+      // El backend usa esto para poder revertir despues (por API si hay
+      // pasarela, o via voucher si la terminal es externa).
+      const cardCapture = card > 0 ? {
+        provider: "manual",
+        auth_code: authDigitsOnly || null,
+        card_last4: cardDigitsOnly || null,
+        card_brand: cardBrand || null,
+        terminal_reference: cardTerminalRef || null,
+      } : undefined;
       const res = await posApi.registerSale({
         session_id: session.id,
         customer_id: customer?.id,
@@ -1859,6 +1884,7 @@ function PayModal({ t, session, total, cart, customer, tierDiscount, tierDiscoun
         })),
         payments, tax_rate: 16, notes,
         discount_amount: discountAmountArg,
+        card_capture: cardCapture,
       });
       onDone(res);
     } catch (e: any) { alert(e?.response?.data?.detail || "Error al cobrar"); }
@@ -1988,6 +2014,86 @@ function PayModal({ t, session, total, cart, customer, tierDiscount, tierDiscoun
                 <span style={{ fontWeight: 700, color: paid >= total ? t.good : t.warn, fontVariantNumeric: "tabular-nums" }}>{mxn(paid)}</span>
               </div>
             </>
+          )}
+
+          {/* Captura de tarjeta — obligatoria cuando hay cobro con tarjeta.
+              Sin auth_code del voucher no hay reverso posible despues.
+              NUNCA pedimos el PAN completo — solo los ultimos 4 del voucher. */}
+          {card > 0 && (
+            <div style={{
+              marginTop: 4, padding: 12, borderRadius: 10,
+              background: t.nova + "10", border: `1px solid ${t.nova}33`,
+              display: "grid", gap: 10,
+            }}>
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8,
+                fontSize: 12, color: t.nova, fontWeight: 700,
+                textTransform: "uppercase", letterSpacing: 0.4,
+              }}>
+                <CreditCard size={14} /> Datos del voucher (para poder revertir)
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 10.5, color: t.textLo, marginBottom: 2, fontWeight: 600 }}>Autorizacion *</div>
+                  <input type="text" inputMode="numeric" value={cardAuthCode}
+                    onChange={e => setCardAuthCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                    placeholder="123456"
+                    style={{
+                      width: "100%", padding: "10px 12px", fontSize: 15,
+                      background: t.panel, border: `1px solid ${authDigitsOnly.length >= 4 ? t.border : t.warn + "88"}`,
+                      color: t.textHi, borderRadius: 8, outline: "none",
+                      fontVariantNumeric: "tabular-nums",
+                    }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 10.5, color: t.textLo, marginBottom: 2, fontWeight: 600 }}>Ultimos 4 *</div>
+                  <input type="text" inputMode="numeric" value={cardLast4}
+                    onChange={e => setCardLast4(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                    placeholder="1234"
+                    style={{
+                      width: "100%", padding: "10px 12px", fontSize: 15,
+                      background: t.panel, border: `1px solid ${cardDigitsOnly.length === 4 ? t.border : t.warn + "88"}`,
+                      color: t.textHi, borderRadius: 8, outline: "none",
+                      fontVariantNumeric: "tabular-nums", letterSpacing: 2,
+                    }} />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 10.5, color: t.textLo, marginBottom: 2, fontWeight: 600 }}>Marca</div>
+                  <select value={cardBrand} onChange={e => setCardBrand(e.target.value)}
+                    style={{
+                      width: "100%", padding: "10px 12px", fontSize: 14,
+                      background: t.panel, border: `1px solid ${t.border}`,
+                      color: t.textHi, borderRadius: 8, outline: "none",
+                    }}>
+                    <option value="">Seleccionar</option>
+                    <option value="visa">Visa</option>
+                    <option value="mastercard">Mastercard</option>
+                    <option value="amex">American Express</option>
+                    <option value="carnet">Carnet</option>
+                    <option value="otra">Otra</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10.5, color: t.textLo, marginBottom: 2, fontWeight: 600 }}>Folio terminal</div>
+                  <input type="text" value={cardTerminalRef}
+                    onChange={e => setCardTerminalRef(e.target.value.slice(0, 40))}
+                    placeholder="opcional"
+                    style={{
+                      width: "100%", padding: "10px 12px", fontSize: 14,
+                      background: t.panel, border: `1px solid ${t.border}`,
+                      color: t.textHi, borderRadius: 8, outline: "none",
+                    }} />
+                </div>
+              </div>
+              {!cardCaptureValid && (
+                <div style={{ fontSize: 11.5, color: t.warn, lineHeight: 1.4 }}>
+                  Captura el codigo de autorizacion y los ultimos 4 digitos que aparecen en el voucher fisico.
+                  Sin esto no se podra revertir el cobro despues.
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -2639,6 +2745,22 @@ function POSReturnModal({ t, sale, session, onClose, onDone }: {
   const [notes, setNotes] = useState("");
   const [customerName, setCustomerName] = useState<string | null>(null);
   const [warehouseId, setWarehouseId] = useState<number | null>(null);
+  // Reverso de tarjeta: si la terminal es externa (Netpay/Prosa), el cajero
+  // hace el reverso fisico y captura el auth_code del voucher. Si hay
+  // pasarela (Stripe/MP) el backend intenta reverso via API y el auth_code
+  // se ignora — pero lo mantenemos capturable por si el gateway falla y hay
+  // que fallback a manual.
+  const [refundAuthCode, setRefundAuthCode] = useState("");
+  const [refundTerminalRef, setRefundTerminalRef] = useState("");
+  // Resultado del ultimo intento — muestra estado (sent/confirmed/failed/etc)
+  // y permite reintentar sin cerrar el modal.
+  const [refundResult, setRefundResult] = useState<{
+    pos_transaction_id?: number | null;
+    refund_status?: string | null;
+    gateway_provider?: string | null;
+    gateway_refund_id?: string | null;
+    failed_reason?: string | null;
+  } | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -2666,6 +2788,14 @@ function POSReturnModal({ t, sale, session, onClose, onDone }: {
     : settlement === "store_credit" ? "Nota de crédito"
     : "Cambio (sin liquidación)";
 
+  // UUID por click de "Confirmar devolucion" — persiste mientras el modal
+  // este abierto para que un doble-click use el mismo key (idempotencia).
+  const idempotencyKeyRef = useRef<string>(
+    (typeof crypto !== "undefined" && (crypto as any).randomUUID)
+      ? (crypto as any).randomUUID()
+      : `pos-refund-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  );
+
   const submit = async () => {
     if (!anySelected) { setError("Marca al menos un artículo para devolver"); return; }
     setSaving(true); setError(null);
@@ -2683,13 +2813,39 @@ function POSReturnModal({ t, sale, session, onClose, onDone }: {
       // "cambio sin liquidacion" — no hay refund monetario, cae al legacy.
       if (session && settlement !== "none") {
         const method = settlement === "store_credit" ? "store_credit" : refundMethod;
-        await posApi.registerPosRefund(session.id, {
+        // Tarjeta: mandamos el auth_code del voucher (si el cajero lo capturo)
+        // como fallback manual. El backend intenta primero por API si hay
+        // pasarela; si el gateway rechaza / no hay pasarela, cae al manual_ack
+        // con este auth_code.
+        const res = await posApi.registerPosRefund(session.id, {
           order_id: sale.order_id,
           items: itemsPayload,
           refund_method: method,
           reason: reason.trim() || undefined,
           notes: notes.trim() || undefined,
+          idempotency_key: idempotencyKeyRef.current,
+          manual_auth_code: method === "card" && refundAuthCode
+            ? refundAuthCode.replace(/\D/g, "") : undefined,
+          manual_terminal_reference: method === "card" && refundTerminalRef
+            ? refundTerminalRef : undefined,
         });
+        setRefundResult({
+          pos_transaction_id: res.pos_transaction_id,
+          refund_status: res.refund_status,
+          gateway_provider: res.gateway_provider,
+          gateway_refund_id: res.gateway_refund_id,
+          failed_reason: res.failed_reason,
+        });
+        // Solo cerramos el modal automaticamente cuando el reverso es
+        // terminal-state OK: confirmed / manual_ack (o metodos no-tarjeta,
+        // que el backend marca como 'confirmed' directo).
+        const st = res.refund_status;
+        const isTerminalOk = !st || st === "confirmed" || st === "manual_ack";
+        if (isTerminalOk) {
+          onDone();
+        }
+        // Para pending / sent / failed / unknown: dejamos el modal abierto
+        // con el bloque de estado para que el cajero reintente o marque manual.
       } else {
         await salesApi.createReturn({
           order_id: sale.order_id,
@@ -2699,10 +2855,37 @@ function POSReturnModal({ t, sale, session, onClose, onDone }: {
           notes: notes.trim() || undefined,
           items: itemsPayload,
         });
+        onDone();
       }
-      onDone();
     } catch (e: any) {
       setError(e?.response?.data?.detail || "No se pudo registrar la devolución");
+    } finally { setSaving(false); }
+  };
+
+  // Reintentar o marcar manual cuando el reverso quedo en failed/unknown/sent.
+  const retryRefund = async (action: "retry" | "mark_manual") => {
+    if (!refundResult?.pos_transaction_id) return;
+    setSaving(true); setError(null);
+    try {
+      const res = await posApi.retryPosRefund(refundResult.pos_transaction_id, {
+        action,
+        manual_auth_code: action === "mark_manual" && refundAuthCode
+          ? refundAuthCode.replace(/\D/g, "") : undefined,
+        manual_terminal_reference: action === "mark_manual" && refundTerminalRef
+          ? refundTerminalRef : undefined,
+      });
+      setRefundResult(prev => ({
+        ...(prev || {}),
+        refund_status: res.refund_status,
+        gateway_provider: res.gateway_provider,
+        gateway_refund_id: res.gateway_refund_id,
+        failed_reason: res.failed_reason,
+      }));
+      if (res.refund_status === "confirmed" || res.refund_status === "manual_ack") {
+        onDone();
+      }
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "No se pudo actualizar el reverso");
     } finally { setSaving(false); }
   };
 
@@ -2807,6 +2990,27 @@ function POSReturnModal({ t, sale, session, onClose, onDone }: {
                     </select>
                   </div>
                 )}
+                {session && settlement === "refund" && refundMethod === "card" && (
+                  <>
+                    <div>
+                      <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>
+                        Auth del voucher de reverso
+                      </label>
+                      <input value={refundAuthCode}
+                        onChange={e => setRefundAuthCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                        placeholder="Del voucher fisico (fallback manual)"
+                        style={{ width: "100%", padding: "10px 12px", marginTop: 4, borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, boxSizing: "border-box", outline: "none", fontVariantNumeric: "tabular-nums" }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>
+                        Folio terminal (opcional)
+                      </label>
+                      <input value={refundTerminalRef}
+                        onChange={e => setRefundTerminalRef(e.target.value.slice(0, 40))}
+                        style={{ width: "100%", padding: "10px 12px", marginTop: 4, borderRadius: 8, border: `1px solid ${t.border}`, background: t.inputBg, color: t.textHi, fontSize: 13, boxSizing: "border-box", outline: "none" }} />
+                    </div>
+                  </>
+                )}
                 <div>
                   <label style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>Motivo (opcional)</label>
                   <input value={reason} onChange={e => setReason(e.target.value)}
@@ -2826,6 +3030,61 @@ function POSReturnModal({ t, sale, session, onClose, onDone }: {
                 <div style={{ fontSize: 13, color: t.textMid }}>{settlementLabel}</div>
                 <div style={{ fontSize: 18, fontWeight: 800, color: t.warn, fontVariantNumeric: "tabular-nums" }}>{mxn(totalRefund)}</div>
               </div>
+
+              {/* Estado del reverso — solo aparece tras enviar. Bloquea el
+                  cierre si quedo en pending/sent/failed/unknown y ofrece
+                  reintentar por API o marcar manual con el voucher fisico. */}
+              {refundResult?.refund_status && (() => {
+                const st = refundResult.refund_status || "";
+                const okStates = ["confirmed", "manual_ack"];
+                const warnStates = ["pending", "sent"];
+                const isOk = okStates.includes(st);
+                const isWarn = warnStates.includes(st);
+                const bg = isOk ? t.good : isWarn ? t.warn : t.bad;
+                const label = st === "confirmed" ? "Reverso confirmado"
+                  : st === "manual_ack" ? "Reverso manual registrado"
+                  : st === "pending" ? "En proceso — esperando confirmacion"
+                  : st === "sent" ? "Enviado a la pasarela — esperando ACK"
+                  : st === "failed" ? "La pasarela rechazo el reverso"
+                  : st === "unknown" ? "Sin respuesta — reintenta o marca manual"
+                  : st;
+                return (
+                  <div style={{
+                    background: bg + "18", border: `1px solid ${bg}55`,
+                    borderRadius: 10, padding: "12px 16px",
+                    display: "flex", flexDirection: "column", gap: 8,
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: bg }}>{label}</div>
+                      {refundResult.gateway_provider && (
+                        <div style={{ fontSize: 11, color: t.textLo, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                          {refundResult.gateway_provider}
+                          {refundResult.gateway_refund_id ? ` · ${refundResult.gateway_refund_id}` : ""}
+                        </div>
+                      )}
+                    </div>
+                    {refundResult.failed_reason && (
+                      <div style={{ fontSize: 12, color: t.bad, lineHeight: 1.4 }}>
+                        {refundResult.failed_reason}
+                      </div>
+                    )}
+                    {(st === "failed" || st === "unknown") && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button onClick={() => retryRefund("retry")} disabled={saving}
+                          style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.nova}`, background: t.nova + "1a", color: t.nova, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }}>
+                          Reintentar por pasarela
+                        </button>
+                        <button onClick={() => retryRefund("mark_manual")}
+                          disabled={saving || !refundAuthCode || refundAuthCode.replace(/\D/g, "").length < 4}
+                          title={!refundAuthCode ? "Captura el auth_code del voucher fisico primero" : ""}
+                          style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.warn}`, background: t.warn + "1a", color: t.warn, cursor: !refundAuthCode ? "not-allowed" : "pointer", fontSize: 12.5, fontWeight: 700, opacity: !refundAuthCode ? 0.5 : 1 }}>
+                          Marcar reverso manual (voucher)
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </>
           )}
 

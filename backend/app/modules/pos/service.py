@@ -509,7 +509,8 @@ async def register_sale(db: AsyncSession, session_id: int,
                         customer_id: Optional[int], items: list, payments: dict,
                         discount_amount: float = 0.0, tax_rate: float = 16.0,
                         shipping_amount: float = 0.0, notes: Optional[str] = None,
-                        user_id: Optional[int] = None) -> dict:
+                        user_id: Optional[int] = None,
+                        card_capture: Optional[dict] = None) -> dict:
     """Registra una venta POS. Crea Order + OrderItems y una POSTransaction
     por cada método de pago. La reducción de stock la hace el módulo sales.
 
@@ -670,6 +671,24 @@ async def register_sale(db: AsyncSession, session_id: int,
     # efectivo recibido menos el cambio devuelto. Así el arqueo cuadra (si no,
     # el efectivo esperado quedaría inflado por el monto del cambio) y el saldo
     # de la orden queda en 0 en lugar de negativo.
+    # Sanitizar captura de tarjeta si vino en el request. Se aplica solo al
+    # POSTransaction del metodo 'card'. NUNCA guardamos el PAN, CVV, ni pista;
+    # last4 se recorta agresivo si por error viene mas largo.
+    card_data: dict = {}
+    if card_capture and payments.get("card", 0) > 0:
+        raw_last4 = (card_capture.get("card_last4") or "").strip()
+        # Ultimos 4 y validar que sean solo digitos — si el UI mando mas, se corta.
+        digits_only = "".join(ch for ch in raw_last4 if ch.isdigit())
+        card_last4 = digits_only[-4:] if digits_only else None
+        card_data = {
+            "gateway_provider": (card_capture.get("provider") or "manual"),
+            "gateway_charge_id": (card_capture.get("charge_id") or None),
+            "auth_code": (card_capture.get("auth_code") or None),
+            "card_last4": card_last4,
+            "card_brand": (card_capture.get("card_brand") or None),
+            "terminal_reference": (card_capture.get("terminal_reference") or None),
+        }
+
     for method, amount in payments.items():
         applied = round(amount - change, 2) if method == "cash" else round(amount, 2)
         if applied <= 0.005:
@@ -678,11 +697,21 @@ async def register_sale(db: AsyncSession, session_id: int,
             order_id=order.id, amount=applied, method=method,
             user_id=user_id or s.cashier_id,
         ))
-        db.add(pos_models.POSTransaction(
+        tx_kwargs = dict(
             session_id=s.id, type="sale", amount=applied,
             payment_method=method, order_id=order.id,
             notes=f"Venta {folio}",
-        ))
+        )
+        # Solo la POSTransaction con method='card' recibe la captura.
+        if method == "card":
+            if card_data:
+                tx_kwargs.update(card_data)
+                tx_kwargs["captured_at"] = datetime.utcnow()
+            else:
+                # Compat: si el UI aun no manda card_capture, marcamos 'legacy'
+                # para distinguirlas del flujo profesional.
+                tx_kwargs["gateway_provider"] = "legacy"
+        db.add(pos_models.POSTransaction(**tx_kwargs))
     await db.commit()
     # Liberar reservas de esta sesion: consume_stock ya descontó de
     # StockLevel.quantity, ahora bajamos el reserved_quantity que quedo
@@ -1210,6 +1239,9 @@ async def register_pos_refund(
     reason: Optional[str] = None,
     notes: Optional[str] = None,
     user_id: Optional[int] = None,
+    idempotency_key: Optional[str] = None,
+    manual_auth_code: Optional[str] = None,
+    manual_terminal_reference: Optional[str] = None,
 ) -> dict:
     """Devuelve una venta hecha desde el POS: reingresa stock al almacen del
     terminal, registra la CustomerReturn con settlement=refund (o
@@ -1293,40 +1325,329 @@ async def register_pos_refund(
     )
     ret = await sales_service.create_return(db, return_data, user_id=user_id)
 
-    # 5) POSTransaction para el arqueo. El monto reembolsado sale del cajon
-    #    (o de la tarjeta/transferencia); con payment_method='cash' el cierre
-    #    ya resta esto del efectivo esperado — antes este renglon nunca se
-    #    registraba y el arqueo mostraba mas efectivo del que habia.
+    # 5) POSTransaction para el arqueo + reverso profesional si es tarjeta.
+    #    El monto reembolsado sale del cajon (efectivo) o de la tarjeta/transferencia;
+    #    con payment_method='cash' el cierre ya resta esto del efectivo esperado.
+    #
+    #    Para refund_method='card' cerramos el ciclo profesional:
+    #      - Idempotencia: si el mismo idempotency_key ya se aplico a esta venta,
+    #        devolvemos el resultado previo sin doble refund.
+    #      - Buscamos el POSTransaction(type='sale', method='card') original para
+    #        traer gateway_provider, gateway_charge_id y armar la request.
+    #      - Llamamos al adaptador de pasarela; el resultado se guarda como
+    #        refund_status (pending|sent|confirmed|failed|manual_ack|unknown).
+    refund_amount = float(ret.refund_amount or 0.0)
+
+    # Idempotencia dura: si esta venta ya tiene un refund con este idempotency_key,
+    # devolvemos ese resultado. Cubre doble-click del cajero o retry de red.
+    if idempotency_key:
+        existing_stmt = (
+            select(pos_models.POSTransaction)
+            .where(pos_models.POSTransaction.type == "refund")
+            .where(pos_models.POSTransaction.order_id == order_id)
+            .where(pos_models.POSTransaction.idempotency_key == idempotency_key)
+            .execution_options(skip_tenant_filter=True)
+        )
+        res_existing = await db.execute(existing_stmt)
+        existing_tx = res_existing.scalars().first()
+        if existing_tx:
+            return {
+                "return_id": ret.id,
+                "return_folio": ret.folio,
+                "refund_amount": float(existing_tx.amount or 0.0),
+                "refund_method": existing_tx.payment_method,
+                "order_id": order_id,
+                "pos_transaction_id": existing_tx.id,
+                "refund_status": existing_tx.refund_status,
+                "gateway_provider": existing_tx.gateway_provider,
+                "gateway_refund_id": existing_tx.gateway_refund_id,
+                "failed_reason": existing_tx.failed_reason,
+            }
+
+    # Buscar la venta con tarjeta original SI el refund es con tarjeta.
+    # Puede haber varias POSTransaction(sale) para la misma order (pago mixto).
+    original_card_tx = None
+    if refund_method == "card":
+        stmt_orig = (
+            select(pos_models.POSTransaction)
+            .where(pos_models.POSTransaction.order_id == order_id)
+            .where(pos_models.POSTransaction.type == "sale")
+            .where(pos_models.POSTransaction.payment_method == "card")
+            .order_by(pos_models.POSTransaction.id.desc())
+            .execution_options(skip_tenant_filter=True)
+        )
+        res_orig = await db.execute(stmt_orig)
+        original_card_tx = res_orig.scalars().first()
+
+    # Preparar POSTransaction del refund con status inicial 'pending'.
+    # Persistimos ANTES de llamar al gateway — asi si la llamada explota,
+    # el registro queda en 'pending' y se puede reintentar / marcar manual.
+    settlement_amount = -refund_amount  # negativo indica salida (opcional)
     tx = pos_models.POSTransaction(
         session_id=session_id,
         type="refund",
-        amount=float(ret.refund_amount or 0.0),
+        amount=refund_amount,
         payment_method=refund_method,
         order_id=order_id,
         notes=(f"Devolucion {ret.folio}" + (f" — {reason}" if reason else "")),
+        refund_reason=reason,
+        idempotency_key=idempotency_key,
     )
+    if refund_method == "card":
+        tx.refund_type = "refund_partial" if refund_amount < float(order.total_amount or 0.0) else "refund_full"
+        tx.refund_status = "pending"
+        if original_card_tx:
+            tx.original_transaction_id = original_card_tx.id
+            tx.gateway_provider = original_card_tx.gateway_provider
+            tx.gateway_charge_id = original_card_tx.gateway_charge_id
+            # Copiamos ultimos 4 y marca — util para reportes de reconciliacion.
+            tx.card_last4 = original_card_tx.card_last4
+            tx.card_brand = original_card_tx.card_brand
+    else:
+        # Metodos no-tarjeta: no hay pasarela, se marca como confirmado directo.
+        tx.refund_status = "confirmed"
+        tx.refund_type = "manual_ack"
+
     db.add(tx)
     await db.commit()
     await db.refresh(tx)
 
+    # Llamar al gateway SI el refund es con tarjeta.
+    gateway_result = None
+    if refund_method == "card":
+        from app.modules.payment_gateway import (
+            resolve_gateway, RefundRequest, RefundStatus,
+        )
+        gateway = await resolve_gateway(db, session.company_id)
+        req = RefundRequest(
+            original_charge_id=(original_card_tx.gateway_charge_id if original_card_tx else "") or "",
+            amount=refund_amount,
+            currency="MXN",
+            idempotency_key=idempotency_key,
+            reason=reason,
+            manual_auth_code=manual_auth_code,
+            manual_terminal_reference=manual_terminal_reference,
+        )
+        try:
+            gateway_result = await gateway.refund(req)
+        except Exception as e:
+            log.exception("gateway.refund crashed", extra={"order_id": order_id})
+            gateway_result = None
+
+        if gateway_result is None:
+            tx.refund_status = "unknown"
+            tx.failed_reason = "Excepcion no controlada en el adaptador de pasarela."
+            tx.gateway_provider = tx.gateway_provider or "unknown"
+        else:
+            tx.refund_status = gateway_result.status.value
+            tx.gateway_refund_id = gateway_result.gateway_refund_id
+            tx.gateway_provider = gateway_result.provider or tx.gateway_provider
+            tx.failed_reason = gateway_result.failed_reason
+            # Manual: registramos el auth_code capturado del voucher.
+            if gateway_result.status == RefundStatus.MANUAL_ACK:
+                tx.auth_code = manual_auth_code
+                tx.terminal_reference = manual_terminal_reference
+                tx.refund_type = "manual_ack"
+        await db.commit()
+        await db.refresh(tx)
+
     await _log(
         db, user_id, "POS_REFUND",
-        f"Devolucion {ret.folio} en turno {session_id} por ${ret.refund_amount:,.2f} ({refund_method})",
+        f"Devolucion {ret.folio} en turno {session_id} por ${refund_amount:,.2f} ({refund_method})",
         {
             "session_id": session_id, "order_id": order_id,
             "return_id": ret.id, "return_folio": ret.folio,
-            "amount": float(ret.refund_amount or 0.0),
+            "amount": refund_amount,
             "refund_method": refund_method,
+            "refund_status": tx.refund_status,
+            "gateway_provider": tx.gateway_provider,
+            "gateway_refund_id": tx.gateway_refund_id,
+            "failed_reason": tx.failed_reason,
         },
     )
     return {
         "return_id": ret.id,
         "return_folio": ret.folio,
-        "refund_amount": float(ret.refund_amount or 0.0),
+        "refund_amount": refund_amount,
         "refund_method": refund_method,
         "order_id": order_id,
         "pos_transaction_id": tx.id,
+        "refund_status": tx.refund_status,
+        "gateway_provider": tx.gateway_provider,
+        "gateway_refund_id": tx.gateway_refund_id,
+        "failed_reason": tx.failed_reason,
     }
+
+
+async def retry_pos_refund(
+    db: AsyncSession,
+    pos_transaction_id: int,
+    action: str,
+    manual_auth_code: Optional[str] = None,
+    manual_terminal_reference: Optional[str] = None,
+    notes: Optional[str] = None,
+    user_id: Optional[int] = None,
+) -> dict:
+    """Reintenta un refund con status=failed|unknown, o lo marca manual.
+
+    action='retry'       -> vuelve a llamar al gateway con el mismo
+                            idempotency_key (safe, la pasarela deduplica).
+    action='mark_manual' -> registra reverso via terminal externa con el
+                            auth_code capturado del voucher.
+    """
+    if action not in ("retry", "mark_manual"):
+        raise ValueError("action debe ser 'retry' o 'mark_manual'")
+
+    res = await db.execute(
+        select(pos_models.POSTransaction)
+        .where(pos_models.POSTransaction.id == pos_transaction_id)
+        .execution_options(skip_tenant_filter=True)
+    )
+    tx = res.scalars().first()
+    if not tx:
+        raise ValueError("Transaccion no encontrada")
+    if tx.type != "refund":
+        raise ValueError("Solo se puede reintentar una transaccion tipo 'refund'")
+    if tx.refund_status == "confirmed":
+        # Ya cuadro — nada que hacer. Devolvemos el estado actual.
+        return {
+            "pos_transaction_id": tx.id,
+            "refund_status": tx.refund_status,
+            "gateway_provider": tx.gateway_provider,
+            "gateway_refund_id": tx.gateway_refund_id,
+        }
+
+    if action == "mark_manual":
+        if not manual_auth_code:
+            raise ValueError(
+                "El reverso manual requiere el codigo de autorizacion del voucher."
+            )
+        tx.refund_status = "manual_ack"
+        tx.refund_type = "manual_ack"
+        tx.auth_code = manual_auth_code
+        tx.terminal_reference = manual_terminal_reference
+        tx.gateway_provider = "manual"
+        tx.failed_reason = None
+        if notes:
+            tx.notes = ((tx.notes or "") + f"\n[manual_ack] {notes}").strip()
+        await db.commit()
+        await db.refresh(tx)
+        await _log(
+            db, user_id, "POS_REFUND_MANUAL_ACK",
+            f"Refund {tx.id} marcado manual (auth {manual_auth_code})",
+            {"pos_transaction_id": tx.id, "auth_code": manual_auth_code},
+        )
+        return {
+            "pos_transaction_id": tx.id,
+            "refund_status": tx.refund_status,
+            "gateway_provider": tx.gateway_provider,
+            "gateway_refund_id": tx.gateway_refund_id,
+        }
+
+    # action == 'retry' — llamar al gateway de nuevo con mismo idempotency_key
+    if not tx.gateway_charge_id:
+        raise ValueError(
+            "No hay charge_id original — no se puede reintentar por API. "
+            "Marca el reverso como manual capturando el auth_code."
+        )
+    res_s = await db.execute(
+        select(pos_models.POSSession)
+        .where(pos_models.POSSession.id == tx.session_id)
+        .execution_options(skip_tenant_filter=True)
+    )
+    session = res_s.scalars().first()
+    company_id = session.company_id if session else None
+
+    from app.modules.payment_gateway import (
+        resolve_gateway, RefundRequest, RefundStatus,
+    )
+    gateway = await resolve_gateway(db, company_id)
+    req = RefundRequest(
+        original_charge_id=tx.gateway_charge_id,
+        amount=float(tx.amount or 0.0),
+        currency="MXN",
+        idempotency_key=tx.idempotency_key,
+        reason=tx.refund_reason,
+    )
+    try:
+        result = await gateway.refund(req)
+    except Exception as e:
+        log.exception("retry gateway.refund crashed",
+                      extra={"pos_transaction_id": tx.id})
+        result = None
+
+    if result is None:
+        tx.refund_status = "unknown"
+        tx.failed_reason = "Excepcion no controlada al reintentar."
+    else:
+        tx.refund_status = result.status.value
+        tx.gateway_refund_id = result.gateway_refund_id or tx.gateway_refund_id
+        tx.gateway_provider = result.provider or tx.gateway_provider
+        tx.failed_reason = result.failed_reason
+    await db.commit()
+    await db.refresh(tx)
+
+    await _log(
+        db, user_id, "POS_REFUND_RETRY",
+        f"Refund {tx.id} reintentado -> {tx.refund_status}",
+        {
+            "pos_transaction_id": tx.id,
+            "refund_status": tx.refund_status,
+            "gateway_provider": tx.gateway_provider,
+            "gateway_refund_id": tx.gateway_refund_id,
+            "failed_reason": tx.failed_reason,
+        },
+    )
+    return {
+        "pos_transaction_id": tx.id,
+        "refund_status": tx.refund_status,
+        "gateway_provider": tx.gateway_provider,
+        "gateway_refund_id": tx.gateway_refund_id,
+        "failed_reason": tx.failed_reason,
+    }
+
+
+async def list_pending_card_refunds(
+    db: AsyncSession, company_id: Optional[str] = None,
+) -> List[dict]:
+    """Refunds con tarjeta en estado no-terminal (pending/sent/unknown/failed).
+
+    Usado en el reporte de reconciliacion: al cierre del dia el gerente ve
+    lo que aun no cuadra contra el estado de cuenta de la afiliacion.
+    """
+    stmt = (
+        select(pos_models.POSTransaction)
+        .where(pos_models.POSTransaction.type == "refund")
+        .where(pos_models.POSTransaction.payment_method == "card")
+        .where(pos_models.POSTransaction.refund_status.in_(
+            ["pending", "sent", "unknown", "failed"]
+        ))
+        .order_by(pos_models.POSTransaction.created_at.desc())
+        .execution_options(skip_tenant_filter=True)
+    )
+    if company_id:
+        stmt = stmt.where(pos_models.POSTransaction.company_id == company_id)
+    res = await db.execute(stmt)
+    rows = res.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "session_id": r.session_id,
+            "order_id": r.order_id,
+            "amount": float(r.amount or 0.0),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "refund_status": r.refund_status,
+            "refund_type": r.refund_type,
+            "gateway_provider": r.gateway_provider,
+            "gateway_charge_id": r.gateway_charge_id,
+            "gateway_refund_id": r.gateway_refund_id,
+            "card_last4": r.card_last4,
+            "card_brand": r.card_brand,
+            "failed_reason": r.failed_reason,
+            "refund_reason": r.refund_reason,
+        }
+        for r in rows
+    ]
 
 
 async def get_returnable_pos_order(db: AsyncSession, order_id: int) -> Optional[dict]:

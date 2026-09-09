@@ -1333,6 +1333,52 @@ _POS_CART_RESERVATION_STATEMENTS: list[str] = [
 ]
 
 
+# ── Pasarela de pagos con tarjeta: reverso profesional ────────────────
+# Estos campos permiten cerrar el ciclo profesional de un cobro con tarjeta:
+#   auth/capture/refund con auditoria, idempotencia y maquina de estados.
+# Sin ellos, un refund es solo una anotacion contable — con ellos podemos
+# hacer void/refund via API (Stripe/MP) o registrar el reverso manual del
+# voucher de una terminal bancaria clasica y cuadrar contra el estado de
+# cuenta de la afiliacion. NUNCA se guarda el PAN, CVV, ni la pista.
+_POS_CARD_GATEWAY_STATEMENTS: list[str] = [
+    # Referencia del cobro original (venta con tarjeta)
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS gateway_provider    VARCHAR",
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS gateway_charge_id   VARCHAR",
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS gateway_refund_id   VARCHAR",
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS auth_code           VARCHAR",
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS card_last4          VARCHAR",
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS card_brand          VARCHAR",
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS terminal_reference  VARCHAR",
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS batch_id            VARCHAR",
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS captured_at         TIMESTAMPTZ",
+    # Estado del refund (maquina de estados: pending|sent|confirmed|failed|manual_ack|unknown)
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS refund_status       VARCHAR",
+    # Tipo de reverso: void (antes del capture) | refund_full | refund_partial | manual_ack
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS refund_type         VARCHAR",
+    # Ligado al cobro original — permite ver todos los refunds de una venta
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS original_transaction_id INTEGER REFERENCES pos_transactions(id)",
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS refund_reason       VARCHAR",
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS failed_reason       TEXT",
+    # Idempotencia: (original_transaction_id, idempotency_key) unico para que
+    # un retry accidental del cajero no genere doble refund.
+    "ALTER TABLE pos_transactions ADD COLUMN IF NOT EXISTS idempotency_key     VARCHAR",
+    "CREATE INDEX IF NOT EXISTS ix_pos_transactions_original_transaction_id ON pos_transactions(original_transaction_id)",
+    "CREATE INDEX IF NOT EXISTS ix_pos_transactions_refund_status ON pos_transactions(refund_status)",
+    "CREATE INDEX IF NOT EXISTS ix_pos_transactions_gateway_charge_id ON pos_transactions(gateway_charge_id)",
+    """CREATE UNIQUE INDEX IF NOT EXISTS uq_pos_transactions_refund_idempotency
+       ON pos_transactions(original_transaction_id, idempotency_key)
+       WHERE idempotency_key IS NOT NULL""",
+    # Backfill: los refunds historicos que ya se hayan creado se marcan como
+    # 'manual_ack' + confirmed — asi no aparecen como "pendientes" en el reporte.
+    """UPDATE pos_transactions SET refund_type = 'manual_ack', refund_status = 'confirmed'
+       WHERE type = 'refund' AND refund_status IS NULL""",
+    # Ventas con tarjeta previas no tienen provider registrado — quedan como
+    # 'legacy' para distinguirlas de las que ya pasan por la maquina de estados.
+    """UPDATE pos_transactions SET gateway_provider = 'legacy'
+       WHERE type = 'sale' AND payment_method = 'card' AND gateway_provider IS NULL""",
+]
+
+
 def _apply(sync_conn: Connection) -> None:
     if sync_conn.dialect.name != "postgresql":
         return
@@ -1366,6 +1412,11 @@ def _apply(sync_conn: Connection) -> None:
         ("accounting_tenancy", _ACCOUNTING_TENANCY_STATEMENTS),
         ("warehouse_unique_scope", _WAREHOUSE_UNIQUE_STATEMENTS),
         ("pos_cart_reservations", _POS_CART_RESERVATION_STATEMENTS),
+        # Corre DESPUES de pos_cart_reservations — extiende pos_transactions
+        # con la infraestructura de reverso profesional (idempotencia, estado,
+        # referencia del gateway, tarjeta enmascarada). Compatible con datos
+        # existentes: refunds historicos quedan como manual_ack + confirmed.
+        ("pos_card_gateway", _POS_CARD_GATEWAY_STATEMENTS),
     ]
 
     for label, statements in all_statements:
