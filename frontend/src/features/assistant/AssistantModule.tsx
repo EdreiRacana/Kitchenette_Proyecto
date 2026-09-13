@@ -585,7 +585,7 @@ export default function Assistant({ lang = "es" }: { lang?: "es" | "en" } = {}) 
       {showWelcome && !open && (
         <div
           style={{
-            position: "fixed", right: 88, bottom: 34, zIndex: 9998,
+            position: "fixed", left: 88, bottom: 34, zIndex: 9998,
             maxWidth: 240, padding: "10px 14px",
             background: "rgba(15,22,41,0.55)",
             backdropFilter: "blur(24px) saturate(150%)",
@@ -617,7 +617,7 @@ export default function Assistant({ lang = "es" }: { lang?: "es" | "en" } = {}) 
 
       {/* FAB flotante — triángulo cristalino sin fondo, con label debajo */}
       <div style={{
-        position: "fixed", right: 24, bottom: 22, zIndex: 9998,
+        position: "fixed", left: 24, bottom: 22, zIndex: 9998,
         display: "flex", flexDirection: "column", alignItems: "center", gap: 0,
       }}>
         <button
@@ -669,7 +669,7 @@ export default function Assistant({ lang = "es" }: { lang?: "es" | "en" } = {}) 
         <div
           onClick={e => e.stopPropagation()}
           style={{
-            position: "fixed", right: 20, bottom: 96, zIndex: 9999,
+            position: "fixed", left: 20, bottom: 96, zIndex: 9999,
             width: 440, maxWidth: "calc(100vw - 40px)",
             height: "min(720px, calc(100vh - 130px))",
             // Cristal frosted: fondo con gradient translucido + blur intenso
